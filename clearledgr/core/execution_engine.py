@@ -179,6 +179,9 @@ class ExecutionEngine:
             "evaluate_grn_result": self._handle_evaluate_grn,
             "unsnooze": self._handle_unsnooze,
             "apply_label_matched": self._handle_apply_label,  # alias
+            # §12.2: ERP connectivity recheck + resume
+            "check_erp_connectivity": self._handle_check_erp_connectivity,
+            "evaluate_erp_recheck": self._handle_evaluate_erp_recheck,
         }
 
     async def execute(self, plan: Plan) -> ExecutionResult:
@@ -401,11 +404,26 @@ class ExecutionEngine:
                     await asyncio.sleep(delay)
                     continue
                 if failure_type == "dependency":
+                    # §12.2: Alert Backoffice ERP connector health dashboard
+                    try:
+                        from clearledgr.services.monitoring import alert_cs_team
+                        alert_cs_team(
+                            severity="warning",
+                            title=f"External dependency unavailable: {action.name}",
+                            detail=f"Action {action.name} failed with dependency error: {str(exc)[:200]}. Plan paused — retrying in 15 minutes.",
+                            organization_id=self.organization_id,
+                        )
+                    except Exception:
+                        pass  # Alert is best-effort
                     return {
                         "waiting_condition": {
                             "type": "external_dependency_unavailable",
                             "expected_by": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
-                            "context": {"action": action.name, "error": str(exc)},
+                            "context": {
+                                "action": action.name,
+                                "error": str(exc),
+                                "first_failure_at": datetime.now(timezone.utc).isoformat(),
+                            },
                         }
                     }
                 if failure_type == "llm" and action.layer == "LLM":
@@ -1315,6 +1333,102 @@ class ExecutionEngine:
         except Exception as exc:
             logger.warning("[ExecutionEngine] unsnooze failed: %s", exc)
         return {"ok": True}
+
+    async def _handle_check_erp_connectivity(self, action: Action, plan: Plan) -> dict:
+        """§12.2: Check if ERP is back online after connectivity loss."""
+        ctx = self._ensure_ctx(plan)
+        try:
+            from clearledgr.integrations.erp_router import get_erp_connection
+            connection = get_erp_connection(self.organization_id)
+            if not connection:
+                ctx["erp_connected"] = False
+                return {"ok": True, "erp_available": False, "reason": "no_connection"}
+
+            # Probe ERP with a lightweight call (find_vendor with bogus name)
+            # to check if it responds. If it errors with dependency failure,
+            # still unavailable; otherwise restored.
+            try:
+                from clearledgr.integrations.erp_router import find_vendor
+                # Very short timeout probe
+                import asyncio as _aio
+                result = await _aio.wait_for(
+                    find_vendor(self.organization_id, vendor_name="__probe_erp_health__"),
+                    timeout=5.0,
+                )
+                # Any response (even "not found") means ERP is reachable
+                ctx["erp_connected"] = True
+                return {"ok": True, "erp_available": True}
+            except Exception as probe_exc:
+                failure_type = _classify_failure(probe_exc)
+                ctx["erp_connected"] = failure_type != "dependency"
+                return {
+                    "ok": True,
+                    "erp_available": ctx["erp_connected"],
+                    "probe_error": str(probe_exc)[:200],
+                }
+        except Exception as exc:
+            logger.debug("[ExecutionEngine] check_erp_connectivity: %s", exc)
+            return {"ok": True, "erp_available": False}
+
+    async def _handle_evaluate_erp_recheck(self, action: Action, plan: Plan) -> dict:
+        """§12.2: If ERP restored: clear_waiting + resume. Else: reschedule 15-min."""
+        ctx = self._ensure_ctx(plan)
+        erp_connected = ctx.get("erp_connected", False)
+
+        if erp_connected and plan.box_id:
+            # ERP restored — clear waiting and signal caller to resume pending_plan
+            wf = self._get_workflow()
+            wf.clear_waiting_condition(plan.box_id)
+            return {"ok": True, "resumed": True}
+
+        # ERP still down — check how long it's been, alert CS if > 30 min
+        first_failure_iso = None
+        if plan.box_id:
+            item = self.db.get_ap_item(plan.box_id)
+            if item:
+                import json as _json
+                waiting = item.get("waiting_condition")
+                if isinstance(waiting, str):
+                    try:
+                        waiting = _json.loads(waiting)
+                    except Exception:
+                        waiting = {}
+                first_failure_iso = (waiting or {}).get("context", {}).get("first_failure_at")
+
+        down_minutes = 0
+        if first_failure_iso:
+            try:
+                first = datetime.fromisoformat(first_failure_iso.replace("Z", "+00:00"))
+                down_minutes = (datetime.now(timezone.utc) - first).total_seconds() / 60
+            except Exception:
+                pass
+
+        # §12.2: Alert CS team if ERP unavailable > 30 min
+        if down_minutes >= 30:
+            try:
+                from clearledgr.services.monitoring import alert_cs_team
+                alert_cs_team(
+                    severity="error",
+                    title=f"ERP unavailable for {down_minutes:.0f} minutes",
+                    detail="Contact the customer. Automated recheck still failing.",
+                    organization_id=self.organization_id,
+                )
+            except Exception:
+                pass
+
+        # Reschedule 15-min check
+        return {
+            "ok": True,
+            "erp_available": False,
+            "waiting_condition": {
+                "type": "external_dependency_unavailable",
+                "expected_by": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+                "context": {
+                    "first_failure_at": first_failure_iso or datetime.now(timezone.utc).isoformat(),
+                    "down_minutes": round(down_minutes, 1),
+                },
+            },
+        }
 
     # ------------------------------------------------------------------
     # §3 actions that were missing — now implemented

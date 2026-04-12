@@ -336,6 +336,20 @@ class DeterministicPlanningEngine:
                 ],
                 box_id=box_id,
             )
+        elif timer_type in ("erp_recheck", "external_dependency_unavailable"):
+            # §12.2: ERP connectivity check — if ERP still unavailable,
+            # reschedule for another 15 min. If restored, clear_waiting
+            # and resume from pending_plan.
+            return Plan(
+                event_type="timer_fired",
+                actions=[
+                    Action("check_erp_connectivity", "DET", {},
+                           "Check if ERP is back online"),
+                    Action("evaluate_erp_recheck", "DET", {},
+                           "Clear waiting + resume, or reschedule 15-min check"),
+                ],
+                box_id=box_id,
+            )
 
         logger.warning("[PlanningEngine] Unknown timer type: %s", timer_type)
         return Plan(event_type="timer_fired", actions=[], box_id=box_id)

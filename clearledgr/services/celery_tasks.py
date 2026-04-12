@@ -470,6 +470,30 @@ def fire_pending_timers() -> dict:
     except Exception as exc:
         results["back_pressure_error"] = str(exc)
 
+    # §12.2: Fire erp_recheck timers for paused items whose expected_by has passed
+    try:
+        from clearledgr.services.agent_background import _fire_erp_recheck_timers
+        from clearledgr.core.database import get_db
+        _db = get_db()
+        _db.initialize()
+        org_ids = []
+        try:
+            with _db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT DISTINCT organization_id FROM ap_items "
+                    "WHERE waiting_condition IS NOT NULL LIMIT 100"
+                )
+                org_ids = [r[0] for r in cur.fetchall() if r[0]]
+        except Exception:
+            pass
+        total_fired = 0
+        for oid in org_ids:
+            total_fired += asyncio.run(_fire_erp_recheck_timers(oid))
+        results["erp_recheck_fired"] = total_fired
+    except Exception as exc:
+        results["erp_recheck_error"] = str(exc)
+
     return {"status": "ok", **results}
 
 

@@ -1998,6 +1998,63 @@ async def _check_queue_depth_and_concurrency() -> Dict[str, Any]:
     return result
 
 
+async def _fire_erp_recheck_timers(org_id: str) -> int:
+    """§12.2: Fire TIMER_FIRED erp_recheck events for paused items.
+
+    Finds AP items with waiting_condition.type = 'external_dependency_unavailable'
+    whose expected_by has passed, and enqueues timer events that trigger
+    the ERP connectivity re-check plan.
+    """
+    try:
+        import json as _json
+        from clearledgr.core.database import get_db
+        from clearledgr.core.events import AgentEvent, AgentEventType
+        from clearledgr.core.event_queue import get_event_queue
+
+        db = get_db()
+        items = db.list_ap_items(organization_id=org_id, limit=200)
+        now = datetime.now(timezone.utc)
+        queue = get_event_queue()
+        fired = 0
+
+        for item in (items or []):
+            wc = item.get("waiting_condition")
+            if isinstance(wc, str):
+                try:
+                    wc = _json.loads(wc)
+                except Exception:
+                    wc = None
+            if not isinstance(wc, dict):
+                continue
+            if wc.get("type") != "external_dependency_unavailable":
+                continue
+
+            expected_by = wc.get("expected_by")
+            if not expected_by:
+                continue
+            try:
+                exp = datetime.fromisoformat(expected_by.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if exp > now:
+                continue  # Not yet due
+
+            # Fire the timer
+            queue.enqueue(AgentEvent(
+                type=AgentEventType.TIMER_FIRED,
+                source="erp_recheck_scheduler",
+                payload={"timer_type": "erp_recheck", "box_id": item.get("id", "")},
+                organization_id=org_id,
+                idempotency_key=f"erp_recheck:{item.get('id', '')}:{int(now.timestamp()) // 900}",
+            ))
+            fired += 1
+
+        return fired
+    except Exception as exc:
+        logger.debug("[ERP recheck] Failed for %s: %s", org_id, exc)
+        return 0
+
+
 async def _poll_grn_confirmations(org_id: str) -> None:
     """§2.2 + §4.3: Poll for GRN confirmations on invoices waiting for GRN.
 
