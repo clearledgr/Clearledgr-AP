@@ -37,7 +37,7 @@ from clearledgr.core.prompt_guard import (
 
 logger = logging.getLogger(__name__)
 
-_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 _VALID_RECOMMENDATIONS = {"approve", "needs_info", "escalate", "reject"}
 

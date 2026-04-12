@@ -30,10 +30,10 @@ from clearledgr.core.utils import safe_float_or_none
 
 logger = logging.getLogger(__name__)
 
-# Fast, cheap model for text-only extraction.  Override via env if needed.
-_HAIKU_MODEL = os.getenv("ANTHROPIC_EXTRACTION_MODEL", "claude-3-5-haiku-20241022")
-# Stronger model for vision/PDF.  Inherits the global ANTHROPIC_MODEL setting.
-_SONNET_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+# Fast, cheap model for text-only extraction. Override via env if needed.
+_HAIKU_MODEL = os.getenv("ANTHROPIC_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
+# Stronger model for vision/PDF. Inherits the global ANTHROPIC_MODEL setting.
+_SONNET_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 _API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 _TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "45"))

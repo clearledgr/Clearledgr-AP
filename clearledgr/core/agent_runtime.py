@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PLANNING_STEPS = 10
 MAX_TASK_SECONDS = int(os.getenv("AGENT_MAX_TASK_SECONDS", "600"))
-CLAUDE_MODEL = os.getenv("AGENT_RUNTIME_MODEL", "claude-sonnet-4-20250514")
+CLAUDE_MODEL = os.getenv("AGENT_RUNTIME_MODEL", "claude-sonnet-4-6")
 
 
 class AgentPlanningEngine:

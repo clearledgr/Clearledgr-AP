@@ -37,8 +37,11 @@ logger = logging.getLogger(__name__)
 _COST_PER_1M_INPUT = {"haiku": 0.25, "sonnet": 3.00}
 _COST_PER_1M_OUTPUT = {"haiku": 1.25, "sonnet": 15.00}
 
-_MODEL_HAIKU = "claude-3-5-haiku-20241022"
-_MODEL_SONNET = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+# Defaults point at the latest Claude 4 family. Environments that
+# need to pin a specific version override via ANTHROPIC_MODEL (sonnet
+# tier) and ANTHROPIC_EXTRACTION_MODEL (haiku tier) on Railway/local.
+_MODEL_HAIKU = os.environ.get("ANTHROPIC_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
+_MODEL_SONNET = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 
 class LLMAction(str, Enum):
