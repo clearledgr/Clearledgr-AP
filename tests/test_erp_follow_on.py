@@ -56,7 +56,7 @@ def _create_ap_item(
     db,
     *,
     item_id: str,
-    thread_id: str = "thread-1",
+    thread_id: str = "",
     state: str = "posted_to_erp",
     document_type: str = "invoice",
     amount: float = 1000.0,
@@ -64,12 +64,15 @@ def _create_ap_item(
     erp_reference: str = "",
     metadata: Dict[str, Any] | None = None,
 ) -> dict:
+    # §11.2.5: Gmail provides unique thread_ids per thread. Tests must too,
+    # or the UNIQUE (organization_id, thread_id) index rejects duplicates.
+    resolved_thread_id = thread_id or f"thread-{item_id}"
     return db.create_ap_item(
         {
             "id": item_id,
             "invoice_key": f"inv-{item_id}",
-            "thread_id": thread_id,
-            "message_id": f"msg-{thread_id}",
+            "thread_id": resolved_thread_id,
+            "message_id": f"msg-{resolved_thread_id}",
             "subject": f"Invoice {item_id}",
             "sender": "billing@example.com",
             "vendor_name": "Acme",

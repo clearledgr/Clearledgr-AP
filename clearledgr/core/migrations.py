@@ -1078,6 +1078,31 @@ def _v29_box_state_fields(cur, db):
             pass
 
 
+@migration(31, "Prevent duplicate Box creation on same thread (AGENT_DESIGN_SPECIFICATION.md §11.2.5)")
+def _v31_thread_unique_index(cur, db):
+    """§11.2.5: UNIQUE partial index on (organization_id, thread_id).
+
+    If two workers simultaneously receive events for the same Gmail
+    thread (duplicate Pub/Sub notification), only one can create the
+    Box. The second gets a UNIQUE violation and the handler routes
+    to the existing Box.
+
+    Uses a partial index (WHERE thread_id IS NOT NULL) because thread_id
+    can be NULL for non-Gmail sources (manual creation, API imports).
+    """
+    try:
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uniq_ap_items_org_thread "
+            "ON ap_items(organization_id, thread_id) "
+            "WHERE thread_id IS NOT NULL"
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[Migration v31] Could not create unique index (may already have duplicates): %s", exc,
+        )
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""
