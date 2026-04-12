@@ -248,6 +248,11 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/v1",
     "/static",
     "/fraud-controls",  # DESIGN_THESIS.md §8 — architectural fraud-control admin
+    # §5.1 Object Model — Pipeline / SavedView / BoxLink endpoints backing
+    # the Gmail extension pipeline view and sidebar linked-records section.
+    "/api/pipelines",
+    "/api/saved-views",
+    "/api/box-links",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
