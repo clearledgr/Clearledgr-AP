@@ -1,0 +1,17 @@
+# Railway config for the Beat scheduler service.
+#
+# Beat is a long-running scheduler (not an HTTP server) so it has no
+# healthcheck endpoint. Keep this file separate from the default
+# railway.toml which targets the api service.
+#
+# §11.2.1: run EXACTLY ONE beat instance — replicas > 1 causes
+# duplicate timer firings.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "celery -A clearledgr.services.celery_app beat -l info"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
