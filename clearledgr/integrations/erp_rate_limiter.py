@@ -28,6 +28,11 @@ ERP_RATE_LIMITS: Dict[str, Dict[str, int]] = {
     "xero":       {"requests": 50, "window": 60},
     "netsuite":   {"requests": 30, "window": 60},
     "sap":        {"requests": 20, "window": 60},
+    # §11.1 Gmail API: per-user quotas (sendEmail 250/day,
+    # API calls ~1 billion quota units/day). Conservative rate limit
+    # keeps us well below quotas even for high-volume workspaces.
+    "gmail":      {"requests": 200, "window": 60},  # 200 per minute
+    "gmail_send": {"requests": 10,  "window": 3600},  # 10 sends per hour = 240/day
 }
 
 DEFAULT_LIMIT = {"requests": 30, "window": 60}

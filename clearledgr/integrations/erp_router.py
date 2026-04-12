@@ -286,6 +286,27 @@ def delete_erp_connection(organization_id: str, erp_type: str) -> bool:
 
 # ==================== Journal Entry Dispatcher ====================
 
+def _enforce_erp_rate_limit(organization_id: str, erp_type: str) -> Optional[Dict[str, Any]]:
+    """§11.1: Rate-limit check before any ERP API call.
+
+    Returns a dict with rate_limited status if over limit, None if allowed.
+    Every ERP-calling function must invoke this before making the API call.
+    """
+    try:
+        from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter, ERPRateLimitError
+        get_erp_rate_limiter().check_and_consume(organization_id, erp_type)
+        return None
+    except Exception as exc:
+        if "rate limit exceeded" in str(exc).lower():
+            return {
+                "status": "rate_limited",
+                "reason": str(exc),
+                "erp": erp_type,
+                "retry_after": getattr(exc, "retry_after", 5),
+            }
+        return None  # Non-rate-limit error — proceed
+
+
 async def post_journal_entry(
     organization_id: str,
     entry: Dict[str, Any],
@@ -300,6 +321,11 @@ async def post_journal_entry(
     if not connection:
         logger.warning(f"No ERP connected for {organization_id}")
         return {"status": "skipped", "reason": "No ERP connected"}
+
+    # §11.1: Rate-limit check
+    rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if rate_limited:
+        return rate_limited
 
     if connection.type == "quickbooks":
         return await post_to_quickbooks(connection, entry)
@@ -801,6 +827,11 @@ async def reverse_bill(
             "idempotency_key": idempotency_key,
         }
 
+    # §11.1: Rate-limit check
+    _rate_limited = _enforce_erp_rate_limit(org_id, connection.type)
+    if _rate_limited:
+        return _rate_limited
+
     erp_type = str(connection.type or "").strip().lower()
 
     async def _dispatch_once() -> Dict[str, Any]:
@@ -975,6 +1006,11 @@ async def apply_credit_note(
             "ap_item_id": ap_item_id,
         }
 
+    # §11.1: Rate-limit check
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        return _rate_limited
+
     if connection.type == "xero":
         result = await apply_credit_note_to_xero(
             connection,
@@ -1067,6 +1103,11 @@ async def apply_settlement(
             "erp_reference": application.target_erp_reference,
             "ap_item_id": ap_item_id,
         }
+
+    # §11.1: Rate-limit check
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        return _rate_limited
 
     if connection.type == "quickbooks":
         gl_map = _get_org_gl_map(organization_id)
@@ -1174,6 +1215,11 @@ async def create_vendor(
     if not connection:
         return {"status": "error", "reason": "No ERP connected"}
 
+    # §11.1: Rate-limit check
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        return _rate_limited
+
     if connection.type == "quickbooks":
         return await create_vendor_quickbooks(connection, vendor)
     elif connection.type == "xero":
@@ -1195,6 +1241,11 @@ async def find_vendor(
     connection = get_erp_connection(organization_id)
 
     if not connection:
+        return None
+
+    # §11.1: Rate-limit check — return None so caller falls back to "not found" path
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
         return None
 
     if connection.type == "quickbooks":
@@ -1299,6 +1350,13 @@ async def erp_preflight_check(
     if not connection:
         return result
 
+    # §11.1: Rate-limit check — skip preflight checks when over limit
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        result["erp_type"] = connection.type
+        result["rate_limited"] = True
+        return result
+
     result["erp_type"] = connection.type
     result["erp_available"] = True
 
@@ -1380,6 +1438,11 @@ async def verify_bill_posted(
     if not connection:
         return {"verified": True, "bill": None, "erp_type": None, "reason": "no_erp_connection"}
 
+    # §11.1: Rate-limit check — treat as non-fatal, return verified=True so pipeline isn't blocked
+    _rate_limited = _enforce_erp_rate_limit(org_id, connection.type)
+    if _rate_limited:
+        return {"verified": True, "bill": None, "erp_type": connection.type, "reason": "rate_limited"}
+
     erp_type = str(connection.type or "").strip().lower()
     finder = _BILL_FINDERS.get(erp_type)
     if not finder:
@@ -1449,6 +1512,11 @@ async def attach_file_to_erp_bill(
     if not connection:
         return None
 
+    # §11.1: Rate-limit check — skip attachment upload (non-fatal, caller treats None as warning)
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        return None
+
     erp_type = str(connection.type or "").strip().lower()
     uploader = _ATTACHMENT_UPLOADERS.get(erp_type)
     if not uploader:
@@ -1483,6 +1551,10 @@ async def lookup_purchase_order_from_erp(
     """
     connection = get_erp_connection(organization_id)
     if not connection:
+        return None
+    # §11.1: Rate-limit check — skip PO lookup (caller falls back to no-PO path)
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
         return None
     finder = _BILL_FINDERS.get(connection.type)
     if not finder:
@@ -1535,6 +1607,11 @@ async def get_bill_payment_status(
     connection = get_erp_connection(organization_id, entity_id=entity_id)
     if not connection:
         return {"paid": False, "reason": "no_erp_connection"}
+
+    # §11.1: Rate-limit check
+    _rate_limited = _enforce_erp_rate_limit(organization_id, connection.type)
+    if _rate_limited:
+        return {"paid": False, "reason": "rate_limited"}
 
     erp_type = str(connection.type or "").strip().lower()
     lookup = _PAYMENT_STATUS_LOOKUPS.get(erp_type)
@@ -1673,6 +1750,12 @@ async def get_chart_of_accounts(
         logger.debug("No ERP connection for org %s, returning empty chart of accounts", org_id)
         return []
 
+    # §11.1: Rate-limit check — return empty list so caller falls back to cached/empty path
+    _rate_limited = _enforce_erp_rate_limit(org_id, connection.type)
+    if _rate_limited:
+        logger.warning("Chart of accounts fetch rate-limited for org %s", org_id)
+        return []
+
     erp_type = str(connection.type or "").strip().lower()
     fetcher = _CHART_OF_ACCOUNTS_FETCHERS.get(erp_type)
     if not fetcher:
@@ -1802,6 +1885,12 @@ async def list_all_vendors(
     connection = get_erp_connection(org_id, entity_id=entity_id)
     if not connection:
         logger.debug("No ERP connection for org %s, returning empty vendor list", org_id)
+        return []
+
+    # §11.1: Rate-limit check — return empty list so caller falls back to cached/empty path
+    _rate_limited = _enforce_erp_rate_limit(org_id, connection.type)
+    if _rate_limited:
+        logger.warning("Vendor list fetch rate-limited for org %s", org_id)
         return []
 
     erp_type = str(connection.type or "").strip().lower()

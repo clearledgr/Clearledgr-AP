@@ -638,7 +638,20 @@ class GmailAPIClient:
 
         Requires the ``gmail.send`` OAuth scope.  Used for automated vendor
         follow-ups where the agent sends on behalf of the connected account.
+
+        §11.1: Respects Gmail sendEmail quota (250/day for Google Workspace).
+        Rate limiter caps at 10/hour per user — well within quota.
         """
+        # §11.1: Gmail send rate limit check
+        try:
+            from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter, ERPRateLimitError
+            get_erp_rate_limiter().check_and_consume(self.user_id, "gmail_send")
+        except ERPRateLimitError as exc:
+            logger.warning("Gmail send rate limit hit for %s: %s", self.user_id, exc)
+            return {"status": "rate_limited", "retry_after": exc.retry_after}
+        except Exception:
+            pass  # Rate limiter errors are non-fatal
+
         import email.mime.text
 
         msg = email.mime.text.MIMEText(body, "plain")
