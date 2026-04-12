@@ -231,7 +231,18 @@ class ExecutionEngine:
                 steps_completed += 1
                 break
 
-            self._post_write(box_id, action, step, timeline_id, "completed", "")
+            # Determine status for audit: waiting_condition means the action
+            # succeeded in setting a wait (not an error), but the plan is pausing.
+            # Failures that become waits (dependency) are recorded as "paused".
+            if result.get("waiting_condition"):
+                _summary = result["waiting_condition"].get("context", {}).get("error", "")
+                if _summary:
+                    # This came from a dependency failure, not a deliberate set_waiting
+                    self._post_write(box_id, action, step, timeline_id, "paused", _summary)
+                else:
+                    self._post_write(box_id, action, step, timeline_id, "completed", "set waiting condition")
+            else:
+                self._post_write(box_id, action, step, timeline_id, "completed", "")
             steps_completed += 1
 
             # Update box_id if the action created one
