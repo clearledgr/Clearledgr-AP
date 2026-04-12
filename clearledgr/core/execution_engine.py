@@ -285,20 +285,29 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
 
     def _pre_write(self, box_id: Optional[str], action: Action, step: int) -> str:
-        """Rule 1: Write timeline entry BEFORE execution."""
+        """§5.1 Rule 1: Write timeline entry BEFORE execution.
+
+        Uses the audit_events table (via append_ap_audit_event) as the
+        Box timeline — every agent action is a recorded event.
+        """
         timeline_id = f"TL-{uuid.uuid4().hex[:12]}"
-        if not box_id or not hasattr(self.db, "append_ap_item_timeline_entry"):
+        if not box_id or not hasattr(self.db, "append_ap_audit_event"):
             return timeline_id
         try:
-            self.db.append_ap_item_timeline_entry(box_id, {
+            self.db.append_ap_audit_event({
                 "id": timeline_id,
-                "type": "agent_action",
-                "action": action.name,
-                "description": action.description,
-                "status": "executing",
-                "step": step,
-                "layer": action.layer,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ap_item_id": box_id,
+                "event_type": f"agent_action:{action.name}:executing",
+                "actor_type": "agent",
+                "actor_id": "execution_engine",
+                "organization_id": self.organization_id,
+                "payload_json": {
+                    "action": action.name,
+                    "description": action.description,
+                    "status": "executing",
+                    "step": step,
+                    "layer": action.layer,
+                },
             })
         except Exception as exc:
             # Rule 1 write failure — execution continues but log loudly
@@ -312,17 +321,23 @@ class ExecutionEngine:
     def _post_write(self, box_id: Optional[str], action: Action, step: int,
                     timeline_id: str, status: str, result_summary: str) -> None:
         """Update pre-execution entry with result."""
-        if not box_id or not hasattr(self.db, "append_ap_item_timeline_entry"):
+        if not box_id or not hasattr(self.db, "append_ap_audit_event"):
             return
         try:
-            self.db.append_ap_item_timeline_entry(box_id, {
+            self.db.append_ap_audit_event({
                 "id": f"{timeline_id}-result",
-                "type": "agent_action",
-                "action": action.name,
-                "status": status,
-                "result_summary": result_summary[:200] if result_summary else "",
-                "step": step,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ap_item_id": box_id,
+                "event_type": f"agent_action:{action.name}:{status}",
+                "actor_type": "agent",
+                "actor_id": "execution_engine",
+                "organization_id": self.organization_id,
+                "payload_json": {
+                    "action": action.name,
+                    "status": status,
+                    "result_summary": result_summary[:200] if result_summary else "",
+                    "step": step,
+                    "parent_timeline_id": timeline_id,
+                },
             })
         except Exception as exc:
             logger.warning(
@@ -996,12 +1011,17 @@ class ExecutionEngine:
         return {"ok": True}
 
     async def _handle_timeline(self, action: Action, plan: Plan) -> dict:
-        if plan.box_id and hasattr(self.db, "append_ap_item_timeline_entry"):
-            self.db.append_ap_item_timeline_entry(plan.box_id, {
-                "type": "agent_action",
-                "summary": action.params.get("summary", action.description),
-                "format": action.params.get("format", ""),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+        if plan.box_id and hasattr(self.db, "append_ap_audit_event"):
+            self.db.append_ap_audit_event({
+                "ap_item_id": plan.box_id,
+                "event_type": "agent_action:post_timeline_entry",
+                "actor_type": "agent",
+                "actor_id": "execution_engine",
+                "organization_id": self.organization_id,
+                "payload_json": {
+                    "summary": action.params.get("summary", action.description),
+                    "format": action.params.get("format", ""),
+                },
             })
         return {"ok": True}
 
@@ -1515,13 +1535,17 @@ class ExecutionEngine:
             return {"ok": True}
         event_type = action.params.get("event_type", "agent_action")
         try:
-            if hasattr(self.db, "append_ap_item_timeline_entry"):
-                self.db.append_ap_item_timeline_entry(plan.box_id, {
-                    "type": "notification",
-                    "event_type": event_type,
-                    "summary": action.description,
-                    "requires_attention": True,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+            if hasattr(self.db, "append_ap_audit_event"):
+                self.db.append_ap_audit_event({
+                    "ap_item_id": plan.box_id,
+                    "event_type": f"notification:{event_type}",
+                    "actor_type": "agent",
+                    "actor_id": "execution_engine",
+                    "organization_id": self.organization_id,
+                    "payload_json": {
+                        "summary": action.description,
+                        "requires_attention": True,
+                    },
                 })
             return {"ok": True, "notification_recorded": True}
         except Exception as exc:

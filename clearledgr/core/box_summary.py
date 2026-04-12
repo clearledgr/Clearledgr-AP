@@ -122,22 +122,28 @@ def build_box_summary(
             if exception_reason:
                 summary.match_result_summary += f" — {exception_reason[:100]}"
 
-        # Last 3 actions from timeline
+        # Last 3 actions from audit_events (the Box timeline)
         try:
-            timeline = item.get("timeline") or []
-            if isinstance(timeline, str):
-                timeline = json.loads(timeline) if timeline else []
-            if isinstance(timeline, list):
-                recent = timeline[-3:] if len(timeline) > 3 else timeline
-                for entry in recent:
-                    if isinstance(entry, dict):
-                        action = entry.get("summary") or entry.get("event_type") or entry.get("action") or "action"
-                        ts = entry.get("timestamp") or entry.get("ts") or entry.get("created_at") or ""
-                        summary.last_3_actions.append(f"{action} ({ts[:16]})" if ts else action)
-                    elif isinstance(entry, str):
-                        summary.last_3_actions.append(entry[:100])
-        except Exception:
-            pass
+            if hasattr(db, "list_ap_audit_events"):
+                events = db.list_ap_audit_events(ap_item_id, limit=3, order="desc")
+            else:
+                # Fallback: direct SQL query
+                with db.connect() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        db._prepare_sql(
+                            "SELECT event_type, ts FROM audit_events "
+                            "WHERE ap_item_id = ? ORDER BY ts DESC LIMIT 3"
+                        ),
+                        (ap_item_id,),
+                    )
+                    events = [dict(zip(("event_type", "ts"), row)) for row in cur.fetchall()]
+            for entry in (events or []):
+                action = entry.get("event_type") or "action"
+                ts = entry.get("ts") or ""
+                summary.last_3_actions.append(f"{action} ({ts[:16]})" if ts else action)
+        except Exception as exc:
+            logger.debug("[BoxSummary] timeline query failed: %s", exc)
 
         # Open issues from fraud_flags
         fraud_flags = item.get("fraud_flags")

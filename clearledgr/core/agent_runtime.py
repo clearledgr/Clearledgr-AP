@@ -354,16 +354,22 @@ class AgentPlanningEngine:
                     if hasattr(task, "metadata") and isinstance(task.metadata, dict)
                     else None
                 )
-                if _ap_item_id and hasattr(db, "append_ap_item_timeline_entry"):
+                if _ap_item_id and hasattr(db, "append_ap_audit_event"):
                     import uuid as _uuid
                     _pre_exec_timeline_id = f"TL-{_uuid.uuid4().hex[:12]}"
-                    db.append_ap_item_timeline_entry(_ap_item_id, {
+                    db.append_ap_audit_event({
                         "id": _pre_exec_timeline_id,
-                        "type": "agent_action",
-                        "action": tool_name,
-                        "parameters": {k: str(v)[:100] for k, v in (input_args or {}).items()},
-                        "status": "executing",
-                        "step": step,
+                        "ap_item_id": _ap_item_id,
+                        "event_type": f"agent_action:{tool_name}:executing",
+                        "actor_type": "agent",
+                        "actor_id": "agent_planning_engine",
+                        "organization_id": task.organization_id,
+                        "payload_json": {
+                            "action": tool_name,
+                            "parameters": {k: str(v)[:100] for k, v in (input_args or {}).items()},
+                            "status": "executing",
+                            "step": step,
+                        },
                     })
             except Exception:
                 pass  # Non-fatal — don't block execution on timeline failure
@@ -403,16 +409,23 @@ class AgentPlanningEngine:
 
             # §5.1 Rule 1: Update pre-execution timeline entry with result
             try:
-                if _pre_exec_timeline_id and _ap_item_id and hasattr(db, "append_ap_item_timeline_entry"):
+                if _pre_exec_timeline_id and _ap_item_id and hasattr(db, "append_ap_audit_event"):
                     _result_status = "completed" if output.get("ok", True) else "failed"
                     _result_summary = str(output.get("error", ""))[:200] if not output.get("ok", True) else "ok"
-                    db.append_ap_item_timeline_entry(_ap_item_id, {
+                    db.append_ap_audit_event({
                         "id": f"{_pre_exec_timeline_id}-result",
-                        "type": "agent_action",
-                        "action": tool_name,
-                        "status": _result_status,
-                        "result_summary": _result_summary,
-                        "step": step,
+                        "ap_item_id": _ap_item_id,
+                        "event_type": f"agent_action:{tool_name}:{_result_status}",
+                        "actor_type": "agent",
+                        "actor_id": "agent_planning_engine",
+                        "organization_id": task.organization_id,
+                        "payload_json": {
+                            "action": tool_name,
+                            "status": _result_status,
+                            "result_summary": _result_summary,
+                            "step": step,
+                            "parent_timeline_id": _pre_exec_timeline_id,
+                        },
                     })
             except Exception:
                 pass  # Non-fatal
