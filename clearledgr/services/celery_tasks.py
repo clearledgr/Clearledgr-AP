@@ -458,6 +458,18 @@ def fire_pending_timers() -> dict:
     except Exception as exc:
         results["erp_retry_error"] = str(exc)
 
+    # §11.2.4: Queue depth + workspace concurrency back-pressure monitoring
+    try:
+        from clearledgr.services.agent_background import _check_queue_depth_and_concurrency
+        bp_result = asyncio.run(_check_queue_depth_and_concurrency())
+        results["back_pressure"] = {
+            "queue_pending": bp_result.get("queue_pending"),
+            "queue_depth_sustained_min": bp_result.get("queue_depth_sustained_min"),
+            "workspaces_at_limit": len(bp_result.get("workspaces_at_limit", [])),
+        }
+    except Exception as exc:
+        results["back_pressure_error"] = str(exc)
+
     return {"status": "ok", **results}
 
 

@@ -1707,7 +1707,10 @@ class ExecutionEngine:
 # ---------------------------------------------------------------------------
 
 _TRANSIENT_ERRORS = {"timeout", "rate_limit", "429", "502", "503", "504", "temporary"}
-_DEPENDENCY_ERRORS = {"connection", "unavailable", "offline", "dns", "refused"}
+_DEPENDENCY_ERRORS = {
+    "connection", "unavailable", "offline", "dns", "refused",
+    "unreachable", "not responding", "cannot connect", "erp_unavailable",
+}
 _LLM_ERRORS = {"anthropic", "claude", "llm", "safety", "malformed"}
 
 

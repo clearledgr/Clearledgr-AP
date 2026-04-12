@@ -1872,6 +1872,132 @@ async def _run_monitoring_checks(org_id: str):
         logger.error("Monitoring checks failed for org=%s: %s", org_id, e)
 
 
+# §11.2.4: Queue depth + concurrency tracking for back-pressure alerts.
+# Tracks when queue depth / workspace at-limit conditions started, so we
+# can alert when sustained past the spec's 5-minute threshold.
+_high_queue_depth_started_at: Optional[datetime] = None  # type: ignore[name-defined]
+_workspace_at_limit_started_at: Dict[str, datetime] = {}  # type: ignore[name-defined]
+
+
+async def _check_queue_depth_and_concurrency() -> Dict[str, Any]:
+    """§11.2.4: Monitor queue depth + per-workspace concurrency limit.
+
+    Alerts when:
+    - Queue depth > 100 standard or > 20 high_priority sustained > 5 min
+    - Workspace at concurrency limit sustained > 5 min
+
+    Returns a summary dict for logging.
+    """
+    global _high_queue_depth_started_at
+    result: Dict[str, Any] = {"checked_at": datetime.now(timezone.utc).isoformat()}
+
+    # 1. Queue depth check
+    try:
+        from clearledgr.core.event_queue import (
+            get_event_queue, STREAM_HIGH, STREAM_STANDARD,
+        )
+        queue = get_event_queue()
+        pending = queue.pending_count() or {}
+        high_depth = pending.get(STREAM_HIGH, 0) > 20
+        std_depth = pending.get(STREAM_STANDARD, 0) > 100
+        depth_high = high_depth or std_depth
+        result["queue_pending"] = pending
+        result["queue_depth_high"] = depth_high
+
+        now = datetime.now(timezone.utc)
+        if depth_high:
+            if _high_queue_depth_started_at is None:
+                _high_queue_depth_started_at = now
+            sustained_min = (now - _high_queue_depth_started_at).total_seconds() / 60
+            result["queue_depth_sustained_min"] = round(sustained_min, 1)
+            if sustained_min >= 5:
+                # Sustained > 5 min — alert CS team (likely ERP connectivity issue)
+                logger.error(
+                    "[BackPressure] Queue depth sustained > 5 min: high=%d std=%d",
+                    pending.get(STREAM_HIGH, 0),
+                    pending.get(STREAM_STANDARD, 0),
+                )
+                try:
+                    from clearledgr.services.monitoring import alert_cs_team
+                    alert_cs_team(
+                        severity="error",
+                        title="Event queue depth sustained high for > 5 min",
+                        detail=(
+                            f"high={pending.get(STREAM_HIGH, 0)} "
+                            f"std={pending.get(STREAM_STANDARD, 0)} "
+                            f"sustained {sustained_min:.1f} min — "
+                            f"likely ERP connectivity issue."
+                        ),
+                    )
+                except Exception:
+                    pass
+        else:
+            _high_queue_depth_started_at = None
+            result["queue_depth_sustained_min"] = 0
+    except Exception as exc:
+        result["queue_depth_error"] = str(exc)
+
+    # 2. Workspace concurrency limit check
+    try:
+        from clearledgr.services.workspace_semaphore import (
+            WorkspaceSemaphore, TIER_LIMITS,
+        )
+        from clearledgr.core.database import get_db
+        db = get_db()
+        db.initialize()
+
+        # Find active orgs
+        org_ids = []
+        try:
+            with db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT DISTINCT organization_id FROM ap_items "
+                    "WHERE state NOT IN ('closed', 'rejected') LIMIT 50"
+                )
+                org_ids = [r[0] for r in cur.fetchall() if r[0]]
+        except Exception:
+            pass
+
+        now = datetime.now(timezone.utc)
+        at_limit_orgs = []
+        for org_id in org_ids:
+            sem = WorkspaceSemaphore(org_id)
+            current = sem.current_count()
+            if current >= sem.limit:
+                # At limit — track sustained duration
+                if org_id not in _workspace_at_limit_started_at:
+                    _workspace_at_limit_started_at[org_id] = now
+                sustained = (now - _workspace_at_limit_started_at[org_id]).total_seconds() / 60
+                if sustained >= 5:
+                    at_limit_orgs.append({"org": org_id, "sustained_min": round(sustained, 1)})
+                    logger.error(
+                        "[BackPressure] Workspace %s at concurrency limit for %.1f min "
+                        "(limit=%d, current=%d)",
+                        org_id, sustained, sem.limit, current,
+                    )
+                    try:
+                        from clearledgr.services.monitoring import alert_cs_team
+                        alert_cs_team(
+                            severity="warning",
+                            title=f"Workspace {org_id} stuck at concurrency limit",
+                            detail=(
+                                f"At limit ({current}/{sem.limit}) sustained {sustained:.1f} min. "
+                                "Either limit too low or long-running boxes not releasing slots."
+                            ),
+                        )
+                    except Exception:
+                        pass
+            else:
+                # Released — clear tracker
+                _workspace_at_limit_started_at.pop(org_id, None)
+        result["workspaces_at_limit"] = at_limit_orgs
+    except Exception as exc:
+        result["concurrency_error"] = str(exc)
+
+    return result
+
+
 async def _poll_grn_confirmations(org_id: str) -> None:
     """§2.2 + §4.3: Poll for GRN confirmations on invoices waiting for GRN.
 

@@ -47,6 +47,40 @@ def _alert_channels() -> List[str]:
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
+def alert_cs_team(
+    *,
+    severity: str,
+    title: str,
+    detail: str = "",
+    organization_id: Optional[str] = None,
+) -> None:
+    """§11.2.4 + §2.1.2: Alert CS team on operational issues.
+
+    Used for back-pressure (sustained queue depth), Gmail watch failures,
+    workspace concurrency stuck, etc. Non-blocking — failure to alert
+    must not block agent execution.
+    """
+    level = {"error": logging.ERROR, "warning": logging.WARNING}.get(
+        severity.lower(), logging.INFO,
+    )
+    logger.log(level, "[CS Alert] %s — %s", title, detail[:500])
+
+    # Best-effort Slack relay via the existing _slack_alert infrastructure
+    try:
+        import asyncio as _aio
+        from clearledgr.services.agent_background import _slack_alert
+        msg = f"[{severity.upper()}] {title}\n{detail[:500]}"
+        try:
+            _aio.get_running_loop()
+            # Already in an event loop — schedule instead of await
+            _aio.create_task(_slack_alert(msg, organization_id=organization_id or "ops"))
+        except RuntimeError:
+            # No running loop — run inline
+            _aio.run(_slack_alert(msg, organization_id=organization_id or "ops"))
+    except Exception as exc:
+        logger.debug("[CS Alert] Slack relay failed: %s", exc)
+
+
 class MonitoringService:
     """Runs health checks and emits alerts on threshold breaches."""
 
