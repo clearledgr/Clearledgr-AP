@@ -349,43 +349,37 @@ class ExecutionEngine:
         2. apply_label('Clearledgr/Invoice/Exception')
         3. move_box_stage('exception')
         4. send_slack_exception(box_id, ap_channel, {exception_summary})
+
+        Each step goes through the full execution mechanism:
+        pre-write → execute with retry/timeout → post-write (Rule 1).
         """
         box_id = plan.box_id
         if not box_id:
             return
 
-        # 1. Generate exception reason via Claude (LLM)
-        try:
-            await self._handle_generate_exception(
-                Action("generate_exception_reason", "LLM", {}, "Generate match exception reason"),
-                plan,
-            )
-        except Exception as exc:
-            logger.debug("[ExecutionEngine] exception reason generation failed: %s", exc)
+        exception_actions = [
+            Action("generate_exception_reason", "LLM", {},
+                   "Generate plain-language match exception reason"),
+            Action("apply_label", "DET",
+                   {"label": "Clearledgr/Invoice/Exception"},
+                   "Apply Exception stage label"),
+            Action("move_box_stage", "DET",
+                   {"target": "needs_info"},
+                   "Move Box to exception stage"),
+            Action("send_slack_exception", "DET", {},
+                   "Notify AP team of match exception with resolution buttons"),
+        ]
 
-        # 2. Apply Exception label
-        try:
-            await self._handle_apply_label(
-                Action("apply_label", "DET", {"label": "Clearledgr/Invoice/Exception"}, "Apply Exception label"),
-                plan,
-            )
-        except Exception:
-            pass
+        for step, action in enumerate(exception_actions):
+            # Rule 1: pre-execution timeline write
+            timeline_id = self._pre_write(box_id, action, step + 100)  # offset to distinguish from main plan
 
-        # 3. Move to exception stage
-        try:
-            self.db.update_ap_item(box_id, state="needs_info")
-        except Exception as exc:
-            logger.debug("[ExecutionEngine] move to exception failed: %s", exc)
+            # Execute with retry and timeout (§5.2)
+            result = await self._execute_with_retry(action, plan, step + 100)
 
-        # 4. Send Slack exception notification
-        try:
-            await self._handle_send_slack_exception(
-                Action("send_slack_exception", "DET", {}, "Notify AP team of match exception"),
-                plan,
-            )
-        except Exception as exc:
-            logger.debug("[ExecutionEngine] slack exception notification failed: %s", exc)
+            # Post-execution timeline update
+            status = "completed" if not result.get("_abort") else "failed"
+            self._post_write(box_id, action, step + 100, timeline_id, status, "")
 
     def _move_to_exception(self, box_id: str, action_name: str, error: str) -> None:
         """Move Box to exception stage on persistent failure."""
