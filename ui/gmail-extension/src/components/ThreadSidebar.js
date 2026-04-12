@@ -1,22 +1,26 @@
 /**
- * ThreadSidebar — Phase 3.3.b (DESIGN_THESIS.md §6.6).
+ * ThreadSidebar — DESIGN_THESIS.md §6.6 + AGENT_DESIGN_SPECIFICATION.md §6 / §8.1 / §9.1 / §12.
  *
- * Four fixed sections in strict order:
- *   1. Invoice  — amount due, invoice reference, PO, due date, terms
- *   2. 3-Way Match — PO / GRN / Invoice rows with match-status icons
- *   3. Vendor — vendor name, YTD spend, risk score, IBAN status
- *   4. Agent Actions — condensed timeline of what the agent did
- *
- * Renders inside the existing SidebarApp when a thread-linked AP item
- * is selected. The full WorkPanel still exists for the pipeline view
- * (detail review, approvals, tasks, files) — ThreadSidebar is the
- * simplified "at a glance" view the thesis specifies for the thread
- * context.
+ * Fixed section order:
+ *   0. (conditional) Resubmission banner  — lineage for superseded invoices
+ *   0. (conditional) Override Window       — live countdown + Undo
+ *   0. (conditional) Waiting               — why the agent is paused
+ *   0. (conditional) Fraud Flags           — active IBAN/domain/velocity flags
+ *   1. Invoice        — amount due, reference, PO, due date, terms
+ *   2. 3-Way Match    — PO / GRN / Invoice rows + tolerance
+ *   3. Vendor         — name, spend, risk, IBAN status
+ *   4. Linked Records — linked onboarding / sibling invoices
+ *   5. Agent Actions  — condensed timeline
  *
  * Design rules from the thesis:
  *   - "Clearledgr sidebar has four fixed sections in strict order"
  *   - "The sidebar loads in less than two seconds"
  *   - "The sidebar never shows more than one invoice"
+ *
+ * The conditional banners above the four fixed sections are not new
+ * sections — they are state indicators that the thesis implies (see
+ * spec §9.1 "Override window open until 09:56" and §6 waiting_condition
+ * field) and that users need to see at a glance.
  */
 import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
@@ -45,6 +49,16 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-match-icon.na { color: #94A3B8; }
 .cl-ts-match-label { font-size: 12px; color: #0A1628; flex: 1; }
 .cl-ts-match-detail { font-size: 11px; color: #5C6B7A; }
+.cl-ts-match-tolerance {
+  font-size: 11px; color: #16A34A; background: #ECFDF5;
+  padding: 2px 8px; border-radius: 10px; margin-top: 6px; display: inline-block;
+}
+.cl-ts-match-tolerance.warn { color: #92400E; background: #FEFCE8; }
+.cl-ts-match-tolerance.fail { color: #991B1B; background: #FEF2F2; }
+.cl-ts-match-exception-box {
+  font-size: 12px; color: #92400E; margin-top: 4px;
+  padding: 6px 8px; background: #FEFCE8; border-radius: 6px;
+}
 .cl-ts-risk-badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
@@ -62,6 +76,8 @@ const THREAD_SIDEBAR_CSS = `
   background: #00D67E; position: absolute; left: 0; top: 5px;
 }
 .cl-ts-timeline-time { font-size: 10px; color: #94A3B8; display: block; }
+.cl-ts-agent-icon { width: 10px; height: 10px; vertical-align: -1px; margin-right: 3px; opacity: 0.6; }
+.cl-ts-section-icon { width: 12px; height: 12px; vertical-align: -1px; margin-right: 4px; opacity: 0.7; }
 .cl-ts-iban-pill {
   display: inline-block; padding: 1px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
@@ -99,12 +115,68 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-approve-btn:hover { background: #00C271; }
 .cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-snooze-btn {
+  padding: 6px 14px; border: 1px solid #CA8A04; border-radius: 6px;
+  background: #FEFCE8; color: #92400E;
+  font: 500 12px/1.2 'DM Sans', sans-serif; cursor: pointer;
+}
+.cl-ts-snoozed-notice {
+  font: 500 11px/1.3 'DM Sans', sans-serif; color: #CA8A04; padding: 4px 0;
+}
 .cl-ts-query-input {
   width: 100%; padding: 10px 12px; border: 1px solid #E2E8F0; border-radius: 8px;
   font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
 }
 .cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
 .cl-ts-query-input::placeholder { color: #94A3B8; }
+
+/* -- Banners (conditional, above the fixed sections) -- */
+.cl-ts-banner {
+  padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #E2E8F0;
+}
+.cl-ts-banner-icon {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.cl-ts-banner-body { flex: 1; min-width: 0; }
+.cl-ts-banner-title { font-size: 12px; font-weight: 700; color: #0A1628; line-height: 1.2; }
+.cl-ts-banner-detail { font-size: 11px; color: #5C6B7A; margin-top: 2px; line-height: 1.3; }
+.cl-ts-banner.override { background: #ECFDF5; }
+.cl-ts-banner.override .cl-ts-banner-icon { background: #00D67E; color: #0A1628; }
+.cl-ts-banner.waiting { background: #FEFCE8; }
+.cl-ts-banner.waiting .cl-ts-banner-icon { background: #CA8A04; color: #FEFCE8; }
+.cl-ts-banner.fraud { background: #FEF2F2; }
+.cl-ts-banner.fraud .cl-ts-banner-icon { background: #DC2626; color: #FEF2F2; }
+.cl-ts-banner.resubmission { background: #EFF6FF; }
+.cl-ts-banner.resubmission .cl-ts-banner-icon { background: #1D4ED8; color: #EFF6FF; }
+.cl-ts-banner-action {
+  padding: 6px 12px; border: 1px solid #0A1628; border-radius: 6px;
+  background: #fff; color: #0A1628; font: 600 12px/1 'DM Sans', sans-serif;
+  cursor: pointer; flex-shrink: 0;
+}
+.cl-ts-banner-action:hover { background: #0A1628; color: #fff; }
+.cl-ts-banner-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-fraud-flag {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #991B1B; margin-top: 4px; padding-left: 38px;
+}
+.cl-ts-fraud-flag::before {
+  content: '⚠'; color: #DC2626;
+}
+
+/* Loading skeleton */
+.cl-ts-skeleton {
+  padding: 12px 16px;
+  border-bottom: 1px solid #E2E8F0;
+}
+.cl-ts-skeleton-row {
+  height: 12px; background: linear-gradient(90deg, #F1F5F9 0%, #E2E8F0 50%, #F1F5F9 100%);
+  background-size: 200% 100%; animation: cl-ts-shimmer 1.4s infinite linear;
+  border-radius: 4px; margin-bottom: 8px;
+}
+@keyframes cl-ts-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 `;
 
 // ---------------------------------------------------------------------------
@@ -142,6 +214,23 @@ function formatTimeAgo(iso) {
   } catch { return ''; }
 }
 
+// For countdowns: "3m 42s" / "1h 4m"
+function formatCountdown(targetIso, nowMs) {
+  if (!targetIso) return '';
+  try {
+    const target = new Date(targetIso).getTime();
+    const diff = target - nowMs;
+    if (diff <= 0) return 'closed';
+    const totalSec = Math.floor(diff / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  } catch { return ''; }
+}
+
 function matchIcon(status) {
   if (!status) return html`<span class="cl-ts-match-icon na">—</span>`;
   const s = String(status).toLowerCase();
@@ -167,6 +256,134 @@ function ibanPill(item) {
   if (item?.iban_change_pending) return html`<span class="cl-ts-iban-pill cl-ts-iban-pending">Freeze active</span>`;
   if (item?.iban_verified) return html`<span class="cl-ts-iban-pill cl-ts-iban-verified">Verified</span>`;
   return html`<span class="cl-ts-iban-pill cl-ts-iban-unverified">Unverified</span>`;
+}
+
+function agentIconUrl() {
+  return typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : '';
+}
+
+function humanizeWaitingType(type) {
+  if (!type) return 'the next step';
+  const t = String(type).toLowerCase();
+  const map = {
+    grn_check: 'GRN confirmation',
+    grn_confirmation: 'GRN confirmation',
+    approval_response: 'approval',
+    vendor_onboarding_completion: 'vendor onboarding',
+    iban_verification: 'IBAN verification',
+    external_dependency_unavailable: 'ERP to come back online',
+    erp_unavailable: 'ERP to come back online',
+    erp_recheck: 'ERP reconnection',
+    payment_confirmation: 'payment confirmation',
+    vendor_response: 'vendor response',
+  };
+  return map[t] || t.replace(/_/g, ' ');
+}
+
+// ---------------------------------------------------------------------------
+// Banner components (conditional, above the four fixed sections)
+// ---------------------------------------------------------------------------
+
+function OverrideWindowBanner({ window_, onUndo, nowMs }) {
+  if (!window_ || !window_.expires_at) return null;
+  const [undoing, setUndoing] = useState(false);
+  const remaining = formatCountdown(window_.expires_at, nowMs);
+  const isOpen = remaining && remaining !== 'closed';
+  if (!isOpen) return null;
+  const action = String(window_.action_type || 'posted_to_erp').replace(/_/g, ' ');
+  return html`
+    <div class="cl-ts-banner override">
+      <div class="cl-ts-banner-icon">✓</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Auto-${action} — ${remaining} to undo</div>
+        <div class="cl-ts-banner-detail">
+          ${window_.erp_reference ? `ERP ref ${window_.erp_reference} · ` : ''}
+          Closes ${formatTimeAgo(window_.expires_at).replace(/ ago/, '') || 'shortly'}
+        </div>
+      </div>
+      ${onUndo ? html`
+        <button class="cl-ts-banner-action" disabled=${undoing}
+          onClick=${async () => {
+            if (undoing) return;
+            setUndoing(true);
+            try { await onUndo(window_); } finally { setUndoing(false); }
+          }}
+        >${undoing ? 'Undoing…' : 'Undo'}</button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function WaitingBanner({ waiting }) {
+  if (!waiting || typeof waiting !== 'object') return null;
+  const type = waiting.type || waiting.condition;
+  if (!type) return null;
+  const label = humanizeWaitingType(type);
+  const setAt = waiting.set_at || waiting.context?.set_at || waiting.created_at;
+  const expectedBy = waiting.expected_by || waiting.context?.expected_by;
+  const since = setAt ? formatTimeAgo(setAt) : '';
+  const nextCheck = expectedBy ? `Next check ${formatTimeAgo(expectedBy).replace(/ ago/, '') || 'soon'}` : '';
+  return html`
+    <div class="cl-ts-banner waiting">
+      <div class="cl-ts-banner-icon">⏳</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Waiting for ${label}</div>
+        <div class="cl-ts-banner-detail">
+          ${since ? `Paused ${since}` : 'Paused'}${nextCheck ? ` · ${nextCheck}` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function FraudFlagsBanner({ flags }) {
+  if (!Array.isArray(flags) || flags.length === 0) return null;
+  // Only show unresolved flags
+  const active = flags.filter((f) => f && typeof f === 'object' && !f.resolved_at);
+  if (active.length === 0) return null;
+  const primary = active[0];
+  const type = (primary.flag_type || primary.type || 'flag').replace(/_/g, ' ');
+  return html`
+    <div class="cl-ts-banner fraud">
+      <div class="cl-ts-banner-icon">!</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">${active.length} fraud ${active.length === 1 ? 'flag' : 'flags'} active</div>
+        <div class="cl-ts-banner-detail">Primary: ${type}</div>
+        ${active.slice(1).map((f) => html`
+          <div class="cl-ts-fraud-flag" key=${f.detected_at || f.flag_type}>
+            ${(f.flag_type || f.type || 'flag').replace(/_/g, ' ')}
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function ResubmissionBanner({ item }) {
+  if (!item?.is_resubmission && !item?.has_resubmission) return null;
+  if (item.has_resubmission) {
+    return html`
+      <div class="cl-ts-banner resubmission">
+        <div class="cl-ts-banner-icon">↻</div>
+        <div class="cl-ts-banner-body">
+          <div class="cl-ts-banner-title">Superseded by newer invoice</div>
+          <div class="cl-ts-banner-detail">ID ${item.superseded_by_ap_item_id}</div>
+        </div>
+      </div>
+    `;
+  }
+  return html`
+    <div class="cl-ts-banner resubmission">
+      <div class="cl-ts-banner-icon">↻</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Resubmission</div>
+        <div class="cl-ts-banner-detail">
+          ${item.resubmission_reason ? item.resubmission_reason : 'Supersedes earlier invoice'}
+          ${item.supersedes_ap_item_id ? ` · replaces ${item.supersedes_ap_item_id}` : ''}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +447,26 @@ function MatchSection({ item }) {
   const grnStatus = item.grn_match_status || 'na';
   const invoiceStatus = matchStatus || 'na';
 
+  // §8.1: summarize the match with a tolerance indicator when we have it
+  const score = item.match_score;
+  const deltaPct = item.match_amount_delta_pct;
+  const tolPct = item.match_tolerance_pct;
+  let toleranceLabel = null;
+  let toleranceTone = 'pass';
+  if (deltaPct != null && !isNaN(parseFloat(deltaPct))) {
+    const dp = Math.abs(parseFloat(deltaPct));
+    const tp = tolPct != null ? parseFloat(tolPct) : null;
+    toleranceLabel = `Δ ${dp.toFixed(2)}%${tp != null ? ` / ${tp.toFixed(2)}% tol.` : ''}`;
+    if (tp != null) {
+      if (dp <= tp) toleranceTone = 'pass';
+      else if (dp <= tp * 2) toleranceTone = 'warn';
+      else toleranceTone = 'fail';
+    }
+  } else if (score != null && !isNaN(parseFloat(score))) {
+    const s = parseFloat(score);
+    toleranceLabel = s <= 1 ? `Score ${(s * 100).toFixed(1)}%` : `Score ${s.toFixed(2)}`;
+  }
+
   return html`
     <div class="cl-ts-section">
       <div class="cl-ts-section-title">3-Way Match</div>
@@ -248,8 +485,11 @@ function MatchSection({ item }) {
         <span class="cl-ts-match-label">Invoice</span>
         <span class="cl-ts-match-detail">${String(matchStatus || '—').replace(/_/g, ' ')}</span>
       </div>
+      ${toleranceLabel ? html`
+        <span class="cl-ts-match-tolerance ${toleranceTone}">${toleranceLabel}</span>
+      ` : ''}
       ${item.match_exception_reason ? html`
-        <div style="font-size: 12px; color: #92400E; margin-top: 4px; padding: 6px 8px; background: #FEFCE8; border-radius: 6px;">
+        <div class="cl-ts-match-exception-box">
           ${item.match_exception_reason}
         </div>
       ` : ''}
@@ -306,12 +546,6 @@ function VendorSection({ item }) {
           <span class="cl-ts-value">${riskBadge(item.risk_score)}</span>
         </div>
       ` : ''}
-      ${item.last_payment_date ? html`
-        <div class="cl-ts-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E2E8F0;">
-          <span class="cl-ts-label">Last payment</span>
-          <span class="cl-ts-value">${formatDate(item.last_payment_date)}</span>
-        </div>
-      ` : ''}
     </div>
   `;
 }
@@ -320,20 +554,21 @@ function AgentActionsSection({ item, auditEvents }) {
   const events = (auditEvents || []).slice(0, 10);
   return html`
     <div class="cl-ts-section">
-      <div class="cl-ts-section-title"><img src="${typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : ''}" alt="" style="width:12px;height:12px;vertical-align:-1px;margin-right:4px;opacity:0.7;" />Agent Actions</div>
+      <div class="cl-ts-section-title">
+        <img src="${agentIconUrl()}" alt="" class="cl-ts-section-icon" />Agent Actions
+      </div>
       ${events.length > 0
         ? html`
           <ul class="cl-ts-timeline">
-            ${events.map(e => {
+            ${events.map((e) => {
               // Thesis §6.6: "what the agent did, why it did it, and what happens next"
-              // §10: Clearledgr icon marks agent-initiated actions (not human)
               const what = e.summary || e.decision_reason || e.event_type?.replace(/_/g, ' ') || 'Action';
               const why = e.reasoning_summary || e.reasoning || e.reason || '';
               const next = e.next_action || e.next_step || '';
               const isAgent = (e.actor || e.actor_type || '') !== 'user';
               return html`
                 <li key=${e.id || e.ts}>
-                  ${isAgent ? html`<img src="${typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon16.png') : ''}" alt="agent" style="width:10px;height:10px;vertical-align:-1px;margin-right:3px;opacity:0.6;" />` : ''}
+                  ${isAgent ? html`<img src="${agentIconUrl()}" alt="agent" class="cl-ts-agent-icon" />` : ''}
                   <strong>${what}</strong>
                   ${why ? html`<span class="cl-ts-timeline-why"> — ${why}</span>` : ''}
                   ${next ? html`<span class="cl-ts-timeline-next">Next: ${next}</span>` : ''}
@@ -352,10 +587,6 @@ function AgentActionsSection({ item, auditEvents }) {
   `;
 }
 
-// ---------------------------------------------------------------------------
-// Linked Boxes — §5.1: show linked vendor onboarding sessions
-// ---------------------------------------------------------------------------
-
 function LinkedBoxesSection({ links }) {
   if (!links || links.length === 0) return null;
 
@@ -368,7 +599,7 @@ function LinkedBoxesSection({ links }) {
   return html`
     <div class="cl-ts-section">
       <div class="cl-ts-section-title">Linked Records</div>
-      ${links.map(link => {
+      ${links.map((link) => {
         const isSource = link.source_box_type === 'invoice';
         const linkedId = isSource ? link.target_box_id : link.source_box_id;
         const linkedType = isSource ? link.target_box_type : link.source_box_type;
@@ -389,17 +620,42 @@ function LinkedBoxesSection({ links }) {
   `;
 }
 
+function LoadingSkeleton() {
+  return html`
+    <div class="cl-thread-sidebar">
+      <style>${THREAD_SIDEBAR_CSS}</style>
+      ${[0, 1, 2, 3].map((i) => html`
+        <div class="cl-ts-skeleton" key=${i}>
+          <div class="cl-ts-skeleton-row" style="width:40%"></div>
+          <div class="cl-ts-skeleton-row" style="width:80%"></div>
+          <div class="cl-ts-skeleton-row" style="width:60%"></div>
+        </div>
+      `)}
+    </div>
+  `;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery, fetchBoxLinks }) {
+export function ThreadSidebar({
+  item,
+  auditEvents,
+  onApprove,
+  onSnooze,
+  onQuery,
+  onUndoOverride,
+  fetchBoxLinks,
+  loading,
+}) {
   const [boxLinks, setBoxLinks] = useState([]);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     if (!item?.id || !fetchBoxLinks) return;
     let cancelled = false;
-    fetchBoxLinks(item.id, 'invoice').then(links => {
+    fetchBoxLinks(item.id, 'invoice').then((links) => {
       if (!cancelled) setBoxLinks(links || []);
     }).catch(() => {
       if (!cancelled) setBoxLinks([]);
@@ -407,23 +663,37 @@ export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery,
     return () => { cancelled = true; };
   }, [item?.id, fetchBoxLinks]);
 
+  // Tick for live countdown when an override window is open
+  useEffect(() => {
+    if (!item?.override_window?.expires_at) return;
+    const handle = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(handle);
+  }, [item?.override_window?.expires_at]);
+
+  if (loading) return html`<${LoadingSkeleton} />`;
   if (!item) return null;
 
   const state = String(item.state || '').toLowerCase();
   const matchPassed = state === 'needs_approval' || state === 'pending_approval';
   const canSnooze = ['needs_approval', 'pending_approval', 'needs_info', 'validated', 'failed_post'].includes(state);
   const isSnoozed = state === 'snoozed';
+  const snoozedUntil = item.metadata?.snoozed_until || item.snoozed_until;
 
   return html`
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
+
+      <${ResubmissionBanner} item=${item} />
+      <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
+      <${WaitingBanner} waiting=${item.waiting_condition} />
+      <${FraudFlagsBanner} flags=${item.fraud_flags} />
+
       <${InvoiceSection} item=${item} />
       <${MatchSection} item=${item} />
       <${VendorSection} item=${item} />
       <${LinkedBoxesSection} links=${boxLinks} />
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
-      <!-- §6.6: Below the four sections — approve button + snooze + query field -->
       <div class="cl-ts-actions-bar">
         ${matchPassed ? html`
           <button
@@ -434,13 +704,12 @@ export function ThreadSidebar({ item, auditEvents, onApprove, onSnooze, onQuery,
         ${canSnooze && onSnooze ? html`
           <button
             class="cl-ts-snooze-btn"
-            style="padding:6px 14px;border:1px solid #CA8A04;border-radius:6px;background:#FEFCE8;color:#92400E;font:500 12px/1.2 'DM Sans',sans-serif;cursor:pointer;"
             onClick=${() => onSnooze(item)}
           >Snooze</button>
         ` : ''}
         ${isSnoozed ? html`
-          <div style="font:500 11px/1.3 'DM Sans',sans-serif;color:#CA8A04;padding:4px 0;">
-            Snoozed until ${item.metadata?.snoozed_until ? new Date(item.metadata.snoozed_until).toLocaleString() : 'later'}
+          <div class="cl-ts-snoozed-notice">
+            Snoozed until ${snoozedUntil ? new Date(snoozedUntil).toLocaleString() : 'later'}
           </div>
         ` : ''}
         <input

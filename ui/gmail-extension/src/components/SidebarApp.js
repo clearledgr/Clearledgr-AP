@@ -2003,6 +2003,29 @@ export default function SidebarApp({ queueManager }) {
                 onQuery=${async (query, queryItem) => {
                   showToast('Query received — agent response coming soon', 'info');
                 }}
+                onUndoOverride=${async (window_) => {
+                  // §9.1: Undo an auto-approved post while the override window is open.
+                  // Backend: POST /api/ap/items/{id}/reverse
+                  try {
+                    const orgId = queueManager.runtimeConfig?.organizationId || 'default';
+                    const url = queueManager.runtimeConfig?.backendUrl
+                      + '/api/ap/items/' + encodeURIComponent(item.id)
+                      + '/reverse?organization_id=' + encodeURIComponent(orgId);
+                    const result = await queueManager.backendFetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        reason: 'sidebar_undo',
+                        actor_surface: 'gmail_sidebar',
+                      }),
+                    });
+                    const ok = result && result.reversed !== false && !result.detail;
+                    showToast(ok ? 'Post reversed' : (result?.detail || 'Reverse failed'), ok ? 'success' : 'error');
+                    if (ok) await queueManager.refreshQueue();
+                  } catch (err) {
+                    showToast('Reverse failed: ' + (err.message || err), 'error');
+                  }
+                }}
               />`
             }`
           : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}

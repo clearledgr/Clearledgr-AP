@@ -1774,6 +1774,65 @@ def build_worklist_item(
         except Exception as exc:
             logger.debug("Priority score calculation failed: %s", exc)
 
+    # ThreadSidebar gaps (AGENT_DESIGN_SPECIFICATION.md §6.6, §9.1, §12.2).
+    # - waiting_condition: surface the paused-for-what signal so users see why
+    #   the box is not moving (stored as JSON text on the ap_items row).
+    # - fraud_flags: expose active fraud flags for the sidebar flag section.
+    # - override_window: fetch the most recent override window record so the
+    #   sidebar can render a countdown + Undo button after auto-approval.
+    # - po_match_details: promote numeric match score / delta from metadata so
+    #   the 3-way match section can show "passed within 0.3%" per §8.1.
+    _waiting_raw = payload.get("waiting_condition")
+    if isinstance(_waiting_raw, str) and _waiting_raw.strip():
+        try:
+            payload["waiting_condition"] = json.loads(_waiting_raw)
+        except (json.JSONDecodeError, TypeError):
+            payload["waiting_condition"] = None
+    elif not isinstance(_waiting_raw, dict):
+        payload["waiting_condition"] = None
+
+    _fraud_raw = payload.get("fraud_flags")
+    if isinstance(_fraud_raw, str) and _fraud_raw.strip():
+        try:
+            parsed = json.loads(_fraud_raw)
+            payload["fraud_flags"] = parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            payload["fraud_flags"] = []
+    elif not isinstance(_fraud_raw, list):
+        payload["fraud_flags"] = []
+
+    try:
+        ap_item_id_for_window = payload.get("id") or payload.get("ap_item_id")
+        if ap_item_id_for_window and hasattr(db, "get_override_window_by_ap_item_id"):
+            window_row = db.get_override_window_by_ap_item_id(ap_item_id_for_window)
+            if isinstance(window_row, dict) and str(window_row.get("state") or "").lower() == "open":
+                payload["override_window"] = {
+                    "window_id": window_row.get("id"),
+                    "posted_at": window_row.get("posted_at"),
+                    "expires_at": window_row.get("expires_at"),
+                    "action_type": window_row.get("action_type"),
+                    "erp_reference": window_row.get("erp_reference"),
+                }
+            else:
+                payload["override_window"] = None
+        else:
+            payload["override_window"] = None
+    except Exception as exc:
+        logger.debug("Override window lookup failed: %s", exc)
+        payload["override_window"] = None
+
+    po_match_meta = metadata.get("po_match") or metadata.get("po_match_result") or {}
+    if isinstance(po_match_meta, dict) and po_match_meta:
+        payload["match_score"] = po_match_meta.get("match_score")
+        payload["match_amount_delta_pct"] = po_match_meta.get("amount_delta_pct")
+        payload["match_amount_delta"] = po_match_meta.get("amount_delta")
+        payload["match_tolerance_pct"] = po_match_meta.get("tolerance_pct")
+    else:
+        payload["match_score"] = None
+        payload["match_amount_delta_pct"] = None
+        payload["match_amount_delta"] = None
+        payload["match_tolerance_pct"] = None
+
     # Claude AP reasoning — surface proactively so the sidebar card can display it.
     payload["ap_decision_reasoning"] = (
         metadata.get("ap_decision_reasoning") or payload.get("ap_decision_reasoning")
