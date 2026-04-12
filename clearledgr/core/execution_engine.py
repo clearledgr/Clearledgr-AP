@@ -300,8 +300,13 @@ class ExecutionEngine:
                 "layer": action.layer,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            # Rule 1 write failure — execution continues but log loudly
+            # so operators can investigate the timeline outage.
+            logger.warning(
+                "[ExecutionEngine] Rule 1 pre-write failed for %s: %s",
+                action.name, exc,
+            )
         return timeline_id
 
     def _post_write(self, box_id: Optional[str], action: Action, step: int,
@@ -319,8 +324,11 @@ class ExecutionEngine:
                 "step": step,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "[ExecutionEngine] post-write timeline failed for %s: %s",
+                action.name, exc,
+            )
 
     # ------------------------------------------------------------------
     # Execution with retry (§5.2)

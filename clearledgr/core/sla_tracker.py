@@ -66,6 +66,22 @@ class SLATracker:
         except Exception:
             return None
 
+    def _resolve_tier(self, organization_id: str, db: Any) -> str:
+        """Resolve workspace tier (starter/enterprise) for SLA checking.
+
+        Returns 'starter' (most permissive) when tier cannot be determined.
+        """
+        try:
+            sub = db.get_subscription_record(organization_id) if hasattr(db, "get_subscription_record") else None
+            if sub:
+                plan = str(sub.get("plan") or "").lower()
+                # Enterprise tier uses tighter SLAs
+                if plan in ("enterprise", "enterprise_annual"):
+                    return "enterprise"
+        except Exception:
+            pass
+        return "starter"
+
     def record(
         self,
         step_name: str,
@@ -75,16 +91,22 @@ class SLATracker:
         organization_id: str = "default",
         breached: Optional[bool] = None,
     ) -> None:
-        """Record a latency measurement for an SLA step."""
+        """Record a latency measurement for an SLA step.
+
+        §11: Breach detection uses the workspace's tier (starter/enterprise).
+        Enterprise workspaces have tighter targets than Starter.
+        """
         db = self._get_db()
         if not db:
             return
 
-        # Check if SLA was breached
+        # Check if SLA was breached against THIS workspace's tier
         if breached is None:
             targets = SLA_TARGETS_MS.get(step_name)
             if targets:
-                breached = latency_ms > targets.get("starter", 999999)
+                tier = self._resolve_tier(organization_id, db)
+                target_ms = targets.get(tier, targets.get("starter", 999999))
+                breached = latency_ms > target_ms
 
         try:
             db.initialize()
