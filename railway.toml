@@ -1,0 +1,57 @@
+# Railway deployment configuration — §11.2.1 Worker Pool Architecture
+#
+# Clearledgr runs 4 services on Railway:
+#   - api:    FastAPI HTTP server (web)
+#   - worker: Celery worker fleet (scales horizontally)
+#   - beat:   Celery Beat scheduler (single instance)
+#   - redis:  Redis for event queue + rate limiting + cache
+#   - postgres: PostgreSQL (via Railway plugin)
+#
+# §11.2.1 Autoscaling:
+#   - Worker service should be configured with CELERY_CONCURRENCY=4
+#     (4 async tasks per worker process)
+#   - Scale by replicating the worker service in Railway UI:
+#     Min: 2 replicas (always-on)
+#     Max: 50 replicas (hard limit to control ERP API consumption)
+#     Scale-out: > 20 pending events on high_priority, > 100 on standard
+#
+# §11.2.1 Beat scheduler: run EXACTLY ONE instance (don't scale Beat).
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# API service defaults — override per service in Railway UI
+startCommand = "gunicorn -c gunicorn.conf.py main:app"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Health check for the API service
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+
+# -----------------------------------------------------------------------------
+# Worker service configuration — override in Railway UI:
+#
+#   Start Command:
+#     celery -A clearledgr.services.celery_app worker -l info -c ${CELERY_CONCURRENCY:-4}
+#
+#   Environment:
+#     CLEARLEDGR_PROCESS_ROLE=worker
+#     CELERY_CONCURRENCY=4
+#     REDIS_URL=${{redis.REDIS_URL}}
+#     DATABASE_URL=${{postgres.DATABASE_URL}}
+#     (inherit all API env vars)
+#
+#   Replicas: 2-10 (manual scale via Railway dashboard)
+#
+# -----------------------------------------------------------------------------
+# Beat service configuration — override in Railway UI:
+#
+#   Start Command:
+#     celery -A clearledgr.services.celery_app beat -l info
+#
+#   Replicas: EXACTLY 1 (running multiple Beat instances causes duplicate timers)
+#
+# -----------------------------------------------------------------------------

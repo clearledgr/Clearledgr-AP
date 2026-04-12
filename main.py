@@ -1103,6 +1103,18 @@ async def health():
         "mode": str(backend_info.get("mode") or "unknown"),
     }
 
+    # §11.2.1: Event queue depth for autoscaler
+    try:
+        from clearledgr.core.event_queue import get_event_queue
+        queue = get_event_queue()
+        pending = queue.pending_count()
+        checks["event_queue"] = {
+            "status": "healthy" if queue.ping() else "degraded",
+            "pending": pending,
+        }
+    except Exception as exc:
+        checks["event_queue"] = {"status": "unknown", "error": str(exc)}
+
     return {
         "status": status,
         "checks": checks,
