@@ -176,6 +176,50 @@ AP_STATE_TO_LABEL = {
     "rejected":         "invoice_exception",
 }
 
+# ── Bidirectional label → intent mapping (Phase 2) ──
+#
+# When a user manually applies one of these labels in Gmail, the agent
+# reacts by running the matching intent on the linked AP box. Labels NOT
+# in this dict are treated as status-only (e.g. "Matched", "Paid") and
+# never trigger an action — only a human decision should approve or
+# reject, and users already have the sidebar / Slack for those today.
+#
+# Scope is deliberately narrow: only decision verbs that a user could
+# reasonably want to express by dragging a thread into a Gmail label.
+# New entries require product sign-off.
+LABEL_TO_INTENT = {
+    "Clearledgr/Invoice/Approved":    "approve_invoice",
+    "Clearledgr/Invoice/Exception":   "needs_info",
+    "Clearledgr/Review Required":     "needs_info",
+    "Clearledgr/Not Finance":         "reject_invoice",
+}
+
+# Reverse lookup: intent → label-text-for-audit. Used when we want to
+# record "vendor applied this label so we moved to that state".
+INTENT_FOR_AUDIT = {v: k for k, v in LABEL_TO_INTENT.items()}
+
+
+def intent_for_label(label_name: str) -> Optional[str]:
+    """Return the intent string for a Clearledgr label, or None.
+
+    Case-sensitive against the canonical label display name. Handles
+    the case where the caller passes a label_key (``invoice_approved``)
+    instead of the display name by resolving through CLEARLEDGR_LABELS.
+    """
+    if not label_name:
+        return None
+    # Direct display-name match
+    if label_name in LABEL_TO_INTENT:
+        return LABEL_TO_INTENT[label_name]
+    # Resolve label_key → display name and retry
+    display = CLEARLEDGR_LABELS.get(label_name) or CLEARLEDGR_LABELS.get(
+        _LABEL_KEY_ALIASES.get(label_name, "")
+    )
+    if display and display in LABEL_TO_INTENT:
+        return LABEL_TO_INTENT[display]
+    return None
+
+
 # Cache label name → id per Gmail identity to avoid repeated list_labels calls.
 _label_name_cache: Dict[str, Dict[str, str]] = {}
 

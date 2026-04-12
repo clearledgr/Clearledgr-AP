@@ -41,6 +41,11 @@ class AgentEventType(str, Enum):
     # Override window
     OVERRIDE_WINDOW_EXPIRED = "override_window_expired"
 
+    # Bidirectional Gmail label sync — user applies a Clearledgr/* label
+    # in Gmail and the agent reacts (approve / reject / snooze / review).
+    # Phase 2 of the Gmail-labels-as-AP-pipeline workstream.
+    LABEL_CHANGED = "label_changed"
+
 
 @dataclass
 class AgentEvent:

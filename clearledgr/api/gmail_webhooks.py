@@ -799,6 +799,113 @@ async def gmail_push_notification(
     return {"status": "ok"}
 
 
+async def _process_label_changes(
+    *,
+    client: Any,
+    token: Any,
+    organization_id: str,
+    db: Any,
+    queue: Any,
+    records: list,
+) -> None:
+    """Phase 2: bidirectional Gmail label sync.
+
+    For every labelsAdded history record, resolve label IDs → display
+    names and emit a ``LABEL_CHANGED`` agent event when:
+
+      1. At least one added label is in ``LABEL_TO_INTENT`` (a Clearledgr
+         action verb — we ignore status-only labels like "Matched" that
+         we ourselves apply).
+      2. The affected message's thread has an AP box in this org.
+
+    We explicitly do NOT act on labels the agent applied itself (that
+    would cause a self-feedback loop); Gmail does not tell us the
+    actor, so we rely on the fact that the agent applies status labels
+    while action labels (Approved, Exception, Review Required,
+    Not Finance) are user verbs.
+
+    Idempotency key: "{label_name}:{message_id}". Replaying the same
+    history notification does not trigger the intent twice.
+    """
+    from clearledgr.core.events import AgentEvent, AgentEventType
+    from clearledgr.services.gmail_labels import LABEL_TO_INTENT, intent_for_label
+
+    if not records:
+        return
+
+    # Resolve Gmail label IDs → display names. Cache per-identity so we
+    # call list_labels at most once per notification, not once per record.
+    labels_by_id: Dict[str, str] = {}
+    try:
+        label_list = await client.list_labels()
+        for lbl in (label_list or []):
+            lbl_id = lbl.get("id") if isinstance(lbl, dict) else getattr(lbl, "id", None)
+            lbl_name = lbl.get("name") if isinstance(lbl, dict) else getattr(lbl, "name", None)
+            if lbl_id and lbl_name:
+                labels_by_id[str(lbl_id)] = str(lbl_name)
+    except Exception as exc:
+        logger.warning("[LabelSync] list_labels failed: %s", exc)
+        return
+
+    enqueued = 0
+    for rec in records:
+        message_id = rec.get("message_id") or ""
+        thread_id = rec.get("thread_id") or ""
+        label_ids = rec.get("label_ids") or []
+        if not thread_id or not label_ids:
+            continue
+
+        # Find the first action label applied in this record.
+        action_label = None
+        for lid in label_ids:
+            name = labels_by_id.get(str(lid))
+            if name and name in LABEL_TO_INTENT:
+                action_label = name
+                break
+        if not action_label:
+            continue
+
+        # Only act if the thread has an AP box in this org.
+        try:
+            box = db.get_ap_item_by_thread(organization_id, thread_id)
+        except Exception:
+            box = None
+        if not box:
+            continue
+
+        intent = intent_for_label(action_label)
+        if not intent:
+            continue
+
+        event = AgentEvent(
+            type=AgentEventType.LABEL_CHANGED,
+            source="gmail_label_sync",
+            payload={
+                "box_id": box.get("id"),
+                "thread_id": thread_id,
+                "message_id": message_id,
+                "label_name": action_label,
+                "intent": intent,
+                "actor_email": getattr(token, "email", None) or "gmail_user",
+            },
+            organization_id=organization_id,
+            idempotency_key=f"label:{action_label}:{message_id}",
+        )
+        result = queue.enqueue(event)
+        if result != "duplicate":
+            enqueued += 1
+            logger.info(
+                "[LabelSync] Enqueued LABEL_CHANGED: box=%s label=%s intent=%s",
+                box.get("id"), action_label, intent,
+            )
+
+    if enqueued > 0:
+        logger.info(
+            "[LabelSync] Enqueued %d LABEL_CHANGED event(s) from %d record(s)",
+            enqueued, len(records),
+        )
+
+
 async def process_gmail_notification(email_address: str, history_id: str, push_receipt_ts: float = None):
     """
     Process a Gmail notification in the background.
@@ -837,6 +944,13 @@ async def process_gmail_notification(email_address: str, history_id: str, push_r
         # In production, store last_history_id per user
         history = await client.get_history(history_id)
         
+        # Track labelsAdded records so the bidirectional-label-sync loop
+        # (Phase 2 of gmail-labels-as-AP-pipeline) can enqueue LABEL_CHANGED
+        # events. Collected here so they survive the needsFullSync branch
+        # (where labels can't be recovered anyway — we only act on them when
+        # we have explicit history records).
+        label_change_records: list = []
+
         if history.get("needsFullSync"):
             logger.info(f"Full sync needed for {email_address}")
             # For now, just get recent messages
@@ -851,9 +965,19 @@ async def process_gmail_notification(email_address: str, history_id: str, push_r
             for record in history.get("history", []):
                 for added in record.get("messagesAdded", []):
                     message_ids.append(added["message"]["id"])
-        
-        if not message_ids:
-            logger.info(f"No new messages for {email_address}")
+                # Phase 2 of Gmail labels pipeline: collect labelsAdded
+                # records for bidirectional sync (user labels a thread →
+                # agent reacts). Gmail emits one record per message with
+                # label_ids; we resolve label_ids → display name below.
+                for added in record.get("labelsAdded", []):
+                    label_change_records.append({
+                        "message_id": (added.get("message") or {}).get("id"),
+                        "thread_id": (added.get("message") or {}).get("threadId"),
+                        "label_ids": list(added.get("labelIds") or []),
+                    })
+
+        if not message_ids and not label_change_records:
+            logger.info(f"No new messages or label changes for {email_address}")
             return
         
         logger.info(f"Processing {len(message_ids)} new messages for {email_address}")
@@ -934,7 +1058,25 @@ async def process_gmail_notification(email_address: str, history_id: str, push_r
                 "Enqueued %d/%d email events to durable queue for %s",
                 enqueued, len(message_ids), email_address,
             )
-        
+
+        # ── Phase 2: Bidirectional Gmail label sync ──
+        #
+        # For every labelsAdded record, resolve the label IDs → display
+        # names and enqueue a LABEL_CHANGED event if it matches a
+        # Clearledgr action label and the thread has an AP box.
+        if label_change_records:
+            try:
+                await _process_label_changes(
+                    client=client,
+                    token=token,
+                    organization_id=organization_id,
+                    db=db,
+                    queue=queue,
+                    records=label_change_records,
+                )
+            except Exception as exc:
+                logger.warning("[LabelSync] Failed to process label changes: %s", exc)
+
         logger.info(f"Finished processing emails for {email_address}")
     
     except Exception as e:

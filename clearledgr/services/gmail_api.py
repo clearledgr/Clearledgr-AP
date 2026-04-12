@@ -504,21 +504,28 @@ class GmailAPIClient:
         """
         Get history of changes since a history ID.
         Used to process only new emails after a Pub/Sub notification.
-        
+
+        We subscribe to both ``messageAdded`` (new mail → agent intake)
+        and ``labelAdded`` (bidirectional label sync: user drags a
+        thread into Clearledgr/Invoice/Approved → the agent approves).
+
         Args:
             start_history_id: The history ID to start from
-        
+
         Returns:
-            Dict with history records
+            Dict with history records (may contain messagesAdded and/or
+            labelsAdded arrays per record)
         """
         async with httpx.AsyncClient() as client:
+            # Gmail returns multiple historyTypes via repeated params
             response = await client.get(
                 f"{GMAIL_API_BASE}/users/me/history",
                 headers=self._headers(),
-                params={
-                    "startHistoryId": start_history_id,
-                    "historyTypes": ["messageAdded"],
-                },
+                params=[
+                    ("startHistoryId", start_history_id),
+                    ("historyTypes", "messageAdded"),
+                    ("historyTypes", "labelAdded"),
+                ],
             )
             
             if response.status_code == 404:

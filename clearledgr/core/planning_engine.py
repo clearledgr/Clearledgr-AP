@@ -58,6 +58,7 @@ class DeterministicPlanningEngine:
             AgentEventType.PAYMENT_CONFIRMED: self._plan_payment_confirmed,
             AgentEventType.ERP_GRN_CONFIRMED: self._plan_grn_confirmed,
             AgentEventType.MANUAL_CLASSIFICATION: self._plan_manual_classification,
+            AgentEventType.LABEL_CHANGED: self._plan_label_changed,
         }
         handler = dispatcher.get(event.type)
         if not handler:
@@ -448,6 +449,90 @@ class DeterministicPlanningEngine:
             ],
             box_id=event.payload.get("box_id", ""),
         )
+
+    def _plan_label_changed(self, event: AgentEvent, box_state: dict) -> Plan:
+        """Phase 2: user applies a Clearledgr/* label in Gmail → drive workflow.
+
+        Payload: {box_id, label_name, intent, actor_email, thread_id}.
+
+        The webhook has already:
+          - filtered to labels in LABEL_TO_INTENT,
+          - confirmed the actor is a workspace member (not the agent),
+          - resolved the thread to an AP box.
+
+        So by the time we plan, we just translate the intent into the
+        same action sequence that the approval/rejection flows use.
+        """
+        from clearledgr.services.gmail_labels import intent_for_label
+
+        box_id = event.payload.get("box_id")
+        label_name = event.payload.get("label_name") or ""
+        intent = event.payload.get("intent") or intent_for_label(label_name)
+        actor_email = event.payload.get("actor_email") or "unknown"
+
+        if not intent or not box_id:
+            return Plan(event_type="label_changed", actions=[], box_id=box_id)
+
+        via_label_ctx = {
+            "source": "gmail_label",
+            "label_name": label_name,
+            "actor_email": actor_email,
+        }
+
+        if intent == "approve_invoice":
+            return Plan(
+                event_type="label_changed",
+                box_id=box_id,
+                actions=[
+                    Action("clear_waiting_condition", "DET", {}, "Clear waiting condition if any"),
+                    Action("pre_post_validate", "DET", {}, "Pre-post validation before ERP"),
+                    Action("post_bill", "DET", {"via_label": True}, "Post bill to ERP"),
+                    Action("move_box_stage", "DET", {"target": "approved"}, "Move to approved"),
+                    Action("apply_label", "DET", {"label": "Clearledgr/Invoice/Approved"},
+                           "Confirm approval label"),
+                    Action("schedule_payment", "DET", {}, "Schedule payment"),
+                    Action("post_timeline_entry", "DET",
+                           {"format": "DID-WHY-NEXT", "summary": f"Approved via Gmail label by {actor_email}",
+                            "context": via_label_ctx},
+                           "Record approval via label"),
+                    Action("send_override_window", "DET", {}, "Open override window"),
+                ],
+            )
+
+        if intent == "reject_invoice":
+            return Plan(
+                event_type="label_changed",
+                box_id=box_id,
+                actions=[
+                    Action("clear_waiting_condition", "DET", {}, "Clear waiting condition"),
+                    Action("move_box_stage", "DET", {"target": "exception"}, "Move to exception"),
+                    Action("apply_label", "DET", {"label": "Clearledgr/Invoice/Exception"},
+                           "Apply Exception label"),
+                    Action("post_timeline_entry", "DET",
+                           {"summary": f"Rejected via Gmail label by {actor_email}",
+                            "context": via_label_ctx},
+                           "Record rejection via label"),
+                ],
+            )
+
+        if intent == "needs_info":
+            return Plan(
+                event_type="label_changed",
+                box_id=box_id,
+                actions=[
+                    Action("move_box_stage", "DET", {"target": "needs_info"}, "Move to needs_info"),
+                    Action("apply_label", "DET",
+                           {"label": label_name or "Clearledgr/Review Required"},
+                           "Apply Review Required label"),
+                    Action("post_timeline_entry", "DET",
+                           {"summary": f"Flagged for review via Gmail label by {actor_email}",
+                            "context": via_label_ctx},
+                           "Record review flag via label"),
+                ],
+            )
+
+        # Unknown intent — return empty plan so the webhook can log and move on.
+        return Plan(event_type="label_changed", actions=[], box_id=box_id)
 
     def _plan_manual_classification(self, event: AgentEvent, box_state: dict) -> Plan:
         """AP Manager manually classifies an email."""
