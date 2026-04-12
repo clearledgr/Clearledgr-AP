@@ -388,11 +388,25 @@ def drain_event_stream() -> dict:
     tick and dispatches each to a process_agent_event Celery task.
     This is the ONLY consumer — Gmail webhooks and Slack callbacks
     enqueue to the stream, this task drains it.
+
+    Also writes the Beat heartbeat key that the ops health endpoint
+    reads — if this stops ticking, Beat is dead.
     """
     from clearledgr.core.event_queue import get_event_queue
 
     try:
         queue = get_event_queue()
+        # Beat heartbeat (cheap: one SET with TTL per tick, ~2s cadence).
+        try:
+            from datetime import datetime, timezone
+            queue._redis.set(
+                "clearledgr:beat:last-tick",
+                datetime.now(timezone.utc).isoformat(),
+                ex=300,  # expire after 5min so absence = dead
+            )
+        except Exception:
+            pass
+
         dispatched = 0
         for _ in range(10):  # Max 10 events per tick
             claimed = queue.claim_next(_CONSUMER_NAME, block_ms=0)

@@ -479,9 +479,9 @@ The data model explicitly tracks email-originated finance records and AP sources
 
 This is critical for safe multi-mailbox operation. Without mailbox identity on record sources, multiple inboxes inside one workspace become hard to reason about.
 
-### 10.4 Local DB as truthful default durability
+### 10.4 Durability stack
 
-The repo doctrine explicitly avoids overstating durability. Temporal is optional, not a prerequisite for honest system behavior. The default runtime posture is still local DB centric.
+The durable runtime is Celery + Redis Streams + Postgres task_runs (see §11.2 of AGENT_DESIGN_SPECIFICATION.md). Redis provides the durable event queue with consumer groups and exactly-once delivery. Postgres task_runs tracks per-step checkpointing for crash-resumable agent plans. Celery Beat fires time-based events (GRN polling, approval timeouts, override-window close, vendor chases).
 
 ## 11. Mailbox-Centric Gmail Orchestration
 
@@ -875,7 +875,7 @@ That is an architectural guardrail against silent surface sprawl.
 Some tests rely on stable patch points such as:
 
 - `FinanceAgentRuntime` being patchable in `agent_intents.py`
-- `temporal_enabled` and `TemporalRuntime` remaining patchable in `gmail_extension.py`
+- `run_inline_gmail_triage` patchable in `gmail_triage_service` (used by the extension triage/process/scan endpoints)
 
 That matters because the architecture has to stay testable even while internals evolve.
 

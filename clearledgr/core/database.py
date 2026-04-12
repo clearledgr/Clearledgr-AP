@@ -820,27 +820,7 @@ class _ClearledgrDBBase:
             """)
 
             # agent_sessions table removed (browser agent fallback removed)
-
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_runs (
-                    id TEXT PRIMARY KEY,
-                    workflow_name TEXT NOT NULL,
-                    workflow_type TEXT,
-                    organization_id TEXT NOT NULL,
-                    ap_item_id TEXT,
-                    status TEXT NOT NULL,
-                    runtime_backend TEXT,
-                    task_queue TEXT,
-                    input_json TEXT,
-                    result_json TEXT,
-                    error_json TEXT,
-                    metadata_json TEXT,
-                    created_at TEXT,
-                    started_at TEXT,
-                    completed_at TEXT,
-                    updated_at TEXT
-                )
-            """)
+            # workflow_runs table removed (TemporalRuntime ripped out — see migration v32)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS agent_retry_jobs (
@@ -1084,8 +1064,7 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_item ON approvals(ap_item_id)")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_item_decision_key ON approvals(ap_item_id, decision_idempotency_key)")
             # idx_agent_sessions_org_item removed (browser agent fallback removed)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_status ON workflow_runs(organization_id, status, created_at)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_ap_item ON workflow_runs(ap_item_id)")
+            # idx_workflow_runs_* removed (TemporalRuntime ripped out — see migration v32)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_org_status_next ON agent_retry_jobs(organization_id, status, next_retry_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_ap_item ON agent_retry_jobs(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_retry_jobs_job_type_status ON agent_retry_jobs(job_type, status, next_retry_at)")

@@ -29,7 +29,7 @@ async def run_inline_gmail_triage(
     attachments: Optional[List[Dict[str, Any]]] = None,
     agent_reasoning_fn: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Run the non-Temporal Gmail triage flow and return the triage payload."""
+    """Run the inline Gmail triage flow and return the triage payload."""
     request_attachments = list(attachments or [])
     trail = get_audit_trail(org_id)
     trail.log(

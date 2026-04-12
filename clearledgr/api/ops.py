@@ -75,18 +75,64 @@ def _teams_api_client_class():
         return TeamsAPIClientFallback
 
 
-def get_ap_temporal_client():
+def _runtime_health_snapshot() -> Dict[str, Any]:
+    """Live health check for the agent runtime's actual dependencies.
+
+    Replaces the old get_ap_temporal_client() placeholder. Checks:
+      - Redis reachable (ping)
+      - Celery Beat heartbeat (via Redis `celery-beat-last-tick` key)
+      - Event queue streams have consumer groups
+
+    `blocked` is True only if Redis is unreachable — without Redis, the
+    event queue cannot accept events and the system cannot function.
+    """
+    snapshot: Dict[str, Any] = {
+        "redis_reachable": False,
+        "event_queue_ready": False,
+        "beat_heartbeat_age_sec": None,
+        "blocked": False,
+        "detail": None,
+    }
     try:
-        from clearledgr.workflows.ap.client import get_ap_temporal_client as _get_ap_temporal_client
+        import os
+        import redis as _redis_lib
+        url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        client = _redis_lib.Redis.from_url(url, decode_responses=True, socket_connect_timeout=2)
+        client.ping()
+        snapshot["redis_reachable"] = True
 
-        return _get_ap_temporal_client()
-    except ImportError:  # pragma: no cover - optional in reduced/local installs
-        class _FallbackTemporalClient:
-            enabled = False
-            required = False
-            temporal_available = False
+        # Event queue: both streams should have the consumer group registered.
+        from clearledgr.core.event_queue import STREAM_HIGH, STREAM_STANDARD, GROUP_NAME
+        ok = True
+        for stream in (STREAM_HIGH, STREAM_STANDARD):
+            try:
+                groups = client.xinfo_groups(stream) or []
+                if not any(g.get("name") == GROUP_NAME for g in groups):
+                    ok = False
+                    break
+            except Exception:
+                ok = False
+                break
+        snapshot["event_queue_ready"] = ok
 
-        return _FallbackTemporalClient()
+        # Beat heartbeat: Celery Beat writes a key each tick (via the
+        # drain-event-stream scheduled task's monotonic timestamp).
+        # If nothing has been written in 5+ minutes, Beat is likely dead.
+        heartbeat_key = "clearledgr:beat:last-tick"
+        try:
+            raw = client.get(heartbeat_key)
+            if raw is not None:
+                from datetime import datetime, timezone
+                last = datetime.fromisoformat(str(raw))
+                now = datetime.now(timezone.utc)
+                age = (now - last).total_seconds()
+                snapshot["beat_heartbeat_age_sec"] = round(age, 1)
+        except Exception:
+            pass
+    except Exception as exc:
+        snapshot["blocked"] = True
+        snapshot["detail"] = f"redis_unreachable: {exc}"
+    return snapshot
 
 
 def _assert_org_access(user: TokenData, organization_id: str) -> None:
@@ -372,12 +418,11 @@ async def get_autopilot_status(
     elif not has_tokens:
         state = "auth_required"
 
-    temporal_client = get_ap_temporal_client()
-    temporal_required = bool(temporal_client.enabled and temporal_client.required)
-    temporal_available = bool(temporal_client.temporal_available)
-    temporal_blocked = temporal_required and not temporal_available
-
-    if temporal_blocked:
+    # Real runtime health: Redis (event queue + rate limiting + beat heartbeat)
+    # and Celery workers. Replaces the legacy Temporal health fields.
+    runtime_health = _runtime_health_snapshot()
+    runtime_blocked = bool(runtime_health.get("blocked"))
+    if runtime_blocked:
         state = "blocked"
 
     payload: Dict[str, Any] = {
@@ -392,9 +437,7 @@ async def get_autopilot_status(
         "detail": status.get("detail"),
         "last_run": status.get("last_run"),
         "error": status.get("error"),
-        "temporal_required": temporal_required,
-        "temporal_available": temporal_available,
-        "temporal_blocked": temporal_blocked,
+        "runtime_health": runtime_health,
     }
     runtime_surface_contract = _resolve_runtime_surface_contract(request)
     if isinstance(runtime_surface_contract, dict):
@@ -450,9 +493,9 @@ async def get_autopilot_status(
             "mode": "finance_agent_runtime",
             "error": str(exc),
         }
-    if temporal_blocked and not payload.get("error"):
-        payload["error"] = "temporal_unavailable"
-        payload["detail"] = "temporal_required_unavailable"
+    if runtime_blocked and not payload.get("error"):
+        payload["error"] = "runtime_unavailable"
+        payload["detail"] = runtime_health.get("detail") or "runtime_components_unavailable"
     return {"autopilot": payload}
 
 

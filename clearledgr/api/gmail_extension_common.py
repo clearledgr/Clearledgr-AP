@@ -52,7 +52,3 @@ def build_finance_runtime(user: Any, organization_id: str, *, db: Any = None):
     )
 
 
-def temporal_enabled() -> bool:
-    from clearledgr.workflows.temporal_runtime import temporal_enabled as _temporal_enabled
-
-    return _temporal_enabled()

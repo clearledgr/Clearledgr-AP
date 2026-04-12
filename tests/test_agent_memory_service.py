@@ -172,16 +172,6 @@ def test_agent_memory_surface_aggregates_semantic_and_episodic_context(tmp_path,
         agent_recommendation="approve",
         reason="trusted_vendor",
     )
-    db.create_workflow_run(
-        {
-            "organization_id": "test-org",
-            "workflow_name": "erp_post_retry",
-            "workflow_type": "recovery",
-            "ap_item_id": "ap-3",
-            "status": "running",
-            "metadata": {"source": "test"},
-        }
-    )
     db.create_agent_retry_job(
         {
             "organization_id": "test-org",
@@ -215,7 +205,7 @@ def test_agent_memory_surface_aggregates_semantic_and_episodic_context(tmp_path,
     assert surface["identity_memory"]["name"] == "Clearledgr AP Agent"
     assert surface["semantic_memory"]["vendor_profile"]["payment_terms"] == "Net 15"
     assert surface["semantic_memory"]["vendor_feedback_summary"]["total_feedback"] == 1
-    assert surface["episodic_memory"]["workflow_runs"]
+    assert "workflow_runs" not in surface["episodic_memory"]
     assert surface["episodic_memory"]["retry_jobs"]
     assert surface["episodic_memory"]["task_runs"]
 

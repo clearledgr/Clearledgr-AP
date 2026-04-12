@@ -47,7 +47,7 @@ For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Cle
 8. Human-in-the-loop is intentional for risky actions.
 9. Policy, audit, idempotency, and durability are mandatory.
 10. Current AP connector scope is NetSuite, QuickBooks, Xero, and SAP, each enabled by readiness gates.
-11. Current durable orchestration backend is `local_db` (DB-backed); Temporal remains optional and must be truthfully reported.
+11. Durable orchestration is Celery + Redis Streams (§11.2) with Postgres-backed task_runs for crash-resumable agent state. Temporal was never deployed and has been removed from the codebase.
 12. Outlook intake is explicitly de-scoped for AP v1 GA (Gmail is the only inbox surface in production scope).
 13. Initial rollout is Europe and Africa first (before any broader regional expansion).
 14. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
@@ -126,7 +126,7 @@ Clearledgr runs one core agent runtime and domain skills:
   - auditable state transitions
   - idempotent mutating actions
   - retry/durability semantics
-  - runtime truth-in-claims (`runtime_backend`, `temporal_available`, gating state)
+  - runtime truth-in-claims (live Redis + Celery health via /ops/autopilot `runtime_health`)
 
 Canonical runtime contracts are implemented in:
 
@@ -294,7 +294,7 @@ AP v1 must enforce:
 6. Complete, queryable audit trail.
 7. Truthful runtime/durability reporting.
 8. Strict AP-v1 runtime surface mode in all environments (legacy/full surface toggles are not supported).
-9. No docs/operator messaging should claim Temporal-backed orchestration when runtime reports `temporal_available=false`.
+9. The durable runtime is Celery workers + Redis Streams + Celery Beat + Postgres task_runs. No Temporal dependency.
 
 ## Legacy Notes
 

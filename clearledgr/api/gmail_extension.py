@@ -43,7 +43,6 @@ from clearledgr.api.gmail_extension_common import (
     authenticated_actor as _authenticated_actor,
     build_finance_runtime as _build_finance_runtime,
     resolve_org_id_for_user as _resolve_org_id_for_user,
-    temporal_enabled as _temporal_enabled,
 )
 from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
@@ -197,12 +196,6 @@ def build_worklist_items(*args, **kwargs):
     from clearledgr.services.ap_projection import build_worklist_items as _build_worklist_items
 
     return _build_worklist_items(*args, **kwargs)
-
-
-def _temporal_runtime():
-    from clearledgr.workflows.temporal_runtime import TemporalRuntime
-
-    return TemporalRuntime()
 
 
 async def _recover_ap_item_for_thread(
@@ -475,39 +468,17 @@ async def triage_email(
     7. Detects duplicates/anomalies
     8. Self-validates extraction
     
-    Returns immediately with workflow_id if Temporal is enabled,
-    or waits for result if running inline.
+    Runs the triage pipeline inline: classify → extract → apply
+    intelligence → apply agent reasoning, then returns the result.
     """
     payload = request.model_dump()
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     payload["organization_id"] = org_id
-    
-    # Build combined text for agent reasoning (used for both Temporal + inline)
+
     combined_text = "\n".join(
         [v for v in [request.subject, request.snippet, request.body] if v]
     ).strip()
 
-    if _temporal_enabled():
-        runtime = _temporal_runtime()
-        result = await runtime.start_workflow(
-            "EmailTriageWorkflow",
-            payload,
-            task_queue="clearledgr-gmail",
-            wait=True,
-            timeout_seconds=30,
-        )
-        # Still apply intelligence to Temporal results
-        if result.get("extraction"):
-            result = await _apply_intelligence(result, org_id, request.email_id)
-        # Apply agent reasoning (deep autonomy) even when Temporal is used
-        result = _apply_agent_reasoning(
-            result=result,
-            org_id=org_id,
-            combined_text=combined_text,
-            attachments=request.attachments or [],
-        )
-        return result
-    
     from clearledgr.services.gmail_triage_service import (
         run_inline_gmail_triage,
     )
@@ -592,21 +563,7 @@ async def process_email(
     except Exception as eq_exc:
         logger.debug("[Extension] Event queue unavailable, falling back to inline: %s", eq_exc)
 
-    if _temporal_enabled():
-        runtime = _temporal_runtime()
-        result = await runtime.start_workflow(
-            "EmailProcessingWorkflow",
-            payload,
-            task_queue="clearledgr-gmail",
-            wait=False,
-        )
-        return {
-            "status": "processing",
-            "workflow_id": result.get("workflow_id"),
-            "email_id": request.email_id,
-        }
-
-    # Inline fallback
+    # Event queue failed — fall back to inline triage
     triage_result = await triage_email(
         EmailTriageRequest(**{k: v for k, v in payload.items() if k in EmailTriageRequest.model_fields}),
         user=user,
@@ -635,21 +592,7 @@ async def bulk_scan_emails(
     """
     payload = request.model_dump()
     payload["organization_id"] = _resolve_org_id_for_user(user, request.organization_id)
-    
-    if _temporal_enabled():
-        runtime = _temporal_runtime()
-        result = await runtime.start_workflow(
-            "BulkEmailScanWorkflow",
-            payload,
-            task_queue="clearledgr-gmail",
-            wait=False,  # Don't wait for bulk operations
-        )
-        return {
-            "status": "scanning",
-            "workflow_id": result.get("workflow_id"),
-            "email_count": len(request.email_ids),
-        }
-    
+
     # Inline execution
     results = {
         "total": len(request.email_ids),
@@ -1944,18 +1887,32 @@ async def get_workflow_status(
     workflow_id: str,
     user=Depends(get_current_user),
 ):
+    """Get the status of an agent task by its run ID.
+
+    Used by the Gmail extension to poll for completion of async agent
+    tasks. Backed by the `task_runs` table (agent planning engine
+    checkpoint store) — the id here is a task_run id, not a legacy
+    workflow id.
     """
-    Get the status of a running workflow.
-    
-    Use this to poll for completion of async workflows.
-    """
-    runtime = _temporal_runtime()
-    try:
-        payload = await runtime.get_status(workflow_id)
-    except KeyError:
+    db = get_db()
+    if not hasattr(db, "get_task_run"):
         raise HTTPException(status_code=404, detail="workflow_not_found")
-    _assert_user_org_access(user, str(payload.get("organization_id") or "default"))
-    return payload
+    row = db.get_task_run(workflow_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="workflow_not_found")
+    _assert_user_org_access(user, str(row.get("organization_id") or "default"))
+    return {
+        "workflow_id": row.get("id"),
+        "status": row.get("status"),
+        "task_type": row.get("task_type"),
+        "current_step": row.get("current_step"),
+        "retry_count": row.get("retry_count"),
+        "last_error": row.get("last_error"),
+        "organization_id": row.get("organization_id"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "completed_at": row.get("completed_at"),
+    }
 
 
 @router.get("/ap/{ap_item_id}/explain")

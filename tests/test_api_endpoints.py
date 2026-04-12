@@ -1970,26 +1970,26 @@ class TestExtensionEndpoints:
         )
     
     def test_triage_endpoint(self):
-        """Test email triage endpoint."""
+        """Test email triage endpoint runs inline (Temporal ripped out)."""
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
-            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=True):
-                runtime = MagicMock()
-                runtime.start_workflow = AsyncMock(
+            with patch(
+                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                AsyncMock(
                     return_value={
                         "email_id": "test-email-123",
                         "classification": {"type": "INVOICE", "confidence": 0.99},
                         "extraction": {"vendor": "Acme Corp", "amount": 1500.0},
                     }
-                )
-                with patch.object(gmail_extension_module, "_temporal_runtime", return_value=runtime):
-                    response = client.post("/extension/triage", json={
-                        "email_id": "test-email-123",
-                        "subject": "Invoice #12345 from Acme Corp",
-                        "sender": "billing@acme.com",
-                        "body": "Please find attached invoice for $1,500.00",
-                        "organization_id": "default",
-                    })
+                ),
+            ):
+                response = client.post("/extension/triage", json={
+                    "email_id": "test-email-123",
+                    "subject": "Invoice #12345 from Acme Corp",
+                    "sender": "billing@acme.com",
+                    "body": "Please find attached invoice for $1,500.00",
+                    "organization_id": "default",
+                })
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
         assert response.status_code == 200
@@ -2013,26 +2013,25 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
-            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=False):
-                with patch(
-                    "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
-                    AsyncMock(
-                        return_value={
-                            "email_id": "process-inline-1",
-                            "action": "triaged",
-                            "classification": {"type": "INVOICE"},
-                        }
-                    ),
-                ) as triage_mock:
-                    response = client.post(
-                        "/extension/process",
-                        json={
-                            "email_id": "process-inline-1",
-                            "subject": "Invoice inline process",
-                            "sender": "billing@acme.com",
-                            "organization_id": "default",
-                        },
-                    )
+            with patch(
+                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                AsyncMock(
+                    return_value={
+                        "email_id": "process-inline-1",
+                        "action": "triaged",
+                        "classification": {"type": "INVOICE"},
+                    }
+                ),
+            ) as triage_mock:
+                response = client.post(
+                    "/extension/process",
+                    json={
+                        "email_id": "process-inline-1",
+                        "subject": "Invoice inline process",
+                        "sender": "billing@acme.com",
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
             app.dependency_overrides.pop(gmail_extension_module.require_ops_user, None)
@@ -2051,31 +2050,30 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.require_ops_user] = self._fake_user
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
-            with patch.object(gmail_extension_module, "_temporal_enabled", return_value=False):
-                with patch(
-                    "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
-                    AsyncMock(
-                        side_effect=[
-                            {
-                                "email_id": "scan-inline-1",
-                                "action": "triaged",
-                                "classification": {"type": "INVOICE"},
-                            },
-                            {
-                                "email_id": "scan-inline-2",
-                                "action": "skipped",
-                                "classification": {"type": "NOISE"},
-                            },
-                        ]
-                    ),
-                ) as triage_mock:
-                    response = client.post(
-                        "/extension/scan",
-                        json={
-                            "email_ids": ["scan-inline-1", "scan-inline-2"],
-                            "organization_id": "default",
+            with patch(
+                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                AsyncMock(
+                    side_effect=[
+                        {
+                            "email_id": "scan-inline-1",
+                            "action": "triaged",
+                            "classification": {"type": "INVOICE"},
                         },
-                    )
+                        {
+                            "email_id": "scan-inline-2",
+                            "action": "skipped",
+                            "classification": {"type": "NOISE"},
+                        },
+                    ]
+                ),
+            ) as triage_mock:
+                response = client.post(
+                    "/extension/scan",
+                    json={
+                        "email_ids": ["scan-inline-1", "scan-inline-2"],
+                        "organization_id": "default",
+                    },
+                )
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
             app.dependency_overrides.pop(gmail_extension_module.require_ops_user, None)

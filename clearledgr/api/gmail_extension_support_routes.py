@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from clearledgr.api.gmail_extension_common import resolve_org_id_for_user, temporal_enabled
+from clearledgr.api.gmail_extension_common import resolve_org_id_for_user
 from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.services.gmail_extension_support import (
@@ -25,7 +25,6 @@ router = APIRouter()
 def extension_health():
     return {
         "status": "ok",
-        "temporal_enabled": temporal_enabled(),
         "service": "clearledgr-gmail-extension",
         "differentiators": [
             "audit_link_generation",

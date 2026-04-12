@@ -1126,6 +1126,21 @@ def _v31_thread_unique_index(cur, db):
         raise
 
 
+@migration(32, "Drop workflow_runs table (TemporalRuntime ripped out)")
+def _v32_drop_workflow_runs(cur, db):
+    """Remove the workflow_runs table and its indexes.
+
+    The TemporalRuntime class was a local DB-backed fallback for a
+    Temporal deployment that never materialised. Celery + Redis Streams
+    + task_runs cover every requirement (durability, retry, status
+    polling). The table is dropped; any residual rows were never used
+    by production paths.
+    """
+    cur.execute("DROP INDEX IF EXISTS idx_workflow_runs_org_status")
+    cur.execute("DROP INDEX IF EXISTS idx_workflow_runs_ap_item")
+    cur.execute("DROP TABLE IF EXISTS workflow_runs")
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""
