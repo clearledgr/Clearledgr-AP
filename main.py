@@ -253,6 +253,10 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/pipelines",
     "/api/saved-views",
     "/api/box-links",
+    # Organization settings — GL mappings, approval thresholds, migration
+    # state, autonomy rules. All routes are scoped to /settings/{org_id}/*
+    # and enforce org access in each handler.
+    "/settings",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -334,6 +338,8 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/rollback-controls",
     "/api/workspace/subscription",
     "/api/workspace/subscription/plan",
+    "/api/workspace/subscription/billing-summary",
+    "/api/workspace/implementation/status",
     "/api/workspace/team/invites",
     "/api/workspace/team/approvers",
     "/api/workspace/user/preferences",

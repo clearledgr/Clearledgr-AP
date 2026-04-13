@@ -771,8 +771,9 @@ function registerThreadHandler() {
           // stale queue rows already in memory. Lookup stays read-only; thread
           // repair is an explicit fallback when the backend reports a miss.
           try {
+            const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || '').replace(/\/+$/, '');
             const result = await queueManager.backendFetch(
-              `/extension/by-thread/${encodeURIComponent(threadId)}`
+              `${backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}`
             );
             if (result?.ok) {
               const data = await result.json();
@@ -780,7 +781,7 @@ function registerThreadHandler() {
                 item = data.item;
               } else {
                 const recovered = await queueManager.backendFetch(
-                  `/extension/by-thread/${encodeURIComponent(threadId)}/recover`,
+                  `${backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}/recover`,
                   { method: 'POST' }
                 );
                 if (recovered?.ok) {

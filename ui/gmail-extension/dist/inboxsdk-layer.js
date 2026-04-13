@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:fa80ee48a0600eb8cec41e5cd1337a19631320e6c52e03a43b4e588bc086a792 */
+/* clearledgr-source-fingerprint:6240323e3b5a7ec3fe090ca723cc22b9408e99d0b90f408317943017ca2c591e */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -74101,13 +74101,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         if (threadId && queueManager) {
           try {
-            const result = await queueManager.backendFetch(`/extension/by-thread/${encodeURIComponent(threadId)}`);
+            const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || "").replace(/\/+$/, "");
+            const result = await queueManager.backendFetch(`${backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}`);
             if (result?.ok) {
               const data = await result.json();
               if (data?.found && data?.item) {
                 item = data.item;
               } else {
-                const recovered = await queueManager.backendFetch(`/extension/by-thread/${encodeURIComponent(threadId)}/recover`, { method: "POST" });
+                const recovered = await queueManager.backendFetch(`${backendUrl}/extension/by-thread/${encodeURIComponent(threadId)}/recover`, { method: "POST" });
                 if (recovered?.ok) {
                   const recoveredData = await recovered.json();
                   if (recoveredData?.found && recoveredData?.item) {
