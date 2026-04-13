@@ -369,7 +369,20 @@ def _deep_merge_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, A
 
 def _gmail_status_for_org(organization_id: str, user: TokenData) -> Dict[str, Any]:
     db = get_db()
+    # Resolve the Gmail token in order of specificity:
+    #   1. Exact user_id match (most common: token was stored against the
+    #      same canonical user id present on this JWT).
+    #   2. Exact email match (extension bootstrap can store against a
+    #      profile_email fallback when the user row id isn't populated
+    #      yet; or a legacy token predates a user-id migration).
+    #   3. Any token belonging to an active user in this org (covers
+    #      service-level reconnect flows where the calling user isn't
+    #      the same as the one who originally connected Gmail).
     token = db.get_oauth_token(user.user_id, "gmail")
+    if not token:
+        user_email = str(getattr(user, "email", "") or "").strip().lower()
+        if user_email:
+            token = db.get_oauth_token_by_email(user_email, "gmail")
     if not token:
         user_ids = {str(item.get("id")) for item in db.get_users(organization_id, include_inactive=False)}
         for candidate in db.list_oauth_tokens(provider="gmail"):
