@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:1a4d075b0cda23e3863edfc2eea6e0570df9629c6af5ca96b84d402a764de787 */
+/* clearledgr-source-fingerprint:8a4153c053e56bdaa745d1205d42a66ffd2b5d1240d51d53e8daf58d2c82a3d3 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -74880,10 +74880,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const ref = encodeURIComponent(String(params?.ref || ""));
         return ref ? `clearledgr/invoices-view/${ref}` : "";
       }
-      if (routeId === "clearledgr/pipeline-view/:ref") {
-        const ref = encodeURIComponent(String(params?.ref || ""));
-        return ref ? `clearledgr/pipeline-view/${ref}` : "";
-      }
       return normalizeClearledgrHash(routeId);
     }
     function rememberActiveClearledgrRoute(routeIdOrHash, params = null) {
@@ -74945,7 +74941,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const normalized = String(hash || "").trim().replace(/^#/, "").split("?")[0];
       if (!normalized.startsWith("clearledgr/"))
         return null;
-      if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized] || normalized === "clearledgr/pipeline") {
+      if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized]) {
         return { routeId: normalized, params: null };
       }
       if (normalized.startsWith("clearledgr/invoice/")) {
@@ -74964,12 +74960,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return {
           routeId: "clearledgr/invoices-view/:ref",
           params: { ref: decodeURIComponent(normalized.slice("clearledgr/invoices-view/".length)) }
-        };
-      }
-      if (normalized.startsWith("clearledgr/pipeline-view/")) {
-        return {
-          routeId: "clearledgr/pipeline-view/:ref",
-          params: { ref: decodeURIComponent(normalized.slice("clearledgr/pipeline-view/".length)) }
         };
       }
       return null;
@@ -75523,13 +75513,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       try {
         customRouteView.destroy?.();
       } catch (_2) {}
-    });
-    sdk.Router.handleCustomRoute("clearledgr/pipeline", () => {
-      sdk.Router.goto("clearledgr/invoices");
-    });
-    sdk.Router.handleCustomRoute("clearledgr/pipeline-view/:ref", (routeView) => {
-      const ref = routeView.getParams?.()?.ref || "";
-      sdk.Router.goto("clearledgr/invoices-view/" + ref);
     });
     sdk.Router.handleCustomRoute("clearledgr/invoice/:id", async (customRouteView) => {
       bindRouteSidebarBehavior(customRouteView);

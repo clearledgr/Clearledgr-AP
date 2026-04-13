@@ -1701,10 +1701,6 @@ function registerAppMenuAndRoutes() {
       const ref = encodeURIComponent(String(params?.ref || ''));
       return ref ? `clearledgr/invoices-view/${ref}` : '';
     }
-    if (routeId === 'clearledgr/pipeline-view/:ref') {
-      const ref = encodeURIComponent(String(params?.ref || ''));
-      return ref ? `clearledgr/pipeline-view/${ref}` : '';
-    }
     return normalizeClearledgrHash(routeId);
   }
 
@@ -1775,7 +1771,7 @@ function registerAppMenuAndRoutes() {
     const normalized = String(hash || '').trim().replace(/^#/, '').split('?')[0];
     if (!normalized.startsWith('clearledgr/')) return null;
 
-    if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized] || normalized === 'clearledgr/pipeline') {
+    if (PAGE_MAP[normalized] || LEGACY_PAGE_MAP[normalized]) {
       return { routeId: normalized, params: null };
     }
 
@@ -1795,12 +1791,6 @@ function registerAppMenuAndRoutes() {
       return {
         routeId: 'clearledgr/invoices-view/:ref',
         params: { ref: decodeURIComponent(normalized.slice('clearledgr/invoices-view/'.length)) },
-      };
-    }
-    if (normalized.startsWith('clearledgr/pipeline-view/')) {
-      return {
-        routeId: 'clearledgr/pipeline-view/:ref',
-        params: { ref: decodeURIComponent(normalized.slice('clearledgr/pipeline-view/'.length)) },
       };
     }
 
@@ -2448,15 +2438,6 @@ function registerAppMenuAndRoutes() {
     try {
       customRouteView.destroy?.();
     } catch (_) { /* best effort */ }
-  });
-
-  // Legacy redirect: old pipeline URL → new invoices URL
-  sdk.Router.handleCustomRoute('clearledgr/pipeline', () => {
-    sdk.Router.goto('clearledgr/invoices');
-  });
-  sdk.Router.handleCustomRoute('clearledgr/pipeline-view/:ref', (routeView) => {
-    const ref = routeView.getParams?.()?.ref || '';
-    sdk.Router.goto('clearledgr/invoices-view/' + ref);
   });
 
   // Dynamic route: invoice detail (clearledgr/invoice/:id)
