@@ -1309,20 +1309,24 @@ def erp_connect_start(
             "help_text": "Use a least-privilege integration account with API access to the SAP OData base URL.",
         }
 
-    # OAuth-based ERPs (QuickBooks, Xero)
+    # OAuth-based ERPs (QuickBooks, Xero). State is stored in the
+    # erp_oauth_states DB table (migration v10) via _save_oauth_state,
+    # not the old in-memory _oauth_states dict (removed when it moved
+    # to the DB for multi-worker safety).
     from clearledgr.api.erp_connections import (
-        _oauth_states,
+        _save_oauth_state,
         QUICKBOOKS_CLIENT_ID, QUICKBOOKS_REDIRECT_URI, QUICKBOOKS_AUTH_URL,
         XERO_CLIENT_ID, XERO_REDIRECT_URI, XERO_AUTH_URL,
     )
     from urllib.parse import urlencode as _urlencode
 
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
+    _save_oauth_state(state, {
         "organization_id": org_id,
         "return_url": "success_page",
+        "erp_type": erp_type,
         "created_at": _now_iso(),
-    }
+    })
 
     if erp_type == "quickbooks":
         if not QUICKBOOKS_CLIENT_ID:
