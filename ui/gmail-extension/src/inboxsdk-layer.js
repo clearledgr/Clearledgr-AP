@@ -1472,7 +1472,7 @@ async function bootstrap() {
 
 // ==================== §15 STREAK-STYLE ONBOARDING ====================
 
-function _showOnboardingFlow() {
+function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
   // Mount the onboarding modal as a Preact component into a container on the page
   const existing = document.getElementById('cl-onboarding-root');
   if (existing) return; // Already showing
@@ -1481,8 +1481,12 @@ function _showOnboardingFlow() {
   container.id = 'cl-onboarding-root';
   document.body.appendChild(container);
 
+  const backendUrl = String(
+    queueManager?.runtimeConfig?.backendUrl || 'https://api.clearledgr.com'
+  ).replace(/\/+$/, '');
+
   const api = async (path, options = {}) => {
-    const fullUrl = `${queueManager?.runtimeConfig?.backendUrl || 'http://127.0.0.1:8010'}${path}`;
+    const fullUrl = `${backendUrl}${path}`;
     const result = await queueManager.backendFetch(fullUrl, {
       method: options.method || 'GET',
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -1494,16 +1498,18 @@ function _showOnboardingFlow() {
   };
 
   const onComplete = () => {
-    // Remove the onboarding overlay
     container.remove();
-    // Navigate to Home
     try { sdk.Router.goto('clearledgr/home'); } catch (_) {}
-    // Refresh bootstrap
     try { queueManager.refreshQueue(); } catch (_) {}
   };
 
   render(
-    html`<${OnboardingFlow} api=${api} onComplete=${onComplete} />`,
+    html`<${OnboardingFlow}
+      api=${api}
+      onComplete=${onComplete}
+      oauthBridge=${oauthBridgeRef}
+      backendUrl=${backendUrl}
+    />`,
     container,
   );
 }
@@ -2317,9 +2323,12 @@ function registerAppMenuAndRoutes() {
         currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
       }
-      // §15: First install — show Streak-style onboarding modal
+      // §15: First install — show Streak-style onboarding modal.
+      // The flow needs the same oauthBridge instance the rest of the
+      // sidebar uses so its postMessage listener and popup-close
+      // poller are coordinated.
       if (data?.onboarding && !data.onboarding.completed) {
-        _showOnboardingFlow(data);
+        _showOnboardingFlow(data, oauthBridge);
       }
 
       bootstrapPromise = null;

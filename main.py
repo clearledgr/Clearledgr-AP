@@ -368,6 +368,7 @@ STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
     "/auth/login",
     "/auth/logout",
     "/auth/me",
+    "/auth/popup-complete",
     "/auth/refresh",
     "/auth/register",
     "/auth/users",

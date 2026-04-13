@@ -171,67 +171,90 @@ function PipelineCreation({ erpType, onComplete }) {
 
 // ==================== MAIN FLOW ====================
 
-export default function OnboardingFlow({ api, onComplete, oauthBridge }) {
+export default function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl }) {
   const [step, setStep] = useState('auth');  // auth | erp | creating | done
   const [pending, setPending] = useState(false);
   const [erpType, setErpType] = useState('');
 
-  const handleSignIn = useCallback(async () => {
-    setPending(true);
-    try {
-      const payload = await api('/api/workspace/integrations/gmail/connect/start', {
-        method: 'POST',
-        body: JSON.stringify({ organization_id: 'default', redirect_path: '/workspace' }),
-      });
-      if (payload?.auth_url) {
-        if (oauthBridge) {
-          oauthBridge.startOAuth(payload.auth_url, 'gmail');
-        } else {
-          window.open(payload.auth_url, '_blank', 'width=600,height=700');
-        }
-      }
-      // After OAuth completes, advance to ERP picker
-      // (OAuth bridge will call back when done)
-      setTimeout(() => {
-        setStep('erp');
+  // Resolve backend base URL — fall back to the production hostname if
+  // not passed (the bootstrap module sometimes mounts this component
+  // before runtimeConfig is fully resolved).
+  const apiBase = String(backendUrl || 'https://api.clearledgr.com').replace(/\/+$/, '');
+
+  // Listen for the popup-complete postMessage from /auth/popup-complete.
+  // The popup posts { type: 'clearledgr_oauth_complete', success: bool }
+  // when the auth_code → JWT exchange finishes. Falls back to oauthBridge's
+  // popup-close polling if postMessage is blocked.
+  useEffect(() => {
+    if (step !== 'auth') return undefined;
+    const handler = (event) => {
+      const data = event && event.data;
+      if (!data || data.type !== 'clearledgr_oauth_complete') return;
+      if (data.success) {
         setPending(false);
-      }, 3000);
-    } catch {
-      setPending(false);
+        setStep('erp');
+      } else {
+        setPending(false);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [step]);
+
+  const handleSignIn = useCallback(() => {
+    setPending(true);
+    // /auth/google/start is the public, no-auth-required Google OAuth
+    // entrypoint. After Google consent, the callback redirects to our
+    // /auth/popup-complete page which exchanges the code for cookies
+    // and notifies this window via postMessage.
+    const startUrl = (
+      `${apiBase}/auth/google/start`
+      + `?organization_id=default`
+      + `&redirect_path=${encodeURIComponent('/auth/popup-complete')}`
+    );
+    if (oauthBridge) {
+      oauthBridge.startOAuth(startUrl, 'console-signin');
+    } else {
+      window.open(startUrl, 'clearledgr_oauth', 'width=600,height=700');
     }
-  }, [api, oauthBridge]);
+    // No setTimeout fallback — wait for postMessage or popup-close
+    // (oauthBridge handles the latter).
+  }, [apiBase, oauthBridge]);
 
   const handleErpSelect = useCallback(async (erpId) => {
     setPending(true);
     setErpType(erpId);
     try {
+      // Now we DO have a JWT (from the sign-in step), so the
+      // admin-gated workspace endpoint is reachable.
       const payload = await api('/api/workspace/integrations/erp/connect/start', {
         method: 'POST',
         body: JSON.stringify({ organization_id: 'default', erp_type: erpId }),
       });
       if (payload?.auth_url) {
-        window.open(payload.auth_url, '_blank', 'width=600,height=700');
+        if (oauthBridge) {
+          oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
+        } else {
+          window.open(payload.auth_url, '_blank', 'width=600,height=700');
+        }
       }
-      // Advance to pipeline creation
-      setTimeout(() => {
-        setStep('creating');
-        setPending(false);
-      }, 2000);
-    } catch {
-      // Even if ERP fails, advance — they can connect later
+      // Advance even if ERP popup is still open — user can finish
+      // the ERP flow async; pipeline creation doesn't depend on it.
       setStep('creating');
+    } catch {
+      // ERP failed — they can connect later from Connections page.
+      setStep('creating');
+    } finally {
       setPending(false);
     }
-  }, [api]);
+  }, [api, oauthBridge]);
 
   const handleCreationComplete = useCallback(() => {
     setStep('done');
-    // Mark onboarding as complete
     api('/api/workspace/onboarding/step', {
       method: 'POST',
       body: JSON.stringify({ organization_id: 'default', step: 4 }),
     }).catch(() => {});
-    // Redirect to Home
     if (onComplete) onComplete();
   }, [api, onComplete]);
 

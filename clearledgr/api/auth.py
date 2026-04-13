@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Cookie
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import re
 
@@ -875,6 +875,109 @@ async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, resp
         refresh_token=SESSION_TOKEN_PLACEHOLDER,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
+
+
+@router.get("/popup-complete")
+async def google_oauth_popup_complete():
+    """HTML landing page for the Gmail-extension OAuth popup.
+
+    The OnboardingFlow opens /auth/google/start in a popup window.
+    Google redirects to /auth/google/callback, which redirects again
+    to this page with ?auth_code=...&org=... in the URL.
+
+    This page:
+      1. Reads auth_code from window.location.search
+      2. POSTs it to /auth/google/exchange (which sets HttpOnly
+         session cookies on api.clearledgr.com)
+      3. Notifies window.opener via postMessage so the parent (the
+         Gmail tab running the extension) can re-bootstrap with the
+         new cookies
+      4. Auto-closes after a short delay
+
+    The opener (oauthBridge in the extension) ALSO polls for popup
+    close as a fallback in case postMessage is blocked by a strict
+    referrer policy. Either path triggers the bootstrap refresh.
+    """
+    html = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Clearledgr — signing you in</title>
+    <style>
+      body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0A1628;color:#fff;
+           display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+      .card{text-align:center;padding:32px;max-width:360px}
+      h1{font-size:18px;font-weight:600;margin:0 0 8px}
+      p{font-size:13px;opacity:0.7;margin:0}
+      .ok{color:#00D67E}
+      .err{color:#FCA5A5}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 id="title">Signing you in…</h1>
+      <p id="detail">This window will close automatically.</p>
+    </div>
+    <script>
+      (async function () {
+        const params = new URLSearchParams(window.location.search);
+        const authCode = params.get('auth_code');
+        const orgId = params.get('org') || 'default';
+        const titleEl = document.getElementById('title');
+        const detailEl = document.getElementById('detail');
+
+        function notifyAndClose(success, detail) {
+          try {
+            if (window.opener && !window.opener.closed) {
+              window.opener.postMessage({
+                type: 'clearledgr_oauth_complete',
+                success: !!success,
+                organizationId: orgId,
+                detail: detail || null
+              }, '*');
+            }
+          } catch (_) { /* postMessage failures are fine — opener also polls */ }
+          setTimeout(function () { try { window.close(); } catch (_) {} }, 800);
+        }
+
+        if (!authCode) {
+          titleEl.textContent = 'Sign-in failed';
+          titleEl.className = 'err';
+          detailEl.textContent = 'No auth_code in the redirect URL.';
+          notifyAndClose(false, 'missing_auth_code');
+          return;
+        }
+
+        try {
+          const res = await fetch('/auth/google/exchange', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auth_code: authCode })
+          });
+          if (!res.ok) {
+            const body = await res.text();
+            titleEl.textContent = 'Sign-in failed';
+            titleEl.className = 'err';
+            detailEl.textContent = 'Server returned ' + res.status + '.';
+            notifyAndClose(false, body.slice(0, 200));
+            return;
+          }
+          titleEl.textContent = 'Signed in';
+          titleEl.className = 'ok';
+          detailEl.textContent = 'Returning to Gmail…';
+          notifyAndClose(true);
+        } catch (err) {
+          titleEl.textContent = 'Sign-in failed';
+          titleEl.className = 'err';
+          detailEl.textContent = String(err && err.message || err);
+          notifyAndClose(false, 'network_error');
+        }
+      })();
+    </script>
+  </body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 @router.post("/invites/accept")

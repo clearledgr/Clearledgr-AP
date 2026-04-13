@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:e15b0fd788933ec2679739d5ffea28e610b88cf71101da812a82b3f5bc8e2778 */
+/* clearledgr-source-fingerprint:a5fd5e6df5fdc74eeab4c869497fffb2121a5cbf504df4317bad978917d69982 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61805,32 +61805,37 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function OnboardingFlow({ api, onComplete, oauthBridge }) {
+  function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl }) {
     const [step, setStep] = d2("auth");
     const [pending, setPending] = d2(false);
     const [erpType, setErpType] = d2("");
-    const handleSignIn = q2(async () => {
-      setPending(true);
-      try {
-        const payload = await api("/api/workspace/integrations/gmail/connect/start", {
-          method: "POST",
-          body: JSON.stringify({ organization_id: "default", redirect_path: "/workspace" })
-        });
-        if (payload?.auth_url) {
-          if (oauthBridge) {
-            oauthBridge.startOAuth(payload.auth_url, "gmail");
-          } else {
-            window.open(payload.auth_url, "_blank", "width=600,height=700");
-          }
-        }
-        setTimeout(() => {
-          setStep("erp");
+    const apiBase = String(backendUrl || "https://api.clearledgr.com").replace(/\/+$/, "");
+    y2(() => {
+      if (step !== "auth")
+        return;
+      const handler = (event) => {
+        const data = event && event.data;
+        if (!data || data.type !== "clearledgr_oauth_complete")
+          return;
+        if (data.success) {
           setPending(false);
-        }, 3000);
-      } catch {
-        setPending(false);
+          setStep("erp");
+        } else {
+          setPending(false);
+        }
+      };
+      window.addEventListener("message", handler);
+      return () => window.removeEventListener("message", handler);
+    }, [step]);
+    const handleSignIn = q2(() => {
+      setPending(true);
+      const startUrl = `${apiBase}/auth/google/start` + `?organization_id=default` + `&redirect_path=${encodeURIComponent("/auth/popup-complete")}`;
+      if (oauthBridge) {
+        oauthBridge.startOAuth(startUrl, "console-signin");
+      } else {
+        window.open(startUrl, "clearledgr_oauth", "width=600,height=700");
       }
-    }, [api, oauthBridge]);
+    }, [apiBase, oauthBridge]);
     const handleErpSelect = q2(async (erpId) => {
       setPending(true);
       setErpType(erpId);
@@ -61840,17 +61845,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           body: JSON.stringify({ organization_id: "default", erp_type: erpId })
         });
         if (payload?.auth_url) {
-          window.open(payload.auth_url, "_blank", "width=600,height=700");
+          if (oauthBridge) {
+            oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
+          } else {
+            window.open(payload.auth_url, "_blank", "width=600,height=700");
+          }
         }
-        setTimeout(() => {
-          setStep("creating");
-          setPending(false);
-        }, 2000);
+        setStep("creating");
       } catch {
         setStep("creating");
+      } finally {
         setPending(false);
       }
-    }, [api]);
+    }, [api, oauthBridge]);
     const handleCreationComplete = q2(() => {
       setStep("done");
       api("/api/workspace/onboarding/step", {
@@ -74681,15 +74688,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     registerInboxSavedViewSections();
     registerAppMenuAndRoutes();
   }
-  function _showOnboardingFlow() {
+  function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
     const existing = document.getElementById("cl-onboarding-root");
     if (existing)
       return;
     const container = document.createElement("div");
     container.id = "cl-onboarding-root";
     document.body.appendChild(container);
+    const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || "https://api.clearledgr.com").replace(/\/+$/, "");
     const api = async (path, options = {}) => {
-      const fullUrl = `${queueManager?.runtimeConfig?.backendUrl || "http://127.0.0.1:8010"}${path}`;
+      const fullUrl = `${backendUrl}${path}`;
       const result = await queueManager.backendFetch(fullUrl, {
         method: options.method || "GET",
         headers: { "Content-Type": "application/json", ...options.headers || {} },
@@ -74710,7 +74718,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         queueManager.refreshQueue();
       } catch (_2) {}
     };
-    J(html22`<${OnboardingFlow} api=${api} onComplete=${onComplete} />`, container);
+    J(html22`<${OnboardingFlow}
+      api=${api}
+      onComplete=${onComplete}
+      oauthBridge=${oauthBridgeRef}
+      backendUrl=${backendUrl}
+    />`, container);
   }
   function registerInboxSavedViewSections() {
     if (!sdk?.Router || typeof sdk.Router.handleListRoute !== "function")
@@ -75420,7 +75433,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           rebuildMenuNavigation2();
         }
         if (data?.onboarding && !data.onboarding.completed) {
-          _showOnboardingFlow(data);
+          _showOnboardingFlow(data, oauthBridge);
         }
         bootstrapPromise = null;
         return data;
