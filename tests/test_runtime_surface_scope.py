@@ -184,8 +184,11 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         paths = _mounted_paths()
         # Phase 2.1.b added 6 IBAN verification endpoints. Phase 3.1.b
         # added 4 vendor onboarding control endpoints + 4 public portal
-        # endpoints. Cap raised from 200 to 215 to absorb these.
-        assert len(paths) <= 215
+        # endpoints. Phase 3.5 (2026-04-13) added §5.1 object-model
+        # routes: /api/pipelines/* (5), /api/saved-views (2), /api/box-links,
+        # /api/ops/vendor-onboarding/sessions, /api/user/preferences (split
+        # from /api/workspace/user/preferences). Cap raised from 215 to 230.
+        assert len(paths) <= 230
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -197,7 +200,16 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # OAuth callbacks remain available for admin ERP install flows.
         assert "/erp/quickbooks/callback" in paths
         assert "/erp/xero/callback" in paths
-        assert set(_strict_profile_allowed_prefixes()) == {"/v1", "/static", "/fraud-controls"}
+        assert set(_strict_profile_allowed_prefixes()) == {
+            "/v1",
+            "/static",
+            "/fraud-controls",
+            # Phase 3.5: §5.1 object-model + organization settings prefixes
+            "/api/pipelines",
+            "/api/saved-views",
+            "/api/box-links",
+            "/settings",
+        }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.
         assert "/api/vendors/{vendor_name}/iban-verification" in paths
@@ -265,8 +277,9 @@ def test_strict_profile_allows_workspace_user_preferences_route(monkeypatch):
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     with TestClient(_app()) as client:
+        # /api/user/preferences (split from /api/workspace/user/preferences)
         response = client.patch(
-            "/api/workspace/user/preferences",
+            "/api/user/preferences",
             json={"organization_id": "default", "patch": {"gmail_extension": {"probe": True}}},
         )
         assert response.status_code in {401, 403, 404}

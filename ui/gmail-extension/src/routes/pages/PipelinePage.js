@@ -341,7 +341,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
 
   const syncServerPreferences = async (prefs, { silent = true } = {}) => {
     const normalized = normalizePipelinePreferences({ ...(prefs || {}), viewMode: 'table' });
-    await api('/api/workspace/user/preferences', {
+    await api('/api/user/preferences', {
       method: 'PATCH',
       body: JSON.stringify({
         organization_id: orgId,

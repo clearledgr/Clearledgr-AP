@@ -745,11 +745,6 @@ class OrgSettingsPatchRequest(BaseModel):
     patch: Dict[str, Any]
 
 
-class UserPreferencesPatchRequest(BaseModel):
-    organization_id: Optional[str] = None
-    patch: Dict[str, Any]
-
-
 class TeamInviteCreateRequest(BaseModel):
     organization_id: Optional[str] = None
     email: EmailStr
@@ -1587,47 +1582,8 @@ def patch_org_settings(
     }
 
 
-@router.get("/user/preferences")
-def get_user_preferences(
-    organization_id: Optional[str] = Query(default=None),
-    user: TokenData = Depends(get_current_user),
-):
-    _require_ops_access(user)
-    org_id = _resolve_org_id(user, organization_id)
-    db = get_db()
-    current_user = db.get_user(user.user_id)
-    if not current_user:
-        raise HTTPException(status_code=404, detail="user_not_found")
-    if str(current_user.get("organization_id") or org_id) != org_id:
-        raise HTTPException(status_code=403, detail="org_access_denied")
-    return {
-        "organization_id": org_id,
-        "user_id": current_user.get("id") or user.user_id,
-        "preferences": _load_user_preferences(current_user),
-    }
-
-
-@router.patch("/user/preferences")
-def patch_user_preferences(
-    request: UserPreferencesPatchRequest,
-    user: TokenData = Depends(get_current_user),
-):
-    _require_ops_access(user)
-    org_id = _resolve_org_id(user, request.organization_id)
-    db = get_db()
-    current_user = db.get_user(user.user_id)
-    if not current_user:
-        raise HTTPException(status_code=404, detail="user_not_found")
-    if str(current_user.get("organization_id") or org_id) != org_id:
-        raise HTTPException(status_code=403, detail="org_access_denied")
-    preferences = _deep_merge_dict(_load_user_preferences(current_user), request.patch or {})
-    _save_user_preferences(str(current_user.get("id") or user.user_id), preferences)
-    return {
-        "success": True,
-        "organization_id": org_id,
-        "user_id": current_user.get("id") or user.user_id,
-        "preferences": preferences,
-    }
+# /user/preferences moved to clearledgr/api/user_preferences.py
+# (per-user data — doesn't belong under the /api/workspace/* ops surface)
 
 
 @router.get("/rollback-controls")

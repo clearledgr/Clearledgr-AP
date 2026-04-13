@@ -343,7 +343,8 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/implementation/status",
     "/api/workspace/team/invites",
     "/api/workspace/team/approvers",
-    "/api/workspace/user/preferences",
+    # /api/workspace/user/preferences moved to /api/user/preferences
+    "/api/user/preferences",
     "/api/workspace/spend-analysis",
     "/api/workspace/erp-vendors",
     "/api/workspace/reports/export",
@@ -1054,6 +1055,15 @@ try:
     # bootstrap, integrations, team management, etc. The standalone HTML page
     # at /workspace is gated separately (§4 Principle 01).
     app.include_router(workspace_shell_router)
+except ImportError:
+    pass
+
+# Per-user preferences — split from /api/workspace/* because preferences
+# are per-user data (UI state, saved views, template choices) not org-
+# level admin data. No ops-role gate applies here.
+try:
+    from clearledgr.api.user_preferences import router as user_preferences_router
+    app.include_router(user_preferences_router)
 except ImportError:
     pass
 

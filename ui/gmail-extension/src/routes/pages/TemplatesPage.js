@@ -113,7 +113,7 @@ export default function TemplatesPage({ api, bootstrap, toast, orgId, userEmail,
     if (serialized === lastSyncedPrefsRef.current) return undefined;
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
-      void api('/api/workspace/user/preferences', {
+      void api('/api/user/preferences', {
         method: 'PATCH',
         body: JSON.stringify({
           organization_id: orgId,

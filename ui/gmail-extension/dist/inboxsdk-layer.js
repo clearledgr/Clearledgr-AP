@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:6240323e3b5a7ec3fe090ca723cc22b9408e99d0b90f408317943017ca2c591e */
+/* clearledgr-source-fingerprint:0983b98ad65ca3ea69fd33f384301bf7133f44abebe7a44254c804e1546059f1 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69231,7 +69231,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, [pipelineScope]);
     const syncServerPreferences = async (prefs, { silent = true } = {}) => {
       const normalized = normalizePipelinePreferences({ ...prefs || {}, viewMode: "table" });
-      await api("/api/workspace/user/preferences", {
+      await api("/api/user/preferences", {
         method: "PATCH",
         body: JSON.stringify({
           organization_id: orgId,
@@ -72240,7 +72240,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (syncTimerRef.current)
         clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
-        api("/api/workspace/user/preferences", {
+        api("/api/user/preferences", {
           method: "PATCH",
           body: JSON.stringify({
             organization_id: orgId,

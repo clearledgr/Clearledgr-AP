@@ -683,7 +683,7 @@ test('pipeline page syncs saved views through the authenticated user preferences
     'utf8',
   );
 
-  assert.equal(source.includes("api('/api/workspace/user/preferences'"), true);
+  assert.equal(source.includes("api('/api/user/preferences'"), true);
   assert.equal(source.includes('buildPipelinePreferencePatch(normalized)'), true);
   assert.equal(source.includes('getBootstrappedPipelinePreferences(bootstrap)'), true);
   assert.equal(source.includes('getStarterPipelineViews(viewPrefs)'), true);
