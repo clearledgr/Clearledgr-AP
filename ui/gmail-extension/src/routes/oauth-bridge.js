@@ -34,6 +34,7 @@ export function createOAuthBridge(onComplete) {
   let currentIntegration = null;
   let messageHandler = null;
   let resolved = false;
+  let pendingCallComplete = null;
 
   function finish(payload) {
     if (resolved) return;
@@ -49,16 +50,23 @@ export function createOAuthBridge(onComplete) {
     }
     activePopup = null;
     currentIntegration = null;
+    // Per-call handler fires first so awaiters (the OnboardingFlow
+    // modal) unblock before the global handler kicks off bootstrap
+    // refreshes.
+    const perCall = pendingCallComplete;
+    pendingCallComplete = null;
+    try { perCall?.(payload); } catch (_) { /* handler errors are theirs */ }
     try { onComplete?.(payload); } catch (_) { /* handler errors are theirs */ }
   }
 
-  function startOAuth(authUrl, integrationName = 'integration') {
+  function startOAuth(authUrl, integrationName = 'integration', callComplete = null) {
     if (activePopup && !activePopup.closed) {
       activePopup.focus();
       return;
     }
 
     currentIntegration = integrationName;
+    pendingCallComplete = typeof callComplete === 'function' ? callComplete : null;
     resolved = false;
 
     activePopup = window.open(
@@ -68,7 +76,7 @@ export function createOAuthBridge(onComplete) {
     );
 
     if (!activePopup) {
-      finish({ success: false, error: 'popup_blocked', integration: integrationName });
+      finish({ success: false, error: 'popup_blocked', integration: integrationName, detail: 'popup_blocked' });
       return;
     }
 
@@ -104,6 +112,15 @@ export function createOAuthBridge(onComplete) {
   }
 
   function cleanup() {
+    // Resolve any outstanding call so awaiters don't hang.
+    if (!resolved && pendingCallComplete) {
+      finish({
+        success: false,
+        integration: currentIntegration,
+        detail: 'bridge_cleanup',
+      });
+      return;
+    }
     clearInterval(pollInterval);
     pollInterval = null;
     if (messageHandler) {

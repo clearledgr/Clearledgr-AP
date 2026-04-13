@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:8a63440a83e247d408449325b5fbb5f9329420cdb16128568a58b3c900e52af2 */
+/* clearledgr-source-fingerprint:6b7b7f9b176926e04a9a5acf88928de5747f2075157471128644bb61aeec5e63 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61838,17 +61838,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         if (payload?.auth_url && oauthBridge) {
           await new Promise((resolve) => {
-            const handler = (event) => {
-              const data = event?.data;
-              if (!data || data.type !== "clearledgr_erp_oauth_complete")
-                return;
-              if (String(data.erp || "").toLowerCase() !== String(erpId).toLowerCase())
-                return;
-              window.removeEventListener("message", handler);
-              resolve({ success: !!data.success, detail: data.detail || null });
-            };
-            window.addEventListener("message", handler);
-            oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
+            oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`, (result) => {
+              resolve(result || { success: true });
+            });
           });
         } else if (payload?.auth_url) {
           window.open(payload.auth_url, "_blank", "width=600,height=700");
@@ -62195,6 +62187,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     let currentIntegration = null;
     let messageHandler = null;
     let resolved = false;
+    let pendingCallComplete = null;
     function finish(payload) {
       if (resolved)
         return;
@@ -62212,20 +62205,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       activePopup = null;
       currentIntegration = null;
+      const perCall = pendingCallComplete;
+      pendingCallComplete = null;
+      try {
+        perCall?.(payload);
+      } catch (_2) {}
       try {
         onComplete?.(payload);
       } catch (_2) {}
     }
-    function startOAuth(authUrl, integrationName = "integration") {
+    function startOAuth(authUrl, integrationName = "integration", callComplete = null) {
       if (activePopup && !activePopup.closed) {
         activePopup.focus();
         return;
       }
       currentIntegration = integrationName;
+      pendingCallComplete = typeof callComplete === "function" ? callComplete : null;
       resolved = false;
       activePopup = window.open(authUrl, "clearledgr_oauth", "width=600,height=700,left=200,top=100,toolbar=no,menubar=no");
       if (!activePopup) {
-        finish({ success: false, error: "popup_blocked", integration: integrationName });
+        finish({ success: false, error: "popup_blocked", integration: integrationName, detail: "popup_blocked" });
         return;
       }
       messageHandler = (event) => {
@@ -62254,6 +62253,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }, 1000);
     }
     function cleanup() {
+      if (!resolved && pendingCallComplete) {
+        finish({
+          success: false,
+          integration: currentIntegration,
+          detail: "bridge_cleanup"
+        });
+        return;
+      }
       clearInterval(pollInterval);
       pollInterval = null;
       if (messageHandler) {

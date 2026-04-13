@@ -215,22 +215,18 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       }
 
       if (payload?.auth_url && oauthBridge) {
-        // Wait for the OAuth popup's real result rather than blindly
-        // advancing. The bridge fires clearledgr_erp_oauth_complete from
-        // the backend callback; we advance only on success (or on
-        // popup-closed-without-message, which we treat as optimistic
-        // success since the callback may have completed before the
-        // postMessage window opened).
+        // Wait for the OAuth popup's real result via the bridge's
+        // per-call completion handler. The bridge resolves on any of:
+        //   - clearledgr_erp_oauth_complete postMessage from the backend
+        //     callback HTML
+        //   - popup closed without a message (COOP blocked postMessage,
+        //     or user manually closed it — treat as optimistic success
+        //     so we don't strand the user on "Connecting...")
+        //   - bridge cleanup (teardown)
         await new Promise((resolve) => {
-          const handler = (event) => {
-            const data = event?.data;
-            if (!data || data.type !== 'clearledgr_erp_oauth_complete') return;
-            if (String(data.erp || '').toLowerCase() !== String(erpId).toLowerCase()) return;
-            window.removeEventListener('message', handler);
-            resolve({ success: !!data.success, detail: data.detail || null });
-          };
-          window.addEventListener('message', handler);
-          oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
+          oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`, (result) => {
+            resolve(result || { success: true });
+          });
         });
       } else if (payload?.auth_url) {
         // No bridge available (defensive): open in a blank window and
