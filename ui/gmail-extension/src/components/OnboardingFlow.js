@@ -171,55 +171,27 @@ function PipelineCreation({ erpType, onComplete }) {
 
 // ==================== MAIN FLOW ====================
 
-export default function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl }) {
+export default function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl, signIn }) {
   const [step, setStep] = useState('auth');  // auth | erp | creating | done
   const [pending, setPending] = useState(false);
   const [erpType, setErpType] = useState('');
 
-  // Resolve backend base URL — fall back to the production hostname if
-  // not passed (the bootstrap module sometimes mounts this component
-  // before runtimeConfig is fully resolved).
-  const apiBase = String(backendUrl || 'https://api.clearledgr.com').replace(/\/+$/, '');
-
-  // Listen for the popup-complete postMessage from /auth/popup-complete.
-  // The popup posts { type: 'clearledgr_oauth_complete', success: bool }
-  // when the auth_code → JWT exchange finishes. Falls back to oauthBridge's
-  // popup-close polling if postMessage is blocked.
-  useEffect(() => {
-    if (step !== 'auth') return undefined;
-    const handler = (event) => {
-      const data = event && event.data;
-      if (!data || data.type !== 'clearledgr_oauth_complete') return;
-      if (data.success) {
-        setPending(false);
-        setStep('erp');
-      } else {
-        setPending(false);
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [step]);
-
-  const handleSignIn = useCallback(() => {
+  const handleSignIn = useCallback(async () => {
     setPending(true);
-    // /auth/google/start is the public, no-auth-required Google OAuth
-    // entrypoint. After Google consent, the callback redirects to our
-    // /auth/popup-complete page which exchanges the code for cookies
-    // and notifies this window via postMessage.
-    const startUrl = (
-      `${apiBase}/auth/google/start`
-      + `?organization_id=default`
-      + `&redirect_path=${encodeURIComponent('/auth/popup-complete')}`
-    );
-    if (oauthBridge) {
-      oauthBridge.startOAuth(startUrl, 'console-signin');
-    } else {
-      window.open(startUrl, 'clearledgr_oauth', 'width=600,height=700');
+    try {
+      // Native extension OAuth: chrome.identity.getAuthToken → register with
+      // backend → backend Bearer token populated in queueManager. This is
+      // the same credential queueManager.backendFetch uses, so the ERP step
+      // that follows is authenticated.
+      if (!signIn) throw new Error('signIn handler missing');
+      await signIn();
+      setStep('erp');
+    } catch (_err) {
+      // Stay on the auth step; user can click again.
+    } finally {
+      setPending(false);
     }
-    // No setTimeout fallback — wait for postMessage or popup-close
-    // (oauthBridge handles the latter).
-  }, [apiBase, oauthBridge]);
+  }, [signIn]);
 
   const handleErpSelect = useCallback(async (erpId) => {
     setPending(true);

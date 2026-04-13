@@ -1503,12 +1503,24 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
     try { queueManager.refreshQueue(); } catch (_) {}
   };
 
+  // Native extension auth: getAuthToken → register with backend → Bearer token.
+  // This is the same path queueManager.backendFetch expects, so the ERP picker
+  // call that follows will have a valid credential.
+  const signIn = async () => {
+    const result = await queueManager.authorizeGmailNow();
+    if (!result?.success) {
+      throw new Error(result?.error || 'sign_in_failed');
+    }
+    return result;
+  };
+
   render(
     html`<${OnboardingFlow}
       api=${api}
       onComplete=${onComplete}
       oauthBridge=${oauthBridgeRef}
       backendUrl=${backendUrl}
+      signIn=${signIn}
     />`,
     container,
   );

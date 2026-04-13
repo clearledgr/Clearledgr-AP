@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:b40de447e8bedb28a39faee49e04ce8fc6d9831f470aa9f8f07e354d77b3a998 */
+/* clearledgr-source-fingerprint:022350dc0814480baa94a89b37a9310f9b6c131cb08ae6218b9cde0e0bb7f7d1 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61805,37 +61805,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl }) {
+  function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl, signIn }) {
     const [step, setStep] = d2("auth");
     const [pending, setPending] = d2(false);
     const [erpType, setErpType] = d2("");
-    const apiBase = String(backendUrl || "https://api.clearledgr.com").replace(/\/+$/, "");
-    y2(() => {
-      if (step !== "auth")
-        return;
-      const handler = (event) => {
-        const data = event && event.data;
-        if (!data || data.type !== "clearledgr_oauth_complete")
-          return;
-        if (data.success) {
-          setPending(false);
-          setStep("erp");
-        } else {
-          setPending(false);
-        }
-      };
-      window.addEventListener("message", handler);
-      return () => window.removeEventListener("message", handler);
-    }, [step]);
-    const handleSignIn = q2(() => {
+    const handleSignIn = q2(async () => {
       setPending(true);
-      const startUrl = `${apiBase}/auth/google/start` + `?organization_id=default` + `&redirect_path=${encodeURIComponent("/auth/popup-complete")}`;
-      if (oauthBridge) {
-        oauthBridge.startOAuth(startUrl, "console-signin");
-      } else {
-        window.open(startUrl, "clearledgr_oauth", "width=600,height=700");
+      try {
+        if (!signIn)
+          throw new Error("signIn handler missing");
+        await signIn();
+        setStep("erp");
+      } catch (_err) {} finally {
+        setPending(false);
       }
-    }, [apiBase, oauthBridge]);
+    }, [signIn]);
     const handleErpSelect = q2(async (erpId) => {
       setPending(true);
       setErpType(erpId);
@@ -74726,11 +74710,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         queueManager.refreshQueue();
       } catch (_2) {}
     };
+    const signIn = async () => {
+      const result = await queueManager.authorizeGmailNow();
+      if (!result?.success) {
+        throw new Error(result?.error || "sign_in_failed");
+      }
+      return result;
+    };
     J(html22`<${OnboardingFlow}
       api=${api}
       onComplete=${onComplete}
       oauthBridge=${oauthBridgeRef}
       backendUrl=${backendUrl}
+      signIn=${signIn}
     />`, container);
   }
   function registerInboxSavedViewSections() {
