@@ -3538,21 +3538,24 @@ class TestOrgConfigEndpoints:
 class TestSettingsEndpoints:
     """Test organization settings endpoints."""
     
-    def test_get_settings(self):
-        """Legacy /settings surface is disabled in strict AP-v1 profile."""
+    def test_get_settings_requires_auth(self):
+        """/settings/{org_id} is a canonical AP-v1 surface (GL mappings,
+        thresholds, migration state). It requires authentication — an
+        unauthenticated call should get 401 (not 404)."""
         response = client.get("/settings/default")
-        assert response.status_code == 404
-        assert response.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"
-    
-    def test_update_approval_thresholds(self):
-        """Legacy /settings mutations are disabled in strict AP-v1 profile."""
+        assert response.status_code == 401
+        assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
+
+    def test_update_approval_thresholds_requires_auth(self):
+        """/settings/{org_id}/approval-thresholds accepts authenticated PUT
+        requests. Unauthenticated calls should get 401 (not 404)."""
         response = client.put("/settings/default/approval-thresholds", json={
             "auto_approve_limit": 500,
             "manager_approval_limit": 5000,
             "executive_approval_limit": 25000,
         })
-        assert response.status_code == 404
-        assert response.json().get("detail") == "endpoint_disabled_in_ap_v1_profile"
+        assert response.status_code == 401
+        assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
 
 
 class TestAgentIntentEndpoints:
