@@ -743,7 +743,10 @@ async def start_google_web_auth(
         "prompt": "select_account",
     }
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    return {"auth_url": auth_url}
+    # This endpoint is always hit as a top-level navigation: from the
+    # OnboardingFlow popup, from invite-email links, from console sign-in.
+    # 302 redirect to Google consent is what every caller expects.
+    return RedirectResponse(url=auth_url, status_code=302)
 
 
 @router.get("/google/callback")
