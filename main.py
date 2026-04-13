@@ -343,8 +343,6 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/implementation/status",
     "/api/workspace/team/invites",
     "/api/workspace/team/approvers",
-    # /api/workspace/user/preferences moved to /api/user/preferences
-    "/api/user/preferences",
     "/api/workspace/spend-analysis",
     "/api/workspace/erp-vendors",
     "/api/workspace/reports/export",
@@ -381,6 +379,16 @@ STRICT_PROFILE_ALLOWED_GMAIL_PATHS = {
     "/gmail/connected",
     "/gmail/disconnect",
     "/gmail/push",
+}
+
+# Per-user data. These endpoints only touch the authenticated user's
+# own row (resolved via the JWT, never via a path/query param). They
+# are NOT org-scoped admin surfaces — any authenticated workspace
+# member can reach them for their own record. Keep this bucket small
+# and distinct from /api/workspace/* so the prefix-by-concern split
+# stays visible at review time.
+STRICT_PROFILE_ALLOWED_USER_PATHS = {
+    "/api/user/preferences",
 }
 
 STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
@@ -509,6 +517,8 @@ def _is_strict_profile_allowed_path(path: str) -> bool:
     if normalized in STRICT_PROFILE_ALLOWED_AUTH_PATHS:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_GMAIL_PATHS:
+        return True
+    if normalized in STRICT_PROFILE_ALLOWED_USER_PATHS:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_AGENT_PATHS:
         return True
@@ -868,204 +878,140 @@ app.add_middleware(
 
 # (Autonomous agent, chat, engine, and webhooks routers removed — archived to branch)
 
-# Include Auth API
-try:
-    from clearledgr.api.auth import router as auth_router
-    app.include_router(auth_router)
-except ImportError:
-    pass
+# ── Router registration ────────────────────────────────────────────────
+#
+# These imports are REQUIRED for the app to function. A missing module
+# means a bug, not a configuration variant — the app should refuse to
+# start rather than silently drop an entire API surface. The historical
+# "try: import; except ImportError: pass" pattern hid real breakage in
+# production (user_preferences disappearing, pipelines routes missing,
+# etc. all left no log signal at startup).
+#
+# If a router is legitimately optional (e.g. only in some deployments),
+# gate it on an env var, NOT on import failure.
 
-# Include Organization Config API
-try:
-    if not STRICT_PROFILE_ACTIVE:
-        from clearledgr.api.org_config import router as org_config_router
-        app.include_router(org_config_router)
-except ImportError:
-    pass
+# Core + auth
+from clearledgr.api.auth import router as auth_router
+app.include_router(auth_router)
 
-# Include Fraud Controls API — the only user-facing surface for modifying
-# architectural fraud-control parameters (payment ceiling, velocity limits,
-# first-payment dormancy). CFO or owner role required for writes; every
-# modification is logged to ap_audit_events. See DESIGN_THESIS.md §8.
-try:
-    from clearledgr.api.fraud_controls import router as fraud_controls_router
-    app.include_router(fraud_controls_router)
-except ImportError:
-    pass
+# Organization Config API — not mounted in strict AP-v1 profile
+if not STRICT_PROFILE_ACTIVE:
+    from clearledgr.api.org_config import router as org_config_router
+    app.include_router(org_config_router)
 
-# Include IBAN Change Verification API — Phase 2.1.b.
-# Three-factor verification workflow that lifts the IBAN change freeze
-# started by the validation gate when an invoice presents bank details
-# differing from the vendor's verified profile. CFO or owner role
-# required for writes. See DESIGN_THESIS.md §8.
-try:
-    from clearledgr.api.iban_verification import router as iban_verification_router
-    app.include_router(iban_verification_router)
-except ImportError:
-    pass
+# Fraud Controls API — CFO-gated writes of architectural fraud params
+# (payment ceiling, velocity limits, first-payment dormancy). See
+# DESIGN_THESIS.md §8.
+from clearledgr.api.fraud_controls import router as fraud_controls_router
+app.include_router(fraud_controls_router)
 
-# Include Vendor Trusted-Domains API — Phase 2.2.
-# Vendor domain lock allowlist management. The validation gate blocks
-# invoices from sender domains not in the allowlist as potential
-# vendor impersonation. CFO or owner role required for writes.
-# See DESIGN_THESIS.md §8.
-try:
-    from clearledgr.api.vendor_domains import router as vendor_domains_router
-    app.include_router(vendor_domains_router)
-except ImportError:
-    pass
+# IBAN Change Verification API — Phase 2.1.b. Three-factor CFO-gated
+# workflow that lifts the IBAN change freeze. See DESIGN_THESIS.md §8.
+from clearledgr.api.iban_verification import router as iban_verification_router
+app.include_router(iban_verification_router)
 
-# Include Vendor KYC API — Phase 2.4.
-# First-class KYC fields on the Vendor object plus computed signals
-# (iban_verified, ytd_spend, risk_score). Reads are any authenticated
-# org member; writes require Financial Controller or higher.
-# See DESIGN_THESIS.md §3.
-try:
-    from clearledgr.api.vendor_kyc import router as vendor_kyc_router
-    app.include_router(vendor_kyc_router)
-except ImportError:
-    pass
+# Vendor Trusted-Domains API — Phase 2.2. CFO-gated allowlist of sender
+# domains the validation gate trusts for each vendor. See DESIGN_THESIS.md §8.
+from clearledgr.api.vendor_domains import router as vendor_domains_router
+app.include_router(vendor_domains_router)
 
-# Include Vendor Onboarding control API — Phase 3.1.b.
-# Customer-side endpoints for opening / inspecting / escalating /
-# rejecting onboarding sessions. JWT-authenticated, Financial
-# Controller or higher for writes (CFO-only for reject).
-# See DESIGN_THESIS.md §9.
-try:
-    from clearledgr.api.vendor_onboarding import (
-        router as vendor_onboarding_router,
-        ops_router as vendor_onboarding_ops_router,
+# Vendor KYC API — Phase 2.4. First-class KYC fields + computed signals.
+# Reads = any org member; writes = Financial Controller+. See DESIGN_THESIS.md §3.
+from clearledgr.api.vendor_kyc import router as vendor_kyc_router
+app.include_router(vendor_kyc_router)
+
+# Vendor Onboarding control API — Phase 3.1.b. Customer-side session
+# lifecycle + ops list endpoint. See DESIGN_THESIS.md §9.
+from clearledgr.api.vendor_onboarding import (
+    router as vendor_onboarding_router,
+    ops_router as vendor_onboarding_ops_router,
+)
+app.include_router(vendor_onboarding_router)
+app.include_router(vendor_onboarding_ops_router)
+
+# Vendor Portal — Phase 3.1.b. The ONLY unauthenticated surface
+# (magic-link tokens, 14-day TTL). See DESIGN_THESIS.md §9.
+from clearledgr.api.vendor_portal import router as vendor_portal_router
+app.include_router(vendor_portal_router)
+
+# Gmail integration
+from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
+app.include_router(gmail_webhooks_router)
+
+from clearledgr.api.gmail_schedule import router as gmail_schedule_router
+app.include_router(gmail_schedule_router)
+
+# §5.1 Object Model — Pipeline / SavedView / BoxLink endpoints
+from clearledgr.api.pipelines import (
+    router as pipelines_router,
+    saved_views_router,
+    box_links_router,
+)
+app.include_router(pipelines_router)
+app.include_router(saved_views_router)
+app.include_router(box_links_router)
+
+# Organization settings (thresholds, GL mappings, migration)
+from clearledgr.api.settings import router as settings_router
+app.include_router(settings_router)
+
+# Outlook / Microsoft 365 routes (OAuth + webhooks) — optional surface,
+# currently not in strict AP-v1 scope but shipped so admins who toggle
+# Outlook intake get real endpoints. Keep required so it fails loudly
+# if the module breaks.
+from clearledgr.api.outlook_routes import router as outlook_router
+app.include_router(outlook_router)
+
+# ERP Connections API (OAuth flows). Strict profile exposes only the
+# OAuth-callback completion routes; full profile exposes the whole router.
+if STRICT_PROFILE_ACTIVE:
+    from clearledgr.api.erp_connections import quickbooks_callback, xero_callback
+    app.add_api_route(
+        "/erp/quickbooks/callback",
+        quickbooks_callback,
+        methods=["GET"],
+        tags=["ERP Connections"],
     )
-    app.include_router(vendor_onboarding_router)
-    app.include_router(vendor_onboarding_ops_router)
-except ImportError:
-    pass
-
-# Include Vendor Portal — Phase 3.1.b.
-# Public, unauthenticated magic-link surface for vendors to submit
-# their onboarding details. The /portal/onboard/{token} routes are
-# the ONLY part of Clearledgr that accepts unauthenticated traffic.
-# Auth is via one-time SHA-256-hashed magic-link tokens with a
-# default 14-day TTL. See DESIGN_THESIS.md §9 + clearledgr/core/portal_auth.py.
-try:
-    from clearledgr.api.vendor_portal import router as vendor_portal_router
-    app.include_router(vendor_portal_router)
-except ImportError:
-    pass
-
-# Include Gmail Webhooks API (for Pub/Sub push notifications)
-try:
-    from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
-    app.include_router(gmail_webhooks_router)
-except ImportError:
-    pass
-
-# Gmail scheduled send (Thesis §3 — vendor communication timing)
-try:
-    from clearledgr.api.gmail_schedule import router as gmail_schedule_router
-    app.include_router(gmail_schedule_router)
-
-    # §5.1 Object Model — Pipeline/SavedView/BoxLink endpoints
-    from clearledgr.api.pipelines import router as pipelines_router, saved_views_router, box_links_router
-    app.include_router(pipelines_router)
-    app.include_router(saved_views_router)
-    app.include_router(box_links_router)
-except ImportError:
-    pass
-
-# Organization settings API (thresholds, GL mappings, migration)
-try:
-    from clearledgr.api.settings import router as settings_router
-    app.include_router(settings_router)
-except ImportError:
-    pass
-
-# Outlook / Microsoft 365 routes (OAuth + webhooks)
-try:
-    from clearledgr.api.outlook_routes import router as outlook_router
-    app.include_router(outlook_router)
-except ImportError:
-    pass
-
-# ERP Connections API (OAuth flows)
-try:
-    if STRICT_PROFILE_ACTIVE:
-        from clearledgr.api.erp_connections import quickbooks_callback, xero_callback
-
-        # In strict AP-v1 profile, only OAuth callback completion routes are exposed.
-        app.add_api_route(
-            "/erp/quickbooks/callback",
-            quickbooks_callback,
-            methods=["GET"],
-            tags=["ERP Connections"],
-        )
-        app.add_api_route(
-            "/erp/xero/callback",
-            xero_callback,
-            methods=["GET"],
-            tags=["ERP Connections"],
-        )
-    else:
-        from clearledgr.api.erp_connections import router as erp_connections_router
-        app.include_router(erp_connections_router)
-except ImportError:
-    pass
-
-# Browser-agent control plane APIs removed (browser agent fallback removed)
+    app.add_api_route(
+        "/erp/xero/callback",
+        xero_callback,
+        methods=["GET"],
+        tags=["ERP Connections"],
+    )
+else:
+    from clearledgr.api.erp_connections import router as erp_connections_router
+    app.include_router(erp_connections_router)
 
 # Agent intent runtime contract (preview/execute)
-try:
-    from clearledgr.api.agent_intents import router as agent_intents_router
-    app.include_router(agent_intents_router)
-except ImportError:
-    pass
+from clearledgr.api.agent_intents import router as agent_intents_router
+app.include_router(agent_intents_router)
 
 # AP item routes (sources/context/audit/merge/split)
-try:
-    from clearledgr.api.ap_items import router as ap_items_router
-    app.include_router(ap_items_router)
-except ImportError:
-    pass
+from clearledgr.api.ap_items import router as ap_items_router
+app.include_router(ap_items_router)
 
 # AP audit feeds for admin/activity surfaces
-try:
-    from clearledgr.api.ap_audit import router as ap_audit_router
-    app.include_router(ap_audit_router)
-except ImportError:
-    pass
+from clearledgr.api.ap_audit import router as ap_audit_router
+app.include_router(ap_audit_router)
 
 # AP business policy management (versioned + auditable)
-try:
-    from clearledgr.api.ap_policies import router as ap_policies_router
-    app.include_router(ap_policies_router)
-except ImportError:
-    pass
+from clearledgr.api.ap_policies import router as ap_policies_router
+app.include_router(ap_policies_router)
 
-# Ops health/KPI endpoints (including browser-agent metrics)
-try:
-    from clearledgr.api.ops import router as ops_router
-    app.include_router(ops_router)
-except ImportError:
-    pass
+# Ops health/KPI endpoints
+from clearledgr.api.ops import router as ops_router
+app.include_router(ops_router)
 
-# Workspace shell support APIs (single contract for Gmail-routed support surfaces)
-try:
-    from clearledgr.api.workspace_shell import router as workspace_shell_router
-    # Workspace shell APIs are always mounted — they serve the Gmail extension's
-    # bootstrap, integrations, team management, etc. The standalone HTML page
-    # at /workspace is gated separately (§4 Principle 01).
-    app.include_router(workspace_shell_router)
-except ImportError:
-    pass
+# Workspace shell support APIs — always mounted. The standalone HTML
+# page at /workspace is gated separately (§4 Principle 01).
+from clearledgr.api.workspace_shell import router as workspace_shell_router
+app.include_router(workspace_shell_router)
 
-# Per-user preferences — split from /api/workspace/* because preferences
-# are per-user data (UI state, saved views, template choices) not org-
-# level admin data. No ops-role gate applies here.
-try:
-    from clearledgr.api.user_preferences import router as user_preferences_router
-    app.include_router(user_preferences_router)
-except ImportError:
-    pass
+# Per-user preferences — /api/user/* prefix, not /api/workspace/*, because
+# preferences are per-user data (UI state, saved views, template choices)
+# not org-level admin data. No ops-role gate applies.
+from clearledgr.api.user_preferences import router as user_preferences_router
+app.include_router(user_preferences_router)
 
 # Serve static files (standalone workspace shell)
 static_dir = os.path.join(os.path.dirname(__file__), "static")

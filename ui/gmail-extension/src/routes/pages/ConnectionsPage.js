@@ -89,30 +89,12 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
   const erp = integrationByName(bootstrap, 'erp');
   const slack = integrationByName(bootstrap, 'slack');
   const teams = integrationByName(bootstrap, 'teams');
-  const canManageConnections = hasCapability(bootstrap, 'manage_connections');
-  const [adminProbeGranted, setAdminProbeGranted] = useState(false);
-  const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
-  const canEditConnections = canManageConnections || adminProbeGranted;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (canManageConnections) {
-      setAdminProbeGranted(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-    api(`/api/workspace/team/invites?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
-      .then(() => {
-        if (!cancelled) setAdminProbeGranted(true);
-      })
-      .catch(() => {
-        if (!cancelled) setAdminProbeGranted(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, canManageConnections, orgId]);
+  // Capability comes directly from the authenticated bootstrap response
+  // (workspace_shell._workspace_capabilities).  The previous code probed
+  // /api/workspace/team/invites with silent:true to infer admin status
+  // from a 200 vs 403 — that conflated "not admin" with "permission
+  // denied / auth expired / network error" and hid real errors.
+  const canEditConnections = hasCapability(bootstrap, 'manage_connections');
 
   const [connectGmail, gmailPending] = useAction(async () => {
     if (!canEditConnections) return;

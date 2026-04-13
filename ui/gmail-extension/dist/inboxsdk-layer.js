@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:0983b98ad65ca3ea69fd33f384301bf7133f44abebe7a44254c804e1546059f1 */
+/* clearledgr-source-fingerprint:e15b0fd788933ec2679739d5ffea28e610b88cf71101da812a82b3f5bc8e2778 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -64622,8 +64622,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const pinnedPipelineViews = getPinnedPipelineViews(pipelinePrefs).slice(0, 3);
     const starterSavedViews = getStarterPipelineViews(pipelinePrefs).filter((view) => !pinnedPipelineViews.some((pinnedView) => pinnedView.id === view.id && pinnedView.scope === view.scope)).slice(0, 3);
     const starterPipelineSlices = HOME_PIPELINE_SHORTCUTS.map((sliceId) => PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === sliceId)).filter(Boolean);
-    const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
-    const gmailOk = Boolean(gmail.connected && !gmailReconnectRequired);
+    const gmailReconnectRequired2 = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
+    const gmailOk = Boolean(gmail.connected && !gmailReconnectRequired2);
     const slackOk = Boolean(slack.connected);
     const teamsOk = Boolean(teams.connected);
     const approvalSurfaceOk = slackOk || teamsOk;
@@ -64635,7 +64635,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const agenticSnapshot = dashboard?.agentic_snapshot || {};
     const missingSetup = [];
     if (!gmailOk)
-      missingSetup.push(gmailReconnectRequired ? "Gmail reconnect" : "Gmail");
+      missingSetup.push(gmailReconnectRequired2 ? "Gmail reconnect" : "Gmail");
     if (!approvalSurfaceOk)
       missingSetup.push("Approval channel");
     if (!erpOk)
@@ -66650,9 +66650,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return humanizeMode(teams.mode || "-");
     return "Set after approval setup";
   }
-  function getSetupSummary({ gmail, gmailReconnectRequired, approvalConnected, slack, erp }) {
+  function getSetupSummary({ gmail, gmailReconnectRequired: gmailReconnectRequired2, approvalConnected, slack, erp }) {
     const missing = [];
-    if (!gmail.connected || gmailReconnectRequired)
+    if (!gmail.connected || gmailReconnectRequired2)
       missing.push("Gmail");
     if (!approvalConnected || slack.requires_reauthorization)
       missing.push("Slack or Teams approvals");
@@ -66681,29 +66681,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const erp = integrationByName(bootstrap, "erp");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
-    const canManageConnections = hasCapability(bootstrap, "manage_connections");
-    const [adminProbeGranted, setAdminProbeGranted] = d2(false);
-    const gmailReconnectRequired = Boolean(gmail.connected && (gmail.requires_reconnect || gmail.durable === false));
-    const canEditConnections = canManageConnections || adminProbeGranted;
-    y2(() => {
-      let cancelled = false;
-      if (canManageConnections) {
-        setAdminProbeGranted(false);
-        return () => {
-          cancelled = true;
-        };
-      }
-      api(`/api/workspace/team/invites?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then(() => {
-        if (!cancelled)
-          setAdminProbeGranted(true);
-      }).catch(() => {
-        if (!cancelled)
-          setAdminProbeGranted(false);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }, [api, canManageConnections, orgId]);
+    const canEditConnections = hasCapability(bootstrap, "manage_connections");
     const [connectGmail, gmailPending] = useAction2(async () => {
       if (!canEditConnections)
         return;
