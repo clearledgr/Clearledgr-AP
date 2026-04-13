@@ -8,6 +8,9 @@ gunicorn>=23.0.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
 python-dotenv>=1.0.1
+# Jinja2 — used by clearledgr/api/vendor_portal.py for the magic-link
+# onboarding pages (the only Clearledgr surface that renders HTML server-side).
+jinja2>=3.1.0
 
 # HTTP Client
 httpx>=0.26.0
