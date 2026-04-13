@@ -24,7 +24,7 @@ from urllib.parse import urlencode, parse_qs, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from clearledgr.core.auth import TokenData, get_current_user
@@ -75,6 +75,69 @@ NETSUITE_TOKEN_SECRET = os.getenv("NETSUITE_TOKEN_SECRET", "")
 
 # Frontend URL for redirects after OAuth
 FRONTEND_URL = os.getenv("FRONTEND_URL", "/")
+
+
+def _popup_close_response(
+    erp: str,
+    success: bool,
+    organization_id: Optional[str] = None,
+    detail: Optional[str] = None,
+) -> HTMLResponse:
+    """Return a tiny HTML page that closes the OAuth popup and notifies
+    the opener window (the Gmail tab running the extension). Used by
+    ERP OAuth callbacks instead of RedirectResponse, because:
+      1. The callback runs on api.clearledgr.com, which is the backend
+         API — redirecting here loops back into the strict route filter
+         ("/" isn't allowlisted).
+      2. The opener already listens for a postMessage of shape
+         {type:'clearledgr_erp_oauth_complete', erp, success, ...} and
+         refreshes the connections page / onboarding state.
+    """
+    status_line = "Connected to " + erp.title() if success else "Connection failed"
+    detail_line = (
+        "You can close this window."
+        if success
+        else f"{detail or 'Unknown error'}. Close this window and try again."
+    )
+    color = "#00D67E" if success else "#FCA5A5"
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Clearledgr — {erp.title()}</title>
+    <style>
+      body{{font-family:-apple-system,'Segoe UI',sans-serif;background:#0A1628;color:#fff;
+           display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+      .card{{text-align:center;padding:32px;max-width:360px}}
+      h1{{font-size:18px;font-weight:600;margin:0 0 8px;color:{color}}}
+      p{{font-size:13px;opacity:0.7;margin:0}}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>{status_line}</h1>
+      <p>{detail_line}</p>
+    </div>
+    <script>
+      (function () {{
+        var payload = {{
+          type: 'clearledgr_erp_oauth_complete',
+          erp: {json.dumps(erp)},
+          success: {('true' if success else 'false')},
+          organizationId: {json.dumps(organization_id or '')},
+          detail: {json.dumps(detail or '')}
+        }};
+        try {{
+          if (window.opener && !window.opener.closed) {{
+            window.opener.postMessage(payload, '*');
+          }}
+        }} catch (_) {{ /* opener may be gone */ }}
+        setTimeout(function () {{ try {{ window.close(); }} catch (_) {{}} }}, 800);
+      }})();
+    </script>
+  </body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 def _validate_return_url(url: Optional[str]) -> str:
@@ -260,26 +323,27 @@ async def quickbooks_callback(
     """
     if error:
         logger.error(f"QuickBooks OAuth error: {error}")
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
-    
+        return _popup_close_response("quickbooks", success=False, detail=error)
+
     if not state:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        return _popup_close_response("quickbooks", success=False, detail="invalid_state")
 
     state_data = _pop_oauth_state(state)
     if state_data is None:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        return _popup_close_response("quickbooks", success=False, detail="invalid_state")
     # Enforce 15-minute TTL on OAuth state tokens
     created = state_data.get("created_at", "")
     if created:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(created)).total_seconds()
         if age > 900:
-            raise HTTPException(status_code=400, detail="State token expired")
+            return _popup_close_response("quickbooks", success=False, detail="state_expired")
     organization_id = state_data["organization_id"]
-    return_url = state_data.get("return_url", f"{FRONTEND_URL}/settings/erp")
 
     if not code or not realmId:
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_params")
-    
+        return _popup_close_response(
+            "quickbooks", success=False, organization_id=organization_id, detail="missing_params"
+        )
+
     # Exchange code for tokens
     try:
         async with httpx.AsyncClient() as client:
@@ -297,7 +361,12 @@ async def quickbooks_callback(
             tokens = response.json()
     except Exception as e:
         logger.error(f"QuickBooks token exchange failed: {e}")
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error=token_exchange_failed")
+        return _popup_close_response(
+            "quickbooks",
+            success=False,
+            organization_id=organization_id,
+            detail="token_exchange_failed",
+        )
 
     # Store connection
     connection = ERPConnection(
@@ -313,7 +382,9 @@ async def quickbooks_callback(
 
     logger.info(f"QuickBooks connected for org {organization_id}, realm {realmId}")
 
-    return RedirectResponse(f"{FRONTEND_URL}?connected=quickbooks&org={organization_id}")
+    return _popup_close_response(
+        "quickbooks", success=True, organization_id=organization_id
+    )
 
 
 @router.post("/quickbooks/disconnect")
@@ -381,26 +452,27 @@ async def xero_callback(
     """
     if error:
         logger.error(f"Xero OAuth error: {error}")
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error={error}")
-    
+        return _popup_close_response("xero", success=False, detail=error)
+
     if not state:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        return _popup_close_response("xero", success=False, detail="invalid_state")
 
     state_data = _pop_oauth_state(state)
     if state_data is None:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        return _popup_close_response("xero", success=False, detail="invalid_state")
     # Enforce 15-minute TTL on OAuth state tokens
     created = state_data.get("created_at", "")
     if created:
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(created)).total_seconds()
         if age > 900:
-            raise HTTPException(status_code=400, detail="State token expired")
+            return _popup_close_response("xero", success=False, detail="state_expired")
     organization_id = state_data["organization_id"]
-    return_url = state_data.get("return_url", f"{FRONTEND_URL}/settings/erp")
 
     if not code:
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error=missing_code")
-    
+        return _popup_close_response(
+            "xero", success=False, organization_id=organization_id, detail="missing_code"
+        )
+
     # Exchange code for tokens
     try:
         async with httpx.AsyncClient() as client:
@@ -418,7 +490,12 @@ async def xero_callback(
             tokens = response.json()
     except Exception as e:
         logger.error(f"Xero token exchange failed: {e}")
-        return RedirectResponse(f"{FRONTEND_URL}?erp_error=token_exchange_failed")
+        return _popup_close_response(
+            "xero",
+            success=False,
+            organization_id=organization_id,
+            detail="token_exchange_failed",
+        )
 
     # Get tenant ID (Xero organization)
     tenant_id = None
@@ -449,7 +526,9 @@ async def xero_callback(
 
     logger.info(f"Xero connected for org {organization_id}, tenant {tenant_id}")
 
-    return RedirectResponse(f"{FRONTEND_URL}?connected=xero&org={organization_id}")
+    return _popup_close_response(
+        "xero", success=True, organization_id=organization_id
+    )
 
 
 @router.post("/xero/disconnect")
