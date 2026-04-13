@@ -60,6 +60,7 @@ celery>=5.4.0
 
 # Monitoring
 # NOTE: prometheus-client removed — not imported anywhere.
+sentry-sdk[fastapi]>=2.0.0   # error tracking (opt-in via SENTRY_DSN)
 
 # Development
 pytest>=8.0.0

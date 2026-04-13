@@ -11,12 +11,39 @@ Start the scheduler (Celery Beat):
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from celery import Celery
 
+logger = logging.getLogger(__name__)
+
 # Redis URL from environment (same Redis used for rate limiting and event streams)
 _REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+# Sentry error tracking — wire in both worker and beat processes so task
+# exceptions (planning loop, ERP posting, Gmail push decode) are captured.
+# Same pattern as main.py: opt-in via SENTRY_DSN, graceful if sentry-sdk
+# isn't installed.
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.celery import CeleryIntegration
+        from sentry_sdk.integrations.httpx import HttpxIntegration
+
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.getenv("ENV", "development"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            send_default_pii=False,
+            integrations=[CeleryIntegration(), HttpxIntegration()],
+        )
+        logger.info("Sentry error tracking initialized for Celery")
+    except ImportError:
+        logger.warning("SENTRY_DSN set but sentry-sdk not installed")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Sentry initialization failed: %s", exc)
 
 app = Celery("clearledgr")
 
