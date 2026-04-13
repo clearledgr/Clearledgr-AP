@@ -58,6 +58,39 @@ router = APIRouter(
 )
 
 
+# Ops-facing list view used by the Gmail extension VendorOnboardingPage
+# and HomePage. Mounted at /api/ops/vendor-onboarding to match the
+# /api/ops convention for cross-record list endpoints.
+ops_router = APIRouter(
+    prefix="/api/ops/vendor-onboarding",
+    tags=["vendor-onboarding-ops"],
+)
+
+
+@ops_router.get("/sessions")
+def list_vendor_onboarding_sessions(
+    organization_id: str = Query("default"),
+    limit: int = Query(200, ge=1, le=1000),
+    state: Optional[str] = Query(None, description="Comma-separated list of states to filter"),
+    _user: TokenData = Depends(get_current_user),
+):
+    """List vendor onboarding sessions for the org.
+
+    Default scope: pre-active sessions (anything not yet activated in the
+    ERP). Pass ?state=active,escalated to slice differently.
+    """
+    db = get_db()
+    states = None
+    if state:
+        states = [s.strip() for s in state.split(",") if s.strip()]
+    rows = db.list_pending_onboarding_sessions(
+        organization_id=organization_id,
+        states=states,
+        limit=limit,
+    )
+    return {"sessions": rows or [], "count": len(rows or [])}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

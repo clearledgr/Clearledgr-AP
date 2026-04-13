@@ -274,6 +274,7 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/monitoring-thresholds/check",
     "/api/ops/monitoring-health",
     "/api/ops/retry-queue",
+    "/api/ops/vendor-onboarding/sessions",
 }
 
 STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
@@ -930,8 +931,12 @@ except ImportError:
 # Controller or higher for writes (CFO-only for reject).
 # See DESIGN_THESIS.md §9.
 try:
-    from clearledgr.api.vendor_onboarding import router as vendor_onboarding_router
+    from clearledgr.api.vendor_onboarding import (
+        router as vendor_onboarding_router,
+        ops_router as vendor_onboarding_ops_router,
+    )
     app.include_router(vendor_onboarding_router)
+    app.include_router(vendor_onboarding_ops_router)
 except ImportError:
     pass
 
