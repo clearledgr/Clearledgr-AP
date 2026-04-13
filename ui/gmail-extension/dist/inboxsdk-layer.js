@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:a5fd5e6df5fdc74eeab4c869497fffb2121a5cbf504df4317bad978917d69982 */
+/* clearledgr-source-fingerprint:b40de447e8bedb28a39faee49e04ce8fc6d9831f470aa9f8f07e354d77b3a998 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -62129,12 +62129,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     async function bootstrapWorkspaceShellData() {
       const id = orgId();
+      let bootstrapStatus = 0;
       const [bootstrap, policies, team] = await Promise.allSettled([
-        api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+        api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch((err) => {
+          bootstrapStatus = err?.status || 0;
+          return {};
+        }),
         api(`/api/workspace/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
         api(`/api/workspace/team/invites?organization_id=${id}`, { silent: true }).catch(() => [])
       ]);
       const bootstrapPayload = bootstrap.value || {};
+      const needsAuth = bootstrapStatus === 401 || bootstrapStatus === 403;
       const dashboard = bootstrapPayload.dashboard || {};
       const integrations = Array.isArray(bootstrapPayload.integrations) ? bootstrapPayload.integrations : [];
       const organization = bootstrapPayload.organization || {};
@@ -62149,6 +62154,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       };
       const explicitCapabilities = bootstrapPayload.capabilities || currentUser.capabilities || {};
       const capabilities = Object.keys(explicitCapabilities).length > 0 ? explicitCapabilities : getFallbackCapabilities(fallbackRole);
+      const onboarding = bootstrapPayload.onboarding || (needsAuth ? { completed: false, needs_auth: true, step: 0 } : undefined);
       return {
         dashboard,
         integrations,
@@ -62160,7 +62166,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         recentActivity: dashboard.recent_activity || [],
         required_actions: Array.isArray(bootstrapPayload.required_actions) ? bootstrapPayload.required_actions : [],
         capabilities,
-        current_user: currentUser
+        current_user: currentUser,
+        onboarding,
+        needs_auth: needsAuth
       };
     }
     return { api, toast, orgId, bootstrapWorkspaceShellData };

@@ -41,13 +41,23 @@ export function createWorkspaceShellApi(queueManager) {
 
   async function bootstrapWorkspaceShellData() {
     const id = orgId();
+    let bootstrapStatus = 0;
     const [bootstrap, policies, team] = await Promise.allSettled([
-      api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch(() => ({})),
+      api(`/api/workspace/bootstrap?organization_id=${id}`, { silent: true }).catch((err) => {
+        bootstrapStatus = err?.status || 0;
+        return {};
+      }),
       api(`/api/workspace/policies/ap?organization_id=${id}`, { silent: true }).catch(() => ({})),
       api(`/api/workspace/team/invites?organization_id=${id}`, { silent: true }).catch(() => []),
     ]);
 
     const bootstrapPayload = bootstrap.value || {};
+    // §15 Streak flow: a 401 bootstrap (fresh install, no session yet) means
+    // the Streak-style OnboardingFlow modal should be shown — its first step
+    // IS "Sign in with Google". Surface that state so inboxsdk-layer can
+    // trigger the modal. Don't infer auth state from the payload shape —
+    // use the explicit HTTP status.
+    const needsAuth = bootstrapStatus === 401 || bootstrapStatus === 403;
     const dashboard = bootstrapPayload.dashboard || {};
     const integrations = Array.isArray(bootstrapPayload.integrations) ? bootstrapPayload.integrations : [];
     const organization = bootstrapPayload.organization || {};
@@ -65,6 +75,12 @@ export function createWorkspaceShellApi(queueManager) {
       ? explicitCapabilities
       : getFallbackCapabilities(fallbackRole);
 
+    // Preserve onboarding state from bootstrap if present; otherwise,
+    // if bootstrap returned 401/403 (unauthenticated), emit a synthetic
+    // onboarding state so the modal fires on fresh install.
+    const onboarding = bootstrapPayload.onboarding
+      || (needsAuth ? { completed: false, needs_auth: true, step: 0 } : undefined);
+
     return {
       dashboard,
       integrations,
@@ -77,6 +93,8 @@ export function createWorkspaceShellApi(queueManager) {
       required_actions: Array.isArray(bootstrapPayload.required_actions) ? bootstrapPayload.required_actions : [],
       capabilities,
       current_user: currentUser,
+      onboarding,
+      needs_auth: needsAuth,
     };
   }
 
