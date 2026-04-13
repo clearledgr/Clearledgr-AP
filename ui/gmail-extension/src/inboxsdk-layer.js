@@ -2291,10 +2291,48 @@ function registerAppMenuAndRoutes() {
   });
 
   const workspaceShellApi = createWorkspaceShellApi(queueManager);
-  const oauthBridge = createOAuthBridge(() => {
+  const oauthBridge = createOAuthBridge((result) => {
+    // Any OAuth completion (success, failure, or popup-closed-early)
+    // invalidates our cached state — the server-side connection table
+    // changed, or the user might have picked a different identity.
     bootstrapCache = null;
     queueManager?.scanNow?.();
-    void getBootstrap();
+    const refreshed = getBootstrap();
+
+    if (!result) return;
+    const integration = String(result.integration || '').trim().toLowerCase();
+    if (result.success === false) {
+      const label = integration
+        ? integration.charAt(0).toUpperCase() + integration.slice(1)
+        : 'Integration';
+      const reason = result.detail ? ` (${result.detail})` : '';
+      showToast(`${label} connection failed${reason}`, 'error');
+      return;
+    }
+
+    // ERP connect → refresh ERP connection state + toolbar label so the
+    // "Connected as X" chip picks up the new realm/tenant.
+    if (integration === 'quickbooks' || integration === 'xero'
+        || integration === 'netsuite' || integration === 'sap'
+        || integration.startsWith('erp-')) {
+      // Bootstrap refresh picks up the new connection. The toolbar's
+      // "Connected as X" chip reads from bootstrap state, so it updates
+      // on the next render cycle.
+      void refreshed;
+      const label = integration.replace(/^erp-/, '');
+      const pretty = label ? label.charAt(0).toUpperCase() + label.slice(1) : 'ERP';
+      showToast(`${pretty} connected`, 'success');
+      return;
+    }
+
+    if (integration === 'gmail' || integration === 'google') {
+      showToast('Google connected', 'success');
+      return;
+    }
+
+    if (integration === 'slack') {
+      showToast('Slack connected', 'success');
+    }
   });
 
   store.sdk = sdk;

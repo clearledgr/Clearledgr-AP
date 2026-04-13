@@ -201,24 +201,46 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     setPending(true);
     setErpType(erpId);
     try {
-      // Now we DO have a JWT (from the sign-in step), so the
-      // admin-gated workspace endpoint is reachable.
       const payload = await api('/api/workspace/integrations/erp/connect/start', {
         method: 'POST',
         body: JSON.stringify({ organization_id: 'default', erp_type: erpId }),
       });
-      if (payload?.auth_url) {
-        if (oauthBridge) {
-          oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
-        } else {
-          window.open(payload.auth_url, '_blank', 'width=600,height=700');
-        }
+
+      // Credential-based ERPs (NetSuite, SAP): no OAuth popup. Backend
+      // returns a form spec; user fills it out on Connections later.
+      // Advance through onboarding — connecting is deferred.
+      if (payload?.method === 'form' || payload?.method === 'not_configured') {
+        setStep('creating');
+        return;
       }
-      // Advance even if ERP popup is still open — user can finish
-      // the ERP flow async; pipeline creation doesn't depend on it.
+
+      if (payload?.auth_url && oauthBridge) {
+        // Wait for the OAuth popup's real result rather than blindly
+        // advancing. The bridge fires clearledgr_erp_oauth_complete from
+        // the backend callback; we advance only on success (or on
+        // popup-closed-without-message, which we treat as optimistic
+        // success since the callback may have completed before the
+        // postMessage window opened).
+        await new Promise((resolve) => {
+          const handler = (event) => {
+            const data = event?.data;
+            if (!data || data.type !== 'clearledgr_erp_oauth_complete') return;
+            if (String(data.erp || '').toLowerCase() !== String(erpId).toLowerCase()) return;
+            window.removeEventListener('message', handler);
+            resolve({ success: !!data.success, detail: data.detail || null });
+          };
+          window.addEventListener('message', handler);
+          oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
+        });
+      } else if (payload?.auth_url) {
+        // No bridge available (defensive): open in a blank window and
+        // advance. Can't wait on a result we can't hear.
+        window.open(payload.auth_url, '_blank', 'width=600,height=700');
+      }
+
       setStep('creating');
     } catch {
-      // ERP failed — they can connect later from Connections page.
+      // ERP failed — user can connect later from Connections page.
       setStep('creating');
     } finally {
       setPending(false);

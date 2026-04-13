@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:8a4153c053e56bdaa745d1205d42a66ffd2b5d1240d51d53e8daf58d2c82a3d3 */
+/* clearledgr-source-fingerprint:8a63440a83e247d408449325b5fbb5f9329420cdb16128568a58b3c900e52af2 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61832,12 +61832,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           method: "POST",
           body: JSON.stringify({ organization_id: "default", erp_type: erpId })
         });
-        if (payload?.auth_url) {
-          if (oauthBridge) {
+        if (payload?.method === "form" || payload?.method === "not_configured") {
+          setStep("creating");
+          return;
+        }
+        if (payload?.auth_url && oauthBridge) {
+          await new Promise((resolve) => {
+            const handler = (event) => {
+              const data = event?.data;
+              if (!data || data.type !== "clearledgr_erp_oauth_complete")
+                return;
+              if (String(data.erp || "").toLowerCase() !== String(erpId).toLowerCase())
+                return;
+              window.removeEventListener("message", handler);
+              resolve({ success: !!data.success, detail: data.detail || null });
+            };
+            window.addEventListener("message", handler);
             oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`);
-          } else {
-            window.open(payload.auth_url, "_blank", "width=600,height=700");
-          }
+          });
+        } else if (payload?.auth_url) {
+          window.open(payload.auth_url, "_blank", "width=600,height=700");
         }
         setStep("creating");
       } catch {
@@ -62163,34 +62177,96 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/oauth-bridge.js
+  var OAUTH_MESSAGE_TYPES = new Set([
+    "clearledgr_oauth_complete",
+    "clearledgr_erp_oauth_complete"
+  ]);
+  function integrationFromMessage(data, fallback) {
+    if (!data)
+      return fallback;
+    if (data.type === "clearledgr_erp_oauth_complete" && data.erp) {
+      return String(data.erp);
+    }
+    return fallback;
+  }
   function createOAuthBridge(onComplete) {
     let activePopup = null;
     let pollInterval = null;
+    let currentIntegration = null;
+    let messageHandler = null;
+    let resolved = false;
+    function finish(payload) {
+      if (resolved)
+        return;
+      resolved = true;
+      clearInterval(pollInterval);
+      pollInterval = null;
+      if (messageHandler) {
+        window.removeEventListener("message", messageHandler);
+        messageHandler = null;
+      }
+      if (activePopup && !activePopup.closed) {
+        try {
+          activePopup.close();
+        } catch (_2) {}
+      }
+      activePopup = null;
+      currentIntegration = null;
+      try {
+        onComplete?.(payload);
+      } catch (_2) {}
+    }
     function startOAuth(authUrl, integrationName = "integration") {
       if (activePopup && !activePopup.closed) {
         activePopup.focus();
         return;
       }
+      currentIntegration = integrationName;
+      resolved = false;
       activePopup = window.open(authUrl, "clearledgr_oauth", "width=600,height=700,left=200,top=100,toolbar=no,menubar=no");
       if (!activePopup) {
-        onComplete?.({ success: false, error: "popup_blocked", integration: integrationName });
+        finish({ success: false, error: "popup_blocked", integration: integrationName });
         return;
       }
+      messageHandler = (event) => {
+        const data = event && event.data;
+        if (!data || typeof data !== "object")
+          return;
+        if (!OAUTH_MESSAGE_TYPES.has(data.type))
+          return;
+        finish({
+          success: Boolean(data.success),
+          integration: integrationFromMessage(data, currentIntegration),
+          organizationId: data.organizationId || null,
+          detail: data.detail || null
+        });
+      };
+      window.addEventListener("message", messageHandler);
       clearInterval(pollInterval);
       pollInterval = setInterval(() => {
         if (!activePopup || activePopup.closed) {
-          clearInterval(pollInterval);
-          pollInterval = null;
-          activePopup = null;
-          onComplete?.({ success: true, integration: integrationName });
+          finish({
+            success: true,
+            integration: currentIntegration,
+            detail: "popup_closed_without_message"
+          });
         }
       }, 1000);
     }
     function cleanup() {
       clearInterval(pollInterval);
-      if (activePopup && !activePopup.closed)
-        activePopup.close();
+      pollInterval = null;
+      if (messageHandler) {
+        window.removeEventListener("message", messageHandler);
+        messageHandler = null;
+      }
+      if (activePopup && !activePopup.closed) {
+        try {
+          activePopup.close();
+        } catch (_2) {}
+      }
       activePopup = null;
+      currentIntegration = null;
     }
     return { startOAuth, cleanup };
   }
@@ -75393,10 +75469,32 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       showToast(msg, type);
     });
     const workspaceShellApi = createWorkspaceShellApi(queueManager);
-    const oauthBridge = createOAuthBridge(() => {
+    const oauthBridge = createOAuthBridge((result) => {
       bootstrapCache = null;
       queueManager?.scanNow?.();
-      getBootstrap();
+      const refreshed = getBootstrap();
+      if (!result)
+        return;
+      const integration = String(result.integration || "").trim().toLowerCase();
+      if (result.success === false) {
+        const label = integration ? integration.charAt(0).toUpperCase() + integration.slice(1) : "Integration";
+        const reason = result.detail ? ` (${result.detail})` : "";
+        showToast(`${label} connection failed${reason}`, "error");
+        return;
+      }
+      if (integration === "quickbooks" || integration === "xero" || integration === "netsuite" || integration === "sap" || integration.startsWith("erp-")) {
+        const label = integration.replace(/^erp-/, "");
+        const pretty = label ? label.charAt(0).toUpperCase() + label.slice(1) : "ERP";
+        showToast(`${pretty} connected`, "success");
+        return;
+      }
+      if (integration === "gmail" || integration === "google") {
+        showToast("Google connected", "success");
+        return;
+      }
+      if (integration === "slack") {
+        showToast("Slack connected", "success");
+      }
     });
     store_default.sdk = sdk;
     store_default.openComposeWithPrefill = openComposeWithPrefill;
