@@ -279,6 +279,20 @@ def _resolve_runtime_surface_contract(request: Request) -> Dict[str, Any] | None
     return None
 
 
+# ---------------------------------------------------------------------------
+# Sentry wire check — remove once confirmed the DSN is live in prod.
+# GET /api/ops/sentry-test forces an unhandled exception so you can see it
+# land in the Sentry dashboard. Admin-gated so random users can't trigger it.
+# ---------------------------------------------------------------------------
+@router.get("/sentry-test")
+async def sentry_test(user: TokenData = Depends(get_current_user)) -> Dict[str, Any]:
+    if user.role not in _OPS_ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="admin_role_required")
+    raise RuntimeError(
+        "sentry wire test — this exception is intentional and should appear in Sentry"
+    )
+
+
 @router.get("/tenant-health")
 async def get_tenant_health(
     organization_id: str = Query("default"),
