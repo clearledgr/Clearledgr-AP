@@ -786,6 +786,12 @@ def get_user_by_email(email: str) -> Optional[User]:
 def create_user_from_google(email: str, google_id: str, organization_id: str) -> User:
     """
     Create or update a user from Google identity.
+
+    First user in the org becomes the owner — they're the one claiming
+    the organization through the onboarding flow and need to be able to
+    configure the ERP, complete onboarding steps, invite teammates. Any
+    subsequent Google sign-in uses the default ap_clerk seat; existing
+    users keep their role on re-auth.
     """
     db = _get_db()
     domain = email.split("@")[1] if "@" in email else None
@@ -794,11 +800,32 @@ def create_user_from_google(email: str, google_id: str, organization_id: str) ->
         organization_name=organization_id.replace("-", " ").replace("_", " ").title(),
         domain=domain,
     )
+    existing_users = db.get_users(organization_id, include_inactive=True) or []
+    role = ROLE_OWNER if not existing_users else "user"
     row = db.upsert_google_user(
         email=email,
         google_id=google_id,
         organization_id=organization_id,
         name=email.split("@")[0].replace(".", " ").title(),
-        role="user",
+        role=role,
     )
+    # Promote the sole user in an org to owner if they aren't already.
+    # Covers two cases:
+    #   1. Existing deploys where the first user signed in before this
+    #      promotion logic landed and got stuck as ap_clerk.
+    #   2. Re-auth on an empty org where upsert found their row but we
+    #      want them to be the owner.
+    # Does nothing once a second user joins — subsequent sign-ins keep
+    # whatever role they were assigned.
+    try:
+        if len(existing_users) <= 1:
+            row_id = str(row.get("id") or "")
+            current_role = str(row.get("role") or "")
+            if row_id and current_role != ROLE_OWNER:
+                db.update_user(row_id, role=ROLE_OWNER)
+                refreshed = db.get_user(row_id)
+                if refreshed:
+                    row = refreshed
+    except Exception:  # noqa: BLE001 — promotion is best-effort
+        pass
     return _row_to_user(row)
