@@ -1503,6 +1503,25 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
     try { queueManager.refreshQueue(); } catch (_) {}
   };
 
+  // User dismissed the modal ("Don't use Clearledgr on this account"). Close
+  // it and remember the choice for this Gmail account so we don't re-prompt
+  // on every page load. User can reopen from the sidebar "Connect Gmail" CTA.
+  const onDismiss = () => {
+    try {
+      const email = String(
+        queueManager?.runtimeConfig?.userEmail
+        || sdk?.User?.getEmailAddress?.()
+        || ''
+      ).trim().toLowerCase();
+      if (email && typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.set({
+          [`clearledgr_onboarding_dismissed_${email}`]: Date.now(),
+        });
+      }
+    } catch (_) { /* dismissal is best-effort */ }
+    container.remove();
+  };
+
   // Native extension auth: getAuthToken → register with backend → Bearer token.
   // This is the same path queueManager.backendFetch expects, so the ERP picker
   // call that follows will have a valid credential.
@@ -1518,6 +1537,7 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
     html`<${OnboardingFlow}
       api=${api}
       onComplete=${onComplete}
+      onDismiss=${onDismiss}
       oauthBridge=${oauthBridgeRef}
       backendUrl=${backendUrl}
       signIn=${signIn}
@@ -2340,7 +2360,28 @@ function registerAppMenuAndRoutes() {
       // sidebar uses so its postMessage listener and popup-close
       // poller are coordinated.
       if (data?.onboarding && !data.onboarding.completed) {
-        _showOnboardingFlow(data, oauthBridge);
+        // Respect the user's "Don't use Clearledgr on this account"
+        // dismissal — don't re-prompt on every page load.
+        const emailForDismiss = String(
+          queueManager?.runtimeConfig?.userEmail
+          || sdk?.User?.getEmailAddress?.()
+          || ''
+        ).trim().toLowerCase();
+        const dismissKey = emailForDismiss
+          ? `clearledgr_onboarding_dismissed_${emailForDismiss}`
+          : null;
+        const checkAndMount = () => {
+          if (!dismissKey || typeof chrome === 'undefined' || !chrome.storage?.local) {
+            _showOnboardingFlow(data, oauthBridge);
+            return;
+          }
+          chrome.storage.local.get([dismissKey], (stored) => {
+            if (!stored?.[dismissKey]) {
+              _showOnboardingFlow(data, oauthBridge);
+            }
+          });
+        };
+        checkAndMount();
       }
 
       bootstrapPromise = null;

@@ -24,7 +24,7 @@ const LOGO_URL = typeof chrome !== 'undefined' && chrome.runtime
 
 // ==================== STEP 1: AUTH MODAL ====================
 
-function AuthModal({ onSignIn, pending }) {
+function AuthModal({ onSignIn, pending, onDismiss }) {
   return html`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal">
@@ -49,9 +49,13 @@ function AuthModal({ onSignIn, pending }) {
           </svg>
           ${pending ? 'Connecting...' : 'Sign in with Google'}
         </button>
-        <p style="font:400 12px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:16px 0 0;text-align:center;">
+        <button
+          type="button"
+          onClick=${onDismiss}
+          style="display:block;margin:16px auto 0;padding:0;border:0;background:transparent;cursor:pointer;font:400 12px/1.4 'DM Sans',sans-serif;color:#94A3B8;text-align:center;text-decoration:underline;"
+        >
           Don't use Clearledgr on this account
-        </p>
+        </button>
       </div>
     </div>
   `;
@@ -171,7 +175,7 @@ function PipelineCreation({ erpType, onComplete }) {
 
 // ==================== MAIN FLOW ====================
 
-export default function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl, signIn }) {
+export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge, backendUrl, signIn }) {
   const [step, setStep] = useState('auth');  // auth | erp | creating | done
   const [pending, setPending] = useState(false);
   const [erpType, setErpType] = useState('');
@@ -260,7 +264,7 @@ export default function OnboardingFlow({ api, onComplete, oauthBridge, backendUr
       .cl-onboard-primary-btn:hover { background: #00C271; }
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
-    ${step === 'auth' ? html`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} />` : ''}
+    ${step === 'auth' ? html`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ''}
     ${step === 'erp' ? html`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} />` : ''}
     ${step === 'creating' ? html`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ''}
   `;

@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:022350dc0814480baa94a89b37a9310f9b6c131cb08ae6218b9cde0e0bb7f7d1 */
+/* clearledgr-source-fingerprint:1a4d075b0cda23e3863edfc2eea6e0570df9629c6af5ca96b84d402a764de787 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -61674,7 +61674,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   // src/components/OnboardingFlow.js
   var html3 = htm_module_default.bind(_);
   var LOGO_URL = typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon48.png") : "";
-  function AuthModal({ onSignIn, pending }) {
+  function AuthModal({ onSignIn, pending, onDismiss }) {
     return html3`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal">
@@ -61699,9 +61699,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </svg>
           ${pending ? "Connecting..." : "Sign in with Google"}
         </button>
-        <p style="font:400 12px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:16px 0 0;text-align:center;">
+        <button
+          type="button"
+          onClick=${onDismiss}
+          style="display:block;margin:16px auto 0;padding:0;border:0;background:transparent;cursor:pointer;font:400 12px/1.4 'DM Sans',sans-serif;color:#94A3B8;text-align:center;text-decoration:underline;"
+        >
           Don't use Clearledgr on this account
-        </p>
+        </button>
       </div>
     </div>
   `;
@@ -61805,7 +61809,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function OnboardingFlow({ api, onComplete, oauthBridge, backendUrl, signIn }) {
+  function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge, backendUrl, signIn }) {
     const [step, setStep] = d2("auth");
     const [pending, setPending] = d2(false);
     const [erpType, setErpType] = d2("");
@@ -61881,7 +61885,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-onboard-primary-btn:hover { background: #00C271; }
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
-    ${step === "auth" ? html3`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} />` : ""}
+    ${step === "auth" ? html3`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
     ${step === "erp" ? html3`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} />` : ""}
     ${step === "creating" ? html3`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
   `;
@@ -74710,6 +74714,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         queueManager.refreshQueue();
       } catch (_2) {}
     };
+    const onDismiss = () => {
+      try {
+        const email = String(queueManager?.runtimeConfig?.userEmail || sdk?.User?.getEmailAddress?.() || "").trim().toLowerCase();
+        if (email && typeof chrome !== "undefined" && chrome.storage?.local) {
+          chrome.storage.local.set({
+            [`clearledgr_onboarding_dismissed_${email}`]: Date.now()
+          });
+        }
+      } catch (_2) {}
+      container.remove();
+    };
     const signIn = async () => {
       const result = await queueManager.authorizeGmailNow();
       if (!result?.success) {
@@ -74720,6 +74735,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     J(html22`<${OnboardingFlow}
       api=${api}
       onComplete=${onComplete}
+      onDismiss=${onDismiss}
       oauthBridge=${oauthBridgeRef}
       backendUrl=${backendUrl}
       signIn=${signIn}
@@ -75433,7 +75449,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           rebuildMenuNavigation2();
         }
         if (data?.onboarding && !data.onboarding.completed) {
-          _showOnboardingFlow(data, oauthBridge);
+          const emailForDismiss = String(queueManager?.runtimeConfig?.userEmail || sdk?.User?.getEmailAddress?.() || "").trim().toLowerCase();
+          const dismissKey = emailForDismiss ? `clearledgr_onboarding_dismissed_${emailForDismiss}` : null;
+          const checkAndMount = () => {
+            if (!dismissKey || typeof chrome === "undefined" || !chrome.storage?.local) {
+              _showOnboardingFlow(data, oauthBridge);
+              return;
+            }
+            chrome.storage.local.get([dismissKey], (stored) => {
+              if (!stored?.[dismissKey]) {
+                _showOnboardingFlow(data, oauthBridge);
+              }
+            });
+          };
+          checkAndMount();
         }
         bootstrapPromise = null;
         return data;
