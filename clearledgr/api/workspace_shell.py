@@ -1326,7 +1326,15 @@ def erp_connect_start(
 
     if erp_type == "quickbooks":
         if not QUICKBOOKS_CLIENT_ID:
-            raise HTTPException(status_code=500, detail="QuickBooks not configured on this server")
+            # Not configured on this deploy — don't 500, let the caller
+            # (onboarding modal, Connections page) advance and surface a
+            # "connect later" state.
+            return {
+                "erp_type": "quickbooks",
+                "method": "not_configured",
+                "reason": "quickbooks_client_id_missing",
+                "message": "QuickBooks isn't set up on this deployment yet. You can connect it later from Connections.",
+            }
         params = {
             "client_id": QUICKBOOKS_CLIENT_ID,
             "redirect_uri": QUICKBOOKS_REDIRECT_URI,
@@ -1338,7 +1346,12 @@ def erp_connect_start(
 
     if erp_type == "xero":
         if not XERO_CLIENT_ID:
-            raise HTTPException(status_code=500, detail="Xero not configured on this server")
+            return {
+                "erp_type": "xero",
+                "method": "not_configured",
+                "reason": "xero_client_id_missing",
+                "message": "Xero isn't set up on this deployment yet. You can connect it later from Connections.",
+            }
         params = {
             "client_id": XERO_CLIENT_ID,
             "redirect_uri": XERO_REDIRECT_URI,
