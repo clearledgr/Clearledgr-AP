@@ -2001,7 +2001,33 @@ export default function SidebarApp({ queueManager }) {
                   }
                 }}
                 onQuery=${async (query, queryItem) => {
-                  showToast('Query received — agent response coming soon', 'info');
+                  // §6.8: conversational queries answered by the agent with
+                  // full grounding (invoice, vendor history, audit trail).
+                  // Backend shares the Slack query layer for consistent
+                  // answer format across decision surfaces.
+                  try {
+                    const orgId = queueManager.runtimeConfig?.organizationId || 'default';
+                    const url = queueManager.runtimeConfig?.backendUrl
+                      + '/extension/sidebar/query';
+                    const resp = await queueManager.backendFetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        query,
+                        ap_item_id: queryItem?.id || null,
+                        organization_id: orgId,
+                      }),
+                    });
+                    if (!resp || !resp.ok) {
+                      const text = await resp?.text?.().catch(() => '') || '';
+                      throw new Error(text || `HTTP ${resp?.status || 'unknown'}`);
+                    }
+                    const data = await resp.json();
+                    return data?.answer || '';
+                  } catch (err) {
+                    // ThreadSidebar surfaces the error inline in the Q&A log.
+                    throw err;
+                  }
                 }}
                 onUndoOverride=${async (window_) => {
                   // §9.1: Undo an auto-approved post while the override window is open.

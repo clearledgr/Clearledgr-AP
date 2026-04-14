@@ -130,6 +130,36 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
 .cl-ts-query-input::placeholder { color: #94A3B8; }
+.cl-ts-query-input:disabled { background: #F1F5F9; color: #94A3B8; cursor: not-allowed; }
+
+/* Conversational Q&A log — thesis §6.8 ("plain English questions
+   answered with live ERP data"). Shown above the input; scroll caps
+   at ~220px so the sidebar never grows unbounded. */
+.cl-ts-qa-log {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 240px; overflow-y: auto; padding: 4px 2px;
+}
+.cl-ts-qa-row { display: flex; flex-direction: column; gap: 4px; }
+.cl-ts-qa-q {
+  align-self: flex-end; max-width: 92%;
+  background: #0A1628; color: #fff; padding: 7px 11px;
+  border-radius: 12px 12px 2px 12px;
+  font: 500 12px/1.4 'DM Sans', sans-serif;
+  word-wrap: break-word;
+}
+.cl-ts-qa-a {
+  align-self: flex-start; max-width: 96%;
+  background: #F1F5F9; color: #0A1628; padding: 7px 11px;
+  border-radius: 12px 12px 12px 2px;
+  font: 400 12px/1.45 'DM Sans', sans-serif;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.cl-ts-qa-a.pending {
+  color: #64748B; font-style: italic;
+}
+.cl-ts-qa-a.error {
+  background: #FEF2F2; color: #B91C1C;
+}
 
 /* -- Banners (conditional, above the fixed sections) -- */
 .cl-ts-banner {
@@ -698,6 +728,15 @@ export function ThreadSidebar({
 }) {
   const [boxLinks, setBoxLinks] = useState([]);
   const [nowMs, setNowMs] = useState(Date.now());
+  // Conversational Q&A log. Each row: { q, a, status: 'pending'|'done'|'error' }.
+  // Reset when the user switches to a different invoice — conversations
+  // are per-Box, not per-session.
+  const [qaLog, setQaLog] = useState([]);
+  const [queryPending, setQueryPending] = useState(false);
+  useEffect(() => {
+    setQaLog([]);
+    setQueryPending(false);
+  }, [item?.id]);
 
   useEffect(() => {
     if (!item?.id || !fetchBoxLinks) return;
@@ -716,6 +755,53 @@ export function ThreadSidebar({
     const handle = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(handle);
   }, [item?.override_window?.expires_at]);
+
+  // Submit a query to the agent and append to the local log. onQuery
+  // is expected to return a promise resolving to { answer } (or just
+  // the string). Old stub returned undefined — the catch branch handles
+  // that too so the sidebar degrades gracefully if the adapter is stale.
+  const submitQuery = async (question) => {
+    if (!question || queryPending) return;
+    setQaLog((prev) => [...prev, { q: question, a: '', status: 'pending' }]);
+    setQueryPending(true);
+    try {
+      const result = onQuery ? await onQuery(question, item) : null;
+      const answer = typeof result === 'string'
+        ? result
+        : (result?.answer || result?.content || '');
+      setQaLog((prev) => {
+        const next = prev.slice();
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].status === 'pending') {
+            next[i] = {
+              ...next[i],
+              a: answer || 'No answer returned. Try rephrasing.',
+              status: answer ? 'done' : 'error',
+            };
+            break;
+          }
+        }
+        return next;
+      });
+    } catch (err) {
+      setQaLog((prev) => {
+        const next = prev.slice();
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i].status === 'pending') {
+            next[i] = {
+              ...next[i],
+              a: String(err?.message || err || 'Query failed'),
+              status: 'error',
+            };
+            break;
+          }
+        }
+        return next;
+      });
+    } finally {
+      setQueryPending(false);
+    }
+  };
 
   if (loading) return html`<${LoadingSkeleton} />`;
   if (!item) return null;
@@ -759,14 +845,28 @@ export function ThreadSidebar({
             Snoozed until ${snoozedUntil ? new Date(snoozedUntil).toLocaleString() : 'later'}
           </div>
         ` : ''}
+        ${qaLog.length > 0 ? html`
+          <div class="cl-ts-qa-log">
+            ${qaLog.map((row, idx) => html`
+              <div class="cl-ts-qa-row" key=${idx}>
+                <div class="cl-ts-qa-q">${row.q}</div>
+                <div class="cl-ts-qa-a ${row.status === 'pending' ? 'pending' : row.status === 'error' ? 'error' : ''}">
+                  ${row.status === 'pending' ? 'Thinking…' : row.a}
+                </div>
+              </div>
+            `)}
+          </div>
+        ` : ''}
         <input
           class="cl-ts-query-input"
           type="text"
-          placeholder="Ask about this vendor or invoice..."
+          placeholder=${queryPending ? 'Waiting for answer…' : 'Ask about this vendor or invoice...'}
+          disabled=${queryPending}
           onKeyDown=${(e) => {
-            if (e.key === 'Enter' && e.target.value.trim() && onQuery) {
-              onQuery(e.target.value.trim(), item);
+            if (e.key === 'Enter' && e.target.value.trim() && !queryPending) {
+              const q = e.target.value.trim();
               e.target.value = '';
+              void submitQuery(q);
             }
           }}
         />

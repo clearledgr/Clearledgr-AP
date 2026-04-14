@@ -305,6 +305,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/suggestions/gl-code",
     "/extension/suggestions/vendor",
     "/extension/suggestions/amount-validation",
+    "/extension/sidebar/query",
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {

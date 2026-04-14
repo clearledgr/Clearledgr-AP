@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:67c552ba9f403d9f1ad3bf4f18078208561000988baf7ebcc5c2fd1c41c585a5 */
+/* clearledgr-source-fingerprint:cc9c0f2ac3830f5175df694ee7c3b46c097781a094c3927632ec1a95cf262ad7 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59086,6 +59086,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 }
 .cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
 .cl-ts-query-input::placeholder { color: #94A3B8; }
+.cl-ts-query-input:disabled { background: #F1F5F9; color: #94A3B8; cursor: not-allowed; }
+
+/* Conversational Q&A log — thesis §6.8 ("plain English questions
+   answered with live ERP data"). Shown above the input; scroll caps
+   at ~220px so the sidebar never grows unbounded. */
+.cl-ts-qa-log {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 240px; overflow-y: auto; padding: 4px 2px;
+}
+.cl-ts-qa-row { display: flex; flex-direction: column; gap: 4px; }
+.cl-ts-qa-q {
+  align-self: flex-end; max-width: 92%;
+  background: #0A1628; color: #fff; padding: 7px 11px;
+  border-radius: 12px 12px 2px 12px;
+  font: 500 12px/1.4 'DM Sans', sans-serif;
+  word-wrap: break-word;
+}
+.cl-ts-qa-a {
+  align-self: flex-start; max-width: 96%;
+  background: #F1F5F9; color: #0A1628; padding: 7px 11px;
+  border-radius: 12px 12px 12px 2px;
+  font: 400 12px/1.45 'DM Sans', sans-serif;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.cl-ts-qa-a.pending {
+  color: #64748B; font-style: italic;
+}
+.cl-ts-qa-a.error {
+  background: #FEF2F2; color: #B91C1C;
+}
 
 /* -- Banners (conditional, above the fixed sections) -- */
 .cl-ts-banner {
@@ -59635,6 +59665,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }) {
     const [boxLinks, setBoxLinks] = d2([]);
     const [nowMs, setNowMs] = d2(Date.now());
+    const [qaLog, setQaLog] = d2([]);
+    const [queryPending, setQueryPending] = d2(false);
+    y2(() => {
+      setQaLog([]);
+      setQueryPending(false);
+    }, [item?.id]);
     y2(() => {
       if (!item?.id || !fetchBoxLinks)
         return;
@@ -59656,6 +59692,47 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const handle = setInterval(() => setNowMs(Date.now()), 1000);
       return () => clearInterval(handle);
     }, [item?.override_window?.expires_at]);
+    const submitQuery = async (question) => {
+      if (!question || queryPending)
+        return;
+      setQaLog((prev) => [...prev, { q: question, a: "", status: "pending" }]);
+      setQueryPending(true);
+      try {
+        const result = onQuery ? await onQuery(question, item) : null;
+        const answer = typeof result === "string" ? result : result?.answer || result?.content || "";
+        setQaLog((prev) => {
+          const next = prev.slice();
+          for (let i3 = next.length - 1;i3 >= 0; i3 -= 1) {
+            if (next[i3].status === "pending") {
+              next[i3] = {
+                ...next[i3],
+                a: answer || "No answer returned. Try rephrasing.",
+                status: answer ? "done" : "error"
+              };
+              break;
+            }
+          }
+          return next;
+        });
+      } catch (err) {
+        setQaLog((prev) => {
+          const next = prev.slice();
+          for (let i3 = next.length - 1;i3 >= 0; i3 -= 1) {
+            if (next[i3].status === "pending") {
+              next[i3] = {
+                ...next[i3],
+                a: String(err?.message || err || "Query failed"),
+                status: "error"
+              };
+              break;
+            }
+          }
+          return next;
+        });
+      } finally {
+        setQueryPending(false);
+      }
+    };
     if (loading)
       return m3`<${LoadingSkeleton} />`;
     if (!item)
@@ -59698,14 +59775,28 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             Snoozed until ${snoozedUntil ? new Date(snoozedUntil).toLocaleString() : "later"}
           </div>
         ` : ""}
+        ${qaLog.length > 0 ? m3`
+          <div class="cl-ts-qa-log">
+            ${qaLog.map((row, idx) => m3`
+              <div class="cl-ts-qa-row" key=${idx}>
+                <div class="cl-ts-qa-q">${row.q}</div>
+                <div class="cl-ts-qa-a ${row.status === "pending" ? "pending" : row.status === "error" ? "error" : ""}">
+                  ${row.status === "pending" ? "Thinking…" : row.a}
+                </div>
+              </div>
+            `)}
+          </div>
+        ` : ""}
         <input
           class="cl-ts-query-input"
           type="text"
-          placeholder="Ask about this vendor or invoice..."
+          placeholder=${queryPending ? "Waiting for answer…" : "Ask about this vendor or invoice..."}
+          disabled=${queryPending}
           onKeyDown=${(e3) => {
-      if (e3.key === "Enter" && e3.target.value.trim() && onQuery) {
-        onQuery(e3.target.value.trim(), item);
+      if (e3.key === "Enter" && e3.target.value.trim() && !queryPending) {
+        const q3 = e3.target.value.trim();
         e3.target.value = "";
+        submitQuery(q3);
       }
     }}
         />
@@ -61643,7 +61734,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     }}
                 onQuery=${async (query, queryItem) => {
-      showToast("Query received — agent response coming soon", "info");
+      try {
+        const orgId = queueManager.runtimeConfig?.organizationId || "default";
+        const url = queueManager.runtimeConfig?.backendUrl + "/extension/sidebar/query";
+        const resp = await queueManager.backendFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            ap_item_id: queryItem?.id || null,
+            organization_id: orgId
+          })
+        });
+        if (!resp || !resp.ok) {
+          const text = await resp?.text?.().catch(() => "") || "";
+          throw new Error(text || `HTTP ${resp?.status || "unknown"}`);
+        }
+        const data = await resp.json();
+        return data?.answer || "";
+      } catch (err) {
+        throw err;
+      }
     }}
                 onUndoOverride=${async (window_) => {
       try {
