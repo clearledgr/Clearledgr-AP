@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:426fae38f261140f2b227ba6878d120e7e2f08caf05537b34d019a91c18a315e */
+/* clearledgr-source-fingerprint:67c552ba9f403d9f1ad3bf4f18078208561000988baf7ebcc5c2fd1c41c585a5 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -64609,6 +64609,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
           <strong style="font-size:13px">${entry?.title || entry?.operator_title || "Update"}</strong>
+          ${Number(entry?._repeatCount) > 1 ? html5`<span style="
+                font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;
+                background:#F1F5F9;color:#64748B;font-family:var(--font-mono);
+              " title="This action repeated ${entry._repeatCount} times today">×${entry._repeatCount}</span>` : null}
           ${entry?.operator_severity ? html5`<span style="
                 font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
                 background:${entry.operator_severity === "success" ? "#ECFDF5" : entry.operator_severity === "warning" ? "#FEF3C7" : entry.operator_severity === "error" ? "#FEF2F2" : "#EFF6FF"};
@@ -64667,7 +64671,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return html5`<div class=${`panel home-surface-panel ${className}`.trim()}>
     <div class="home-surface-head">
       <div>
-        <div class="home-section-label">${title}</div>
         <h3 style="margin:0 0 4px">${title}</h3>
         ${detail ? html5`<p class="muted" style="margin:0">${detail}</p>` : null}
       </div>
@@ -64726,8 +64729,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       missingSetup.push("Approval channel");
     if (!erpOk)
       missingSetup.push("ERP");
-    if (!policyOk)
-      missingSetup.push("Approval rules");
+    const showSetupBanner = missingSetup.length > 0;
     const [connectGmail, gmailPending] = useAction2(async () => {
       const payload = await api("/api/workspace/integrations/gmail/connect/start", {
         method: "POST",
@@ -65023,7 +65025,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, [queue]);
     const agentActionsToday = T2(() => {
       const midnightIso = new Date().toISOString().slice(0, 10);
-      return (Array.isArray(recentAudit) ? recentAudit : []).filter((e3) => String(e3?.ts || e3?.created_at || "").slice(0, 10) >= midnightIso).slice(0, 10);
+      const todays = (Array.isArray(recentAudit) ? recentAudit : []).filter((e3) => String(e3?.ts || e3?.created_at || "").slice(0, 10) >= midnightIso);
+      const groups = new Map;
+      for (const event of todays) {
+        const key = [
+          String(event?.ap_item_id || event?.box_id || ""),
+          String(event?.event_type || event?.operator_title || ""),
+          String(event?.operator_title || event?.title || "")
+        ].join("::");
+        const prior = groups.get(key);
+        if (!prior) {
+          groups.set(key, { event, count: 1 });
+          continue;
+        }
+        const priorTs = String(prior.event?.ts || prior.event?.created_at || "");
+        const thisTs = String(event?.ts || event?.created_at || "");
+        prior.count += 1;
+        if (thisTs > priorTs)
+          prior.event = event;
+      }
+      const collapsed = Array.from(groups.values()).sort((a3, b) => {
+        const ta = String(a3.event?.ts || a3.event?.created_at || "");
+        const tb = String(b.event?.ts || b.event?.created_at || "");
+        return tb.localeCompare(ta);
+      }).slice(0, 10);
+      return collapsed.map(({ event, count }) => count > 1 ? { ...event, _repeatCount: count } : event);
     }, [recentAudit]);
     return html5`
     <div class="topbar home-header-shell">
@@ -65036,7 +65062,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     </div>
 
-    ${!allReady ? html5`<${SetupNotice}
+    ${showSetupBanner ? html5`<${SetupNotice}
             adminAccess=${adminAccess}
             missingSetup=${missingSetup}
             navigate=${navigate}

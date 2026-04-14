@@ -109,6 +109,12 @@ function AuditEventRow({ entry, actionLabel = 'Open record', onAction }) {
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
           <strong style="font-size:13px">${entry?.title || entry?.operator_title || 'Update'}</strong>
+          ${Number(entry?._repeatCount) > 1
+            ? html`<span style="
+                font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;
+                background:#F1F5F9;color:#64748B;font-family:var(--font-mono);
+              " title="This action repeated ${entry._repeatCount} times today">×${entry._repeatCount}</span>`
+            : null}
           ${entry?.operator_severity
             ? html`<span style="
                 font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
@@ -250,10 +256,12 @@ function InsightList({ items = [] }) {
 }
 
 function SectionPanel({ title, detail, actionLabel = '', onAction, children, panelMinHeight = 0, className = '' }) {
+  // §6.1: Section header. One title, not two. The previous render had a
+  // home-section-label (uppercase eyebrow) AND an h3 with the same text —
+  // redundant chrome that §7 ("density without ambiguity") reads as noise.
   return html`<div class=${`panel home-surface-panel ${className}`.trim()}>
     <div class="home-surface-head">
       <div>
-        <div class="home-section-label">${title}</div>
         <h3 style="margin:0 0 4px">${title}</h3>
         ${detail ? html`<p class="muted" style="margin:0">${detail}</p>` : null}
       </div>
@@ -317,11 +325,17 @@ export default function HomePage({
   const pilotSnapshot = dashboard?.pilot_snapshot || {};
   const agenticSnapshot = dashboard?.agentic_snapshot || {};
 
+  // §6.1: the home banner is for operational blockers (the AP pipeline
+  // literally cannot run without these). Configuration gaps like policy
+  // rules live in Settings; they shouldn't yellow-flag the home page
+  // every time an admin loads it. allReady still factors in policy for
+  // the greeting copy, but the warning banner is reserved for things
+  // that block pipeline execution.
   const missingSetup = [];
   if (!gmailOk) missingSetup.push(gmailReconnectRequired ? 'Gmail reconnect' : 'Gmail');
   if (!approvalSurfaceOk) missingSetup.push('Approval channel');
   if (!erpOk) missingSetup.push('ERP');
-  if (!policyOk) missingSetup.push('Approval rules');
+  const showSetupBanner = missingSetup.length > 0;
 
   const [connectGmail, gmailPending] = useAction(async () => {
     const payload = await api('/api/workspace/integrations/gmail/connect/start', {
@@ -669,9 +683,42 @@ export default function HomePage({
 
   const agentActionsToday = useMemo(() => {
     const midnightIso = new Date().toISOString().slice(0, 10);
-    return (Array.isArray(recentAudit) ? recentAudit : [])
-      .filter((e) => String(e?.ts || e?.created_at || '').slice(0, 10) >= midnightIso)
+    const todays = (Array.isArray(recentAudit) ? recentAudit : [])
+      .filter((e) => String(e?.ts || e?.created_at || '').slice(0, 10) >= midnightIso);
+    // Thesis §6.1: one line per action. The audit stream often writes
+    // multiple events per step (pre-write Rule 1 audit, retries, post-write)
+    // — they surface as visually identical rows. Collapse by (ap_item_id,
+    // event_type, title) keeping the most recent occurrence, plus a repeat
+    // counter so the Controller still sees that something happened N times.
+    const groups = new Map();
+    for (const event of todays) {
+      const key = [
+        String(event?.ap_item_id || event?.box_id || ''),
+        String(event?.event_type || event?.operator_title || ''),
+        String(event?.operator_title || event?.title || ''),
+      ].join('::');
+      const prior = groups.get(key);
+      if (!prior) {
+        groups.set(key, { event, count: 1 });
+        continue;
+      }
+      const priorTs = String(prior.event?.ts || prior.event?.created_at || '');
+      const thisTs = String(event?.ts || event?.created_at || '');
+      prior.count += 1;
+      if (thisTs > priorTs) prior.event = event;
+    }
+    // Re-sort by the latest timestamp in each group, newest first.
+    const collapsed = Array.from(groups.values())
+      .sort((a, b) => {
+        const ta = String(a.event?.ts || a.event?.created_at || '');
+        const tb = String(b.event?.ts || b.event?.created_at || '');
+        return tb.localeCompare(ta);
+      })
       .slice(0, 10);
+    // Attach the repeat count as _repeatCount so AuditEventRow can surface it.
+    return collapsed.map(({ event, count }) => (
+      count > 1 ? { ...event, _repeatCount: count } : event
+    ));
   }, [recentAudit]);
 
   return html`
@@ -689,7 +736,7 @@ export default function HomePage({
       </div>
     </div>
 
-    ${!allReady
+    ${showSetupBanner
       ? html`<${SetupNotice}
             adminAccess=${adminAccess}
             missingSetup=${missingSetup}
