@@ -30,66 +30,122 @@ def migration(version: int, description: str):
     return decorator
 
 
+# Advisory-lock id for the migration runner. Postgres will serialize every
+# caller of pg_advisory_lock(MIGRATION_LOCK_KEY) across the whole cluster,
+# which is what we need when api/worker/beat processes boot simultaneously
+# and each try to apply pending migrations.
+MIGRATION_LOCK_KEY = 0x0C11_8D61  # arbitrary 32-bit constant, "clearledgr" vibe
+
+
 def run_migrations(db) -> int:
-    """Run all pending migrations. Returns count of migrations applied."""
+    """Run all pending migrations. Returns count of migrations applied.
+
+    Safe to call concurrently from multiple processes (Railway runs api +
+    worker + beat, and gunicorn runs multiple api workers). The first
+    caller to acquire the advisory lock runs the pending migrations; the
+    others wait, then find current_version updated and do nothing.
+    """
     db.initialize()
 
-    # Ensure schema_versions table exists
+    # Ensure schema_versions table exists (idempotent, safe to race).
     with db.connect() as conn:
         cur = conn.cursor()
-        if db.use_postgres:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS schema_versions (
-                    version INTEGER PRIMARY KEY,
-                    description TEXT,
-                    applied_at TEXT NOT NULL
-                )
-            """)
-        else:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS schema_versions (
-                    version INTEGER PRIMARY KEY,
-                    description TEXT,
-                    applied_at TEXT NOT NULL
-                )
-            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schema_versions (
+                version INTEGER PRIMARY KEY,
+                description TEXT,
+                applied_at TEXT NOT NULL
+            )
+        """)
         conn.commit()
 
-    # Get current version
-    with db.connect() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(version) FROM schema_versions")
-        row = cur.fetchone()
-        current_version = row[0] if row and row[0] is not None else 0
-
-    # Sort and run pending migrations
-    sorted_migrations = sorted(_MIGRATIONS, key=lambda m: m[0])
-    applied = 0
-
-    for version, description, fn in sorted_migrations:
-        if version <= current_version:
-            continue
-
-        logger.info("[Migration] Applying v%d: %s", version, description)
+    # Acquire the cluster-wide advisory lock (Postgres only). SQLite
+    # development runs single-process, so no lock needed. The lock is
+    # released automatically when the connection closes.
+    lock_conn = None
+    if db.use_postgres:
         try:
-            with db.connect() as conn:
-                cur = conn.cursor()
-                fn(cur, db)
-                cur.execute(
-                    "INSERT INTO schema_versions (version, description, applied_at) VALUES (?, ?, ?)",
-                    (version, description, datetime.now(timezone.utc).isoformat()),
-                )
-                conn.commit()
-            applied += 1
-            logger.info("[Migration] v%d applied successfully", version)
+            lock_conn = db.connect().__enter__()
+            lock_conn.cursor().execute(
+                db._prepare_sql("SELECT pg_advisory_lock(?)"),
+                (MIGRATION_LOCK_KEY,),
+            )
+            lock_conn.commit()
         except Exception as exc:
-            logger.error("[Migration] v%d FAILED: %s", version, exc)
-            raise  # Don't continue if a migration fails
+            logger.warning(
+                "[Migration] advisory lock not acquired (%s); continuing without cluster serialization",
+                exc,
+            )
+            lock_conn = None
 
-    if applied:
-        logger.info("[Migration] %d migration(s) applied. Schema at v%d",
-                     applied, sorted_migrations[-1][0] if sorted_migrations else 0)
-    return applied
+    try:
+        # Get current version AFTER acquiring the lock so we see any
+        # versions that a racing process just applied.
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT MAX(version) FROM schema_versions")
+            row = cur.fetchone()
+            current_version = row[0] if row and row[0] is not None else 0
+
+        sorted_migrations = sorted(_MIGRATIONS, key=lambda m: m[0])
+        applied = 0
+
+        for version, description, fn in sorted_migrations:
+            if version <= current_version:
+                continue
+
+            logger.info("[Migration] Applying v%d: %s", version, description)
+            try:
+                with db.connect() as conn:
+                    cur = conn.cursor()
+                    fn(cur, db)
+                    # Belt-and-braces: if another process raced past the
+                    # lock (it shouldn't, but crashes mid-migration can
+                    # leave the lock stuck for us to re-acquire and the
+                    # INSERT still succeeds once), use conflict-tolerant
+                    # SQL. DO NOTHING means "someone beat us to it — we
+                    # already applied the same DDL idempotently via
+                    # IF NOT EXISTS, so dropping the version row is
+                    # harmless."
+                    if db.use_postgres:
+                        cur.execute(
+                            db._prepare_sql(
+                                "INSERT INTO schema_versions (version, description, applied_at) "
+                                "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
+                            ),
+                            (version, description, datetime.now(timezone.utc).isoformat()),
+                        )
+                    else:
+                        cur.execute(
+                            "INSERT OR IGNORE INTO schema_versions (version, description, applied_at) "
+                            "VALUES (?, ?, ?)",
+                            (version, description, datetime.now(timezone.utc).isoformat()),
+                        )
+                    conn.commit()
+                applied += 1
+                logger.info("[Migration] v%d applied successfully", version)
+            except Exception as exc:
+                logger.error("[Migration] v%d FAILED: %s", version, exc)
+                raise  # Don't continue if a migration fails
+
+        if applied:
+            logger.info("[Migration] %d migration(s) applied. Schema at v%d",
+                         applied, sorted_migrations[-1][0] if sorted_migrations else 0)
+        return applied
+    finally:
+        if lock_conn is not None:
+            try:
+                lock_conn.cursor().execute(
+                    db._prepare_sql("SELECT pg_advisory_unlock(?)"),
+                    (MIGRATION_LOCK_KEY,),
+                )
+                lock_conn.commit()
+            except Exception:
+                pass
+            try:
+                lock_conn.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def get_schema_version(db) -> int:
