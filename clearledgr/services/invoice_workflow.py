@@ -1728,11 +1728,38 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         try:
             mention_suffix = f" · {' '.join(approval_mentions)}" if approval_mentions else ""
-            # Send to Slack
-            message = await self.slack_client.send_message(
-                channel=approval_channel,
-                text=f"Invoice approval needed: {invoice.vendor_name} - ${invoice.amount:,.2f}{mention_suffix}",
+            # §6.8 intelligent routing: DM for low-amount personal approvals,
+            # DM + channel copy for above-threshold, channel for everything
+            # else. Delivery falls back to channel if DM can't resolve the
+            # approver's Slack user.
+            from clearledgr.services.slack_notifications import deliver_approval_with_routing
+            from types import SimpleNamespace
+            # Pick the first authorization target (email) as the DM recipient.
+            # Fall back to None → channel delivery.
+            primary_approver_email: Optional[str] = None
+            for candidate in approval_authorization_targets:
+                candidate_str = str(candidate or "").strip()
+                if "@" in candidate_str:
+                    primary_approver_email = candidate_str
+                    break
+            routing_result = await deliver_approval_with_routing(
                 blocks=blocks,
+                text=f"Invoice approval needed: {invoice.vendor_name} - ${invoice.amount:,.2f}{mention_suffix}",
+                approval_channel=approval_channel,
+                approver_email=primary_approver_email,
+                amount=float(invoice.amount or 0),
+                message_type="personal_approval",
+                organization_id=self.organization_id,
+            )
+            if not routing_result:
+                raise RuntimeError("slack_delivery_failed")
+            # Normalize to a SimpleNamespace so the existing downstream
+            # code (message.channel / message.ts) keeps working unchanged.
+            message = SimpleNamespace(
+                channel=routing_result.get("channel") or approval_channel,
+                ts=routing_result.get("ts") or "",
+                routing_rule=routing_result.get("routing_rule"),
+                dm_sent=routing_result.get("dm_sent", False),
             )
             
             # Save Slack thread reference

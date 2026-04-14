@@ -411,6 +411,140 @@ async def sidebar_query_suggestions(
     return {"suggestions": suggestions[:4]}
 
 
+class FeedbackRequest(BaseModel):
+    """Report issue / feedback from the Gmail sidebar.
+
+    Intentionally permissive schema — we want the smallest possible
+    friction when a user hits something broken. `message` is the only
+    required field. `kind` lets the user flag bug / suggestion / praise
+    so we can route accordingly.
+    """
+    message: str
+    kind: Optional[str] = "bug"  # bug | suggestion | praise | other
+    ap_item_id: Optional[str] = None
+    organization_id: Optional[str] = "default"
+    page: Optional[str] = None  # e.g. "sidebar", "home", "pipeline"
+    user_agent: Optional[str] = None
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    _user=Depends(get_current_user),
+):
+    """Record user feedback + forward to Slack for immediate triage.
+
+    Failure modes:
+      - Slack delivery fails → still return 200 (feedback is captured
+        in the audit log; the Slack post is a nice-to-have, not a
+        dependency).
+      - Backend completely down → user sees a toast in the sidebar,
+        can retry. We never lose a submission to a Slack outage.
+    """
+    message = str(request.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="empty_message")
+    if len(message) > 4000:
+        raise HTTPException(status_code=413, detail="message_too_long")
+
+    org_id = resolve_org_id_for_user(_user, request.organization_id)
+    kind = (request.kind or "bug").strip().lower()
+    if kind not in {"bug", "suggestion", "praise", "other"}:
+        kind = "other"
+    user_email = str(getattr(_user, "email", "") or "unknown")
+    db = get_db()
+
+    # Snapshot invoice context if the user is reporting from a specific
+    # invoice — that's usually the most useful debug info.
+    invoice_snippet: Optional[Dict[str, Any]] = None
+    if request.ap_item_id:
+        try:
+            focus = db.get_ap_item(request.ap_item_id)
+            if focus and str(focus.get("organization_id") or org_id) == org_id:
+                invoice_snippet = {
+                    "id": str(focus.get("id") or ""),
+                    "vendor": str(focus.get("vendor_name") or ""),
+                    "amount": focus.get("amount"),
+                    "currency": focus.get("currency"),
+                    "state": str(focus.get("state") or ""),
+                    "invoice_number": str(focus.get("invoice_number") or ""),
+                }
+        except Exception:  # noqa: BLE001
+            invoice_snippet = None
+
+    # Log to audit trail so we never lose a submission.
+    try:
+        db.append_ap_audit_event({
+            "ap_item_id": request.ap_item_id,
+            "event_type": "user_feedback_submitted",
+            "actor_type": "user",
+            "actor_id": user_email,
+            "reason": message[:200],
+            "metadata": {
+                "kind": kind,
+                "page": str(request.page or ""),
+                "user_agent": str(request.user_agent or "")[:200],
+                "full_message": message,
+            },
+            "organization_id": org_id,
+            "source": "sidebar_feedback",
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[feedback] audit log failed: %s", exc)
+
+    # Forward to Slack (best-effort).
+    slack_delivered = False
+    try:
+        from clearledgr.services.slack_notifications import _post_slack_blocks
+        import os as _os
+        channel = (
+            _os.getenv("SLACK_FEEDBACK_CHANNEL")
+            or _os.getenv("SLACK_APPROVAL_CHANNEL")
+            or _os.getenv("SLACK_DEFAULT_CHANNEL")
+            or "#finance-approvals"
+        )
+        emoji = {"bug": "🐞", "suggestion": "💡", "praise": "🎉", "other": "💬"}.get(kind, "💬")
+        header_text = f"{emoji} {kind.title()} from {user_email}"
+        body_lines = [f"> {line}" for line in message.split("\n")[:20]]
+        context_lines = []
+        if request.page:
+            context_lines.append(f"Page: {request.page}")
+        if invoice_snippet:
+            amt_raw = invoice_snippet.get("amount")
+            try:
+                amt_num = float(amt_raw) if amt_raw is not None else 0.0
+                amt_display = f"{(invoice_snippet.get('currency') or 'USD')} {amt_num:,.2f}"
+            except (TypeError, ValueError):
+                amt_display = str(amt_raw or "")
+            context_lines.append(
+                f"Invoice: {invoice_snippet.get('vendor') or 'Unknown'} "
+                f"#{invoice_snippet.get('invoice_number') or '—'} · "
+                f"{amt_display} · {invoice_snippet.get('state') or '—'}"
+            )
+        if request.user_agent:
+            context_lines.append(f"Client: {request.user_agent[:120]}")
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": header_text}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(body_lines)}},
+        ]
+        if context_lines:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": " · ".join(context_lines)}],
+            })
+        result = await _post_slack_blocks(
+            blocks=blocks,
+            text=f"{kind.title()} from {user_email}: {message[:120]}",
+            preferred_channel=channel,
+            organization_id=org_id,
+        )
+        slack_delivered = bool(result)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[feedback] Slack forward failed: %s", exc)
+
+    return {"ok": True, "slack_delivered": slack_delivered}
+
+
 @router.get("/needs-info-draft/{ap_item_id}")
 async def get_needs_info_draft(
     ap_item_id: str,

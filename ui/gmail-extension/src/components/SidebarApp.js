@@ -2137,6 +2137,28 @@ export default function SidebarApp({ queueManager }) {
                   }
                 }}
                 onQuery=${agentQuery}
+                onSubmitFeedback=${async ({ message, kind, ap_item_id, page }) => {
+                  const orgId = queueManager.runtimeConfig?.organizationId || 'default';
+                  const url = (queueManager.runtimeConfig?.backendUrl || '')
+                    + '/extension/feedback';
+                  const resp = await queueManager.backendFetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      message,
+                      kind: kind || 'bug',
+                      ap_item_id: ap_item_id || null,
+                      organization_id: orgId,
+                      page: page || 'sidebar',
+                      user_agent: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+                    }),
+                  });
+                  if (!resp || !resp.ok) {
+                    const text = await resp?.text?.().catch(() => '') || '';
+                    throw new Error(text || `HTTP ${resp?.status || 'unknown'}`);
+                  }
+                  return resp.json();
+                }}
                 onUndoOverride=${async (window_) => {
                   // §9.1: Undo an auto-approved post while the override window is open.
                   // Backend: POST /api/ap/items/{id}/reverse

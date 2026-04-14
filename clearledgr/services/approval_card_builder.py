@@ -347,6 +347,82 @@ def build_approval_blocks(
         {"type": "header", "text": {"type": "plain_text", "text": header_text}},
     ]
 
+    # ========== §6.8 MATCH ICON ROW — scannable in under two seconds =========
+    # Thesis: "Three icons in a row: Purchase Order ✓, Goods Receipt ✓,
+    # Invoice ✓. Or with discrepancy: GRN ⚠ — £422 delta. Visual at a
+    # glance. No text required to understand the status."
+    def _match_icon(status: Any) -> str:
+        s = str(status or "").lower().strip()
+        if s in {"matched", "passed", "confirmed", "verified", "ok", "linked"}:
+            return "✓"
+        if s in {"exception", "warning", "mismatch", "partial", "delta"}:
+            return "⚠"
+        if s in {"failed", "missing", "not_linked", "not_provided", "na"}:
+            return "✗"
+        return "—"
+
+    _po_match = getattr(invoice, "po_match_result", None) or (extra_context or {}).get("po_match_result") or {}
+    _grn_match = (extra_context or {}).get("grn_match_result") or {}
+    _three_way = (extra_context or {}).get("three_way_match") or {}
+
+    # PO icon: linked + matched > linked > not linked
+    if _po_match:
+        _po_icon = _match_icon(_po_match.get("match_status") or ("matched" if _po_match.get("po_number") else ""))
+    elif getattr(invoice, "po_number", None):
+        _po_icon = "✓"  # PO number extracted but not yet matched in ERP
+    else:
+        _po_icon = "✗"
+
+    # GRN icon: from dedicated match result or three_way_match
+    _grn_status_raw = (
+        _grn_match.get("status")
+        or _three_way.get("grn_status")
+        or _three_way.get("grn_match")
+        or ""
+    )
+    _grn_icon = _match_icon(_grn_status_raw) if _grn_status_raw else "—"
+
+    # Invoice match: usually from three-way match or the invoice's own
+    # extraction confidence + exception state
+    _inv_status_raw = (
+        _three_way.get("invoice_status")
+        or _three_way.get("overall_status")
+        or _three_way.get("match_status")
+        or ""
+    )
+    if _inv_status_raw:
+        _inv_icon = _match_icon(_inv_status_raw)
+    elif invoice.policy_compliance and not invoice.policy_compliance.get("compliant", True):
+        _inv_icon = "⚠"
+    elif invoice.confidence and invoice.confidence >= 0.9:
+        _inv_icon = "✓"
+    else:
+        _inv_icon = "—"
+
+    # Variance line (if we know the delta)
+    _variance_bits = []
+    _po_delta = _po_match.get("delta") or _po_match.get("variance_amount")
+    if _po_delta:
+        try:
+            _variance_bits.append(f"PO delta {invoice.currency} {abs(float(_po_delta)):,.2f}")
+        except (TypeError, ValueError):
+            pass
+    _grn_delta = _grn_match.get("delta") or _grn_match.get("variance_amount")
+    if _grn_delta:
+        try:
+            _variance_bits.append(f"GRN delta {invoice.currency} {abs(float(_grn_delta)):,.2f}")
+        except (TypeError, ValueError):
+            pass
+
+    _icon_row = f"PO {_po_icon}    GRN {_grn_icon}    Invoice {_inv_icon}"
+    if _variance_bits:
+        _icon_row += "  ·  " + "  ·  ".join(_variance_bits)
+
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"`{_icon_row}`"},
+    })
+
     # ========== EXTRACTION CONTEXT ==========
     missing_fields = []
     field_labels = {

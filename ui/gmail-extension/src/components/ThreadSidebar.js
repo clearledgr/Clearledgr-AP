@@ -215,6 +215,71 @@ const THREAD_SIDEBAR_CSS = `
   background: #fff; border-color: #00D67E; color: #059669;
 }
 
+/* Feedback link + dialog at the bottom of the sidebar */
+.cl-ts-footer {
+  padding: 10px 16px 14px; border-top: 1px solid #E2E8F0; margin-top: 8px;
+  display: flex; justify-content: center; gap: 12px;
+  font: 500 11px/1.3 'DM Sans', sans-serif;
+}
+.cl-ts-footer-link {
+  color: #94A3B8; cursor: pointer; background: transparent; border: 0;
+  padding: 0; font: inherit; text-decoration: none;
+}
+.cl-ts-footer-link:hover { color: #00D67E; }
+
+.cl-ts-feedback-overlay {
+  position: fixed; inset: 0; background: rgba(10, 22, 40, 0.4); z-index: 99999;
+  display: flex; align-items: center; justify-content: center;
+}
+.cl-ts-feedback-modal {
+  background: #fff; border-radius: 12px; padding: 20px; width: 92%; max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2); font-family: 'DM Sans', sans-serif;
+}
+.cl-ts-feedback-modal h3 {
+  margin: 0 0 4px; font: 700 16px/1.3 'Instrument Sans','DM Sans',sans-serif;
+  color: #0A1628;
+}
+.cl-ts-feedback-modal .muted {
+  margin: 0 0 14px; font-size: 12px; color: #64748B;
+}
+.cl-ts-feedback-kinds {
+  display: flex; gap: 6px; margin-bottom: 10px;
+}
+.cl-ts-feedback-kind {
+  padding: 6px 10px; border-radius: 999px; border: 1px solid #E2E8F0;
+  background: #fff; color: #475569; font: 500 12px/1 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.cl-ts-feedback-kind.active {
+  background: #0A1628; color: #fff; border-color: #0A1628;
+}
+.cl-ts-feedback-textarea {
+  width: 100%; box-sizing: border-box; min-height: 96px; padding: 10px 12px;
+  border: 1px solid #E2E8F0; border-radius: 8px; font: 400 13px/1.45 'DM Sans', sans-serif;
+  color: #0A1628; resize: vertical;
+}
+.cl-ts-feedback-textarea:focus {
+  outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+}
+.cl-ts-feedback-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;
+}
+.cl-ts-feedback-btn {
+  padding: 8px 14px; border-radius: 8px; border: 0; cursor: pointer;
+  font: 600 13px/1 'DM Sans', sans-serif;
+}
+.cl-ts-feedback-btn.secondary {
+  background: transparent; color: #64748B;
+}
+.cl-ts-feedback-btn.primary {
+  background: #00D67E; color: #0A1628;
+}
+.cl-ts-feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-feedback-thanks {
+  padding: 14px; text-align: center; color: #059669;
+  font: 600 13px/1.4 'DM Sans', sans-serif;
+}
+
 /* -- Banners (conditional, above the fixed sections) -- */
 .cl-ts-banner {
   padding: 10px 16px; display: flex; align-items: center; gap: 10px;
@@ -872,6 +937,7 @@ export function ThreadSidebar({
   onSnooze,
   onQuery,
   onUndoOverride,
+  onSubmitFeedback,
   fetchBoxLinks,
   loading,
 }) {
@@ -884,6 +950,46 @@ export function ThreadSidebar({
   const [qaLog, setQaLog] = useState([]);
   const [queryPending, setQueryPending] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  // Feedback dialog state
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackKind, setFeedbackKind] = useState('bug');
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  const openFeedback = () => {
+    setFeedbackKind('bug');
+    setFeedbackText('');
+    setFeedbackSent(false);
+    setFeedbackOpen(true);
+  };
+
+  const submitFeedback = async () => {
+    const text = feedbackText.trim();
+    if (!text || feedbackSending) return;
+    setFeedbackSending(true);
+    try {
+      if (typeof onSubmitFeedback === 'function') {
+        await onSubmitFeedback({
+          message: text,
+          kind: feedbackKind,
+          ap_item_id: item?.id || null,
+          page: 'sidebar',
+        });
+      }
+      setFeedbackSent(true);
+      // Auto-close after 1.2s so the user sees the confirmation
+      setTimeout(() => {
+        setFeedbackOpen(false);
+        setFeedbackText('');
+      }, 1200);
+    } catch (err) {
+      // Keep the modal open; user can retry or copy their message.
+      alert('Could not send feedback. Please try again.');  // eslint-disable-line no-alert
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
   // Abort controller for the in-flight stream. We cancel on invoice
   // switch (real Anthropic $ saver: user moves on, we stop generating
   // tokens they'll never see) and before starting a new stream.
@@ -1177,6 +1283,79 @@ export function ThreadSidebar({
           }}
         />
       </div>
+
+      <div class="cl-ts-footer">
+        <button type="button" class="cl-ts-footer-link" onClick=${openFeedback}>
+          Report issue
+        </button>
+      </div>
+
+      ${feedbackOpen ? html`
+        <div
+          class="cl-ts-feedback-overlay"
+          onClick=${(e) => { if (e.target === e.currentTarget) setFeedbackOpen(false); }}
+        >
+          <div class="cl-ts-feedback-modal">
+            ${feedbackSent ? html`
+              <div class="cl-ts-feedback-thanks">
+                ✓ Thanks — we saw it.
+              </div>
+            ` : html`
+              <h3>Send feedback</h3>
+              <p class="muted">
+                ${item?.vendor_name
+                  ? `This includes the current invoice (${item.vendor_name}) as context.`
+                  : 'Tell us what you hit or what you want.'}
+              </p>
+              <div class="cl-ts-feedback-kinds">
+                ${[
+                  { id: 'bug', label: '🐞 Bug' },
+                  { id: 'suggestion', label: '💡 Idea' },
+                  { id: 'praise', label: '🎉 Love it' },
+                  { id: 'other', label: '💬 Other' },
+                ].map((k) => html`
+                  <button
+                    type="button"
+                    key=${k.id}
+                    class="cl-ts-feedback-kind ${feedbackKind === k.id ? 'active' : ''}"
+                    onClick=${() => setFeedbackKind(k.id)}
+                  >${k.label}</button>
+                `)}
+              </div>
+              <textarea
+                class="cl-ts-feedback-textarea"
+                value=${feedbackText}
+                onInput=${(e) => setFeedbackText(e.target.value)}
+                placeholder=${
+                  feedbackKind === 'bug'
+                    ? 'What happened? What did you expect?'
+                    : feedbackKind === 'suggestion'
+                      ? 'What should we build?'
+                      : feedbackKind === 'praise'
+                        ? 'Tell us what worked well.'
+                        : 'What did you want to tell us?'
+                }
+                disabled=${feedbackSending}
+                autofocus
+              ></textarea>
+              <div class="cl-ts-feedback-actions">
+                <button
+                  type="button"
+                  class="cl-ts-feedback-btn secondary"
+                  onClick=${() => setFeedbackOpen(false)}
+                  disabled=${feedbackSending}
+                >Cancel</button>
+                <button
+                  type="button"
+                  class="cl-ts-feedback-btn primary"
+                  onClick=${submitFeedback}
+                  disabled=${feedbackSending || !feedbackText.trim()}
+                >${feedbackSending ? 'Sending…' : 'Send'}</button>
+              </div>
+            `}
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 }

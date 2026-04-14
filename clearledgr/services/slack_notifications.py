@@ -877,211 +877,104 @@ async def send_payment_request_notification(request) -> bool:
     return sent
 
 
-async def send_invoice_approval_notification(
-    invoice_id: str,
-    gmail_thread_id: str,
-    vendor: str,
-    amount: float,
-    due_date: Optional[str] = None,
-    user_email: Optional[str] = None,
-    exceptions: Optional[List[str]] = None,
+async def deliver_approval_with_routing(
+    *,
+    blocks: List[Dict[str, Any]],
+    text: str,
+    approval_channel: Optional[str],
+    approver_email: Optional[str],
+    amount: Optional[float],
+    message_type: str = "personal_approval",
     organization_id: Optional[str] = None,
-    reasoning: Optional[str] = None,
-    match_status: Optional[str] = None,
-    po_status: Optional[str] = None,
-    grn_status: Optional[str] = None,
-    currency: Optional[str] = None,
-) -> bool:
+) -> Optional[Dict[str, Any]]:
+    """§6.8 Interactive Approval Messages — routed delivery.
+
+    Encapsulates the thesis's intelligent routing:
+      Rule 1: AP Manager DM (standard approval)
+      Rule 2: Controller DM + channel copy (above controller threshold)
+      Rule 3: CFO DM with 4h window (CFO-level sign-off)
+      Rule 4: Procurement DM (no-PO exceptions)
+      Rule 5: OOO backup (approver unavailable)
+
+    Returns ``{channel, ts, routing_rule, user_email?}`` compatible with
+    the shape ``invoice_workflow._send_for_approval`` consumes, so the
+    workflow's downstream save_slack_thread / waiting_condition logic
+    stays unchanged.
+
+    Falls back to the approval channel if DM delivery fails (e.g., the
+    approver's Slack lookup by email returns 404). Never silently drops
+    — the finance team always sees the card somewhere.
     """
-    Send Slack notification for invoice requiring approval.
-    
-    Includes DEEP LINK to Gmail thread with sidebar auto-open.
-    
-    Args:
-        invoice_id: Invoice ID
-        gmail_thread_id: Gmail thread ID for deep linking
-        vendor: Vendor name
-        amount: Invoice amount
-        due_date: Due date string
-        user_email: User's email for Gmail deep link
-        exceptions: List of issues requiring attention
-    
-    Returns:
-        True if sent successfully
-    """
-    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
-    
-    # Build Gmail deep link that opens directly to the thread
-    # Format: https://mail.google.com/mail/u/0/#inbox/{thread_id}
-    gmail_link = f"https://mail.google.com/mail/u/0/#inbox/{gmail_thread_id}"
-    
-    # Determine urgency color
-    if exceptions:
-        color = "#E65100"  # Orange for exceptions
-    elif due_date:
-        # Check if overdue
-        try:
-            from datetime import datetime
-            due = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
-            if due < datetime.now(due.tzinfo or None):
-                color = "#C62828"  # Red for overdue
-            else:
-                color = "#1565C0"  # Blue for normal
-        except Exception:
-            color = "#1565C0"
-    else:
-        color = "#1565C0"
-    
-    # Build exception text
-    exception_text = ""
-    if exceptions:
-        exception_text = "\n*Issues:*\n" + "\n".join([f"• {e}" for e in exceptions])
-    
-    # §6.8 Interactive Approval Messages — thesis-defined card structure
-    currency_str = currency or "USD"
-
-    # Match result icons from actual AP item match data
-    def _icon(status):
-        s = str(status or "").lower()
-        if s in ("matched", "passed", "confirmed", "verified"):
-            return "✓"
-        elif s in ("exception", "warning", "mismatch", "partial"):
-            return "⚠"
-        elif s in ("failed", "missing", "na"):
-            return "✗"
-        return "—"
-
-    po_icon = _icon(po_status or ("matched" if not exceptions else "warning"))
-    grn_icon = _icon(grn_status or ("matched" if not exceptions else "warning"))
-    inv_icon = _icon(match_status or ("passed" if not exceptions else "exception"))
-    match_icons = f"PO {po_icon}  GRN {grn_icon}  Invoice {inv_icon}"
-
-    blocks = [
-        # HEADER: vendor name, invoice ref, amount — scannable in under 2 seconds
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"{vendor} — ${amount:,.2f}",
-            }
-        },
-        # MATCH RESULT: three icons in a row
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": match_icons + (f"\n{exception_text}" if exception_text else ""),
-            },
-        },
-        {
-            "type": "divider"
-        },
-        # ACTIONS: Approve, Reject, Request Info
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Approve"},
-                    "style": "primary",
-                    "action_id": f"approve_invoice_{invoice_id}",
-                    "value": invoice_id,
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Reject"},
-                    "style": "danger",
-                    "action_id": f"reject_invoice_{invoice_id}",
-                    "value": invoice_id,
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Request info"},
-                    "action_id": f"request_info_{invoice_id}",
-                    "value": invoice_id,
-                }
-            ]
-        },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"Invoice {invoice_id}" + (f" | Due {due_date}" if due_date else "") + f" | <{gmail_link}|Open in Gmail →>"
-                }
-            ]
-        }
-    ]
-    
-    # §6.8 Intelligent Routing — five thesis-defined routing rules
     route = _resolve_intelligent_route(
-        message_type="personal_approval" if user_email else "channel",
-        approver_email=user_email,
+        message_type=message_type,
+        approver_email=approver_email,
         organization_id=organization_id,
         amount=amount,
     )
+    routing_rule = route.get("routing_rule", "default")
 
-    if route["target"] == "dm" and route["user_email"]:
-        sent = await _post_slack_dm(
+    # DM path
+    if route.get("target") == "dm" and route.get("user_email"):
+        dm_sent = await _post_slack_dm(
             user_email=route["user_email"],
             blocks=blocks,
-            text=f"Invoice {invoice_id} needs your approval",
+            text=text,
             organization_id=organization_id,
         )
-        if sent:
+        if dm_sent:
             logger.info(
-                "[intelligent_routing] DM approval to %s for %s (rule=%s)",
-                route["user_email"], invoice_id, route.get("routing_rule"),
+                "[intelligent_routing] DM approval to %s (rule=%s)",
+                route["user_email"], routing_rule,
             )
-            # Rule 2: above-threshold → also post to channel for visibility
+            # Rule 2: also post to channel for visibility above threshold.
             if route.get("also_channel"):
                 try:
-                    await _post_slack_blocks(
+                    channel_result = await _post_slack_blocks(
                         blocks=blocks,
-                        text=f"Invoice {invoice_id} routed to {route['user_email']} for approval (above threshold)",
-                        preferred_channel=preferred_channel,
+                        text=f"{text} (routed to {route['user_email']})",
+                        preferred_channel=approval_channel,
                         organization_id=organization_id,
                     )
-                except Exception:
-                    pass
-            return True
-        # Fall through to channel if DM fails
-        logger.info("[intelligent_routing] DM failed, falling back to channel for %s", invoice_id)
+                    if channel_result:
+                        return {
+                            "channel": channel_result.get("channel"),
+                            "ts": channel_result.get("ts"),
+                            "routing_rule": routing_rule,
+                            "user_email": route["user_email"],
+                            "dm_sent": True,
+                            "also_channel": True,
+                        }
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[intelligent_routing] also_channel copy failed: %s", exc)
+            # DM-only path — use the DM channel id (we don't have it
+            # directly from the DM API, so we return a synthetic marker).
+            return {
+                "channel": f"dm:{route['user_email']}",
+                "ts": None,
+                "routing_rule": routing_rule,
+                "user_email": route["user_email"],
+                "dm_sent": True,
+                "also_channel": False,
+            }
+        logger.info("[intelligent_routing] DM failed, falling back to channel")
 
-    # Send via _post_slack_blocks directly to get message_ts for threaded reasoning
-    send_result = await _post_slack_blocks(
+    # Channel path (default, or DM fallback)
+    channel_result = await _post_slack_blocks(
         blocks=blocks,
-        text=f"Invoice {invoice_id} needs approval",
-        preferred_channel=preferred_channel,
+        text=text,
+        preferred_channel=approval_channel,
         organization_id=organization_id,
     )
-    sent = bool(send_result)
-    if sent:
-        logger.info(f"Sent invoice approval notification for {invoice_id}")
+    if channel_result:
+        return {
+            "channel": channel_result.get("channel"),
+            "ts": channel_result.get("ts"),
+            "routing_rule": routing_rule,
+            "dm_sent": False,
+            "also_channel": False,
+        }
+    return None
 
-        # §6.8 AGENT REASONING (THREADED): post actual AP decision reasoning
-        # as a reply thread. Uses message_ts from _post_slack_blocks response.
-        parent_ts = (send_result or {}).get("ts")
-        parent_channel = (send_result or {}).get("channel")
-        if parent_ts and parent_channel and reasoning:
-            try:
-                runtime = resolve_slack_runtime(organization_id or "default")
-                if runtime and runtime.get("token"):
-                    headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            "https://slack.com/api/chat.postMessage",
-                            json={
-                                "channel": parent_channel,
-                                "thread_ts": parent_ts,
-                                "text": f"*Agent reasoning*\n{reasoning}",
-                            },
-                            headers=headers,
-                        )
-            except Exception as reasoning_exc:
-                logger.debug("[approval] reasoning thread failed: %s", reasoning_exc)
-
-    return sent
 
 
 async def send_invoice_posted_notification(
