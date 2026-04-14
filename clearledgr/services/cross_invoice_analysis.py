@@ -278,6 +278,7 @@ class CrossInvoiceAnalyzer:
             invoice_date=invoice_date,
             recent_invoices=recent_invoices,
             exclude_gmail_id=gmail_id,
+            currency=currency,
         )
         duplicates.extend(duplicate_alerts)
         
@@ -337,31 +338,45 @@ class CrossInvoiceAnalyzer:
         invoice_date: Optional[str],
         recent_invoices: List[Dict[str, Any]],
         exclude_gmail_id: Optional[str] = None,
+        currency: str = "USD",
     ) -> List[DuplicateAlert]:
         """Check for potential duplicate invoices."""
         duplicates = []
-        
+        current_currency = str(currency or "USD").strip().upper()
+
         for inv in recent_invoices:
             # Skip self
             if exclude_gmail_id and inv.get("gmail_id") == exclude_gmail_id:
                 continue
-            
+
             match_score = 0.0
             match_reasons = []
-            
-            # Check invoice number match (strongest signal) — normalized comparison
+
+            # Check invoice number match (strongest signal) — normalized
+            # comparison. Currency-independent: "INV-1234" is the same
+            # invoice regardless of what currency it's quoted in.
             if invoice_number and inv.get("invoice_number"):
                 if _normalize_invoice_number(invoice_number) == _normalize_invoice_number(inv.get("invoice_number", "")):
                     match_score += 0.5
                     match_reasons.append("Same invoice number")
-            
-            # Check amount match
+
+            # Check amount match — only if currencies match. €100 and
+            # $100 are NOT duplicates; comparing them as raw floats
+            # would generate false positives for international AP.
+            inv_currency = str(inv.get("currency") or "USD").strip().upper()
             inv_amount = inv.get("amount", 0)
-            if inv_amount > 0 and amount > 0:
+            if (
+                inv_amount > 0
+                and amount > 0
+                and inv_currency == current_currency
+            ):
                 amount_diff = abs(amount - inv_amount) / max(amount, inv_amount)
                 if amount_diff <= self.DUPLICATE_AMOUNT_TOLERANCE:
                     match_score += 0.3
-                    match_reasons.append(f"Same amount (${amount:,.2f})")
+                    # Use the real currency symbol where we can; default
+                    # "$" is fine as a fallback for unknown codes.
+                    sym = {"USD": "$", "EUR": "€", "GBP": "£"}.get(current_currency, f"{current_currency} ")
+                    match_reasons.append(f"Same amount ({sym}{amount:,.2f})")
             
             # Check date proximity
             if invoice_date and inv.get("created_at"):
