@@ -118,10 +118,21 @@ def _build_form_context(
     db = get_db()
     kyc = db.get_vendor_kyc(portal.organization_id, portal.vendor_name) or {}
     profile = db.get_vendor_profile(portal.organization_id, portal.vendor_name) or {}
+    # Resolve the customer (buyer) name so the portal can tell the vendor
+    # who they're onboarding with. Vendors often onboard with multiple
+    # customers in parallel — "Onboarding with Acme" beats generic
+    # Clearledgr branding.
+    customer_name = ""
+    try:
+        org = db.get_organization(portal.organization_id) or {}
+        customer_name = str(org.get("name") or org.get("display_name") or "").strip()
+    except Exception:  # noqa: BLE001
+        customer_name = ""
     return {
         "request": request,
         "token": _token_from_request(request),
         "vendor_name": portal.vendor_name,
+        "customer_name": customer_name,
         "state": portal.onboarding_state,
         "kyc": kyc,
         "bank_submitted": bool(profile.get("bank_details_encrypted")),

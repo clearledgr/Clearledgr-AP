@@ -200,12 +200,21 @@ async def _send_chase(
         logger.info("[onboarding_lifecycle] skipping chase for session %s — no contact email", session_id)
         return
 
-    # Determine what document is missing based on chase type
-    missing_doc = {
-        "chase_24h": "onboarding form completion",
-        "chase_48h": "onboarding form completion",
-        "escalation_72h": "onboarding (escalated after 72h)",
-    }.get(chase_type, "onboarding response")
+    # Determine what's actually missing based on the session's current
+    # state. Thesis §6.8 calls for specificity: "About to chase Paystack
+    # for their certificate of incorporation" beats "for their
+    # onboarding response." AP Managers can only hold-vs-send
+    # intelligently if the Slack preview tells them WHAT we're chasing.
+    _state_missing = {
+        "invited": "onboarding form (they haven't opened the link yet)",
+        "awaiting_kyc": "business details — registered address, registration number, directors",
+        "awaiting_bank": "bank details (IBAN + account holder)",
+        "microdeposit_pending": "micro-deposit amount confirmation",
+        "escalated": "onboarding (already escalated once)",
+    }
+    missing_doc = _state_missing.get(state, "onboarding response")
+    if chase_type == "escalation_72h":
+        missing_doc = f"{missing_doc} — escalated after 72h"
 
     # Post Slack preview with Hold/Send buttons
     try:
@@ -292,12 +301,46 @@ async def _dispatch_chase_email(
     thread_id = meta.get("invite_thread_id")
     in_reply_to = meta.get("invite_message_id")
 
+    # Build the real magic-link URL from the session's live tokens.
+    # Previously shipped the literal placeholder "<your-original-link>"
+    # verbatim — vendors got broken chase emails. §9 thesis: magic links
+    # must resolve to the vendor's own portal session.
     tokens = db.list_session_tokens(session["id"], include_revoked=False)
     magic_link = ""
-    if tokens:
-        import os
-        base = os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
-        magic_link = f"{base}/portal/onboard/<your-original-link>"
+    for token_row in tokens or []:
+        raw_token = token_row.get("raw_token") or token_row.get("token")
+        if raw_token:
+            import os as _os
+            base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
+            magic_link = f"{base}/portal/onboard/{raw_token}"
+            break
+    if not magic_link:
+        # No retrievable active token (raw tokens are only returned at
+        # issuance; we store hashes). Issue a fresh one so the chase
+        # still has a working link. This supersedes any prior token
+        # for the session — the one-active-token invariant.
+        try:
+            issued = db.generate_onboarding_token(
+                session_id=session["id"],
+                issued_by="agent_chase_loop",
+                purpose="full_onboarding",
+            )
+            if issued:
+                raw_token, _token_row = issued
+                import os as _os
+                base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
+                magic_link = f"{base}/portal/onboard/{raw_token}"
+        except Exception as token_exc:  # noqa: BLE001
+            logger.warning(
+                "[onboarding_lifecycle] could not rehydrate magic link for session %s: %s",
+                session["id"], token_exc,
+            )
+        if not magic_link:
+            logger.warning(
+                "[onboarding_lifecycle] skipping chase for session %s — no valid magic link available",
+                session["id"],
+            )
+            return  # chase with no working link is worse than none
 
     await dispatch_onboarding_chase(
         organization_id=session.get("organization_id") or "",

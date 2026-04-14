@@ -1,8 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Vendor Onboarding · {{ vendor_name }}{% endblock %}
 {% block content %}
-<h1>Onboarding for {{ vendor_name }}</h1>
-<p class="lead">A few details to get you set up as a supplier. Each section saves independently — you can come back to this link if you need to break it up.</p>
+<h1>
+  Onboarding{% if customer_name %} with {{ customer_name }}{% endif %}
+</h1>
+<p class="lead">
+  {% if customer_name %}{{ customer_name }}{% else %}Your customer{% endif %} is getting
+  <strong>{{ vendor_name }}</strong> set up as a supplier. A few details and you're done.
+  Each section saves independently — you can come back to this link if you need to break it up.
+</p>
 
 <div class="progress">
   <div class="step {% if state in ['awaiting_kyc', 'awaiting_bank', 'microdeposit_pending', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'invited' %}active{% endif %}"></div>
@@ -28,7 +34,7 @@
     {% if kyc.kyc_completion_date %}<span class="status-pill">Saved</span>{% endif %}
   </h2>
   <form method="post" action="/portal/onboard/{{ token }}/kyc">
-    <label>Registered company name
+    <label>Registered business address
       <input type="text" name="registered_address" value="{{ kyc.registered_address or '' }}" placeholder="123 Example Road, London, UK" required>
       <span class="hint">Full registered address as filed with Companies House (or your local equivalent).</span>
     </label>
