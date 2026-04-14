@@ -23,7 +23,7 @@
  * field) and that users need to see at a glance.
  */
 import { html } from 'htm/preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -884,11 +884,28 @@ export function ThreadSidebar({
   const [qaLog, setQaLog] = useState([]);
   const [queryPending, setQueryPending] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  // Abort controller for the in-flight stream. We cancel on invoice
+  // switch (real Anthropic $ saver: user moves on, we stop generating
+  // tokens they'll never see) and before starting a new stream.
+  const activeAbortRef = useRef(null);
+
+  const cancelActiveStream = (reason) => {
+    const controller = activeAbortRef.current;
+    activeAbortRef.current = null;
+    if (controller) {
+      try { controller.abort(reason || 'cancelled'); } catch (_) { /* ignore */ }
+    }
+  };
+
   useEffect(() => {
+    cancelActiveStream('invoice_changed');
     setQaLog([]);
     setQueryPending(false);
     setSuggestions([]);
   }, [item?.id]);
+
+  // Also cancel on unmount (sidebar closed, tab closed).
+  useEffect(() => () => cancelActiveStream('sidebar_unmounted'), []);
 
   // Pull suggested starter questions when we have a focus invoice and
   // no conversation yet. The backend tailors them to invoice state.
@@ -945,6 +962,10 @@ export function ThreadSidebar({
   const submitQuery = async (question) => {
     if (!question || queryPending) return;
     setSuggestions([]);
+    // Cancel any in-flight stream before starting a new one. (Rare path
+    // — the input is disabled while queryPending — but cheap insurance.)
+    cancelActiveStream('superseded');
+
     // Build history to send — last 3 completed exchanges.
     const history = qaLog
       .filter((r) => r.status === 'done' && r.q && r.a)
@@ -957,6 +978,22 @@ export function ThreadSidebar({
       status: 'pending',
     }]);
     setQueryPending(true);
+
+    // Set up abort controller + 30s silence watchdog. Any received
+    // chunk (or server ping — which arrives as an SSE comment and
+    // resets the reader, not as a delta) resets the watchdog.
+    const controller = new AbortController();
+    activeAbortRef.current = controller;
+    let silenceTimer = null;
+    const SILENCE_MS = 30000;
+    const resetSilenceTimer = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        try { controller.abort('silence_timeout'); } catch (_) { /* ignore */ }
+      }, SILENCE_MS);
+    };
+    resetSilenceTimer();
+
     try {
       if (onQuery && typeof onQuery.stream === 'function') {
         let buffered = '';
@@ -965,12 +1002,15 @@ export function ThreadSidebar({
           question,
           item,
           history,
+          signal: controller.signal,
+          onActivity: resetSilenceTimer,
           onDelta: (chunk) => {
             if (!seenFirstDelta) {
               seenFirstDelta = true;
               updateTrailingRow({ status: 'streaming' });
             }
             buffered += chunk;
+            resetSilenceTimer();
             updateTrailingRow({ a: buffered });
           },
           onReferences: (refs) => {
@@ -1001,11 +1041,28 @@ export function ThreadSidebar({
         });
       }
     } catch (err) {
-      updateTrailingRow({
-        a: String(err?.message || err || 'Query failed'),
-        status: 'error',
-      });
+      const reason = controller.signal.reason;
+      const isCancellation = err?.name === 'AbortError'
+        || /abort/i.test(String(err?.message || ''));
+      if (isCancellation && reason === 'invoice_changed') {
+        // User moved on — drop the partial row silently. Resetting qaLog
+        // in the item-change effect already happened; nothing to do here.
+      } else if (isCancellation && reason === 'silence_timeout') {
+        updateTrailingRow({
+          a: 'The agent stopped responding. The connection may be unstable — try again.',
+          status: 'error',
+        });
+      } else if (isCancellation) {
+        updateTrailingRow({ status: 'error', a: 'Cancelled.' });
+      } else {
+        updateTrailingRow({
+          a: String(err?.message || err || 'Query failed'),
+          status: 'error',
+        });
+      }
     } finally {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (activeAbortRef.current === controller) activeAbortRef.current = null;
       setQueryPending(false);
     }
   };

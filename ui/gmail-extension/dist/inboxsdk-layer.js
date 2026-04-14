@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:04e5a005654cfa5e8656be13195671cb61c7d01d450adc43d5ea4ba336587ab6 */
+/* clearledgr-source-fingerprint:ea4a775dfa8167ccff33887ccea9346202504d3a3193867399e15d3a6c6dc3f6 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59811,11 +59811,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [qaLog, setQaLog] = d2([]);
     const [queryPending, setQueryPending] = d2(false);
     const [suggestions, setSuggestions] = d2([]);
+    const activeAbortRef = A2(null);
+    const cancelActiveStream = (reason) => {
+      const controller = activeAbortRef.current;
+      activeAbortRef.current = null;
+      if (controller) {
+        try {
+          controller.abort(reason || "cancelled");
+        } catch (_2) {}
+      }
+    };
     y2(() => {
+      cancelActiveStream("invoice_changed");
       setQaLog([]);
       setQueryPending(false);
       setSuggestions([]);
     }, [item?.id]);
+    y2(() => () => cancelActiveStream("sidebar_unmounted"), []);
     y2(() => {
       if (!item?.id || qaLog.length > 0)
         return;
@@ -59870,6 +59882,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!question || queryPending)
         return;
       setSuggestions([]);
+      cancelActiveStream("superseded");
       const history = qaLog.filter((r3) => r3.status === "done" && r3.q && r3.a).slice(-3).map((r3) => ({ q: r3.q, a: r3.a }));
       setQaLog((prev) => [...prev, {
         q: question,
@@ -59878,6 +59891,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         status: "pending"
       }]);
       setQueryPending(true);
+      const controller = new AbortController;
+      activeAbortRef.current = controller;
+      let silenceTimer = null;
+      const SILENCE_MS = 30000;
+      const resetSilenceTimer = () => {
+        if (silenceTimer)
+          clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          try {
+            controller.abort("silence_timeout");
+          } catch (_2) {}
+        }, SILENCE_MS);
+      };
+      resetSilenceTimer();
       try {
         if (onQuery && typeof onQuery.stream === "function") {
           let buffered = "";
@@ -59886,12 +59913,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             question,
             item,
             history,
+            signal: controller.signal,
+            onActivity: resetSilenceTimer,
             onDelta: (chunk) => {
               if (!seenFirstDelta) {
                 seenFirstDelta = true;
                 updateTrailingRow({ status: "streaming" });
               }
               buffered += chunk;
+              resetSilenceTimer();
               updateTrailingRow({ a: buffered });
             },
             onReferences: (refs) => {
@@ -59918,11 +59948,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           });
         }
       } catch (err) {
-        updateTrailingRow({
-          a: String(err?.message || err || "Query failed"),
-          status: "error"
-        });
+        const reason = controller.signal.reason;
+        const isCancellation = err?.name === "AbortError" || /abort/i.test(String(err?.message || ""));
+        if (isCancellation && reason === "invoice_changed") {} else if (isCancellation && reason === "silence_timeout") {
+          updateTrailingRow({
+            a: "The agent stopped responding. The connection may be unstable — try again.",
+            status: "error"
+          });
+        } else if (isCancellation) {
+          updateTrailingRow({ status: "error", a: "Cancelled." });
+        } else {
+          updateTrailingRow({
+            a: String(err?.message || err || "Query failed"),
+            status: "error"
+          });
+        }
       } finally {
+        if (silenceTimer)
+          clearTimeout(silenceTimer);
+        if (activeAbortRef.current === controller)
+          activeAbortRef.current = null;
         setQueryPending(false);
       }
     };
@@ -61852,7 +61897,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const data = await resp.json();
         return data;
       };
-      singleShot.stream = async ({ question, item: queryItem, history, onDelta, onReferences }) => {
+      singleShot.stream = async ({
+        question,
+        item: queryItem,
+        history,
+        signal,
+        onDelta,
+        onReferences,
+        onActivity
+      }) => {
         const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
@@ -61861,7 +61914,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ap_item_id: queryItem?.id || null,
             organization_id: orgId(),
             history: Array.isArray(history) ? history : []
-          })
+          }),
+          signal
         });
         if (!resp || !resp.ok || !resp.body || typeof resp.body.getReader !== "function") {
           const data = await singleShot(question, queryItem);
@@ -61872,48 +61926,76 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           return;
         }
         const reader = resp.body.getReader();
+        const onAbort = () => {
+          try {
+            reader.cancel();
+          } catch (_2) {}
+        };
+        if (signal) {
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done)
-            break;
-          buffer += decoder.decode(value, { stream: true });
+        try {
           while (true) {
-            const terminator = buffer.indexOf(`
+            let chunk;
+            try {
+              chunk = await reader.read();
+            } catch (err) {
+              if (signal?.aborted)
+                return;
+              throw err;
+            }
+            const { value, done } = chunk;
+            if (done)
+              break;
+            onActivity?.();
+            buffer += decoder.decode(value, { stream: true });
+            while (true) {
+              const terminator = buffer.indexOf(`
 
 `);
-            if (terminator < 0)
-              break;
-            const rawEvent = buffer.slice(0, terminator);
-            buffer = buffer.slice(terminator + 2);
-            let eventType = "message";
-            let dataLine = "";
-            rawEvent.split(`
+              if (terminator < 0)
+                break;
+              const rawEvent = buffer.slice(0, terminator);
+              buffer = buffer.slice(terminator + 2);
+              if (rawEvent.startsWith(":"))
+                continue;
+              let eventType = "message";
+              let dataLine = "";
+              rawEvent.split(`
 `).forEach((line) => {
-              if (line.startsWith("event:"))
-                eventType = line.slice(6).trim();
-              else if (line.startsWith("data:"))
-                dataLine += line.slice(5).trim();
-            });
-            if (!dataLine)
-              continue;
-            let payload = null;
-            try {
-              payload = JSON.parse(dataLine);
-            } catch {
-              continue;
-            }
-            if (eventType === "delta" && payload?.text) {
-              onDelta?.(String(payload.text));
-            } else if (eventType === "references") {
-              onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
-            } else if (eventType === "error") {
-              throw new Error(payload?.message || "stream_error");
-            } else if (eventType === "done") {
-              return;
+                if (line.startsWith("event:"))
+                  eventType = line.slice(6).trim();
+                else if (line.startsWith("data:"))
+                  dataLine += line.slice(5).trim();
+              });
+              if (!dataLine)
+                continue;
+              let payload = null;
+              try {
+                payload = JSON.parse(dataLine);
+              } catch {
+                continue;
+              }
+              if (eventType === "delta" && payload?.text) {
+                onDelta?.(String(payload.text));
+              } else if (eventType === "references") {
+                onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
+              } else if (eventType === "error") {
+                throw new Error(payload?.message || "stream_error");
+              } else if (eventType === "done") {
+                return;
+              }
             }
           }
+        } finally {
+          if (signal)
+            signal.removeEventListener("abort", onAbort);
         }
       };
       singleShot.fetchSuggestions = async (queryItem) => {

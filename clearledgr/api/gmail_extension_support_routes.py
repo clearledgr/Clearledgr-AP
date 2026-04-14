@@ -249,33 +249,105 @@ async def stream_sidebar_query(
     history = [(t.q, t.a) for t in (request.history or [])][-6:]
 
     async def event_stream():
+        import asyncio as _asyncio
         import json as _json
+
+        # Race the Claude generator against a heartbeat task via a queue.
+        # Either produces items; the consumer (this generator) drains and
+        # yields SSE. Sentinels: `('ping', None)` for heartbeat,
+        # `('chunk', text)` for deltas, `('end', None)` when Claude finishes.
+        queue: _asyncio.Queue = _asyncio.Queue(maxsize=64)
+
+        async def producer():
+            try:
+                async for chunk in _stream_sidebar_query(
+                    query=query,
+                    focus_item=ctx["focus_item"],
+                    vendor_items=ctx["vendor_items"],
+                    audit_events=ctx["audit_events"],
+                    org_id=ctx["org_id"],
+                    history=history,
+                ):
+                    if chunk:
+                        await queue.put(("chunk", chunk))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[sidebar/query/stream] producer error: %s", exc)
+                await queue.put(("error", "stream_failed"))
+            finally:
+                await queue.put(("end", None))
+
+        async def heartbeat():
+            # Emit a ping every 10s. Clients treat 30s of silence as a
+            # dead connection, so 10s gives us 3 pings before the client
+            # gives up — comfortable headroom for transient stalls.
+            while True:
+                await _asyncio.sleep(10)
+                try:
+                    await queue.put(("ping", None))
+                except Exception:  # noqa: BLE001
+                    break
+
+        producer_task = _asyncio.create_task(producer())
+        heartbeat_task = _asyncio.create_task(heartbeat())
+
         full_answer_parts: List[str] = []
+        client_disconnected = False
+
         try:
-            async for chunk in _stream_sidebar_query(
-                query=query,
-                focus_item=ctx["focus_item"],
-                vendor_items=ctx["vendor_items"],
-                audit_events=ctx["audit_events"],
-                org_id=ctx["org_id"],
-                history=history,
-            ):
-                if not chunk:
-                    continue
-                full_answer_parts.append(chunk)
-                yield "event: delta\n"
-                yield f"data: {_json.dumps({'text': chunk})}\n\n"
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[sidebar/query/stream] unexpected error: %s", exc)
-            yield "event: error\n"
-            yield f"data: {_json.dumps({'message': 'stream_failed'})}\n\n"
-        # Post-stream: send references + done event.
-        full_answer = "".join(full_answer_parts)
-        references = _extract_references(full_answer, ctx["audit_events"])
-        yield "event: references\n"
-        yield f"data: {_json.dumps({'references': references})}\n\n"
-        yield "event: done\n"
-        yield "data: {}\n\n"
+            while True:
+                kind, payload = await queue.get()
+                if kind == "chunk":
+                    full_answer_parts.append(payload)
+                    yield "event: delta\n"
+                    yield f"data: {_json.dumps({'text': payload})}\n\n"
+                elif kind == "ping":
+                    # SSE comments (lines starting with ':') are ignored by
+                    # the client parser but keep the TCP connection warm
+                    # and reset the client's silence timer. Lower overhead
+                    # than a typed event.
+                    yield ": ping\n\n"
+                elif kind == "error":
+                    yield "event: error\n"
+                    yield f"data: {_json.dumps({'message': str(payload or 'stream_failed')})}\n\n"
+                elif kind == "end":
+                    break
+        except _asyncio.CancelledError:
+            # FastAPI raises CancelledError into the generator when the
+            # client closes the connection. Record it so we can verify
+            # backpressure is actually propagating through to Claude.
+            client_disconnected = True
+            logger.info(
+                "[sidebar/query/stream] client disconnected mid-stream "
+                "(ap_item_id=%s, chars_streamed=%d)",
+                ctx["focus_item"].get("id") if ctx["focus_item"] else None,
+                sum(len(p) for p in full_answer_parts),
+            )
+            raise
+        finally:
+            heartbeat_task.cancel()
+            if client_disconnected:
+                producer_task.cancel()
+            # Await producer so Claude's httpx.AsyncClient is torn down
+            # cleanly (the stream context manager exits, closing the
+            # connection and stopping Anthropic from billing us for
+            # tokens the user will never see).
+            try:
+                await producer_task
+            except (Exception, _asyncio.CancelledError):  # noqa: BLE001
+                pass
+            try:
+                await heartbeat_task
+            except (Exception, _asyncio.CancelledError):  # noqa: BLE001
+                pass
+
+        # Post-stream: emit references + done. Skipped if client bailed.
+        if not client_disconnected:
+            full_answer = "".join(full_answer_parts)
+            references = _extract_references(full_answer, ctx["audit_events"])
+            yield "event: references\n"
+            yield f"data: {_json.dumps({'references': references})}\n\n"
+            yield "event: done\n"
+            yield "data: {}\n\n"
 
     return StreamingResponse(
         event_stream(),

@@ -1893,7 +1893,16 @@ export default function SidebarApp({ queueManager }) {
     };
 
     // Streaming via fetch + ReadableStream (EventSource can't POST).
-    singleShot.stream = async ({ question, item: queryItem, history, onDelta, onReferences }) => {
+    // Accepts:
+    //   - signal: AbortController.signal → cancels the stream cleanly
+    //     (user switched invoices, new question superseded, or silence
+    //     timeout fired client-side)
+    //   - onActivity: called on ANY inbound bytes (deltas AND SSE
+    //     comment heartbeats) so the caller can reset its stall watchdog
+    singleShot.stream = async ({
+      question, item: queryItem, history, signal,
+      onDelta, onReferences, onActivity,
+    }) => {
       const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
@@ -1903,6 +1912,7 @@ export default function SidebarApp({ queueManager }) {
           organization_id: orgId(),
           history: Array.isArray(history) ? history : [],
         }),
+        signal,
       });
       if (!resp || !resp.ok || !resp.body || typeof resp.body.getReader !== 'function') {
         // Stream endpoint unavailable or response is buffered — fall back
@@ -1914,37 +1924,64 @@ export default function SidebarApp({ queueManager }) {
       }
 
       const reader = resp.body.getReader();
+      // If caller aborts, cancel the reader → unblocks the pending read
+      // with an error we translate into a clean exit.
+      const onAbort = () => { try { reader.cancel(); } catch (_) { /* ignore */ } };
+      if (signal) {
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
-      // Iterate the SSE stream. Each event is `event: <type>\ndata: <json>\n\n`.
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+      // Iterate the SSE stream. Each event is `event: <type>\ndata: <json>\n\n`
+      // or a comment `: <text>\n\n` (used for heartbeats). Heartbeats don't
+      // fire onDelta/onReferences but still count as activity so the
+      // caller's silence watchdog gets reset.
+      try {
         while (true) {
-          const terminator = buffer.indexOf('\n\n');
-          if (terminator < 0) break;
-          const rawEvent = buffer.slice(0, terminator);
-          buffer = buffer.slice(terminator + 2);
-          let eventType = 'message';
-          let dataLine = '';
-          rawEvent.split('\n').forEach((line) => {
-            if (line.startsWith('event:')) eventType = line.slice(6).trim();
-            else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
-          });
-          if (!dataLine) continue;
-          let payload = null;
-          try { payload = JSON.parse(dataLine); } catch { continue; }
-          if (eventType === 'delta' && payload?.text) {
-            onDelta?.(String(payload.text));
-          } else if (eventType === 'references') {
-            onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
-          } else if (eventType === 'error') {
-            throw new Error(payload?.message || 'stream_error');
-          } else if (eventType === 'done') {
-            return;
+          let chunk;
+          try {
+            chunk = await reader.read();
+          } catch (err) {
+            if (signal?.aborted) return;
+            throw err;
+          }
+          const { value, done } = chunk;
+          if (done) break;
+          // Any bytes received → activity signal.
+          onActivity?.();
+          buffer += decoder.decode(value, { stream: true });
+          while (true) {
+            const terminator = buffer.indexOf('\n\n');
+            if (terminator < 0) break;
+            const rawEvent = buffer.slice(0, terminator);
+            buffer = buffer.slice(terminator + 2);
+            // Comment lines (heartbeat) start with ':'. Already counted
+            // as activity above — nothing else to do.
+            if (rawEvent.startsWith(':')) continue;
+            let eventType = 'message';
+            let dataLine = '';
+            rawEvent.split('\n').forEach((line) => {
+              if (line.startsWith('event:')) eventType = line.slice(6).trim();
+              else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+            });
+            if (!dataLine) continue;
+            let payload = null;
+            try { payload = JSON.parse(dataLine); } catch { continue; }
+            if (eventType === 'delta' && payload?.text) {
+              onDelta?.(String(payload.text));
+            } else if (eventType === 'references') {
+              onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
+            } else if (eventType === 'error') {
+              throw new Error(payload?.message || 'stream_error');
+            } else if (eventType === 'done') {
+              return;
+            }
           }
         }
+      } finally {
+        if (signal) signal.removeEventListener('abort', onAbort);
       }
     };
 
