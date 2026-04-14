@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:6b7b7f9b176926e04a9a5acf88928de5747f2075157471128644bb61aeec5e63 */
+/* clearledgr-source-fingerprint:2c31762d135ab04890e2f72438091aec89a4189b6efd05bcb921a4a75f97a30b */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69130,63 +69130,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     background:${tone.bg};color:${tone.text};letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
-  function SliceChip({ slice, count, active, onClick }) {
-    return html15`<button
-    onClick=${onClick}
-    style="
-      display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:10px;
-      border:1px solid ${active ? "var(--accent)" : "var(--border)"};
-      background:${active ? "var(--accent-soft)" : "var(--surface)"};
-      color:${active ? "var(--accent-ink)" : "var(--ink)"};
-      cursor:pointer;font-family:inherit;text-align:left;min-width:128px;
-    "
-  >
-    <span style="font-size:12px;font-weight:700">${slice.label}</span>
-    <span style="margin-left:auto;font-size:11px;font-weight:700;color:inherit">${count}</span>
-  </button>`;
-  }
-  function QueueMetricPill({ label, value, tone = "default" }) {
-    const tones = {
-      default: { bg: "var(--bg)", border: "var(--border)", text: "var(--ink)" },
-      warning: { bg: "#FFFBEB", border: "#FCD34D", text: "#92400E" },
-      success: { bg: "#ECFDF5", border: "#A7F3D0", text: "#166534" },
-      danger: { bg: "#FEF2F2", border: "#FECACA", text: "#B91C1C" }
-    };
-    const palette = tones[tone] || tones.default;
-    return html15`<span style="
-    display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 11px;border-radius:10px;
-    border:1px solid ${palette.border};background:${palette.bg};color:${palette.text};
-    font-size:11px;font-weight:700;min-width:88px;
-  ">
-    <span style="font-family:var(--font-display);font-variant-numeric:tabular-nums;font-size:15px;line-height:1">${value}</span>
-    <span style="opacity:0.72;text-transform:uppercase;letter-spacing:0.04em;font-size:10px">${label}</span>
-  </span>`;
-  }
-  function SavedViewChip({ view, active, onOpen, onTogglePin, onDelete }) {
-    const scopeLabel = view.scope === "starter" ? "Starter" : "Personal";
-    return html15`
-    <div style="
-      display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;
-      border:1px solid ${active ? "var(--accent)" : "var(--border)"};
-      background:${active ? "var(--accent-soft)" : "var(--bg)"};
-    ">
-      <button class="btn-secondary btn-xs" onClick=${onOpen}>${view.name}</button>
-      <span class="muted" style="font-size:11px;font-weight:700">${scopeLabel}</span>
-      <button
-        class="btn-ghost btn-xs"
-        aria-label=${view.pinned ? "Unpin saved view" : "Pin saved view"}
-        onClick=${onTogglePin}
-        style="color:${view.pinned ? "var(--accent-ink)" : "var(--ink-muted)"}"
-      >${view.pinned ? "Pinned" : "Pin"}</button>
-      ${typeof onDelete === "function" ? html15`<button
-            class="btn-ghost btn-xs"
-            aria-label="Delete saved view"
-            onClick=${onDelete}
-            style="color:var(--ink-muted)"
-          >×</button>` : null}
-    </div>
-  `;
-  }
   function saveActiveItemId(itemId) {
     if (typeof window === "undefined" || !window?.localStorage)
       return;
@@ -69275,6 +69218,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [navState, setNavState] = d2(() => readPipelineNavigation(pipelineScope));
     const [savedViewName, setSavedViewName] = d2("");
     const [pipelineStages, setPipelineStages] = d2([]);
+    const [filtersOpen, setFiltersOpen] = d2(false);
+    const [viewsOpen, setViewsOpen] = d2(false);
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
     y2(() => {
       api(`/api/pipelines/ap-invoices?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => {
@@ -69430,7 +69375,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const sliceCounts = T2(() => buildPipelineSliceCounts(items), [items]);
     const starterViews = T2(() => getStarterPipelineViews(viewPrefs), [viewPrefs]);
     const personalViews = T2(() => getPersonalPipelineViews(viewPrefs), [viewPrefs]);
-    const pinnedViews = T2(() => getPinnedPipelineViews(viewPrefs), [viewPrefs]);
     const activeSavedView = T2(() => getActiveSavedView(viewPrefs), [viewPrefs]);
     const focusedItem = T2(() => {
       const focusItemId = String(navState?.focusItemId || "").trim();
@@ -69439,13 +69383,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return items.find((item) => String(item.id || "") === focusItemId) || null;
     }, [items, navState]);
     const focusedItemVisible = Boolean(focusedItem && displayed.some((item) => String(item.id || "") === String(focusedItem.id || "")));
-    const stats = T2(() => ({
-      total: items.length,
-      open: items.filter((item) => !["posted_to_erp", "closed", "rejected"].includes(normalizePipelineState(item.state))).length,
-      waitingApproval: sliceCounts.waiting_on_approval || 0,
-      readyToPost: sliceCounts.ready_to_post || 0,
-      overdue: sliceCounts.overdue || 0
-    }), [items, sliceCounts]);
+    const activeFilterCount = T2(() => {
+      const f3 = viewPrefs?.filters || {};
+      let n3 = 0;
+      if (f3.vendor && String(f3.vendor).trim())
+        n3 += 1;
+      if (f3.due && f3.due !== "all")
+        n3 += 1;
+      if (f3.blocker && f3.blocker !== "all")
+        n3 += 1;
+      if (f3.erpStatus && f3.erpStatus !== "all")
+        n3 += 1;
+      if (f3.amount && f3.amount !== "all")
+        n3 += 1;
+      if (f3.approvalAge && f3.approvalAge !== "all")
+        n3 += 1;
+      if (viewPrefs.activeSliceId && viewPrefs.activeSliceId !== "all_open")
+        n3 += 1;
+      return n3;
+    }, [viewPrefs]);
     y2(() => {
       if (activeSavedView?.scope === "user" && !String(savedViewName || "").trim()) {
         setSavedViewName(getSavedViewLabel(activeSavedView));
@@ -69649,220 +69605,292 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     return html15`
     <div class="pipeline-shell">
-      <div class="panel pipeline-hero-panel" style="padding:12px 14px">
-        <div class="pipeline-hero-head">
-          <div class="pipeline-hero-copy">
-            <div>
-              <h3 style="margin:0 0 4px">Live AP queue</h3>
-              <p class="muted" style="margin:0">Filter, route, and reopen records without leaving Gmail.</p>
-            </div>
-            <div class="pipeline-metric-row">
-              <${QueueMetricPill} label="Open" value=${stats.open} />
-              <${QueueMetricPill} label="Waiting approval" value=${stats.waitingApproval} tone="warning" />
-              <${QueueMetricPill} label="Ready to post" value=${stats.readyToPost} tone="success" />
-              <${QueueMetricPill} label="Overdue" value=${stats.overdue} tone="danger" />
-              <${QueueMetricPill} label="Total" value=${stats.total} />
-            </div>
-          </div>
-          <div class="toolbar-actions">
-            <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/home")}>Home</button>
-            <button class="btn-secondary btn-sm" onClick=${doRefresh} disabled=${refreshing}>${refreshing ? "Refreshing…" : "Refresh"}</button>
-          </div>
+      <!-- §6.7 header — minimal chrome above the Kanban.
+           Title, saved view toggle, search, filters button, refresh.
+           Everything else lives in the board or in on-demand sheets. -->
+      <div class="pipeline-topbar" style="
+        display:flex;align-items:center;gap:10px;padding:10px 14px 6px;flex-wrap:wrap;
+      ">
+        <div style="display:flex;align-items:baseline;gap:10px;flex:0 0 auto">
+          <h3 style="margin:0;font:700 18px/1.2 var(--font-display),'DM Sans',sans-serif;color:#0A1628">
+            Live AP queue
+          </h3>
+          ${activeSavedView || viewPrefs.activeSliceId !== "all_open" ? html15`<span class="muted" style="font-size:12px">
+                ${currentViewLabel}
+              </span>` : null}
         </div>
 
-        ${focusedItem ? html15`
-              <div class="pipeline-focus-row">
-                <div>
-                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-                    <strong style="font-size:13px">Current thread record</strong>
-                    <${StatePill} state=${focusedItem.state} />
-                  </div>
-                  <div class="muted" style="font-size:13px">
-                    ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} · ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
-                  </div>
-                  <div class="muted" style="font-size:12px;margin-top:4px">
-                    ${focusedItemVisible ? "This record is already visible in the active invoices view." : "This record is outside the current slice or filters. Jump back to its matching queue to keep thread context intact."}
-                  </div>
+        <div style="flex:1 1 260px;min-width:220px;max-width:560px">
+          <input
+            placeholder="Search vendor, invoice #, PO, sender…"
+            value=${searchQuery}
+            onInput=${(event) => setSearchQuery(event.target.value)}
+            style="
+              width:100%;padding:8px 12px;border:1px solid var(--border);
+              border-radius:8px;font-size:13px;font-family:inherit;background:#fff;
+            "
+          />
+        </div>
+
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          <button
+            class="btn-secondary btn-sm"
+            onClick=${() => setViewsOpen((v3) => !v3)}
+            style="display:flex;align-items:center;gap:6px"
+          >
+            Views
+            ${activeSavedView ? html15`<span style="
+                  font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
+                  background:#ECFDF5;color:#059669;
+                ">●</span>` : null}
+          </button>
+          <button
+            class="btn-secondary btn-sm"
+            onClick=${() => setFiltersOpen(true)}
+            style="display:flex;align-items:center;gap:6px"
+          >
+            Filters
+            ${activeFilterCount > 0 ? html15`<span style="
+                  font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
+                  background:#0A1628;color:#fff;min-width:16px;text-align:center;
+                ">${activeFilterCount}</span>` : null}
+          </button>
+          <button
+            class="btn-secondary btn-sm"
+            onClick=${doRefresh}
+            disabled=${refreshing}
+            aria-label="Refresh queue"
+          >${refreshing ? "Refreshing…" : "Refresh"}</button>
+        </div>
+      </div>
+
+      <!-- §7 focus row — keep: if the user opened the Kanban from a thread,
+           show that record's location. This is Streak's "context always
+           visible" principle, not dashboard sprawl. -->
+      ${focusedItem ? html15`
+            <div class="pipeline-focus-row" style="
+              margin:4px 14px 8px;padding:10px 12px;border-radius:10px;
+              background:#FFFBEB;border:1px solid #FDE68A;
+              display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+            ">
+              <div style="flex:1;min-width:200px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">
+                  <strong style="font-size:13px;color:#92400E">Thread record</strong>
+                  <${StatePill} state=${focusedItem.state} />
                 </div>
-                <div class="pipeline-focus-actions">
-                  ${!focusedItemVisible ? html15`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show in invoices</button>` : null}
-                  <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open record</button>
-                  <button class="btn-ghost btn-sm" onClick=${clearFocus}>Clear focus</button>
+                <div class="muted" style="font-size:12px">
+                  ${focusedItem.vendor_name || focusedItem.vendor || "Unknown vendor"} ·
+                  ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
                 </div>
               </div>
-            ` : null}
-      </div>
-
-      <div class="panel pipeline-view-panel" style="padding:12px 14px">
-        <div class="pipeline-view-head" style="margin-bottom:10px">
-          <div>
-            <strong style="font-size:13px">Views</strong>
-            <div class="muted" style="font-size:12px">
-              ${activeSavedView ? `Current saved view: ${currentViewLabel}.` : `Current slice: ${currentSliceLabel}.`}
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                ${!focusedItemVisible ? html15`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show</button>` : null}
+                <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open</button>
+                <button class="btn-ghost btn-sm" onClick=${clearFocus}>×</button>
+              </div>
             </div>
-          </div>
-          <div class="muted" style="font-size:12px">${pinnedViews.length} pinned · ${personalViews.length} personal · ${displayed.length} visible</div>
-        </div>
+          ` : null}
 
-        <div class="pipeline-view-band">
-          <span class="pipeline-view-label">Slices</span>
-          <div class="pipeline-chip-strip" style="overflow-x:auto;padding-bottom:2px">
-            ${PIPELINE_BUILTIN_SLICES.map((slice) => html15`
-              <${SliceChip}
-                key=${slice.id}
-                slice=${slice}
-                count=${sliceCounts[slice.id] || 0}
-                active=${viewPrefs.activeSliceId === slice.id}
-                onClick=${() => applySlice(slice.id)}
-              />
-            `)}
-          </div>
-        </div>
+      <!-- Views popover: slices + starter/personal saved views + save current.
+           Only visible when the user taps Views — no permanent chrome. -->
+      ${viewsOpen ? html15`
+            <div style="
+              position:fixed;inset:0;background:rgba(10,22,40,0.3);z-index:9500;
+            " onClick=${() => setViewsOpen(false)}>
+              <div
+                onClick=${(e3) => e3.stopPropagation()}
+                style="
+                  position:absolute;top:56px;right:14px;width:340px;max-width:calc(100vw - 28px);
+                  max-height:calc(100vh - 80px);overflow:auto;
+                  background:#fff;border:1px solid var(--border);border-radius:12px;
+                  box-shadow:0 12px 32px rgba(10,22,40,0.2);padding:14px;
+                "
+              >
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                  <strong style="font-size:14px">Views</strong>
+                  <button class="btn-ghost btn-xs" onClick=${() => setViewsOpen(false)}>Close</button>
+                </div>
 
-        <div class="pipeline-view-band" style="margin-top:10px">
-          <span class="pipeline-view-label">Saved</span>
-          <div class="pipeline-chip-strip">
-            ${starterViews.map((view) => html15`
-              <${SavedViewChip}
-                key=${view.id}
-                view=${view}
-                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
-                onOpen=${() => applySavedView(view)}
-                onTogglePin=${() => toggleSavedViewPin(view)}
-              />
-            `)}
-            ${personalViews.map((view) => html15`
-              <${SavedViewChip}
-                key=${view.id}
-                view=${view}
-                active=${activeSavedView?.scope === view.scope && activeSavedView?.id === view.id}
-                onOpen=${() => applySavedView(view)}
-                onTogglePin=${() => toggleSavedViewPin(view)}
-                onDelete=${() => removeView(view.id)}
-              />
-            `)}
-          </div>
-        </div>
+                <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Slice</div>
+                <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+                  ${PIPELINE_BUILTIN_SLICES.map((slice) => html15`
+                    <button
+                      key=${slice.id}
+                      onClick=${() => {
+      applySlice(slice.id);
+      setViewsOpen(false);
+    }}
+                      style="
+                        display:flex;align-items:center;justify-content:space-between;
+                        padding:8px 10px;border-radius:8px;border:0;cursor:pointer;
+                        background:${viewPrefs.activeSliceId === slice.id ? "#ECFDF5" : "transparent"};
+                        color:${viewPrefs.activeSliceId === slice.id ? "#059669" : "#0A1628"};
+                        text-align:left;font-family:inherit;font-size:13px;
+                      "
+                    >
+                      <span>${slice.label}</span>
+                      <span class="muted" style="font-size:11px;font-weight:700">${sliceCounts[slice.id] || 0}</span>
+                    </button>
+                  `)}
+                </div>
 
-        <div class="pipeline-saved-input-row">
-          <input
-            value=${savedViewName}
-            onInput=${(event) => setSavedViewName(event.target.value)}
-            placeholder="Save current view…"
-            style="min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-          />
-          <button class="btn-secondary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? "Saving…" : "Save current view"}</button>
-          ${activeSavedView?.scope === "user" ? html15`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView}>${updatingView ? "Updating…" : "Update active view"}</button>` : null}
-          <button class="btn-ghost btn-sm" onClick=${resetFiltersAndSearch}>Reset filters</button>
-          <span class="muted" style="font-size:12px">Sorted ${viewPrefs.sortDir === "desc" ? "descending" : "ascending"} by ${viewPrefs.sortCol.replace(/_/g, " ")}.</span>
-        </div>
-      </div>
+                ${starterViews.length > 0 ? html15`
+                  <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Saved</div>
+                  <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+                    ${[...starterViews, ...personalViews].map((view) => html15`
+                      <div key=${view.id} style="
+                        display:flex;align-items:center;gap:4px;
+                        padding:6px 8px;border-radius:8px;
+                        background:${activeSavedView?.id === view.id ? "#ECFDF5" : "transparent"};
+                      ">
+                        <button
+                          onClick=${() => {
+      applySavedView(view);
+      setViewsOpen(false);
+    }}
+                          style="flex:1;border:0;background:transparent;cursor:pointer;text-align:left;font-family:inherit;font-size:13px;padding:0"
+                        >${getSavedViewLabel(view)}</button>
+                        <button
+                          class="btn-ghost btn-xs"
+                          onClick=${() => toggleSavedViewPin(view)}
+                          aria-label=${view.pinned ? "Unpin" : "Pin"}
+                        >${view.pinned ? "★" : "☆"}</button>
+                        ${view.scope === "user" ? html15`<button class="btn-ghost btn-xs" onClick=${() => removeView(view.id)}>✕</button>` : null}
+                      </div>
+                    `)}
+                  </div>
+                ` : null}
 
-      <div class="panel pipeline-filter-panel" style="padding:12px 14px">
-        <div class="pipeline-filter-grid" style="display:grid;grid-template-columns:minmax(0,1.8fr) minmax(0,1.2fr) repeat(4,minmax(0,1fr));gap:10px;align-items:end">
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Search</span>
-            <input
-              placeholder="Search vendors, references, PO, sender…"
-              value=${searchQuery}
-              onInput=${(event) => setSearchQuery(event.target.value)}
-              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-            />
-          </label>
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Vendor</span>
-            <input
-              placeholder="Filter vendor…"
-              value=${viewPrefs.filters.vendor}
-              onInput=${(event) => updateFilters({ vendor: event.target.value })}
-              style="padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit"
-            />
-          </label>
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Due date</span>
-            <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
-              <option value="all">All</option>
-              <option value="overdue">Overdue</option>
-              <option value="due_7d">Due in 7 days</option>
-              <option value="no_due">No due date</option>
-            </select>
-          </label>
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Blocker type</span>
-            <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
-              <option value="all">All</option>
-              <option value="entity">Entity</option>
-              <option value="approval">Approval</option>
-              <option value="info">Needs info</option>
-              <option value="erp">ERP</option>
-              <option value="exception">Policy</option>
-              <option value="confidence">Field review</option>
-              <option value="budget">Budget</option>
-              <option value="po">PO / GR</option>
-              <option value="processing">Processing</option>
-            </select>
-          </label>
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">ERP status</span>
-            <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
-              <option value="all">All</option>
-              <option value="ready">Ready</option>
-              <option value="failed">Failed</option>
-              <option value="connected">Connected</option>
-              <option value="posted">Posted</option>
-              <option value="not_connected">Not connected</option>
-            </select>
-          </label>
-          <label style="display:flex;flex-direction:column;gap:6px">
-            <span class="muted" style="font-size:12px">Sort</span>
-            <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
-              <option value="queue_age">Queue age</option>
-              <option value="due_date">Due date</option>
-              <option value="amount">Amount</option>
-              <option value="updated_at">Last update</option>
-              <option value="approval_wait">Approval waiting time</option>
-            </select>
-          </label>
-        </div>
+                <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Save current</div>
+                <div style="display:flex;gap:6px">
+                  <input
+                    value=${savedViewName}
+                    onInput=${(event) => setSavedViewName(event.target.value)}
+                    placeholder="View name"
+                    style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit"
+                  />
+                  <button class="btn-primary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? "…" : "Save"}</button>
+                </div>
+                ${activeSavedView?.scope === "user" ? html15`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView} style="margin-top:6px;width:100%">
+                      ${updatingView ? "Updating…" : `Update "${activeSavedView.name}"`}
+                    </button>` : null}
+              </div>
+            </div>
+          ` : null}
 
-        <div class="pipeline-filter-footer">
-          <div class="pipeline-filter-aux" style="align-items:flex-end">
-            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
-              <span class="muted" style="font-size:12px">Amount band</span>
-              <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
-                <option value="all">All</option>
-                <option value="under_1k">Under 1k</option>
-                <option value="1k_10k">1k - 10k</option>
-                <option value="over_10k">Over 10k</option>
-              </select>
-            </label>
-            <label style="display:flex;flex-direction:column;gap:6px;min-width:160px">
-              <span class="muted" style="font-size:12px">Approval age</span>
-              <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
-                <option value="all">All</option>
-                <option value="under_24h">Under 24h</option>
-                <option value="1d_3d">1-3 days</option>
-                <option value="over_3d">Over 3 days</option>
-              </select>
-            </label>
-          </div>
-          <div class="pipeline-filter-actions" style="justify-content:flex-end">
-            <span class="muted" style="font-size:12px">
-              ${selectedItems.length ? `${selectedItems.length} selected` : "No selection"}
-              ${routeableSelectedItems.length ? ` · ${routeableSelectedItems.length} routeable` : ""}
-            </span>
-            <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
-            <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
-            <button
-              class="btn-primary btn-sm"
-              onClick=${() => routeSelected()}
-              disabled=${routingSelected || !routeableSelectedItems.length && !isRouteableInvoiceItem(activeItem)}
-            >
-              ${routingSelected ? "Routing…" : routeableSelectedItems.length > 0 ? "Route selected" : "Route current"}
-            </button>
-          </div>
-        </div>
-      </div>
+      <!-- Filters sheet: slides in from the right when Filters is tapped.
+           All the filter controls from the old permanent panel live here. -->
+      ${filtersOpen ? html15`
+            <div style="
+              position:fixed;inset:0;background:rgba(10,22,40,0.3);z-index:9500;
+            " onClick=${() => setFiltersOpen(false)}>
+              <div
+                onClick=${(e3) => e3.stopPropagation()}
+                style="
+                  position:absolute;top:0;right:0;bottom:0;width:380px;max-width:100vw;
+                  background:#fff;border-left:1px solid var(--border);
+                  box-shadow:-12px 0 32px rgba(10,22,40,0.12);
+                  padding:16px;overflow-y:auto;
+                  display:flex;flex-direction:column;gap:12px;
+                "
+              >
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <strong style="font-size:15px">Filters</strong>
+                  <button class="btn-ghost btn-sm" onClick=${() => setFiltersOpen(false)}>Close</button>
+                </div>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Vendor</span>
+                  <input
+                    placeholder="Any vendor"
+                    value=${viewPrefs.filters.vendor}
+                    onInput=${(event) => updateFilters({ vendor: event.target.value })}
+                    style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit"
+                  />
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Due date</span>
+                  <select value=${viewPrefs.filters.due} onChange=${(event) => updateFilters({ due: event.target.value })}>
+                    <option value="all">All</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="due_7d">Due in 7 days</option>
+                    <option value="no_due">No due date</option>
+                  </select>
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Blocker type</span>
+                  <select value=${viewPrefs.filters.blocker} onChange=${(event) => updateFilters({ blocker: event.target.value })}>
+                    <option value="all">All</option>
+                    <option value="entity">Entity</option>
+                    <option value="approval">Approval</option>
+                    <option value="info">Needs info</option>
+                    <option value="erp">ERP</option>
+                    <option value="exception">Policy</option>
+                    <option value="confidence">Field review</option>
+                    <option value="budget">Budget</option>
+                    <option value="po">PO / GR</option>
+                    <option value="processing">Processing</option>
+                  </select>
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">ERP status</span>
+                  <select value=${viewPrefs.filters.erpStatus} onChange=${(event) => updateFilters({ erpStatus: event.target.value })}>
+                    <option value="all">All</option>
+                    <option value="ready">Ready</option>
+                    <option value="failed">Failed</option>
+                    <option value="connected">Connected</option>
+                    <option value="posted">Posted</option>
+                    <option value="not_connected">Not connected</option>
+                  </select>
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Amount band</span>
+                  <select value=${viewPrefs.filters.amount} onChange=${(event) => updateFilters({ amount: event.target.value })}>
+                    <option value="all">All</option>
+                    <option value="under_1k">Under 1k</option>
+                    <option value="1k_10k">1k - 10k</option>
+                    <option value="over_10k">Over 10k</option>
+                  </select>
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Approval age</span>
+                  <select value=${viewPrefs.filters.approvalAge} onChange=${(event) => updateFilters({ approvalAge: event.target.value })}>
+                    <option value="all">All</option>
+                    <option value="under_24h">Under 24h</option>
+                    <option value="1d_3d">1-3 days</option>
+                    <option value="over_3d">Over 3 days</option>
+                  </select>
+                </label>
+
+                <label style="display:flex;flex-direction:column;gap:6px">
+                  <span class="muted" style="font-size:12px">Sort by</span>
+                  <select value=${viewPrefs.sortCol} onChange=${(event) => updateSort(event.target.value)}>
+                    <option value="queue_age">Queue age</option>
+                    <option value="due_date">Due date</option>
+                    <option value="amount">Amount</option>
+                    <option value="updated_at">Last update</option>
+                    <option value="approval_wait">Approval wait</option>
+                  </select>
+                  <span class="muted" style="font-size:11px">
+                    ${viewPrefs.sortDir === "desc" ? "Descending" : "Ascending"} — tap the sort option again to flip.
+                  </span>
+                </label>
+
+                <div style="display:flex;gap:6px;margin-top:8px">
+                  <button class="btn-ghost btn-sm" onClick=${() => {
+      resetFiltersAndSearch();
+      setFiltersOpen(false);
+    }} style="flex:1">Reset</button>
+                  <button class="btn-primary btn-sm" onClick=${() => setFiltersOpen(false)} style="flex:1">Done</button>
+                </div>
+              </div>
+            </div>
+          ` : null}
 
       <style>${BATCH_OPS_CSS}</style>
       <${BatchOps}
@@ -69955,9 +69983,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     })()}
       </div>
 
-      <div class="muted" style="text-align:center;padding:2px 0 0;font-size:12px">
-        ${displayed.length} of ${items.length} records in ${currentSliceLabel}.
-      </div>
     </div>
   `;
   }
