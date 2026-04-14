@@ -93,6 +93,9 @@ def _load_store_symbols() -> None:
         OnboardingTokenStore as _OnboardingTokenStore,
     )
     from clearledgr.core.stores.pipeline_store import PipelineStore as _PipelineStore
+    from clearledgr.core.stores.purchase_order_store import (
+        PurchaseOrderStore as _PurchaseOrderStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -112,6 +115,7 @@ def _load_store_symbols() -> None:
     OverrideWindowStore = _OverrideWindowStore
     OnboardingTokenStore = _OnboardingTokenStore
     PipelineStore = _PipelineStore
+    PurchaseOrderStore = _PurchaseOrderStore
 
 
 class _ClearledgrDBBase:
@@ -1337,6 +1341,7 @@ def _get_db_impl_class():
             DisputeStore,
             OverrideWindowStore,
             PipelineStore,
+            PurchaseOrderStore,
             _ClearledgrDBBase,
         ):
             pass

@@ -1197,6 +1197,127 @@ def _v32_drop_workflow_runs(cur, db):
     cur.execute("DROP TABLE IF EXISTS workflow_runs")
 
 
+@migration(33, "DB-backed PO / GR / 3-way match tables (§6.6 + thesis match primitive)")
+def _v33_purchase_orders(cur, db):
+    """Persist Purchase Orders, Goods Receipts, and 3-way matches.
+
+    The original PurchaseOrderService kept these in process-local dicts,
+    so nothing survived a deploy and multi-worker setups couldn't share
+    state. These three tables back the new PurchaseOrderStore mixin
+    which the service now delegates to.
+
+    Line items are stored as JSON text on the parent row. PO line items
+    are always queried with the PO (no standalone PO-line queries we
+    care about), and JSON keeps the schema tight. Indexes cover the
+    two access patterns the service actually uses:
+      - get PO by (org, number)
+      - list open POs for a vendor
+    """
+    # Purchase Orders
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS purchase_orders (
+            po_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            po_number TEXT,
+            vendor_id TEXT,
+            vendor_name TEXT,
+            order_date TEXT,
+            expected_delivery TEXT,
+            line_items_json TEXT NOT NULL DEFAULT '[]',
+            subtotal REAL NOT NULL DEFAULT 0,
+            tax_amount REAL NOT NULL DEFAULT 0,
+            total_amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            status TEXT NOT NULL DEFAULT 'draft',
+            requested_by TEXT,
+            approved_by TEXT,
+            approved_at TEXT,
+            notes TEXT,
+            department TEXT,
+            project TEXT,
+            ship_to_address TEXT,
+            erp_po_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_po_org_number ON purchase_orders(organization_id, po_number)",
+        "CREATE INDEX IF NOT EXISTS idx_po_org_vendor ON purchase_orders(organization_id, vendor_name)",
+        "CREATE INDEX IF NOT EXISTS idx_po_org_status ON purchase_orders(organization_id, status)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v33] PO index skipped: %s", exc)
+
+    # Goods Receipts
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS goods_receipts (
+            gr_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            gr_number TEXT,
+            po_id TEXT,
+            po_number TEXT,
+            vendor_id TEXT,
+            vendor_name TEXT,
+            receipt_date TEXT,
+            received_by TEXT,
+            delivery_note TEXT,
+            carrier TEXT,
+            line_items_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'pending',
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_gr_po ON goods_receipts(po_id)",
+        "CREATE INDEX IF NOT EXISTS idx_gr_org_vendor ON goods_receipts(organization_id, vendor_name)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v33] GR index skipped: %s", exc)
+
+    # 3-Way Matches
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS three_way_matches (
+            match_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            invoice_id TEXT,
+            po_id TEXT,
+            gr_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            exceptions_json TEXT NOT NULL DEFAULT '[]',
+            po_amount REAL NOT NULL DEFAULT 0,
+            gr_amount REAL NOT NULL DEFAULT 0,
+            invoice_amount REAL NOT NULL DEFAULT 0,
+            price_variance REAL NOT NULL DEFAULT 0,
+            quantity_variance REAL NOT NULL DEFAULT 0,
+            override_by TEXT,
+            override_reason TEXT,
+            matched_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_match_invoice ON three_way_matches(invoice_id)",
+        "CREATE INDEX IF NOT EXISTS idx_match_po ON three_way_matches(po_id)",
+        "CREATE INDEX IF NOT EXISTS idx_match_org_status ON three_way_matches(organization_id, status)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v33] Match index skipped: %s", exc)
+
+
 @migration(24, "Migration from Existing Tools (DESIGN_THESIS.md §3)")
 def _v24_migration_state(cur, db):
     """§3 Migration: parallel running mode + cutover decision tracking."""

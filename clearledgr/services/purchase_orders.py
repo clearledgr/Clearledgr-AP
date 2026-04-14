@@ -319,109 +319,280 @@ class ThreeWayMatch:
         }
 
 
+# ---------------------------------------------------------------------------
+# Dataclass ↔ dict converters — the service talks dataclasses, the DB store
+# speaks dicts. These funnel the conversion through one place so the rest of
+# the service stays readable.
+# ---------------------------------------------------------------------------
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    if isinstance(value, date):
+        return value
+    s = str(value or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.split("T")[0]).date()
+    except Exception:
+        return None
+
+
+def _parse_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    s = str(value or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _po_line_from_dict(d: Dict[str, Any]) -> POLineItem:
+    return POLineItem(
+        line_id=str(d.get("line_id") or uuid.uuid4().hex[:8]),
+        item_number=str(d.get("item_number") or ""),
+        description=str(d.get("description") or ""),
+        quantity=float(d.get("quantity") or 0.0),
+        unit_price=float(d.get("unit_price") or 0.0),
+        unit_of_measure=str(d.get("unit_of_measure") or "EA"),
+        gl_code=str(d.get("gl_code") or ""),
+        cost_center=str(d.get("cost_center") or ""),
+        tax_code=str(d.get("tax_code") or ""),
+        quantity_received=float(d.get("quantity_received") or 0.0),
+        quantity_invoiced=float(d.get("quantity_invoiced") or 0.0),
+    )
+
+
+def _po_from_dict(d: Optional[Dict[str, Any]]) -> Optional[PurchaseOrder]:
+    if not d:
+        return None
+    line_dicts = d.get("line_items") or []
+    lines = [_po_line_from_dict(ld) for ld in line_dicts if isinstance(ld, dict)]
+    try:
+        status = POStatus(str(d.get("status") or "draft"))
+    except ValueError:
+        status = POStatus.DRAFT
+    po = PurchaseOrder(
+        po_id=str(d.get("po_id") or ""),
+        po_number=str(d.get("po_number") or ""),
+        vendor_id=str(d.get("vendor_id") or ""),
+        vendor_name=str(d.get("vendor_name") or ""),
+        order_date=_parse_date(d.get("order_date")) or date.today(),
+        expected_delivery=_parse_date(d.get("expected_delivery")),
+        line_items=lines,
+        subtotal=float(d.get("subtotal") or 0.0),
+        tax_amount=float(d.get("tax_amount") or 0.0),
+        total_amount=float(d.get("total_amount") or 0.0),
+        currency=str(d.get("currency") or "USD"),
+        status=status,
+        requested_by=str(d.get("requested_by") or ""),
+        approved_by=d.get("approved_by") or None,
+        approved_at=_parse_datetime(d.get("approved_at")),
+        notes=str(d.get("notes") or ""),
+        department=str(d.get("department") or ""),
+        project=str(d.get("project") or ""),
+        ship_to_address=str(d.get("ship_to_address") or ""),
+        created_at=_parse_datetime(d.get("created_at")) or datetime.now(),
+        updated_at=_parse_datetime(d.get("updated_at")) or datetime.now(),
+        organization_id=str(d.get("organization_id") or "default"),
+        erp_po_id=str(d.get("erp_po_id") or ""),
+    )
+    return po
+
+
+def _po_to_store_dict(po: PurchaseOrder) -> Dict[str, Any]:
+    data = po.to_dict()
+    data["organization_id"] = po.organization_id
+    data["updated_at"] = datetime.now().isoformat()
+    data["erp_po_id"] = po.erp_po_id
+    data["ship_to_address"] = po.ship_to_address
+    data["project"] = po.project
+    data["approved_at"] = po.approved_at.isoformat() if po.approved_at else None
+    return data
+
+
+def _gr_line_from_dict(d: Dict[str, Any]) -> GoodsReceiptLine:
+    return GoodsReceiptLine(
+        line_id=str(d.get("line_id") or uuid.uuid4().hex[:8]),
+        po_line_id=str(d.get("po_line_id") or ""),
+        item_number=str(d.get("item_number") or ""),
+        description=str(d.get("description") or ""),
+        quantity_received=float(d.get("quantity_received") or 0.0),
+        quantity_rejected=float(d.get("quantity_rejected") or 0.0),
+        unit_of_measure=str(d.get("unit_of_measure") or "EA"),
+        rejection_reason=str(d.get("rejection_reason") or ""),
+    )
+
+
+def _gr_from_dict(d: Optional[Dict[str, Any]]) -> Optional[GoodsReceipt]:
+    if not d:
+        return None
+    line_dicts = d.get("line_items") or []
+    lines = [_gr_line_from_dict(ld) for ld in line_dicts if isinstance(ld, dict)]
+    try:
+        status = GRStatus(str(d.get("status") or "pending"))
+    except ValueError:
+        status = GRStatus.PENDING
+    return GoodsReceipt(
+        gr_id=str(d.get("gr_id") or ""),
+        gr_number=str(d.get("gr_number") or ""),
+        po_id=str(d.get("po_id") or ""),
+        po_number=str(d.get("po_number") or ""),
+        vendor_id=str(d.get("vendor_id") or ""),
+        vendor_name=str(d.get("vendor_name") or ""),
+        receipt_date=_parse_date(d.get("receipt_date")) or date.today(),
+        received_by=str(d.get("received_by") or ""),
+        delivery_note=str(d.get("delivery_note") or ""),
+        carrier=str(d.get("carrier") or ""),
+        line_items=lines,
+        status=status,
+        notes=str(d.get("notes") or ""),
+        created_at=_parse_datetime(d.get("created_at")) or datetime.now(),
+        organization_id=str(d.get("organization_id") or "default"),
+    )
+
+
+def _gr_to_store_dict(gr: GoodsReceipt) -> Dict[str, Any]:
+    data = gr.to_dict()
+    data["organization_id"] = gr.organization_id
+    data["carrier"] = gr.carrier
+    return data
+
+
+def _match_from_dict(d: Optional[Dict[str, Any]]) -> Optional[ThreeWayMatch]:
+    if not d:
+        return None
+    try:
+        status = MatchStatus(str(d.get("status") or "pending"))
+    except ValueError:
+        status = MatchStatus.PENDING
+    return ThreeWayMatch(
+        match_id=str(d.get("match_id") or ""),
+        invoice_id=str(d.get("invoice_id") or ""),
+        po_id=str(d.get("po_id") or ""),
+        gr_id=str(d.get("gr_id") or ""),
+        status=status,
+        exceptions=list(d.get("exceptions") or []),
+        po_amount=float(d.get("po_amount") or 0.0),
+        gr_amount=float(d.get("gr_amount") or 0.0),
+        invoice_amount=float(d.get("invoice_amount") or 0.0),
+        price_variance=float(d.get("price_variance") or 0.0),
+        quantity_variance=float(d.get("quantity_variance") or 0.0),
+        override_by=d.get("override_by") or None,
+        override_reason=str(d.get("override_reason") or ""),
+        matched_at=_parse_datetime(d.get("matched_at")) or datetime.now(),
+    )
+
+
+def _match_to_store_dict(match: ThreeWayMatch, organization_id: str) -> Dict[str, Any]:
+    data = match.to_dict()
+    data["organization_id"] = organization_id
+    return data
+
+
 class PurchaseOrderService:
+    """Service for Purchase Order management and 3-way matching.
+
+    State lives in the DB (``purchase_orders`` / ``goods_receipts`` /
+    ``three_way_matches`` tables via the ``PurchaseOrderStore`` mixin).
+    The service converts between the dataclass API its callers expect
+    and the dict rows the store returns.
+
+    Nothing is cached across calls — each method reads fresh state from
+    the DB so multi-worker and post-deploy invariants hold. The
+    singleton cache below only avoids re-constructing the service
+    object itself; it holds no state.
     """
-    Service for Purchase Order management and 3-way matching.
-    """
-    
-    # Default tolerances
+
+    # Default tolerances — thesis §6.6 informs these:
     PRICE_TOLERANCE_PERCENT = 2.0  # 2% price variance allowed
     QUANTITY_TOLERANCE_PERCENT = 5.0  # 5% quantity variance allowed
     AMOUNT_TOLERANCE = 10.0  # $10 absolute tolerance
-    
+    OPEN_STATUSES = (
+        POStatus.APPROVED,
+        POStatus.PARTIALLY_RECEIVED,
+        POStatus.PARTIALLY_INVOICED,
+    )
+
     def __init__(self, organization_id: str = "default"):
         self.organization_id = organization_id
-        self._purchase_orders: Dict[str, PurchaseOrder] = {}
-        self._goods_receipts: Dict[str, GoodsReceipt] = {}
-        self._matches: Dict[str, ThreeWayMatch] = {}
-        
-        # Index for quick lookup
-        self._po_by_number: Dict[str, str] = {}  # po_number -> po_id
-        self._po_by_vendor: Dict[str, List[str]] = {}  # vendor_id -> [po_ids]
-    
-    # =========================================================================
+        from clearledgr.core.database import get_db
+        self._db = get_db()
+
+    # ------------------------------------------------------------------
     # PURCHASE ORDER MANAGEMENT
-    # =========================================================================
-    
+    # ------------------------------------------------------------------
+
     def create_po(
         self,
         vendor_id: str,
         vendor_name: str,
         requested_by: str,
         line_items: List[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> PurchaseOrder:
-        """Create a new purchase order."""
+        """Create and persist a new purchase order."""
         po = PurchaseOrder(
             vendor_id=vendor_id,
             vendor_name=vendor_name,
             requested_by=requested_by,
             organization_id=self.organization_id,
-            **kwargs
+            **kwargs,
         )
-        
-        # Generate PO number if not provided
         if not po.po_number:
-            po.po_number = f"PO-{datetime.now().strftime('%Y%m%d')}-{len(self._purchase_orders) + 1:04d}"
-        
-        # Add line items
+            # Use the db-wide count for the suffix so numbers don't
+            # collide across workers. Falls back to a short uuid when
+            # the count query fails.
+            try:
+                existing_count = len(self._db.list_purchase_orders(self.organization_id, limit=10000))
+            except Exception:
+                existing_count = 0
+            po.po_number = (
+                f"PO-{datetime.now().strftime('%Y%m%d')}-{existing_count + 1:04d}"
+            )
         if line_items:
             for item_data in line_items:
-                item = POLineItem(**item_data)
-                po.add_line_item(item)
-        
-        self._purchase_orders[po.po_id] = po
-        self._po_by_number[po.po_number] = po.po_id
-        
-        # Index by vendor
-        if vendor_id not in self._po_by_vendor:
-            self._po_by_vendor[vendor_id] = []
-        self._po_by_vendor[vendor_id].append(po.po_id)
-        
-        logger.info(f"Created PO: {po.po_number} for {vendor_name}")
+                po.add_line_item(POLineItem(**item_data))
+        self._db.save_purchase_order(_po_to_store_dict(po))
+        logger.info("Created PO: %s for %s", po.po_number, vendor_name)
         return po
-    
+
     def approve_po(self, po_id: str, approved_by: str) -> PurchaseOrder:
         """Approve a purchase order."""
-        po = self._purchase_orders.get(po_id)
+        po = self.get_po(po_id)
         if not po:
             raise ValueError(f"PO {po_id} not found")
-        
-        if po.status != POStatus.PENDING_APPROVAL:
-            po.status = POStatus.PENDING_APPROVAL
-        
         po.status = POStatus.APPROVED
         po.approved_by = approved_by
         po.approved_at = datetime.now()
         po.updated_at = datetime.now()
-        
-        logger.info(f"Approved PO: {po.po_number} by {approved_by}")
+        self._db.save_purchase_order(_po_to_store_dict(po))
+        logger.info("Approved PO: %s by %s", po.po_number, approved_by)
         return po
-    
+
     def get_po(self, po_id: str) -> Optional[PurchaseOrder]:
-        """Get a purchase order by ID."""
-        return self._purchase_orders.get(po_id)
-    
+        return _po_from_dict(self._db.get_purchase_order(po_id))
+
     def get_po_by_number(self, po_number: str) -> Optional[PurchaseOrder]:
-        """Get a purchase order by PO number."""
-        po_id = self._po_by_number.get(po_number)
-        if po_id:
-            return self._purchase_orders.get(po_id)
-        return None
-    
+        return _po_from_dict(
+            self._db.get_purchase_order_by_number(self.organization_id, po_number)
+        )
+
     def get_open_pos_for_vendor(self, vendor_id: str) -> List[PurchaseOrder]:
-        """Get open POs for a vendor."""
-        po_ids = self._po_by_vendor.get(vendor_id, [])
-        return [
-            self._purchase_orders[po_id] 
-            for po_id in po_ids 
-            if self._purchase_orders[po_id].status in [
-                POStatus.APPROVED, 
-                POStatus.PARTIALLY_RECEIVED,
-                POStatus.PARTIALLY_INVOICED
-            ]
-        ]
-    
+        """Open POs for a vendor. Matches the legacy signature (vendor_id
+        as input); the underlying store matches by vendor_name which is
+        typically what's populated. Callers already pass vendor_name in
+        practice — see execution_engine and invoice_validation."""
+        rows = self._db.list_purchase_orders_for_vendor(
+            self.organization_id,
+            vendor_id,
+            open_only=True,
+        )
+        return [_po_from_dict(r) for r in rows if r]
+
     def search_pos(
         self,
         vendor_name: str = "",
@@ -429,40 +600,35 @@ class PurchaseOrderService:
         from_date: date = None,
         to_date: date = None,
     ) -> List[PurchaseOrder]:
-        """Search purchase orders."""
-        results = list(self._purchase_orders.values())
-        
+        """Filter POs by vendor substring / status / date range."""
+        raw = self._db.list_purchase_orders(self.organization_id, limit=1000)
+        pos = [_po_from_dict(r) for r in raw if r]
         if vendor_name:
             vendor_lower = vendor_name.lower()
-            results = [po for po in results if vendor_lower in po.vendor_name.lower()]
-        
+            pos = [po for po in pos if po and vendor_lower in po.vendor_name.lower()]
         if status:
-            results = [po for po in results if po.status == status]
-        
+            pos = [po for po in pos if po and po.status == status]
         if from_date:
-            results = [po for po in results if po.order_date >= from_date]
-        
+            pos = [po for po in pos if po and po.order_date and po.order_date >= from_date]
         if to_date:
-            results = [po for po in results if po.order_date <= to_date]
-        
-        return results
-    
-    # =========================================================================
+            pos = [po for po in pos if po and po.order_date and po.order_date <= to_date]
+        return [po for po in pos if po is not None]
+
+    # ------------------------------------------------------------------
     # GOODS RECEIPT MANAGEMENT
-    # =========================================================================
-    
+    # ------------------------------------------------------------------
+
     def create_goods_receipt(
         self,
         po_id: str,
         received_by: str,
         line_items: List[Dict[str, Any]],
-        **kwargs
+        **kwargs,
     ) -> GoodsReceipt:
-        """Create a goods receipt against a PO."""
-        po = self._purchase_orders.get(po_id)
+        """Create a goods receipt against a PO and advance PO state."""
+        po = self.get_po(po_id)
         if not po:
             raise ValueError(f"PO {po_id} not found")
-        
         gr = GoodsReceipt(
             po_id=po_id,
             po_number=po.po_number,
@@ -470,44 +636,38 @@ class PurchaseOrderService:
             vendor_name=po.vendor_name,
             received_by=received_by,
             organization_id=self.organization_id,
-            **kwargs
+            **kwargs,
         )
-        
-        # Generate GR number
-        gr.gr_number = f"GR-{datetime.now().strftime('%Y%m%d')}-{len(self._goods_receipts) + 1:04d}"
-        
-        # Process line items and update PO
+        try:
+            existing_grs = len(self._db.list_goods_receipts_for_po(po_id))
+        except Exception:
+            existing_grs = 0
+        gr.gr_number = (
+            f"GR-{datetime.now().strftime('%Y%m%d')}-{existing_grs + 1:04d}"
+        )
         for item_data in line_items:
             gr_line = GoodsReceiptLine(**item_data)
             gr.line_items.append(gr_line)
-            
-            # Update PO line received quantity
             if gr_line.po_line_id:
                 for po_line in po.line_items:
                     if po_line.line_id == gr_line.po_line_id:
                         po_line.quantity_received += gr_line.quantity_received
                         break
-        
-        # Update PO status
-        if po.is_fully_received:
-            po.status = POStatus.FULLY_RECEIVED
-        else:
-            po.status = POStatus.PARTIALLY_RECEIVED
-        
+        po.status = POStatus.FULLY_RECEIVED if po.is_fully_received else POStatus.PARTIALLY_RECEIVED
         gr.status = GRStatus.RECEIVED
-        self._goods_receipts[gr.gr_id] = gr
-        
-        logger.info(f"Created GR: {gr.gr_number} for PO {po.po_number}")
+        self._db.save_goods_receipt(_gr_to_store_dict(gr))
+        self._db.save_purchase_order(_po_to_store_dict(po))
+        logger.info("Created GR: %s for PO %s", gr.gr_number, po.po_number)
         return gr
-    
+
     def get_goods_receipts_for_po(self, po_id: str) -> List[GoodsReceipt]:
-        """Get all goods receipts for a PO."""
-        return [gr for gr in self._goods_receipts.values() if gr.po_id == po_id]
-    
-    # =========================================================================
+        rows = self._db.list_goods_receipts_for_po(po_id)
+        return [_gr_from_dict(r) for r in rows if r]
+
+    # ------------------------------------------------------------------
     # 3-WAY MATCHING
-    # =========================================================================
-    
+    # ------------------------------------------------------------------
+
     def match_invoice_to_po(
         self,
         invoice_id: str,
@@ -516,23 +676,21 @@ class PurchaseOrderService:
         invoice_po_number: str = "",
         invoice_lines: List[Dict[str, Any]] = None,
     ) -> ThreeWayMatch:
-        """
-        Perform 3-way matching: PO + Goods Receipt + Invoice.
-        """
+        """Perform 3-way matching: PO + Goods Receipt + Invoice."""
         match = ThreeWayMatch(
             invoice_id=invoice_id,
             invoice_amount=invoice_amount,
         )
-        
-        # Step 1: Find matching PO
-        po = None
+
+        # Step 1: locate the PO. Direct hit by number first; fall back
+        # to fuzzy vendor/amount match only when the invoice didn't
+        # carry an explicit PO number.
+        po: Optional[PurchaseOrder] = None
         if invoice_po_number:
             po = self.get_po_by_number(invoice_po_number)
-        
         if not po:
-            # Try to find PO by vendor + amount
             po = self._find_po_by_vendor_amount(invoice_vendor, invoice_amount)
-        
+
         if not po:
             match.status = MatchStatus.EXCEPTION
             match.exceptions.append({
@@ -540,54 +698,63 @@ class PurchaseOrderService:
                 "message": f"No matching PO found for vendor {invoice_vendor}",
                 "severity": "high",
             })
-            self._matches[match.match_id] = match
+            self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
             return match
-        
+
         match.po_id = po.po_id
         match.po_amount = po.total_amount
-        
-        # Step 2: Find matching Goods Receipt
+
+        # Step 2: most-recent GR for this PO.
         goods_receipts = self.get_goods_receipts_for_po(po.po_id)
         if not goods_receipts:
-            match.status = MatchStatus.EXCEPTION
             match.exceptions.append({
                 "type": MatchExceptionType.NO_GR.value,
                 "message": f"No goods receipt found for PO {po.po_number}",
                 "severity": "medium",
             })
-            # Continue with 2-way match
         else:
-            # Use most recent GR
             gr = max(goods_receipts, key=lambda g: g.created_at)
             match.gr_id = gr.gr_id
             match.gr_amount = sum(
                 line.quantity_received * self._get_po_line_price(po, line.po_line_id)
                 for line in gr.line_items
             )
-        
-        # Step 3: Check price variance
-        if po:
-            match.price_variance = invoice_amount - po.total_amount
-            price_variance_pct = abs(match.price_variance) / po.total_amount * 100 if po.total_amount > 0 else 0
-            
-            if price_variance_pct > self.PRICE_TOLERANCE_PERCENT and abs(match.price_variance) > self.AMOUNT_TOLERANCE:
-                match.exceptions.append({
-                    "type": MatchExceptionType.PRICE_MISMATCH.value,
-                    "message": f"Invoice amount ${invoice_amount:.2f} differs from PO ${po.total_amount:.2f} by {price_variance_pct:.1f}%",
-                    "severity": "medium",
-                    "variance": match.price_variance,
-                    "variance_pct": price_variance_pct,
-                })
-        
-        # Step 4: Check quantity variance (if line items provided)
-        if invoice_lines and po:
+
+        # Step 3: price variance (tolerance pct AND absolute floor).
+        match.price_variance = invoice_amount - po.total_amount
+        price_variance_pct = (
+            abs(match.price_variance) / po.total_amount * 100
+            if po.total_amount > 0
+            else 0
+        )
+        if (
+            price_variance_pct > self.PRICE_TOLERANCE_PERCENT
+            and abs(match.price_variance) > self.AMOUNT_TOLERANCE
+        ):
+            match.exceptions.append({
+                "type": MatchExceptionType.PRICE_MISMATCH.value,
+                "message": (
+                    f"Invoice amount {po.currency} {invoice_amount:,.2f} "
+                    f"differs from PO {po.currency} {po.total_amount:,.2f} by "
+                    f"{price_variance_pct:.1f}%"
+                ),
+                "severity": "medium",
+                "variance": match.price_variance,
+                "variance_pct": price_variance_pct,
+            })
+
+        # Step 4: per-line quantity check.
+        if invoice_lines:
             for inv_line in invoice_lines:
                 po_line = self._find_matching_po_line(po, inv_line)
                 if po_line:
                     qty_diff = inv_line.get("quantity", 0) - po_line.quantity
                     if qty_diff > 0:
                         match.quantity_variance += qty_diff
-                        if qty_diff / po_line.quantity * 100 > self.QUANTITY_TOLERANCE_PERCENT:
+                        if po_line.quantity > 0 and (
+                            qty_diff / po_line.quantity * 100
+                            > self.QUANTITY_TOLERANCE_PERCENT
+                        ):
                             match.exceptions.append({
                                 "type": MatchExceptionType.OVER_INVOICE.value,
                                 "message": f"Invoice quantity exceeds PO for {po_line.description}",
@@ -596,78 +763,71 @@ class PurchaseOrderService:
                                 "po_qty": po_line.quantity,
                                 "invoice_qty": inv_line.get("quantity", 0),
                             })
-        
-        # Step 5: Determine final status
+
+        # Step 5: status.
         if not match.exceptions:
             match.status = MatchStatus.MATCHED
         elif all(e.get("severity") == "low" for e in match.exceptions):
             match.status = MatchStatus.PARTIAL_MATCH
         else:
             match.status = MatchStatus.EXCEPTION
-        
-        # Update PO invoiced quantities
-        if match.status in [MatchStatus.MATCHED, MatchStatus.PARTIAL_MATCH]:
+
+        if match.status in (MatchStatus.MATCHED, MatchStatus.PARTIAL_MATCH):
             self._update_po_invoiced(po, invoice_lines or [])
-        
-        self._matches[match.match_id] = match
-        logger.info(f"3-way match result for invoice {invoice_id}: {match.status.value}")
-        
+
+        self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
+        logger.info("3-way match result for invoice %s: %s", invoice_id, match.status.value)
         return match
-    
+
     def _find_po_by_vendor_amount(
         self,
         vendor_name: str,
         amount: float,
     ) -> Optional[PurchaseOrder]:
-        """Find a PO by vendor name and approximate amount."""
-        vendor_lower = vendor_name.lower()
-        
-        for po in self._purchase_orders.values():
-            if po.status not in [POStatus.APPROVED, POStatus.PARTIALLY_RECEIVED, POStatus.PARTIALLY_INVOICED]:
+        """Find an open PO by vendor name + amount within tolerance."""
+        candidates = self._db.list_purchase_orders_for_vendor(
+            self.organization_id,
+            vendor_name,
+            open_only=True,
+            limit=25,
+        )
+        for row in candidates:
+            po = _po_from_dict(row)
+            if not po:
                 continue
-            
-            if vendor_lower in po.vendor_name.lower():
-                # Check amount within tolerance
-                if abs(po.total_amount - amount) <= self.AMOUNT_TOLERANCE:
+            if abs(po.total_amount - amount) <= self.AMOUNT_TOLERANCE:
+                return po
+            if po.total_amount > 0:
+                variance_pct = abs(po.total_amount - amount) / po.total_amount * 100
+                if variance_pct <= self.PRICE_TOLERANCE_PERCENT:
                     return po
-                if po.total_amount > 0:
-                    variance_pct = abs(po.total_amount - amount) / po.total_amount * 100
-                    if variance_pct <= self.PRICE_TOLERANCE_PERCENT:
-                        return po
-        
         return None
-    
-    def _get_po_line_price(self, po: PurchaseOrder, line_id: str) -> float:
-        """Get unit price for a PO line."""
+
+    def _get_po_line_price(
+        self, po: Optional[PurchaseOrder], line_id: str
+    ) -> float:
+        if not po:
+            return 0.0
         for line in po.line_items:
             if line.line_id == line_id:
                 return line.unit_price
         return 0.0
-    
+
     def _find_matching_po_line(
         self,
         po: PurchaseOrder,
         invoice_line: Dict[str, Any],
     ) -> Optional[POLineItem]:
-        """Find matching PO line for an invoice line.
-
-        Tries deterministic matching first (item number, description substring),
-        then falls back to AI semantic matching via Claude.
-        """
-        item_number = invoice_line.get("item_number", "")
-        description = invoice_line.get("description", "").lower()
-
-        # Deterministic match first (fast)
+        """Match invoice line to PO line: item number → substring → LLM."""
+        item_number = str(invoice_line.get("item_number") or "")
+        description = str(invoice_line.get("description") or "").lower()
         for po_line in po.line_items:
             if item_number and po_line.item_number == item_number:
                 return po_line
             if description and description in po_line.description.lower():
                 return po_line
-
-        # AI semantic match (when deterministic fails)
         if description and po.line_items:
             return self._ai_match_po_line(invoice_line, po.line_items)
-
         return None
 
     def _ai_match_po_line(
@@ -675,78 +835,70 @@ class PurchaseOrderService:
         invoice_line: Dict[str, Any],
         po_lines: List[POLineItem],
     ) -> Optional[POLineItem]:
-        """Use Claude to semantically match an invoice line to a PO line."""
+        """Use Claude to semantically match when deterministic fails."""
         try:
-            import os, json, httpx
+            import os
+            import json as _json
             api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             if not api_key:
                 return None
-
             inv_desc = invoice_line.get("description", "")
             inv_qty = invoice_line.get("quantity", 1)
             inv_amount = invoice_line.get("amount", 0)
-
             po_lines_text = "\n".join(
                 f"  Line {i}: {pl.description} (qty: {pl.quantity}, unit price: {pl.unit_price})"
                 for i, pl in enumerate(po_lines)
             )
-
-            prompt = f"""Match this invoice line item to the correct PO line.
-
-INVOICE LINE:
-  Description: {inv_desc}
-  Quantity: {inv_qty}
-  Amount: {inv_amount}
-
-PO LINES:
-{po_lines_text}
-
-Which PO line (if any) matches this invoice line? Consider that descriptions may use different words for the same item (e.g. "Cloud services" = "SaaS subscription", "Office supplies" = "Stationery").
-
-Return JSON: {{"match_index": <0-based index or null if no match>, "confidence": 0.0-1.0, "reasoning": "one sentence"}}
-Return ONLY valid JSON."""
-
+            prompt = (
+                "Match this invoice line item to the correct PO line.\n\n"
+                f"INVOICE LINE:\n  Description: {inv_desc}\n  Quantity: {inv_qty}\n  Amount: {inv_amount}\n\n"
+                f"PO LINES:\n{po_lines_text}\n\n"
+                "Descriptions may use different words for the same item. "
+                "Return JSON: "
+                "{\"match_index\": <0-based index or null>, \"confidence\": 0.0-1.0, \"reasoning\": \"one sentence\"}\n"
+                "Return ONLY valid JSON."
+            )
             from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
             gateway = get_llm_gateway()
             llm_resp = gateway.call_sync(
                 LLMAction.PO_LINE_MATCH,
                 messages=[{"role": "user", "content": prompt}],
             )
-            text = str(llm_resp.content) if llm_resp.content else ""
-            result = json.loads(text)
+            text = str(llm_resp.content) if llm_resp and llm_resp.content else ""
+            result = _json.loads(text) if text else {}
             idx = result.get("match_index")
-            conf = result.get("confidence", 0)
-
-            if idx is not None and 0 <= idx < len(po_lines) and conf >= 0.6:
-                return po_lines[idx]
+            conf = float(result.get("confidence") or 0)
+            if idx is not None and 0 <= int(idx) < len(po_lines) and conf >= 0.6:
+                return po_lines[int(idx)]
         except Exception as exc:
             logger.debug("AI PO line matching failed: %s", exc)
         return None
-    
+
     def _update_po_invoiced(
         self,
         po: PurchaseOrder,
         invoice_lines: List[Dict[str, Any]],
-    ):
-        """Update PO with invoiced quantities."""
+    ) -> None:
+        """Advance PO invoiced quantities + persist the status change."""
         if not invoice_lines:
-            # Mark entire PO as invoiced
             for line in po.line_items:
                 line.quantity_invoiced = line.quantity
         else:
             for inv_line in invoice_lines:
                 po_line = self._find_matching_po_line(po, inv_line)
                 if po_line:
-                    po_line.quantity_invoiced += inv_line.get("quantity", 0)
-        
-        if po.is_fully_invoiced:
-            po.status = POStatus.FULLY_INVOICED
-        else:
-            po.status = POStatus.PARTIALLY_INVOICED
-    
-    # =========================================================================
+                    po_line.quantity_invoiced += float(inv_line.get("quantity") or 0)
+        po.status = (
+            POStatus.FULLY_INVOICED
+            if po.is_fully_invoiced
+            else POStatus.PARTIALLY_INVOICED
+        )
+        po.updated_at = datetime.now()
+        self._db.save_purchase_order(_po_to_store_dict(po))
+
+    # ------------------------------------------------------------------
     # 2-WAY MATCHING (Invoice + GR, no PO)
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     def match_invoice_to_gr(
         self,
@@ -755,23 +907,30 @@ Return ONLY valid JSON."""
         invoice_vendor: str,
         invoice_lines: List[Dict[str, Any]] = None,
     ) -> ThreeWayMatch:
-        """
-        Perform 2-way matching: Goods Receipt + Invoice (when PO is unavailable).
-
-        Finds a GR by vendor name and checks amount variance against the
-        received total.  Returns a ThreeWayMatch with ``po_id`` left empty.
-        """
+        """2-way match: GR + Invoice (when no PO is available)."""
         match = ThreeWayMatch(
             invoice_id=invoice_id,
             invoice_amount=invoice_amount,
         )
 
-        # Find GR by vendor
-        candidate_grs = [
-            gr for gr in self._goods_receipts.values()
-            if invoice_vendor.lower() in gr.vendor_name.lower()
-            and gr.status in (GRStatus.RECEIVED, GRStatus.PARTIAL)
-        ]
+        # Pull GRs for the vendor by walking the vendor's POs. GR rows
+        # don't carry a vendor-name index right now, so this round-trip
+        # through the vendor's POs is the supported access pattern.
+        candidate_grs: List[GoodsReceipt] = []
+        po_rows = self._db.list_purchase_orders_for_vendor(
+            self.organization_id,
+            invoice_vendor,
+            open_only=False,
+            limit=25,
+        )
+        for po_row in po_rows:
+            po_id = str((po_row or {}).get("po_id") or "")
+            if not po_id:
+                continue
+            for gr_row in self._db.list_goods_receipts_for_po(po_id):
+                gr = _gr_from_dict(gr_row)
+                if gr and gr.status in (GRStatus.RECEIVED, GRStatus.PARTIAL):
+                    candidate_grs.append(gr)
 
         if not candidate_grs:
             match.status = MatchStatus.EXCEPTION
@@ -780,19 +939,17 @@ Return ONLY valid JSON."""
                 "message": f"No goods receipt found for vendor {invoice_vendor}",
                 "severity": "high",
             })
-            self._matches[match.match_id] = match
+            self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
             return match
 
-        # Pick best GR by closest amount
         best_gr: Optional[GoodsReceipt] = None
         best_diff = float("inf")
         for gr in candidate_grs:
-            # Estimate GR total using PO line prices where available
-            gr_total = 0.0
-            po = self._purchase_orders.get(gr.po_id)
-            for line in gr.line_items:
-                price = self._get_po_line_price(po, line.po_line_id) if po else 0.0
-                gr_total += line.quantity_received * price
+            po = self.get_po(gr.po_id) if gr.po_id else None
+            gr_total = sum(
+                line.quantity_received * self._get_po_line_price(po, line.po_line_id)
+                for line in gr.line_items
+            )
             diff = abs(gr_total - invoice_amount)
             if diff < best_diff:
                 best_diff = diff
@@ -806,42 +963,36 @@ Return ONLY valid JSON."""
                 "message": "Could not determine matching goods receipt",
                 "severity": "high",
             })
-            self._matches[match.match_id] = match
+            self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
             return match
 
         match.gr_id = best_gr.gr_id
-
-        # No PO — flag as informational exception
         match.exceptions.append({
             "type": MatchExceptionType.NO_PO.value,
             "message": "Two-way match only (no PO available)",
             "severity": "low",
         })
-
-        # Price variance check (invoice vs GR total)
         if match.gr_amount > 0:
             match.price_variance = invoice_amount - match.gr_amount
             variance_pct = abs(match.price_variance) / match.gr_amount * 100
-            if variance_pct > self.PRICE_TOLERANCE_PERCENT and abs(match.price_variance) > self.AMOUNT_TOLERANCE:
+            if (
+                variance_pct > self.PRICE_TOLERANCE_PERCENT
+                and abs(match.price_variance) > self.AMOUNT_TOLERANCE
+            ):
                 match.exceptions.append({
                     "type": MatchExceptionType.PRICE_MISMATCH.value,
                     "message": (
-                        f"Invoice ${invoice_amount:.2f} differs from GR total "
-                        f"${match.gr_amount:.2f} by {variance_pct:.1f}%"
+                        f"Invoice {invoice_amount:,.2f} differs from GR total "
+                        f"{match.gr_amount:,.2f} by {variance_pct:.1f}%"
                     ),
                     "severity": "medium",
                     "variance": match.price_variance,
                     "variance_pct": variance_pct,
                 })
 
-        # Determine status
         high_severity = [e for e in match.exceptions if e.get("severity") in ("high", "medium")]
-        if not high_severity:
-            match.status = MatchStatus.PARTIAL_MATCH
-        else:
-            match.status = MatchStatus.EXCEPTION
-
-        self._matches[match.match_id] = match
+        match.status = MatchStatus.EXCEPTION if high_severity else MatchStatus.PARTIAL_MATCH
+        self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
         logger.info("2-way match result for invoice %s: %s", invoice_id, match.status.value)
         return match
 
@@ -851,25 +1002,17 @@ Return ONLY valid JSON."""
         override_by: str,
         reason: str,
     ) -> ThreeWayMatch:
-        """Override match exceptions (management approval).
-
-        Records the override in the audit trail via
-        ``ClearledgrDB.list_audit_events`` when available.
-        """
-        match = self._matches.get(match_id)
+        """Management override — clears exceptions and writes audit event."""
+        match = self.get_match(match_id)
         if not match:
             raise ValueError(f"Match {match_id} not found")
-
         prev_status = match.status.value
         match.status = MatchStatus.OVERRIDE
         match.override_by = override_by
         match.override_reason = reason
-
-        # Best-effort audit trail write
+        self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
         try:
-            from clearledgr.core.database import get_db
-            db = get_db()
-            db.append_ap_audit_event({
+            self._db.append_ap_audit_event({
                 "ap_item_id": match.invoice_id,
                 "event_type": "po_match_override",
                 "from_state": prev_status,
@@ -888,49 +1031,51 @@ Return ONLY valid JSON."""
             })
         except Exception as exc:
             logger.warning("Failed to write PO override audit event: %s", exc)
-
         logger.info("Match %s overridden by %s: %s", match_id, override_by, reason)
         return match
-    
+
     def get_match(self, match_id: str) -> Optional[ThreeWayMatch]:
-        """Get a match result."""
-        return self._matches.get(match_id)
-    
+        return _match_from_dict(self._db.get_three_way_match(match_id))
+
     def get_match_exceptions(self) -> List[ThreeWayMatch]:
-        """Get all matches with exceptions."""
-        return [m for m in self._matches.values() if m.status == MatchStatus.EXCEPTION]
-    
-    # =========================================================================
+        rows = self._db.list_three_way_matches(
+            self.organization_id, status=MatchStatus.EXCEPTION.value, limit=500
+        )
+        return [_match_from_dict(r) for r in rows if r]
+
+    # ------------------------------------------------------------------
     # STATISTICS
-    # =========================================================================
-    
+    # ------------------------------------------------------------------
+
     def get_summary(self) -> Dict[str, Any]:
-        """Get PO/matching summary."""
-        pos = list(self._purchase_orders.values())
-        matches = list(self._matches.values())
-        
+        pos_rows = self._db.list_purchase_orders(self.organization_id, limit=5000)
+        pos = [_po_from_dict(r) for r in pos_rows if r]
+        match_rows = self._db.list_three_way_matches(self.organization_id, limit=5000)
+        matches = [_match_from_dict(r) for r in match_rows if r]
         return {
             "total_pos": len(pos),
             "po_by_status": {
-                status.value: len([p for p in pos if p.status == status])
+                status.value: len([p for p in pos if p and p.status == status])
                 for status in POStatus
             },
-            "total_po_value": sum(p.total_amount for p in pos),
+            "total_po_value": sum(p.total_amount for p in pos if p),
             "open_po_value": sum(
-                p.total_amount for p in pos 
-                if p.status in [POStatus.APPROVED, POStatus.PARTIALLY_RECEIVED]
+                p.total_amount for p in pos
+                if p and p.status in (POStatus.APPROVED, POStatus.PARTIALLY_RECEIVED)
             ),
-            "total_goods_receipts": len(self._goods_receipts),
             "total_matches": len(matches),
             "match_by_status": {
-                status.value: len([m for m in matches if m.status == status])
+                status.value: len([m for m in matches if m and m.status == status])
                 for status in MatchStatus
             },
-            "pending_exceptions": len(self.get_match_exceptions()),
+            "pending_exceptions": len([m for m in matches if m and m.status == MatchStatus.EXCEPTION]),
         }
 
 
-# Singleton instance cache
+# ---------------------------------------------------------------------------
+# Singleton — holds only the service object, no business state (the DB is
+# the source of truth). Safe for multi-worker deployments.
+# ---------------------------------------------------------------------------
 _instances: Dict[str, PurchaseOrderService] = {}
 
 

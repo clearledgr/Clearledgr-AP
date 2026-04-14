@@ -1118,31 +1118,153 @@ class ExecutionEngine:
             return {"ok": True}
 
     async def _handle_classify_vendor(self, action: Action, plan: Plan) -> dict:
-        """§3 LLM: Classify a vendor's reply to an onboarding or chase email."""
+        """§3 LLM: Classify a vendor's reply to an onboarding or chase email.
+
+        Gives Claude:
+          - the vendor's reply body
+          - the onboarding session's current state (what we're waiting on)
+          - which documents are outstanding
+          - when the last agent action on this vendor fired
+
+        Expects back a typed classification PLUS any extracted action
+        data (asked question text, cited document name, refused reason)
+        so the router can do more than just branch on a single label.
+        """
         ctx = self._ensure_ctx(plan)
-        vendor_id = action.params.get("vendor_id", "")
+        vendor_id = action.params.get("vendor_id", "") or ctx.get("vendor_id", "")
         body = ctx.get("body", "")
         if not body:
             return {"ok": True, "type": "unclassifiable"}
+
+        # Pull onboarding session context so Claude can resolve references
+        # like "it" / "the document you asked for" against actual state.
+        session_state = "unknown"
+        outstanding: list = []
+        days_since_invite = None
+        try:
+            sessions = self.db.list_pending_onboarding_sessions() or []
+            for s in sessions:
+                if str(s.get("vendor_name") or "").lower() == str(vendor_id or "").lower():
+                    session_state = str(s.get("state") or "unknown")
+                    invited_at = s.get("invited_at")
+                    if invited_at:
+                        try:
+                            from datetime import datetime, timezone
+                            invited = datetime.fromisoformat(str(invited_at).replace("Z", "+00:00"))
+                            days_since_invite = int(
+                                (datetime.now(timezone.utc) - invited).total_seconds() // 86400
+                            )
+                        except Exception:
+                            pass
+                    outstanding = {
+                        "invited": ["onboarding form not yet opened"],
+                        "awaiting_kyc": [
+                            "registered address",
+                            "company registration number",
+                            "director names",
+                        ],
+                        "awaiting_bank": [
+                            "bank IBAN",
+                            "account holder name",
+                        ],
+                        "microdeposit_pending": ["micro-deposit amount confirmation"],
+                        "escalated": ["responsive contact point"],
+                    }.get(session_state, [])
+                    break
+        except Exception:
+            pass
+
+        system_prompt = (
+            "You are Clearledgr's AP agent classifying a vendor's email reply "
+            "to an onboarding or chase message. You will be given the reply "
+            "body and what the session is currently waiting on, and must "
+            "return a strict JSON classification.\n\n"
+            "Valid types:\n"
+            "  - document_submitted: vendor attached or pasted the info we "
+            "    asked for (address, registration, bank details, IBAN, etc.)\n"
+            "  - question_asked: vendor is asking us something before "
+            "    continuing. Extract the question text.\n"
+            "  - refused: vendor is unwilling to proceed. Extract reason.\n"
+            "  - out_of_office: automated OOO / vacation responder.\n"
+            "  - incorrect_contact: vendor says we reached the wrong person; "
+            "    extract a redirect email if provided.\n"
+            "  - unclassifiable: unclear or doesn't fit any category.\n\n"
+            "Return only valid JSON in this exact shape — no prose, no "
+            "markdown:\n"
+            "{\n"
+            "  \"type\": \"<one of the types above>\",\n"
+            "  \"confidence\": <float 0.0-1.0>,\n"
+            "  \"reasoning\": \"<one sentence citing the specific language in the reply that led to this classification>\",\n"
+            "  \"extracted\": {\n"
+            "    \"question_text\": \"<null or the question the vendor asked, verbatim>\",\n"
+            "    \"refusal_reason\": \"<null or short phrase>\",\n"
+            "    \"redirect_email\": \"<null or the email they said to contact instead>\",\n"
+            "    \"submitted_fields\": [\"<field names present in the reply>\"]\n"
+            "  }\n"
+            "}"
+        )
+
+        outstanding_text = (
+            ", ".join(outstanding) if outstanding else "unspecified"
+        )
+        age_phrase = (
+            f"{days_since_invite}d since invite"
+            if days_since_invite is not None
+            else "time unknown"
+        )
+        user_message = (
+            f"Vendor: {vendor_id or 'unknown'}\n"
+            f"Onboarding state: {session_state} ({age_phrase})\n"
+            f"We are waiting on: {outstanding_text}\n\n"
+            f"Vendor reply:\n{body[:3000]}"
+        )
+
         try:
             from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
             gateway = get_llm_gateway()
-            prompt = (
-                f"Classify this vendor reply. Vendor ID: {vendor_id}\n\n"
-                f"Reply content:\n{body[:2000]}\n\n"
-                "Classify as: document_submitted, question_asked, refused, "
-                "out_of_office, incorrect_contact, or unclassifiable.\n"
-                "Return JSON: {{\"type\": \"...\", \"confidence\": 0.0-1.0}}"
-            )
-            resp = gateway.call_sync(
+            resp = await gateway.call(
                 LLMAction.CLASSIFY_VENDOR,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": user_message}],
+                system_prompt=system_prompt,
                 organization_id=self.organization_id,
             )
             import json
-            result = json.loads(resp.content) if isinstance(resp.content, str) else {}
+            raw = str(resp.content or "").strip() if resp else ""
+            # Defensive JSON parse — Claude sometimes wraps JSON in fences
+            # even after being told not to.
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.lower().startswith("json"):
+                    raw = raw[4:].lstrip()
+            try:
+                result = json.loads(raw) if raw else {}
+            except ValueError:
+                logger.debug(
+                    "[ExecutionEngine] classify_vendor got non-JSON: %s",
+                    raw[:200],
+                )
+                result = {}
+            # Validate type enum — if Claude hallucinates a new type,
+            # fall back to unclassifiable so the router doesn't break.
+            valid_types = {
+                "document_submitted",
+                "question_asked",
+                "refused",
+                "out_of_office",
+                "incorrect_contact",
+                "unclassifiable",
+            }
+            classified_type = str(result.get("type") or "").strip()
+            if classified_type not in valid_types:
+                classified_type = "unclassifiable"
+                result["type"] = classified_type
             ctx["vendor_response_classification"] = result
-            return {"ok": True, "type": result.get("type", "unclassifiable")}
+            return {
+                "ok": True,
+                "type": classified_type,
+                "confidence": float(result.get("confidence") or 0),
+                "extracted": result.get("extracted") or {},
+            }
         except Exception as exc:
             logger.debug("[ExecutionEngine] classify_vendor non-fatal: %s", exc)
             return {"ok": True, "type": "unclassifiable"}
