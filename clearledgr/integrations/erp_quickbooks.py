@@ -187,6 +187,15 @@ async def post_bill_to_quickbooks(
         "Line": [],
     }
 
+    # Currency — post in the invoice's native currency, not the QB
+    # home currency. QB requires Multicurrency to be enabled on the
+    # company file for non-home-currency bills. If QB rejects because
+    # Multicurrency is off, the caller will see erp_error_detail and
+    # can enable it.
+    bill_currency = str(getattr(bill, "currency", "") or "").strip().upper()
+    if bill_currency and len(bill_currency) == 3:
+        qb_bill["CurrencyRef"] = {"value": bill_currency}
+
     # Add line items or create single expense line
     if bill.line_items:
         for i, item in enumerate(bill.line_items):

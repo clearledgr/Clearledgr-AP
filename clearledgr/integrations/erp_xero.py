@@ -195,6 +195,14 @@ async def post_bill_to_xero(
         "LineItems": [],
     }
 
+    # Currency — post in the invoice's native currency. Xero requires
+    # the currency to be set up on the organisation; if it isn't, the
+    # API returns a clear "CurrencyCode not found" error the caller can
+    # surface to the user.
+    bill_currency = str(getattr(bill, "currency", "") or "").strip().upper()
+    if bill_currency and len(bill_currency) == 3:
+        xero_bill["CurrencyCode"] = bill_currency
+
     # Add line items
     if bill.line_items:
         for item in bill.line_items:

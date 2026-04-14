@@ -270,6 +270,14 @@ async def post_bill_to_sap(
         "DocumentLines": [],
     }
 
+    # Currency — SAP B1 uses DocCurrency (3-letter code). Tenants with
+    # multi-currency disabled will get a clear error from the Service
+    # Layer; tenants with it enabled record the bill in its native
+    # currency.
+    bill_currency = str(getattr(bill, "currency", "") or "").strip().upper()
+    if bill_currency and len(bill_currency) == 3:
+        sap_bill["DocCurrency"] = bill_currency
+
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             sap_bill["DocumentLines"].append({

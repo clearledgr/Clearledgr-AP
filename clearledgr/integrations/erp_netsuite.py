@@ -315,6 +315,14 @@ async def post_bill_to_netsuite(
         "expense": {"items": []},
     }
 
+    # Currency — NetSuite references currencies by refName (3-letter
+    # code works for all OneWorld tenants; single-sub tenants with
+    # exotic currencies may need internal IDs, which is a configuration
+    # edge case to handle via the gl_map in future).
+    bill_currency = str(getattr(bill, "currency", "") or "").strip().upper()
+    if bill_currency and len(bill_currency) == 3:
+        ns_bill["currency"] = {"refName": bill_currency}
+
     # Add line items as expenses
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
