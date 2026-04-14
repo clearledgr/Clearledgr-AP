@@ -2743,8 +2743,18 @@ function registerAppMenuAndRoutes() {
 
   window.addEventListener('pagehide', persistReloadedClearledgrRoute, true);
   window.addEventListener('beforeunload', persistReloadedClearledgrRoute, true);
-  window.addEventListener('hashchange', () => {
+  window.addEventListener('hashchange', (event) => {
     const currentClearledgrHash = normalizeClearledgrHash(window.location.hash);
+    // If the user navigated FROM a clearledgr route TO a non-clearledgr
+    // route (e.g., back to #inbox), they're explicitly leaving our
+    // surface. Clear any pending-direct-route marker so we don't bounce
+    // them back on the next tick. The pending marker exists for
+    // first-install deep-linking; it should not override live nav.
+    const prevHash = normalizeClearledgrHash(String(event?.oldURL || '').split('#')[1] || '');
+    if (!currentClearledgrHash && prevHash) {
+      void clearPendingDirectHashRoute();
+      lastDirectHashRoute = '';
+    }
     if (currentClearledgrHash) {
       lastActiveClearledgrRoute = currentClearledgrHash;
     } else {
@@ -2754,7 +2764,13 @@ function registerAppMenuAndRoutes() {
     window.setTimeout(async () => {
       const restored = await maybeRestoreReloadedClearledgrRoute();
       if (!restored) {
-        await syncDirectHashRoute();
+        // Only try to sync a pending direct route if the user is NOT
+        // already on a native Gmail route. If they just clicked #inbox,
+        // respect it — don't second-guess them.
+        const nowHash = String(window.location.hash || '').trim();
+        if (nowHash.startsWith('#clearledgr/') || !nowHash || nowHash === '#') {
+          await syncDirectHashRoute();
+        }
       }
     }, 0);
   });

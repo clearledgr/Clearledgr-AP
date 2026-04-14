@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:cc9c0f2ac3830f5175df694ee7c3b46c097781a094c3927632ec1a95cf262ad7 */
+/* clearledgr-source-fingerprint:ae95cb00b71025eb3ac36aaf166eff7ff19607d77e49b98d6d1bc2a7d879f9ff */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76116,8 +76116,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     window.addEventListener("pagehide", persistReloadedClearledgrRoute, true);
     window.addEventListener("beforeunload", persistReloadedClearledgrRoute, true);
-    window.addEventListener("hashchange", () => {
+    window.addEventListener("hashchange", (event) => {
       const currentClearledgrHash = normalizeClearledgrHash(window.location.hash);
+      const prevHash = normalizeClearledgrHash(String(event?.oldURL || "").split("#")[1] || "");
+      if (!currentClearledgrHash && prevHash) {
+        clearPendingDirectHashRoute();
+        lastDirectHashRoute = "";
+      }
       if (currentClearledgrHash) {
         lastActiveClearledgrRoute = currentClearledgrHash;
       } else {
@@ -76127,7 +76132,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       window.setTimeout(async () => {
         const restored = await maybeRestoreReloadedClearledgrRoute();
         if (!restored) {
-          await syncDirectHashRoute();
+          const nowHash = String(window.location.hash || "").trim();
+          if (nowHash.startsWith("#clearledgr/") || !nowHash || nowHash === "#") {
+            await syncDirectHashRoute();
+          }
         }
       }, 0);
     });
