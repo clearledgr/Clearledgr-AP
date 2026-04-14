@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:ae95cb00b71025eb3ac36aaf166eff7ff19607d77e49b98d6d1bc2a7d879f9ff */
+/* clearledgr-source-fingerprint:04e5a005654cfa5e8656be13195671cb61c7d01d450adc43d5ea4ba336587ab6 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59116,6 +59116,60 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 .cl-ts-qa-a.error {
   background: #FEF2F2; color: #B91C1C;
 }
+.cl-ts-qa-a strong { font-weight: 700; color: #0A1628; }
+.cl-ts-qa-a em { font-style: italic; color: #0A1628; }
+.cl-ts-qa-a code {
+  font: 600 11px/1.3 'Geist Mono', ui-monospace, monospace;
+  background: #E2E8F0; color: #0A1628;
+  padding: 1px 5px; border-radius: 4px;
+}
+.cl-ts-qa-a ul {
+  margin: 4px 0 2px; padding-left: 18px;
+}
+.cl-ts-qa-a li { margin: 2px 0; }
+.cl-ts-qa-a .cl-ts-ref {
+  display: inline-block; padding: 0 5px;
+  background: rgba(0, 214, 126, 0.12); color: #059669;
+  border-radius: 3px; font-weight: 600;
+  cursor: pointer; text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.cl-ts-qa-a .cl-ts-ref:hover { background: rgba(0, 214, 126, 0.22); }
+
+/* Streaming caret — blinks while Claude is still writing */
+.cl-ts-qa-a .cl-ts-caret {
+  display: inline-block; width: 7px; height: 13px; vertical-align: text-bottom;
+  background: #00D67E; margin-left: 2px; animation: cl-ts-blink 0.9s steps(2) infinite;
+}
+@keyframes cl-ts-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Flash highlight when a reference chip scrolls an audit row into view */
+.cl-ts-audit-flash {
+  animation: cl-ts-flash 1.5s ease-out;
+  border-radius: 4px;
+}
+@keyframes cl-ts-flash {
+  0%, 20% { background: rgba(0, 214, 126, 0.25); }
+  100% { background: transparent; }
+}
+
+/* Suggested starter questions — shown when the Q&A log is empty */
+.cl-ts-suggestions {
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px;
+}
+.cl-ts-suggestions-label {
+  font: 600 10px/1.2 'DM Sans', sans-serif; color: #94A3B8;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
+}
+.cl-ts-suggestion-chip {
+  text-align: left; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid #E2E8F0; background: #FBFCFD; color: #0A1628;
+  font: 500 12px/1.35 'DM Sans', sans-serif; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cl-ts-suggestion-chip:hover {
+  background: #fff; border-color: #00D67E; color: #059669;
+}
 
 /* -- Banners (conditional, above the fixed sections) -- */
 .cl-ts-banner {
@@ -59286,6 +59340,94 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (label.length > 80)
       label = label.slice(0, 77) + "…";
     return label;
+  }
+  function renderInlineMarkdown(text, { references = [], onReferenceClick }) {
+    if (!text)
+      return "";
+    const refByLabel = new Map;
+    (references || []).forEach((r3) => {
+      if (r3 && r3.label)
+        refByLabel.set(String(r3.label), r3);
+    });
+    const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\b(?:[01]?\d|2[0-3]):[0-5]\d\b)/g;
+    const out = [];
+    let lastIndex = 0;
+    let key = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        out.push(text.slice(lastIndex, match.index));
+      }
+      const token = match[0];
+      if (token.startsWith("**")) {
+        out.push(m3`<strong key=${++key}>${token.slice(2, -2)}</strong>`);
+      } else if (token.startsWith("*")) {
+        out.push(m3`<em key=${++key}>${token.slice(1, -1)}</em>`);
+      } else if (token.startsWith("`")) {
+        out.push(m3`<code key=${++key}>${token.slice(1, -1)}</code>`);
+      } else if (refByLabel.has(token)) {
+        const ref = refByLabel.get(token);
+        out.push(m3`<a
+        key=${++key}
+        class="cl-ts-ref"
+        role="button"
+        tabindex="0"
+        onClick=${(e3) => {
+          e3.preventDefault();
+          onReferenceClick?.(ref);
+        }}
+        onKeyDown=${(e3) => {
+          if (e3.key === "Enter" || e3.key === " ") {
+            e3.preventDefault();
+            onReferenceClick?.(ref);
+          }
+        }}
+      >${token}</a>`);
+      } else {
+        out.push(token);
+      }
+      lastIndex = pattern.lastIndex;
+    }
+    if (lastIndex < text.length)
+      out.push(text.slice(lastIndex));
+    return out;
+  }
+  function renderAnswerMarkdown(answer, { references = [], onReferenceClick, streaming = false }) {
+    if (!answer) {
+      return streaming ? m3`<span class="cl-ts-caret"></span>` : "";
+    }
+    const lines = String(answer).split(`
+`);
+    const blocks = [];
+    let bulletBuffer = [];
+    const flushBullets = (keyPrefix) => {
+      if (bulletBuffer.length === 0)
+        return;
+      blocks.push(m3`<ul key=${keyPrefix}>
+      ${bulletBuffer.map((line, i3) => m3`
+        <li key=${i3}>${renderInlineMarkdown(line, { references, onReferenceClick })}</li>
+      `)}
+    </ul>`);
+      bulletBuffer = [];
+    };
+    lines.forEach((line, i3) => {
+      const trimmed = line.replace(/^\s+/, "");
+      if (/^([-•*])\s+/.test(trimmed)) {
+        bulletBuffer.push(trimmed.replace(/^([-•*])\s+/, ""));
+      } else {
+        flushBullets(`ul-${i3}`);
+        if (trimmed.length > 0) {
+          blocks.push(m3`<div key=${`p-${i3}`}>${renderInlineMarkdown(line, { references, onReferenceClick })}</div>`);
+        } else if (blocks.length > 0) {
+          blocks.push(m3`<div key=${`br-${i3}`} style="height:4px"></div>`);
+        }
+      }
+    });
+    flushBullets("ul-end");
+    if (streaming) {
+      blocks.push(m3`<span key="caret" class="cl-ts-caret"></span>`);
+    }
+    return blocks;
   }
   function humanizeWaitingType(type) {
     if (!type)
@@ -59589,8 +59731,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const why = humanizedWhy && humanizedWhy !== what ? humanizedWhy : "";
       const next = e3.next_action || e3.next_step || "";
       const isAgent = (e3.actor || e3.actor_type || "") !== "user";
+      const auditTs = String(e3.ts || e3.created_at || "").slice(0, 16).replace("T", " ");
       return m3`
-                <li key=${e3.id || e3.ts}>
+                <li key=${e3.id || e3.ts} data-audit-ts=${auditTs}>
                   ${isAgent ? m3`<img src="${agentIconUrl()}" alt="agent" class="cl-ts-agent-icon" />` : ""}
                   <strong>${what}</strong>
                   ${why ? m3`<span class="cl-ts-timeline-why"> — ${why}</span>` : ""}
@@ -59667,10 +59810,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [nowMs, setNowMs] = d2(Date.now());
     const [qaLog, setQaLog] = d2([]);
     const [queryPending, setQueryPending] = d2(false);
+    const [suggestions, setSuggestions] = d2([]);
     y2(() => {
       setQaLog([]);
       setQueryPending(false);
+      setSuggestions([]);
     }, [item?.id]);
+    y2(() => {
+      if (!item?.id || qaLog.length > 0)
+        return;
+      if (typeof onQuery !== "function" || !onQuery.fetchSuggestions)
+        return;
+      let cancelled = false;
+      onQuery.fetchSuggestions(item).then((list) => {
+        if (!cancelled)
+          setSuggestions(Array.isArray(list) ? list.slice(0, 4) : []);
+      }).catch(() => {
+        if (!cancelled)
+          setSuggestions([]);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [item?.id, qaLog.length, onQuery]);
     y2(() => {
       if (!item?.id || !fetchBoxLinks)
         return;
@@ -59692,46 +59854,96 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const handle = setInterval(() => setNowMs(Date.now()), 1000);
       return () => clearInterval(handle);
     }, [item?.override_window?.expires_at]);
+    const updateTrailingRow = (patch) => {
+      setQaLog((prev) => {
+        const next = prev.slice();
+        for (let i3 = next.length - 1;i3 >= 0; i3 -= 1) {
+          if (next[i3].status === "pending" || next[i3].status === "streaming") {
+            next[i3] = { ...next[i3], ...patch };
+            break;
+          }
+        }
+        return next;
+      });
+    };
     const submitQuery = async (question) => {
       if (!question || queryPending)
         return;
-      setQaLog((prev) => [...prev, { q: question, a: "", status: "pending" }]);
+      setSuggestions([]);
+      const history = qaLog.filter((r3) => r3.status === "done" && r3.q && r3.a).slice(-3).map((r3) => ({ q: r3.q, a: r3.a }));
+      setQaLog((prev) => [...prev, {
+        q: question,
+        a: "",
+        references: [],
+        status: "pending"
+      }]);
       setQueryPending(true);
       try {
-        const result = onQuery ? await onQuery(question, item) : null;
-        const answer = typeof result === "string" ? result : result?.answer || result?.content || "";
-        setQaLog((prev) => {
-          const next = prev.slice();
-          for (let i3 = next.length - 1;i3 >= 0; i3 -= 1) {
-            if (next[i3].status === "pending") {
-              next[i3] = {
-                ...next[i3],
-                a: answer || "No answer returned. Try rephrasing.",
-                status: answer ? "done" : "error"
-              };
-              break;
+        if (onQuery && typeof onQuery.stream === "function") {
+          let buffered = "";
+          let seenFirstDelta = false;
+          await onQuery.stream({
+            question,
+            item,
+            history,
+            onDelta: (chunk) => {
+              if (!seenFirstDelta) {
+                seenFirstDelta = true;
+                updateTrailingRow({ status: "streaming" });
+              }
+              buffered += chunk;
+              updateTrailingRow({ a: buffered });
+            },
+            onReferences: (refs) => {
+              updateTrailingRow({ references: Array.isArray(refs) ? refs : [] });
             }
-          }
-          return next;
-        });
+          });
+          updateTrailingRow({
+            status: buffered ? "done" : "error",
+            a: buffered || "No answer returned. Try rephrasing."
+          });
+        } else if (typeof onQuery === "function") {
+          const result = await onQuery(question, item);
+          const answer = typeof result === "string" ? result : result?.answer || result?.content || "";
+          const refs = typeof result === "object" && Array.isArray(result?.references) ? result.references : [];
+          updateTrailingRow({
+            a: answer || "No answer returned. Try rephrasing.",
+            references: refs,
+            status: answer ? "done" : "error"
+          });
+        } else {
+          updateTrailingRow({
+            a: "No query handler wired.",
+            status: "error"
+          });
+        }
       } catch (err) {
-        setQaLog((prev) => {
-          const next = prev.slice();
-          for (let i3 = next.length - 1;i3 >= 0; i3 -= 1) {
-            if (next[i3].status === "pending") {
-              next[i3] = {
-                ...next[i3],
-                a: String(err?.message || err || "Query failed"),
-                status: "error"
-              };
-              break;
-            }
-          }
-          return next;
+        updateTrailingRow({
+          a: String(err?.message || err || "Query failed"),
+          status: "error"
         });
       } finally {
         setQueryPending(false);
       }
+    };
+    const handleReferenceClick = (ref) => {
+      if (!ref)
+        return;
+      const label = String(ref.label || "").trim();
+      if (!label)
+        return;
+      try {
+        const nodes = document.querySelectorAll("[data-audit-ts]");
+        for (const node of nodes) {
+          const ts = String(node.getAttribute("data-audit-ts") || "");
+          if (ts.includes(label)) {
+            node.scrollIntoView({ behavior: "smooth", block: "center" });
+            node.classList.add("cl-ts-audit-flash");
+            setTimeout(() => node.classList.remove("cl-ts-audit-flash"), 1600);
+            return;
+          }
+        }
+      } catch (_2) {}
     };
     if (loading)
       return m3`<${LoadingSkeleton} />`;
@@ -59781,9 +59993,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <div class="cl-ts-qa-row" key=${idx}>
                 <div class="cl-ts-qa-q">${row.q}</div>
                 <div class="cl-ts-qa-a ${row.status === "pending" ? "pending" : row.status === "error" ? "error" : ""}">
-                  ${row.status === "pending" ? "Thinking…" : row.a}
+                  ${row.status === "pending" ? "Thinking…" : renderAnswerMarkdown(row.a, {
+      references: row.references || [],
+      onReferenceClick: handleReferenceClick,
+      streaming: row.status === "streaming"
+    })}
                 </div>
               </div>
+            `)}
+          </div>
+        ` : suggestions.length > 0 ? m3`
+          <div class="cl-ts-suggestions">
+            <div class="cl-ts-suggestions-label">Ask the agent</div>
+            ${suggestions.map((s3, idx) => m3`
+              <button
+                class="cl-ts-suggestion-chip"
+                key=${idx}
+                disabled=${queryPending}
+                onClick=${() => submitQuery(s3)}
+              >${s3}</button>
             `)}
           </div>
         ` : ""}
@@ -61604,6 +61832,100 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       userEmail: queueManager?.runtimeConfig?.userEmail || ""
     };
     const openPipeline = q2(() => navigateInboxRoute("clearledgr/invoices", store_default.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
+    const agentQuery = T2(() => {
+      const orgId = () => queueManager.runtimeConfig?.organizationId || "default";
+      const baseUrl = () => queueManager.runtimeConfig?.backendUrl || "";
+      const singleShot = async (query, queryItem) => {
+        const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            ap_item_id: queryItem?.id || null,
+            organization_id: orgId()
+          })
+        });
+        if (!resp || !resp.ok) {
+          const text = await resp?.text?.().catch(() => "") || "";
+          throw new Error(text || `HTTP ${resp?.status || "unknown"}`);
+        }
+        const data = await resp.json();
+        return data;
+      };
+      singleShot.stream = async ({ question, item: queryItem, history, onDelta, onReferences }) => {
+        const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          body: JSON.stringify({
+            query: question,
+            ap_item_id: queryItem?.id || null,
+            organization_id: orgId(),
+            history: Array.isArray(history) ? history : []
+          })
+        });
+        if (!resp || !resp.ok || !resp.body || typeof resp.body.getReader !== "function") {
+          const data = await singleShot(question, queryItem);
+          if (data?.answer)
+            onDelta?.(data.answer);
+          if (Array.isArray(data?.references))
+            onReferences?.(data.references);
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done)
+            break;
+          buffer += decoder.decode(value, { stream: true });
+          while (true) {
+            const terminator = buffer.indexOf(`
+
+`);
+            if (terminator < 0)
+              break;
+            const rawEvent = buffer.slice(0, terminator);
+            buffer = buffer.slice(terminator + 2);
+            let eventType = "message";
+            let dataLine = "";
+            rawEvent.split(`
+`).forEach((line) => {
+              if (line.startsWith("event:"))
+                eventType = line.slice(6).trim();
+              else if (line.startsWith("data:"))
+                dataLine += line.slice(5).trim();
+            });
+            if (!dataLine)
+              continue;
+            let payload = null;
+            try {
+              payload = JSON.parse(dataLine);
+            } catch {
+              continue;
+            }
+            if (eventType === "delta" && payload?.text) {
+              onDelta?.(String(payload.text));
+            } else if (eventType === "references") {
+              onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
+            } else if (eventType === "error") {
+              throw new Error(payload?.message || "stream_error");
+            } else if (eventType === "done") {
+              return;
+            }
+          }
+        }
+      };
+      singleShot.fetchSuggestions = async (queryItem) => {
+        const url = `${baseUrl()}/extension/sidebar/query/suggestions` + `?ap_item_id=${encodeURIComponent(queryItem?.id || "")}` + `&organization_id=${encodeURIComponent(orgId())}`;
+        const resp = await queueManager.backendFetch(url);
+        if (!resp || !resp.ok)
+          return [];
+        const data = await resp.json();
+        return Array.isArray(data?.suggestions) ? data.suggestions : [];
+      };
+      return singleShot;
+    }, [queueManager]);
     y2(() => {
       if (item?.id && queueManager?.fetchItemContext) {
         queueManager.fetchItemContext(item.id).catch(() => {});
@@ -61733,29 +62055,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         showToast("Snooze failed: " + (err.message || err), "error");
       }
     }}
-                onQuery=${async (query, queryItem) => {
-      try {
-        const orgId = queueManager.runtimeConfig?.organizationId || "default";
-        const url = queueManager.runtimeConfig?.backendUrl + "/extension/sidebar/query";
-        const resp = await queueManager.backendFetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query,
-            ap_item_id: queryItem?.id || null,
-            organization_id: orgId
-          })
-        });
-        if (!resp || !resp.ok) {
-          const text = await resp?.text?.().catch(() => "") || "";
-          throw new Error(text || `HTTP ${resp?.status || "unknown"}`);
-        }
-        const data = await resp.json();
-        return data?.answer || "";
-      } catch (err) {
-        throw err;
-      }
-    }}
+                onQuery=${agentQuery}
                 onUndoOverride=${async (window_) => {
       try {
         const orgId = queueManager.runtimeConfig?.organizationId || "default";

@@ -306,6 +306,8 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/suggestions/vendor",
     "/extension/suggestions/amount-validation",
     "/extension/sidebar/query",
+    "/extension/sidebar/query/stream",
+    "/extension/sidebar/query/suggestions",
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {

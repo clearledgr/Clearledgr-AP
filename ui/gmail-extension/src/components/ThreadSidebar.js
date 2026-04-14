@@ -160,6 +160,60 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-qa-a.error {
   background: #FEF2F2; color: #B91C1C;
 }
+.cl-ts-qa-a strong { font-weight: 700; color: #0A1628; }
+.cl-ts-qa-a em { font-style: italic; color: #0A1628; }
+.cl-ts-qa-a code {
+  font: 600 11px/1.3 'Geist Mono', ui-monospace, monospace;
+  background: #E2E8F0; color: #0A1628;
+  padding: 1px 5px; border-radius: 4px;
+}
+.cl-ts-qa-a ul {
+  margin: 4px 0 2px; padding-left: 18px;
+}
+.cl-ts-qa-a li { margin: 2px 0; }
+.cl-ts-qa-a .cl-ts-ref {
+  display: inline-block; padding: 0 5px;
+  background: rgba(0, 214, 126, 0.12); color: #059669;
+  border-radius: 3px; font-weight: 600;
+  cursor: pointer; text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.cl-ts-qa-a .cl-ts-ref:hover { background: rgba(0, 214, 126, 0.22); }
+
+/* Streaming caret — blinks while Claude is still writing */
+.cl-ts-qa-a .cl-ts-caret {
+  display: inline-block; width: 7px; height: 13px; vertical-align: text-bottom;
+  background: #00D67E; margin-left: 2px; animation: cl-ts-blink 0.9s steps(2) infinite;
+}
+@keyframes cl-ts-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Flash highlight when a reference chip scrolls an audit row into view */
+.cl-ts-audit-flash {
+  animation: cl-ts-flash 1.5s ease-out;
+  border-radius: 4px;
+}
+@keyframes cl-ts-flash {
+  0%, 20% { background: rgba(0, 214, 126, 0.25); }
+  100% { background: transparent; }
+}
+
+/* Suggested starter questions — shown when the Q&A log is empty */
+.cl-ts-suggestions {
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px;
+}
+.cl-ts-suggestions-label {
+  font: 600 10px/1.2 'DM Sans', sans-serif; color: #94A3B8;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
+}
+.cl-ts-suggestion-chip {
+  text-align: left; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid #E2E8F0; background: #FBFCFD; color: #0A1628;
+  font: 500 12px/1.35 'DM Sans', sans-serif; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cl-ts-suggestion-chip:hover {
+  background: #fff; border-color: #00D67E; color: #059669;
+}
 
 /* -- Banners (conditional, above the fixed sections) -- */
 .cl-ts-banner {
@@ -328,6 +382,98 @@ function humanizeEventType(raw, { fallback = '' } = {}) {
   // can't nuke the layout.
   if (label.length > 80) label = label.slice(0, 77) + '…';
   return label;
+}
+
+// Mini markdown renderer for agent Q&A answer bubbles.
+// Handles only what the system prompt is told to use:
+//   **bold**, *italic*, `code`, and "- " bullets (one per line).
+// Also substitutes reference timestamps (HH:MM) with clickable chips.
+// Inline content is XSS-safe: we never set innerHTML from Claude's
+// output — every piece is returned as a Preact vnode or plain string.
+function renderInlineMarkdown(text, { references = [], onReferenceClick }) {
+  if (!text) return '';
+  const refByLabel = new Map();
+  (references || []).forEach((r) => {
+    if (r && r.label) refByLabel.set(String(r.label), r);
+  });
+  // Tokenise inline: **bold**, *italic*, `code`, HH:MM timestamps, plain text.
+  const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\b(?:[01]?\d|2[0-3]):[0-5]\d\b)/g;
+  const out = [];
+  let lastIndex = 0;
+  let key = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      out.push(text.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('**')) {
+      out.push(html`<strong key=${++key}>${token.slice(2, -2)}</strong>`);
+    } else if (token.startsWith('*')) {
+      out.push(html`<em key=${++key}>${token.slice(1, -1)}</em>`);
+    } else if (token.startsWith('`')) {
+      out.push(html`<code key=${++key}>${token.slice(1, -1)}</code>`);
+    } else if (refByLabel.has(token)) {
+      const ref = refByLabel.get(token);
+      out.push(html`<a
+        key=${++key}
+        class="cl-ts-ref"
+        role="button"
+        tabindex="0"
+        onClick=${(e) => { e.preventDefault(); onReferenceClick?.(ref); }}
+        onKeyDown=${(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onReferenceClick?.(ref);
+          }
+        }}
+      >${token}</a>`);
+    } else {
+      out.push(token);
+    }
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < text.length) out.push(text.slice(lastIndex));
+  return out;
+}
+
+function renderAnswerMarkdown(answer, { references = [], onReferenceClick, streaming = false }) {
+  if (!answer) {
+    return streaming
+      ? html`<span class="cl-ts-caret"></span>`
+      : '';
+  }
+  const lines = String(answer).split('\n');
+  const blocks = [];
+  let bulletBuffer = [];
+  const flushBullets = (keyPrefix) => {
+    if (bulletBuffer.length === 0) return;
+    blocks.push(html`<ul key=${keyPrefix}>
+      ${bulletBuffer.map((line, i) => html`
+        <li key=${i}>${renderInlineMarkdown(line, { references, onReferenceClick })}</li>
+      `)}
+    </ul>`);
+    bulletBuffer = [];
+  };
+  lines.forEach((line, i) => {
+    const trimmed = line.replace(/^\s+/, '');
+    if (/^([-•*])\s+/.test(trimmed)) {
+      bulletBuffer.push(trimmed.replace(/^([-•*])\s+/, ''));
+    } else {
+      flushBullets(`ul-${i}`);
+      if (trimmed.length > 0) {
+        blocks.push(html`<div key=${`p-${i}`}>${renderInlineMarkdown(line, { references, onReferenceClick })}</div>`);
+      } else if (blocks.length > 0) {
+        // Blank line → paragraph break
+        blocks.push(html`<div key=${`br-${i}`} style="height:4px"></div>`);
+      }
+    }
+  });
+  flushBullets('ul-end');
+  if (streaming) {
+    blocks.push(html`<span key="caret" class="cl-ts-caret"></span>`);
+  }
+  return blocks;
 }
 
 function humanizeWaitingType(type) {
@@ -643,8 +789,11 @@ function AgentActionsSection({ item, auditEvents }) {
               const why = humanizedWhy && humanizedWhy !== what ? humanizedWhy : '';
               const next = e.next_action || e.next_step || '';
               const isAgent = (e.actor || e.actor_type || '') !== 'user';
+              // data-audit-ts carries the full timestamp (up to minutes) so the
+              // Q&A log's reference chips can scroll the matching row into view.
+              const auditTs = String(e.ts || e.created_at || '').slice(0, 16).replace('T', ' ');
               return html`
-                <li key=${e.id || e.ts}>
+                <li key=${e.id || e.ts} data-audit-ts=${auditTs}>
                   ${isAgent ? html`<img src="${agentIconUrl()}" alt="agent" class="cl-ts-agent-icon" />` : ''}
                   <strong>${what}</strong>
                   ${why ? html`<span class="cl-ts-timeline-why"> — ${why}</span>` : ''}
@@ -728,15 +877,30 @@ export function ThreadSidebar({
 }) {
   const [boxLinks, setBoxLinks] = useState([]);
   const [nowMs, setNowMs] = useState(Date.now());
-  // Conversational Q&A log. Each row: { q, a, status: 'pending'|'done'|'error' }.
+  // Conversational Q&A log. Each row:
+  //   { q, a, references: [...], status: 'pending'|'streaming'|'done'|'error' }
   // Reset when the user switches to a different invoice — conversations
   // are per-Box, not per-session.
   const [qaLog, setQaLog] = useState([]);
   const [queryPending, setQueryPending] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
   useEffect(() => {
     setQaLog([]);
     setQueryPending(false);
+    setSuggestions([]);
   }, [item?.id]);
+
+  // Pull suggested starter questions when we have a focus invoice and
+  // no conversation yet. The backend tailors them to invoice state.
+  useEffect(() => {
+    if (!item?.id || qaLog.length > 0) return;
+    if (typeof onQuery !== 'function' || !onQuery.fetchSuggestions) return;
+    let cancelled = false;
+    onQuery.fetchSuggestions(item)
+      .then((list) => { if (!cancelled) setSuggestions(Array.isArray(list) ? list.slice(0, 4) : []); })
+      .catch(() => { if (!cancelled) setSuggestions([]); });
+    return () => { cancelled = true; };
+  }, [item?.id, qaLog.length, onQuery]);
 
   useEffect(() => {
     if (!item?.id || !fetchBoxLinks) return;
@@ -756,51 +920,115 @@ export function ThreadSidebar({
     return () => clearInterval(handle);
   }, [item?.override_window?.expires_at]);
 
-  // Submit a query to the agent and append to the local log. onQuery
-  // is expected to return a promise resolving to { answer } (or just
-  // the string). Old stub returned undefined — the catch branch handles
-  // that too so the sidebar degrades gracefully if the adapter is stale.
+  // Mutate the trailing pending/streaming row. Factored out so stream
+  // deltas, references, completion, and error all use the same updater.
+  const updateTrailingRow = (patch) => {
+    setQaLog((prev) => {
+      const next = prev.slice();
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        if (next[i].status === 'pending' || next[i].status === 'streaming') {
+          next[i] = { ...next[i], ...patch };
+          break;
+        }
+      }
+      return next;
+    });
+  };
+
+  // Submit a query to the agent and stream the response into the log.
+  // Streaming pathway (onQuery.stream):
+  //   - emits text deltas that we concatenate
+  //   - emits a final references array
+  //   - resolves on completion or rejects on error
+  // Non-streaming fallback (onQuery as a plain function) is still
+  // supported for clients that can't handle SSE.
   const submitQuery = async (question) => {
     if (!question || queryPending) return;
-    setQaLog((prev) => [...prev, { q: question, a: '', status: 'pending' }]);
+    setSuggestions([]);
+    // Build history to send — last 3 completed exchanges.
+    const history = qaLog
+      .filter((r) => r.status === 'done' && r.q && r.a)
+      .slice(-3)
+      .map((r) => ({ q: r.q, a: r.a }));
+    setQaLog((prev) => [...prev, {
+      q: question,
+      a: '',
+      references: [],
+      status: 'pending',
+    }]);
     setQueryPending(true);
     try {
-      const result = onQuery ? await onQuery(question, item) : null;
-      const answer = typeof result === 'string'
-        ? result
-        : (result?.answer || result?.content || '');
-      setQaLog((prev) => {
-        const next = prev.slice();
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          if (next[i].status === 'pending') {
-            next[i] = {
-              ...next[i],
-              a: answer || 'No answer returned. Try rephrasing.',
-              status: answer ? 'done' : 'error',
-            };
-            break;
-          }
-        }
-        return next;
-      });
+      if (onQuery && typeof onQuery.stream === 'function') {
+        let buffered = '';
+        let seenFirstDelta = false;
+        await onQuery.stream({
+          question,
+          item,
+          history,
+          onDelta: (chunk) => {
+            if (!seenFirstDelta) {
+              seenFirstDelta = true;
+              updateTrailingRow({ status: 'streaming' });
+            }
+            buffered += chunk;
+            updateTrailingRow({ a: buffered });
+          },
+          onReferences: (refs) => {
+            updateTrailingRow({ references: Array.isArray(refs) ? refs : [] });
+          },
+        });
+        updateTrailingRow({
+          status: buffered ? 'done' : 'error',
+          a: buffered || 'No answer returned. Try rephrasing.',
+        });
+      } else if (typeof onQuery === 'function') {
+        // Legacy single-shot path.
+        const result = await onQuery(question, item);
+        const answer = typeof result === 'string'
+          ? result
+          : (result?.answer || result?.content || '');
+        const refs = (typeof result === 'object' && Array.isArray(result?.references))
+          ? result.references : [];
+        updateTrailingRow({
+          a: answer || 'No answer returned. Try rephrasing.',
+          references: refs,
+          status: answer ? 'done' : 'error',
+        });
+      } else {
+        updateTrailingRow({
+          a: 'No query handler wired.',
+          status: 'error',
+        });
+      }
     } catch (err) {
-      setQaLog((prev) => {
-        const next = prev.slice();
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          if (next[i].status === 'pending') {
-            next[i] = {
-              ...next[i],
-              a: String(err?.message || err || 'Query failed'),
-              status: 'error',
-            };
-            break;
-          }
-        }
-        return next;
+      updateTrailingRow({
+        a: String(err?.message || err || 'Query failed'),
+        status: 'error',
       });
     } finally {
       setQueryPending(false);
     }
+  };
+
+  // Click handler for reference chips inside answers. Looks up the
+  // timestamp in the Agent Actions section and scrolls to it with a
+  // brief highlight so the user can see which action was cited.
+  const handleReferenceClick = (ref) => {
+    if (!ref) return;
+    const label = String(ref.label || '').trim();
+    if (!label) return;
+    try {
+      const nodes = document.querySelectorAll('[data-audit-ts]');
+      for (const node of nodes) {
+        const ts = String(node.getAttribute('data-audit-ts') || '');
+        if (ts.includes(label)) {
+          node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          node.classList.add('cl-ts-audit-flash');
+          setTimeout(() => node.classList.remove('cl-ts-audit-flash'), 1600);
+          return;
+        }
+      }
+    } catch (_) { /* best effort */ }
   };
 
   if (loading) return html`<${LoadingSkeleton} />`;
@@ -850,13 +1078,34 @@ export function ThreadSidebar({
             ${qaLog.map((row, idx) => html`
               <div class="cl-ts-qa-row" key=${idx}>
                 <div class="cl-ts-qa-q">${row.q}</div>
-                <div class="cl-ts-qa-a ${row.status === 'pending' ? 'pending' : row.status === 'error' ? 'error' : ''}">
-                  ${row.status === 'pending' ? 'Thinking…' : row.a}
+                <div class="cl-ts-qa-a ${
+                  row.status === 'pending' ? 'pending'
+                    : row.status === 'error' ? 'error' : ''
+                }">
+                  ${row.status === 'pending'
+                    ? 'Thinking…'
+                    : renderAnswerMarkdown(row.a, {
+                        references: row.references || [],
+                        onReferenceClick: handleReferenceClick,
+                        streaming: row.status === 'streaming',
+                      })}
                 </div>
               </div>
             `)}
           </div>
-        ` : ''}
+        ` : (suggestions.length > 0 ? html`
+          <div class="cl-ts-suggestions">
+            <div class="cl-ts-suggestions-label">Ask the agent</div>
+            ${suggestions.map((s, idx) => html`
+              <button
+                class="cl-ts-suggestion-chip"
+                key=${idx}
+                disabled=${queryPending}
+                onClick=${() => submitQuery(s)}
+              >${s}</button>
+            `)}
+          </div>
+        ` : '')}
         <input
           class="cl-ts-query-input"
           type="text"

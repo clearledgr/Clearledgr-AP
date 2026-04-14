@@ -109,80 +109,64 @@ async def get_form_prefill(
         raise HTTPException(status_code=403, detail="org_mismatch")
 
 
+class SidebarQueryTurn(BaseModel):
+    """One prior Q&A exchange. The client sends up to the last few so
+    Claude has continuity ("can I override it?" needs the prior "why is
+    it blocked?" turn to resolve "it")."""
+    q: str
+    a: str
+
+
 class SidebarQueryRequest(BaseModel):
-    """Natural-language question from the Gmail thread sidebar about the
-    current invoice / vendor. DESIGN_THESIS.md §6.8 specifies this for
-    Slack — we reuse the same agent layer for the sidebar so the answer
-    format and grounding are identical across decision surfaces.
-    """
+    """Natural-language question from the thread sidebar. Single-invoice
+    scope, conversation memory, streaming answer. §6.8."""
     query: str
     ap_item_id: Optional[str] = None
     organization_id: Optional[str] = "default"
+    history: Optional[List[SidebarQueryTurn]] = None
 
 
-@router.post("/sidebar/query")
-async def answer_sidebar_query(
-    request: SidebarQueryRequest,
-    _user=Depends(get_current_user),
-):
-    """Answer a conversational query posed from the thread sidebar.
-
-    Scope: the user is on a Gmail thread tied to one AP item. We pull
-    the invoice itself, the vendor's recent history (for "what else is
-    open from this vendor" style questions), and the invoice's audit
-    timeline (for "why is this stuck" style questions). That bundle is
-    handed to the existing Claude conversational layer
-    (`_answer_query_with_context`), which is already battle-tested via
-    the Slack query surface.
-    """
-    query = str(request.query or "").strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="empty_query")
-    if len(query) > 1000:
-        raise HTTPException(status_code=413, detail="query_too_long")
-
-    org_id = resolve_org_id_for_user(_user, request.organization_id)
+def _load_sidebar_context(
+    request_ap_item_id: Optional[str],
+    request_org_id: Optional[str],
+    user,
+) -> Dict[str, Any]:
+    """Shared: resolve org, focus item, vendor siblings, audit timeline."""
+    org_id = resolve_org_id_for_user(user, request_org_id)
     db = get_db()
 
-    # Assemble context for the one-invoice scope the sidebar cares about.
     focus_item = None
-    if request.ap_item_id:
+    if request_ap_item_id:
         try:
-            focus_item = db.get_ap_item(request.ap_item_id)
-        except Exception:  # noqa: BLE001 — best-effort context load
+            focus_item = db.get_ap_item(request_ap_item_id)
+        except Exception:  # noqa: BLE001
             focus_item = None
         if focus_item and str(focus_item.get("organization_id") or org_id) != org_id:
             raise HTTPException(status_code=403, detail="org_mismatch")
 
-    # Include the focus item + up to 9 of the same vendor's recent items
-    # so the agent can answer "what else is open from X?" correctly.
-    items: list = []
-    if focus_item:
-        items.append(focus_item)
-        vendor_name = str(focus_item.get("vendor_name") or "").strip()
-        if vendor_name:
-            try:
-                vendor_items = db.list_ap_items(
-                    organization_id=org_id,
-                    limit=10,
-                ) or []
-            except TypeError:
-                # Older store signature — fall back to no vendor context.
-                vendor_items = []
-            except Exception:  # noqa: BLE001
-                vendor_items = []
-            focus_id = str(focus_item.get("id") or "")
-            for vi in vendor_items:
-                if str(vi.get("id") or "") == focus_id:
-                    continue
-                if str(vi.get("vendor_name") or "").strip().lower() == vendor_name.lower():
-                    items.append(vi)
-                if len(items) >= 10:
-                    break
+    vendor_items: List[Dict[str, Any]] = []
+    if focus_item and focus_item.get("vendor_name"):
+        vendor_name = str(focus_item.get("vendor_name") or "").strip().lower()
+        focus_id = str(focus_item.get("id") or "")
+        try:
+            candidates = db.list_ap_items(organization_id=org_id, limit=40) or []
+        except TypeError:
+            candidates = []
+        except Exception:  # noqa: BLE001
+            candidates = []
+        for vi in candidates:
+            if str(vi.get("id") or "") == focus_id:
+                continue
+            if str(vi.get("vendor_name") or "").strip().lower() != vendor_name:
+                continue
+            state = str(vi.get("state") or "").lower()
+            if state in {"closed", "rejected", "posted_to_erp"}:
+                continue  # only surface OPEN invoices from the vendor
+            vendor_items.append(vi)
+            if len(vendor_items) >= 9:
+                break
 
-    # Audit timeline for the focus item only. 30 events is what the
-    # Slack path uses too.
-    audit_events: list = []
+    audit_events: List[Dict[str, Any]] = []
     if focus_item and focus_item.get("id"):
         try:
             audit_events = db.list_ap_audit_events(
@@ -191,7 +175,6 @@ async def answer_sidebar_query(
                 order="desc",
             ) or []
         except TypeError:
-            # Older signature — try kwargs-less call.
             try:
                 audit_events = db.list_ap_audit_events(str(focus_item.get("id"))) or []
             except Exception:  # noqa: BLE001
@@ -199,27 +182,161 @@ async def answer_sidebar_query(
         except Exception:  # noqa: BLE001
             audit_events = []
 
-    # Sidebar-specific answer. Scope is always ONE invoice (plus vendor
-    # context). Don't use the Slack query prompt — that's tuned for
-    # cross-cutting "what's outstanding this week?" queries and gives
-    # list-style answers that feel useless here.
+    return {
+        "org_id": org_id,
+        "focus_item": focus_item,
+        "vendor_items": vendor_items,
+        "audit_events": audit_events,
+    }
+
+
+@router.post("/sidebar/query")
+async def answer_sidebar_query(
+    request: SidebarQueryRequest,
+    _user=Depends(get_current_user),
+):
+    """Non-streaming answer. Kept for clients that can't stream SSE and
+    as the JSON shape for post-answer rendering (references list)."""
+    query = str(request.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="empty_query")
+    if len(query) > 1000:
+        raise HTTPException(status_code=413, detail="query_too_long")
+
+    ctx = _load_sidebar_context(request.ap_item_id, request.organization_id, _user)
+    history = [(t.q, t.a) for t in (request.history or [])][-6:]  # cap at last 3 turns
+
     answer = await _answer_sidebar_query(
         query=query,
-        focus_item=focus_item,
-        vendor_items=items[1:] if len(items) > 1 else [],
-        audit_events=audit_events,
-        org_id=org_id,
+        focus_item=ctx["focus_item"],
+        vendor_items=ctx["vendor_items"],
+        audit_events=ctx["audit_events"],
+        org_id=ctx["org_id"],
+        history=history,
     )
+
+    references = _extract_references(answer, ctx["audit_events"])
 
     return {
         "answer": str(answer or "").strip() or "I couldn't find an answer for that question.",
+        "references": references,
         "context": {
-            "ap_item_id": str(focus_item.get("id")) if focus_item else None,
-            "vendor": str(focus_item.get("vendor_name")) if focus_item else None,
-            "item_count": len(items),
-            "audit_event_count": len(audit_events),
+            "ap_item_id": str(ctx["focus_item"].get("id")) if ctx["focus_item"] else None,
+            "vendor": str(ctx["focus_item"].get("vendor_name")) if ctx["focus_item"] else None,
+            "vendor_item_count": len(ctx["vendor_items"]),
+            "audit_event_count": len(ctx["audit_events"]),
         },
     }
+
+
+@router.post("/sidebar/query/stream")
+async def stream_sidebar_query(
+    request: SidebarQueryRequest,
+    _user=Depends(get_current_user),
+):
+    """Server-Sent Events streaming answer. Falls back to emitting the
+    full rule-based answer as one event if Claude / credits aren't
+    available. Frontend consumes via EventSource or fetch+reader."""
+    from fastapi.responses import StreamingResponse
+
+    query = str(request.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="empty_query")
+    if len(query) > 1000:
+        raise HTTPException(status_code=413, detail="query_too_long")
+
+    ctx = _load_sidebar_context(request.ap_item_id, request.organization_id, _user)
+    history = [(t.q, t.a) for t in (request.history or [])][-6:]
+
+    async def event_stream():
+        import json as _json
+        full_answer_parts: List[str] = []
+        try:
+            async for chunk in _stream_sidebar_query(
+                query=query,
+                focus_item=ctx["focus_item"],
+                vendor_items=ctx["vendor_items"],
+                audit_events=ctx["audit_events"],
+                org_id=ctx["org_id"],
+                history=history,
+            ):
+                if not chunk:
+                    continue
+                full_answer_parts.append(chunk)
+                yield "event: delta\n"
+                yield f"data: {_json.dumps({'text': chunk})}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[sidebar/query/stream] unexpected error: %s", exc)
+            yield "event: error\n"
+            yield f"data: {_json.dumps({'message': 'stream_failed'})}\n\n"
+        # Post-stream: send references + done event.
+        full_answer = "".join(full_answer_parts)
+        references = _extract_references(full_answer, ctx["audit_events"])
+        yield "event: references\n"
+        yield f"data: {_json.dumps({'references': references})}\n\n"
+        yield "event: done\n"
+        yield "data: {}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/sidebar/query/suggestions")
+async def sidebar_query_suggestions(
+    ap_item_id: Optional[str] = Query(None),
+    organization_id: Optional[str] = Query("default"),
+    _user=Depends(get_current_user),
+):
+    """Seed starter questions based on invoice state so users aren't
+    staring at a blank input. Max 4 chips — curated per state."""
+    ctx = _load_sidebar_context(ap_item_id, organization_id, _user)
+    focus = ctx["focus_item"]
+    if not focus:
+        return {"suggestions": [
+            "What's in the AP queue right now?",
+            "Show me overdue invoices",
+        ]}
+
+    state = str(focus.get("state") or "").lower()
+    blockers = _blockers_for(focus)
+    vendor = str(focus.get("vendor_name") or "this vendor").strip()
+    has_vendor_siblings = len(ctx["vendor_items"]) > 0
+
+    suggestions: List[str] = []
+    # State-specific lead question
+    if state in {"needs_info", "failed_post"} or blockers:
+        suggestions.append("Why is this invoice blocked?")
+    elif state in {"needs_approval", "pending_approval"}:
+        suggestions.append("Is this safe to approve?")
+    elif state in {"approved", "ready_to_post"}:
+        suggestions.append("When will this be paid?")
+    elif state in {"posted_to_erp"}:
+        suggestions.append("Show me the ERP entry")
+    else:
+        suggestions.append("What's the status of this invoice?")
+
+    # Vendor-aware follow-up
+    if has_vendor_siblings:
+        suggestions.append(f"What else is open from {vendor}?")
+    else:
+        suggestions.append(f"What's {vendor}'s payment history?")
+
+    # Decision help
+    overdue = _days_overdue(focus.get("due_date"))
+    if overdue and overdue > 0:
+        suggestions.append("What happens if I don't pay this?")
+    elif blockers:
+        suggestions.append("What do I need to do next?")
+    else:
+        suggestions.append("Can the agent handle this automatically?")
+
+    return {"suggestions": suggestions[:4]}
 
 
 @router.get("/needs-info-draft/{ap_item_id}")
@@ -446,60 +563,222 @@ def _answer_sidebar_query_rule_based(
     return "\n".join(lines)
 
 
+# Shared audit-event humanizer. Raw event types look like
+# "ap_invoice_processing_field_review_required" — humans and Claude both
+# prefer "Field review required". Mirrors the frontend humanizer in
+# ThreadSidebar.js so sidebar and Claude context read the same.
+_HUMANIZE_STRIP_PREFIXES = (
+    "ap_invoice_processing_",
+    "agent_action:",
+    "ap_",
+    "invoice_",
+    "workflow_",
+)
+
+
+def _humanize_event_type(raw: Any) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    # Already humanized (has spaces and no snake_case)
+    if " " in s and "_" not in s and ":" not in s:
+        return s if len(s) <= 100 else s[:97] + "…"
+    lower = s.lower()
+    for prefix in _HUMANIZE_STRIP_PREFIXES:
+        if lower.startswith(prefix):
+            lower = lower[len(prefix):]
+            break
+    lower = lower.replace(":", " ").replace("_", " ").strip()
+    if not lower:
+        return ""
+    return lower[:1].upper() + lower[1:]
+
+
+def _humanize_audit_line(event: Dict[str, Any]) -> str:
+    """Turn a raw audit row into one line Claude can quote back verbatim.
+
+    Format: "{HH:MM timestamp} — {human title}[ · {short message}]"
+    """
+    raw_ts = str(event.get("ts") or event.get("created_at") or "").strip()
+    # Trim to HH:MM on a date — compact but unambiguous.
+    ts_short = raw_ts[:16].replace("T", " ") if raw_ts else ""
+    title = event.get("operator_title") or event.get("title") or event.get("event_type") or ""
+    title = _humanize_event_type(title)
+    msg = str(
+        event.get("operator_message")
+        or event.get("summary")
+        or event.get("reason")
+        or ""
+    ).strip()
+    if msg and len(msg) > 100:
+        msg = msg[:97] + "…"
+    base = f"{ts_short} — {title}" if ts_short else title
+    return f"{base} · {msg}" if msg else base
+
+
 def _build_sidebar_context(
     focus_item: Dict[str, Any],
     vendor_items: List[Dict[str, Any]],
     audit_events: List[Dict[str, Any]],
 ) -> str:
-    """Compact fact sheet handed to Claude."""
+    """Human-curated fact sheet handed to Claude.
+
+    Previous version dumped raw DB fields ("match_status: NOT LINKED").
+    This version narrates the invoice the way a teammate would describe
+    it — Claude mirrors the phrasing back, so answers feel natural
+    instead of robotic.
+    """
     lines: List[str] = []
-    v = str(focus_item.get("vendor_name") or focus_item.get("vendor") or "Unknown")
-    ref = str(focus_item.get("invoice_number") or focus_item.get("reference") or "")
-    amt = _fmt_amount(focus_item.get("amount"), focus_item.get("currency"))
-    due = str(focus_item.get("due_date") or "")[:10]
+    vendor = str(focus_item.get("vendor_name") or focus_item.get("vendor") or "Unknown vendor").strip()
+    ref = str(focus_item.get("invoice_number") or focus_item.get("reference") or "").strip()
+    amount = _fmt_amount(focus_item.get("amount"), focus_item.get("currency"))
+    due_iso = str(focus_item.get("due_date") or "")[:10]
     overdue = _days_overdue(focus_item.get("due_date"))
-    state = _describe_state(focus_item.get("state"))
-    lines.append("FOCUS INVOICE (the one the user is asking about):")
-    lines.append(f"  vendor: {v}")
-    lines.append(f"  reference: {ref or '—'}")
-    lines.append(f"  amount: {amt}")
-    lines.append(f"  due: {due or '—'}" + (f" ({overdue} days overdue)" if (overdue and overdue > 0) else ""))
-    lines.append(f"  state: {state}")
+    state_description = _describe_state(focus_item.get("state"))
+
+    # Narrative header
+    header_bits = [f"An invoice from {vendor}"]
+    if ref:
+        header_bits.append(f"(reference #{ref})")
+    header_bits.append(f"for {amount}.")
+    lines.append("INVOICE:")
+    lines.append("  " + " ".join(header_bits))
+    lines.append(f"  Current status: {state_description}.")
+
+    # Due-date narration
+    if due_iso:
+        if overdue is not None and overdue > 0:
+            lines.append(f"  Due {due_iso} — {overdue} days overdue.")
+        elif overdue == 0:
+            lines.append(f"  Due today ({due_iso}).")
+        elif overdue is not None and overdue < 0:
+            lines.append(f"  Due {due_iso} — in {abs(overdue)} days.")
+        else:
+            lines.append(f"  Due {due_iso}.")
+    else:
+        lines.append("  No due date was extracted from this invoice.")
+
+    # 3-way match narration
     po = focus_item.get("po_number") or focus_item.get("purchase_order_number")
     grn = focus_item.get("grn_number") or focus_item.get("goods_received_note_number")
-    lines.append(f"  PO: {po or 'NOT LINKED'}")
-    lines.append(f"  GRN: {grn or 'NOT LINKED'}")
-    lines.append(f"  match_status: {focus_item.get('match_status') or '—'}")
+    match_status = str(focus_item.get("match_status") or "").lower()
+    if po and grn:
+        if match_status in {"passed", "matched", "ok"}:
+            lines.append(f"  Three-way match passed (PO {po}, GRN {grn}).")
+        elif match_status in {"failed", "mismatch", "exception"}:
+            lines.append(f"  Three-way match failed despite PO {po} and GRN {grn} being linked.")
+        else:
+            lines.append(f"  PO {po} and GRN {grn} are linked. Match status: {match_status or 'pending'}.")
+    elif po and not grn:
+        lines.append(f"  PO {po} is linked, but no Goods Receipt Note is attached.")
+    elif grn and not po:
+        lines.append(f"  GRN {grn} is linked, but no Purchase Order is attached.")
+    else:
+        lines.append("  No Purchase Order or Goods Receipt Note is linked to this invoice.")
+
+    # Vendor-side narration
+    iban_verified = focus_item.get("vendor_iban_verified")
+    if iban_verified is True:
+        lines.append(f"  {vendor}'s bank details (IBAN) have been verified.")
+    elif iban_verified is False:
+        lines.append(f"  {vendor}'s bank details (IBAN) have NOT been verified — payment cannot be scheduled yet.")
+
+    # Exception / pause reason (already human text usually)
     exception = str(focus_item.get("exception_reason") or focus_item.get("exception_code") or "").strip()
     if exception:
-        lines.append(f"  exception: {exception}")
+        lines.append(f"  Exception flagged: {exception}")
     paused = str(focus_item.get("workflow_paused_reason") or "").strip()
     if paused:
-        lines.append(f"  workflow_paused_reason: {paused}")
-    iban_verified = focus_item.get("vendor_iban_verified")
-    if iban_verified is not None:
-        lines.append(f"  vendor_iban_verified: {iban_verified}")
+        lines.append(f"  Workflow paused because: {paused}")
 
+    # Vendor siblings
     if vendor_items:
+        total = sum(float(vi.get("amount") or 0) for vi in vendor_items) + float(focus_item.get("amount") or 0)
         lines.append("")
-        lines.append(f"OTHER OPEN INVOICES FROM {v.upper()} (up to 9):")
+        lines.append(
+            f"OTHER OPEN INVOICES FROM {vendor} "
+            f"({len(vendor_items)} more, {_fmt_amount(total, focus_item.get('currency'))} total "
+            "including this one):"
+        )
         for vi in vendor_items[:9]:
-            r = str(vi.get("invoice_number") or "").strip() or "(no ref)"
+            r = str(vi.get("invoice_number") or "").strip() or "(no reference)"
             a = _fmt_amount(vi.get("amount"), vi.get("currency"))
-            d = str(vi.get("due_date") or "")[:10] or "—"
+            d = str(vi.get("due_date") or "")[:10] or "no due date"
             s = _describe_state(vi.get("state"))
-            lines.append(f"  - #{r} | {a} | due:{d} | {s}")
+            lines.append(f"  - #{r}, {a}, {s}, due {d}")
 
+    # Audit timeline — humanized
     if audit_events:
         lines.append("")
-        lines.append("RECENT AGENT ACTIONS ON THIS INVOICE (newest first, up to 10):")
+        lines.append("WHAT THE AGENT HAS DONE ON THIS INVOICE (newest first):")
         for e in audit_events[:10]:
-            ts = str(e.get("ts") or e.get("created_at") or "")[:19]
-            title = str(e.get("operator_title") or e.get("event_type") or "").strip() or "action"
-            msg = str(e.get("operator_message") or e.get("summary") or "").strip()
-            lines.append(f"  - {ts} | {title}" + (f" — {msg[:100]}" if msg else ""))
+            lines.append("  - " + _humanize_audit_line(e))
 
     return "\n".join(lines)
+
+
+def _build_system_prompt() -> str:
+    return (
+        "You are Clearledgr's AP agent answering a finance teammate's question about "
+        "a SPECIFIC invoice they have open in Gmail. You are NOT running a dashboard "
+        "query — you are explaining ONE invoice and what should happen with it.\n\n"
+        "GROUNDING:\n"
+        "- You receive a curated fact sheet describing the focus invoice, any other "
+        "  open invoices from the same vendor, and recent agent actions on this "
+        "  invoice. Treat this as ground truth. Do not invent amounts, dates, PO "
+        "  numbers, or vendor history.\n"
+        "- If the fact sheet says something isn't linked (e.g., 'No Purchase Order'), "
+        "  don't hedge — say it plainly.\n\n"
+        "CONVERSATION:\n"
+        "- Earlier turns in this conversation are included as chat history. Resolve "
+        "  pronouns like 'it', 'them', 'that invoice' against that history. When "
+        "  the user follows up with 'can I override it?', they mean the thing you "
+        "  were just discussing.\n\n"
+        "ANSWER STYLE:\n"
+        "- Open with the single most useful fact. No preamble. No repeating the "
+        "  question back.\n"
+        "- For 'why is this blocked', list real blockers in a short bullet list, "
+        "  then one sentence on what they can do next.\n"
+        "- For vendor questions, list invoices with reference, amount, state, due "
+        "  date. Sum totals only if asked.\n"
+        "- For 'what should I do', be prescriptive about the next step: approve "
+        "  here, link a PO, trigger vendor onboarding, retry post.\n"
+        "- Use real numbers with currency symbols. Never hedge with 'some' or 'a few'.\n"
+        "- When referencing an agent action, include its timestamp (HH:MM) so the "
+        "  user can find it in the Agent Actions timeline above — e.g., 'The agent "
+        "  flagged this at 09:12 for field review.'\n"
+        "- 2-5 sentences unless a bulleted list is genuinely needed. Use markdown "
+        "  sparingly: `**bold**` for emphasis on one key phrase, `-` for bullets, "
+        "  nothing else. No headers.\n"
+        "- If the data genuinely doesn't support an answer, say what's missing."
+    )
+
+
+def _build_messages(
+    query: str,
+    context: str,
+    history: Optional[List[tuple]] = None,
+) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = []
+    # Plant the curated fact sheet as the first user turn so it's part of
+    # the conversation context, not just a floating header.
+    messages.append({
+        "role": "user",
+        "content": f"Here is the invoice I'm looking at:\n\n{context}",
+    })
+    messages.append({
+        "role": "assistant",
+        "content": "Got it — I have this invoice in view. What would you like to know?",
+    })
+    for (q, a) in (history or []):
+        q_clean = str(q or "").strip()
+        a_clean = str(a or "").strip()
+        if not q_clean or not a_clean:
+            continue
+        messages.append({"role": "user", "content": q_clean})
+        messages.append({"role": "assistant", "content": a_clean})
+    messages.append({"role": "user", "content": query})
+    return messages
 
 
 async def _answer_sidebar_query(
@@ -508,8 +787,9 @@ async def _answer_sidebar_query(
     vendor_items: List[Dict[str, Any]],
     audit_events: List[Dict[str, Any]],
     org_id: str,
+    history: Optional[List[tuple]] = None,
 ) -> str:
-    """Answer a single-invoice sidebar question, Claude first, rule-based fallback."""
+    """Non-streaming answer. Claude first, rule-based fallback."""
     if not focus_item:
         return (
             "Open an invoice in Gmail first — I need a specific record to answer "
@@ -521,43 +801,15 @@ async def _answer_sidebar_query(
         return _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
 
     context = _build_sidebar_context(focus_item, vendor_items, audit_events)
-    system_prompt = (
-        "You are Clearledgr's AP agent answering a finance teammate's question about "
-        "a SPECIFIC invoice they have open in Gmail. You are NOT running a dashboard "
-        "query — you are explaining one invoice and what needs to happen with it.\n\n"
-        "INPUT SHAPE:\n"
-        "You will receive the focus invoice's full state (vendor, amount, PO/GRN "
-        "linkage, match status, exception reason, workflow pause reason, vendor IBAN "
-        "verification), up to 9 other open invoices from the same vendor, and the "
-        "focus invoice's recent agent-action timeline.\n\n"
-        "ANSWER STYLE:\n"
-        "- Open with the single most useful fact for the question asked. Don't "
-        "  preamble, don't repeat the question back.\n"
-        "- When the user asks 'why is this blocked' or 'what's wrong', walk through "
-        "  the actual blockers (no PO, unverified IBAN, match failure, etc.) in a "
-        "  short bulleted list, then one line on what they can do.\n"
-        "- When the user asks about the vendor's other invoices, list them: ref, "
-        "  amount with currency, state, due date. Sum totals only if they ask.\n"
-        "- When the user asks 'what should I do', be prescriptive about the next "
-        "  action (approve here, link a PO, trigger vendor onboarding, retry post).\n"
-        "- Never tell the user to 'try asking about a specific vendor' — you ALREADY "
-        "  have the specific vendor and invoice.\n"
-        "- Include currency symbols and real numbers. Don't hedge with 'some' or "
-        "  'a few'.\n"
-        "- Be terse. 2-5 sentences unless a bulleted list is genuinely needed. No "
-        "  markdown headers. Plain prose.\n"
-        "- If the data genuinely doesn't support an answer, say what's missing "
-        "  (e.g., 'no due date was extracted from this invoice')."
-    )
-    user_message = f"INVOICE CONTEXT\n{context}\n\nQUESTION: {query}"
+    messages = _build_messages(query, context, history)
 
     try:
         from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
         gateway = get_llm_gateway()
         resp = await gateway.call(
             LLMAction.SLACK_QUERY,
-            messages=[{"role": "user", "content": user_message}],
-            system_prompt=system_prompt,
+            messages=messages,
+            system_prompt=_build_system_prompt(),
             organization_id=org_id,
         )
         answer = str(resp.content or "").strip() if resp else ""
@@ -567,3 +819,80 @@ async def _answer_sidebar_query(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[sidebar/query] Claude call failed: %s", exc)
         return _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
+
+
+async def _stream_sidebar_query(
+    query: str,
+    focus_item: Optional[Dict[str, Any]],
+    vendor_items: List[Dict[str, Any]],
+    audit_events: List[Dict[str, Any]],
+    org_id: str,
+    history: Optional[List[tuple]] = None,
+):
+    """Async generator yielding text chunks. Falls back to emitting the
+    full rule-based answer as one chunk if Claude is unavailable."""
+    if not focus_item:
+        yield (
+            "Open an invoice in Gmail first — I need a specific record to answer "
+            "questions about it."
+        )
+        return
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        yield _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
+        return
+
+    context = _build_sidebar_context(focus_item, vendor_items, audit_events)
+    messages = _build_messages(query, context, history)
+
+    try:
+        from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+        gateway = get_llm_gateway()
+        any_chunk = False
+        async for chunk in gateway.stream(
+            LLMAction.SLACK_QUERY,
+            messages=messages,
+            system_prompt=_build_system_prompt(),
+            organization_id=org_id,
+        ):
+            if chunk:
+                any_chunk = True
+                yield chunk
+        if not any_chunk:
+            yield _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[sidebar/query/stream] Claude stream failed: %s", exc)
+        yield _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
+
+
+# Reference extraction: find HH:MM timestamps in the answer that match
+# audit events, so the frontend can turn them into clickable links that
+# scroll to the matching row in the Agent Actions timeline.
+import re as _re
+
+_TIMESTAMP_PATTERN = _re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
+
+
+def _extract_references(answer: str, audit_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not answer or not audit_events:
+        return []
+    refs: List[Dict[str, Any]] = []
+    seen: set = set()
+    for match in _TIMESTAMP_PATTERN.finditer(answer):
+        hhmm = match.group(0)
+        if hhmm in seen:
+            continue
+        # Find an audit event whose ts contains this HH:MM (first match wins).
+        for e in audit_events:
+            ts = str(e.get("ts") or e.get("created_at") or "")
+            if hhmm in ts[:16]:
+                refs.append({
+                    "label": hhmm,
+                    "event_id": str(e.get("id") or ""),
+                    "event_type": str(e.get("event_type") or ""),
+                    "offset": match.start(),
+                })
+                seen.add(hhmm)
+                break
+    return refs

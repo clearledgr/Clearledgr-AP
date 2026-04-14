@@ -1,6 +1,6 @@
 /** Root sidebar Preact component — compact AP-first Gmail work surface */
 import { h, Component } from 'preact';
-import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import htm from 'htm';
 import store from '../utils/store.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
@@ -1862,6 +1862,105 @@ export default function SidebarApp({ queueManager }) {
   };
   const openPipeline = useCallback(() => navigateInboxRoute('clearledgr/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
 
+  // Agent Q&A adapter handed to ThreadSidebar. Carries:
+  //   - legacy non-streaming call (plain function form, back-compat)
+  //   - .stream() for SSE streaming with history + references
+  //   - .fetchSuggestions(item) for starter-question chips
+  // All three hit /extension/sidebar/query endpoints on the backend.
+  const agentQuery = useMemo(() => {
+    const orgId = () => queueManager.runtimeConfig?.organizationId || 'default';
+    const baseUrl = () => queueManager.runtimeConfig?.backendUrl || '';
+
+    // Non-streaming fallback (Preact can't guarantee SSE support in every
+    // Gmail render context, so ThreadSidebar still supports the plain-
+    // function form).
+    const singleShot = async (query, queryItem) => {
+      const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          ap_item_id: queryItem?.id || null,
+          organization_id: orgId(),
+        }),
+      });
+      if (!resp || !resp.ok) {
+        const text = await resp?.text?.().catch(() => '') || '';
+        throw new Error(text || `HTTP ${resp?.status || 'unknown'}`);
+      }
+      const data = await resp.json();
+      return data;
+    };
+
+    // Streaming via fetch + ReadableStream (EventSource can't POST).
+    singleShot.stream = async ({ question, item: queryItem, history, onDelta, onReferences }) => {
+      const resp = await queueManager.backendFetch(`${baseUrl()}/extension/sidebar/query/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify({
+          query: question,
+          ap_item_id: queryItem?.id || null,
+          organization_id: orgId(),
+          history: Array.isArray(history) ? history : [],
+        }),
+      });
+      if (!resp || !resp.ok || !resp.body || typeof resp.body.getReader !== 'function') {
+        // Stream endpoint unavailable or response is buffered — fall back
+        // to the single-shot endpoint so the user still gets an answer.
+        const data = await singleShot(question, queryItem);
+        if (data?.answer) onDelta?.(data.answer);
+        if (Array.isArray(data?.references)) onReferences?.(data.references);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      // Iterate the SSE stream. Each event is `event: <type>\ndata: <json>\n\n`.
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        while (true) {
+          const terminator = buffer.indexOf('\n\n');
+          if (terminator < 0) break;
+          const rawEvent = buffer.slice(0, terminator);
+          buffer = buffer.slice(terminator + 2);
+          let eventType = 'message';
+          let dataLine = '';
+          rawEvent.split('\n').forEach((line) => {
+            if (line.startsWith('event:')) eventType = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+          });
+          if (!dataLine) continue;
+          let payload = null;
+          try { payload = JSON.parse(dataLine); } catch { continue; }
+          if (eventType === 'delta' && payload?.text) {
+            onDelta?.(String(payload.text));
+          } else if (eventType === 'references') {
+            onReferences?.(Array.isArray(payload?.references) ? payload.references : []);
+          } else if (eventType === 'error') {
+            throw new Error(payload?.message || 'stream_error');
+          } else if (eventType === 'done') {
+            return;
+          }
+        }
+      }
+    };
+
+    singleShot.fetchSuggestions = async (queryItem) => {
+      const url = `${baseUrl()}/extension/sidebar/query/suggestions`
+        + `?ap_item_id=${encodeURIComponent(queryItem?.id || '')}`
+        + `&organization_id=${encodeURIComponent(orgId())}`;
+      const resp = await queueManager.backendFetch(url);
+      if (!resp || !resp.ok) return [];
+      const data = await resp.json();
+      return Array.isArray(data?.suggestions) ? data.suggestions : [];
+    };
+
+    return singleShot;
+  }, [queueManager]);
+
   useEffect(() => {
     if (item?.id && queueManager?.fetchItemContext) {
       queueManager.fetchItemContext(item.id).catch(() => {});
@@ -2000,35 +2099,7 @@ export default function SidebarApp({ queueManager }) {
                     showToast('Snooze failed: ' + (err.message || err), 'error');
                   }
                 }}
-                onQuery=${async (query, queryItem) => {
-                  // §6.8: conversational queries answered by the agent with
-                  // full grounding (invoice, vendor history, audit trail).
-                  // Backend shares the Slack query layer for consistent
-                  // answer format across decision surfaces.
-                  try {
-                    const orgId = queueManager.runtimeConfig?.organizationId || 'default';
-                    const url = queueManager.runtimeConfig?.backendUrl
-                      + '/extension/sidebar/query';
-                    const resp = await queueManager.backendFetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        query,
-                        ap_item_id: queryItem?.id || null,
-                        organization_id: orgId,
-                      }),
-                    });
-                    if (!resp || !resp.ok) {
-                      const text = await resp?.text?.().catch(() => '') || '';
-                      throw new Error(text || `HTTP ${resp?.status || 'unknown'}`);
-                    }
-                    const data = await resp.json();
-                    return data?.answer || '';
-                  } catch (err) {
-                    // ThreadSidebar surfaces the error inline in the Q&A log.
-                    throw err;
-                  }
-                }}
+                onQuery=${agentQuery}
                 onUndoOverride=${async (window_) => {
                   // §9.1: Undo an auto-approved post while the override window is open.
                   // Backend: POST /api/ap/items/{id}/reverse

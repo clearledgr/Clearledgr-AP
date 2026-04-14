@@ -403,6 +403,107 @@ class LLMGateway:
         )
         raise RuntimeError(f"[LLMGateway] {action.value} failed after {_MAX_RETRIES} retries: {last_error}")
 
+    async def stream(
+        self,
+        action: LLMAction,
+        messages: List[Dict[str, Any]],
+        *,
+        system_prompt: Optional[str] = None,
+        organization_id: str = "default",
+        temperature: Optional[float] = None,
+        max_tokens_override: Optional[int] = None,
+        model_override: Optional[str] = None,
+    ):
+        """Async generator that yields text chunks as Claude emits them.
+
+        Uses Anthropic's SSE streaming endpoint
+        (https://docs.anthropic.com/claude/reference/messages-streaming).
+        Each yielded value is a string fragment of the assistant's
+        response. Usage/cost is logged once at the end via the same
+        _log_call path as call(). Tool-use streaming is NOT supported
+        here — this is for pure text responses (sidebar Q&A, explain
+        state, etc.).
+
+        Retries are NOT applied to stream() — if the initial POST fails,
+        the caller is expected to fall back to a non-streaming path.
+        This keeps the first-chunk latency predictable and avoids mid-
+        stream retry complexity.
+        """
+        if action not in ACTION_REGISTRY:
+            raise ValueError(f"Action {action!r} is not registered in the LLM Gateway.")
+
+        config = ACTION_REGISTRY[action]
+        model = model_override or self._resolve_model(config)
+        max_tokens = max_tokens_override or config.max_output_tokens
+        temp = temperature if temperature is not None else config.temperature
+
+        body: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temp,
+            "messages": messages,
+            "stream": True,
+        }
+        if system_prompt:
+            body["system"] = system_prompt
+
+        import httpx
+        import json as _json
+        import time as _time
+
+        headers = {
+            "x-api-key": self._api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        start_time = _time.monotonic()
+        input_tokens = 0
+        output_tokens = 0
+        error: Optional[str] = None
+
+        try:
+            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+                async with client.stream("POST", _API_URL, headers=headers, json=body) as resp:
+                    if resp.status_code >= 400:
+                        body_text = await resp.aread()
+                        err = f"{resp.status_code}: {body_text[:200].decode('utf-8', errors='replace')}"
+                        error = err
+                        raise RuntimeError(f"[LLMGateway] {action.value} stream failed: {err}")
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        payload_raw = line[5:].strip()
+                        if not payload_raw or payload_raw == "[DONE]":
+                            continue
+                        try:
+                            payload = _json.loads(payload_raw)
+                        except ValueError:
+                            continue
+                        event_type = payload.get("type")
+                        if event_type == "content_block_delta":
+                            delta = payload.get("delta") or {}
+                            if delta.get("type") == "text_delta":
+                                text = delta.get("text") or ""
+                                if text:
+                                    yield text
+                        elif event_type == "message_start":
+                            usage = (payload.get("message") or {}).get("usage") or {}
+                            input_tokens = int(usage.get("input_tokens") or 0)
+                        elif event_type == "message_delta":
+                            usage = payload.get("usage") or {}
+                            output_tokens = int(usage.get("output_tokens") or 0)
+        finally:
+            latency_ms = int((_time.monotonic() - start_time) * 1000)
+            cost = self._estimate_cost(config, input_tokens, output_tokens)
+            self._log_call(
+                action=action, model=model,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                latency_ms=latency_ms, cost_estimate=cost,
+                truncated=False, error=error,
+                organization_id=organization_id,
+            )
+
     def call_sync(
         self,
         action: LLMAction,
