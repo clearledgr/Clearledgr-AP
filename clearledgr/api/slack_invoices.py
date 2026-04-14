@@ -143,6 +143,54 @@ async def _dispatch_runtime_intent(*args, **kwargs):
     return await dispatch_runtime_intent(*args, **kwargs)
 
 
+# Map common runtime-reason codes to plain English the AP Manager can act
+# on directly. Thesis §6.8 voice: say what's wrong, not what the state
+# machine called it. Any code not in the map gets Title Case snake-
+# to-space as a safe fallback (still better than raw `vendor_iban_
+# unverified`).
+_REASON_LABELS: Dict[str, str] = {
+    "vendor_iban_unverified": "The vendor's bank details haven't been verified yet. Payment can't be scheduled until they complete IBAN verification in the portal.",
+    "match_tolerance_exceeded": "The 3-way match delta exceeds your policy tolerance.",
+    "erp_connector_offline": "The ERP connector is temporarily offline. Retry in a few minutes — the invoice is safe in the queue.",
+    "field_review_required": "A reviewer must confirm the critical fields before this can post.",
+    "budget_exceeded": "This invoice would push a budget over its limit.",
+    "needs_budget_decision": "This invoice needs a budget decision before posting.",
+    "no_po_linked": "No Purchase Order is linked to this invoice yet.",
+    "duplicate_detected": "A similar invoice was already recorded this period — please confirm it's not a duplicate.",
+    "policy_violation": "This action breaks one of the AP policy rules.",
+    "invoice_not_found": "This invoice is no longer in the active queue.",
+    "invoice_already_posted": "This invoice has already been posted to the ERP.",
+    "invoice_already_rejected": "This invoice has already been rejected.",
+    "actor_not_authorized": "You're not on the approver list for this invoice.",
+    "approval_window_expired": "The approval window for this invoice has expired.",
+    "waiting_on_vendor": "The agent is still waiting on a response from the vendor.",
+    "override_window_closed": "The override window on this invoice has closed.",
+    "sap_validation_failed": "SAP rejected this bill during pre-flight validation — please review vendor, amount, or company code.",
+    "network_error": "We couldn't reach the ERP right now. Please retry in a moment.",
+}
+
+
+def _humanize_reason(reason: Any, fallback: str = "This action couldn't be completed.") -> str:
+    """Turn a runtime reason code into an AP-manager-friendly sentence.
+
+    Matches the map first; otherwise converts `snake_case` → `Title Case`
+    so the user still gets something readable instead of the raw code.
+    """
+    raw = str(reason or "").strip()
+    if not raw:
+        return fallback
+    if raw in _REASON_LABELS:
+        return _REASON_LABELS[raw]
+    # Safe fallback: snake_case → Title Case with a trailing period.
+    pretty = raw.replace("_", " ").strip()
+    if not pretty:
+        return fallback
+    pretty = pretty[:1].upper() + pretty[1:]
+    if not pretty.endswith("."):
+        pretty += "."
+    return pretty
+
+
 def _parse_form(body: bytes) -> Dict[str, str]:
     data: Dict[str, str] = {}
     for item in body.decode().split("&"):
@@ -312,7 +360,7 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
         if status not in {"approved", "posted", "posted_to_erp"}:
             return {
                 "response_type": "ephemeral",
-                "text": f"Approve failed: {workflow_result.get('reason', result.get('reason', status or 'unknown'))}",
+                "text": f"Can't approve: {_humanize_reason(workflow_result.get('reason') or result.get('reason') or status)}",
                 "result": result,
             }
         erp_result = workflow_result.get("erp_result") or {}
@@ -355,7 +403,7 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
             }
         return {
             "response_type": "ephemeral",
-            "text": f"Request failed: {result.get('reason', status or 'unknown')}",
+            "text": f"Couldn't send the info request: {_humanize_reason(result.get('reason') or status)}",
             "result": result,
         }
 
@@ -385,7 +433,7 @@ async def _dispatch_slack_action(action: Any) -> Dict[str, Any]:
             return {"response_type": "ephemeral", "text": "Invoice rejected.", "result": result}
         return {
             "response_type": "ephemeral",
-            "text": f"Reject failed: {result.get('reason', result.get('status', 'unknown'))}",
+            "text": f"Can't reject: {_humanize_reason(result.get('reason') or result.get('status'))}",
             "result": result,
         }
 
@@ -491,7 +539,7 @@ async def _handle_undo_post_action(
     return {
         "response_type": "ephemeral",
         "text": (
-            f"Reversal failed: {outcome.reason or outcome.status}. "
+            f"Couldn't reverse the posting: {_humanize_reason(outcome.reason or outcome.status)} "
             "Manual intervention may be required at the ERP level."
         ),
         "result": outcome.to_dict(),
