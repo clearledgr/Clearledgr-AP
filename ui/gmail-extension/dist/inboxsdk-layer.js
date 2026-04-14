@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:2c31762d135ab04890e2f72438091aec89a4189b6efd05bcb921a4a75f97a30b */
+/* clearledgr-source-fingerprint:426fae38f261140f2b227ba6878d120e7e2f08caf05537b34d019a91c18a315e */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -69109,6 +69109,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     rejected: { bg: "#FEF2F2", text: "#DC2626", label: "Rejected" },
     failed_post: { bg: "#FEF2F2", text: "#DC2626", label: "Failed post" }
   };
+  var BLOCKER_LABELS = {
+    entity: "Entity review",
+    approval: "Waiting on approver",
+    info: "Needs info",
+    erp: "ERP issue",
+    exception: "Needs review",
+    confidence: "Field review",
+    budget: "Budget review",
+    po: "PO review",
+    processing: "Processing issue"
+  };
   function getPipelineScope2(orgId, userEmail) {
     return { orgId, userEmail };
   }
@@ -69905,6 +69916,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       />
       <${ActionDialog} ...${dialog} />
 
+      <!-- Scope toggle — one-click narrowing without opening Views.
+           All open / Exceptions / Overdue. Maps to existing slice IDs so
+           saved-view persistence keeps working. Depth (per-blocker type,
+           vendor-specific, etc.) still lives in the Views popover. -->
+      <div style="
+        display:flex;align-items:center;gap:6px;padding:0 14px 8px;flex-wrap:wrap;
+      ">
+        ${[
+      { id: "all_open", label: "All open" },
+      { id: "blocked_exception", label: "Exceptions" },
+      { id: "overdue", label: "Overdue" }
+    ].map((scope) => {
+      const isActive = viewPrefs.activeSliceId === scope.id;
+      const count = sliceCounts[scope.id] || 0;
+      return html15`
+            <button
+              key=${scope.id}
+              onClick=${() => applySlice(scope.id)}
+              style="
+                display:inline-flex;align-items:center;gap:6px;
+                padding:6px 10px;border-radius:999px;cursor:pointer;
+                font-family:inherit;font-size:12px;font-weight:600;
+                border:1px solid ${isActive ? "#0A1628" : "#E2E8F0"};
+                background:${isActive ? "#0A1628" : "#fff"};
+                color:${isActive ? "#fff" : "#0A1628"};
+              "
+            >
+              <span>${scope.label}</span>
+              <span style="
+                font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
+                background:${isActive ? "rgba(255,255,255,0.18)" : "#F1F5F9"};
+                color:${isActive ? "#fff" : "#64748B"};
+                min-width:16px;text-align:center;
+              ">${count}</span>
+            </button>
+          `;
+    })}
+      </div>
+
       <!-- §6.7 Kanban board — stage columns with cards -->
       <div class="pipeline-kanban" style="display:flex;gap:12px;overflow-x:auto;padding:0 0 16px;min-height:400px">
         ${(() => {
@@ -69943,6 +69993,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   ${stageItems.length === 0 ? html15`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No invoices</div>` : stageItems.map((item) => {
           const pipelineBlockers = getPipelineBlockers(item);
           const active = String(activeItemId || "") === String(item.id || "");
+          const reference = String(item.invoice_number || item.reference || "").trim();
+          let dueBadge = null;
+          if (item.due_date) {
+            const dueMs = new Date(item.due_date).getTime();
+            if (Number.isFinite(dueMs)) {
+              const days = Math.round((dueMs - Date.now()) / 86400000);
+              if (days < 0) {
+                dueBadge = {
+                  label: `${Math.abs(days)}d overdue`,
+                  bg: "#FEF2F2",
+                  color: "#B91C1C",
+                  border: "#FECACA"
+                };
+              } else if (days <= 7) {
+                dueBadge = {
+                  label: days === 0 ? "Due today" : `Due in ${days}d`,
+                  bg: "#FFFBEB",
+                  color: "#92400E",
+                  border: "#FDE68A"
+                };
+              }
+            }
+          }
+          const primaryBlocker = pipelineBlockers[0];
+          const extraBlockers = pipelineBlockers.length - 1;
           return html15`
                           <div
                             key=${item.id}
@@ -69951,28 +70026,41 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                               background:#fff;border:1px solid ${active ? "#00D67E" : "#E2E8F0"};
                               border-radius:8px;padding:10px 12px;cursor:pointer;
                               ${active ? "box-shadow:0 0 0 2px rgba(0,214,126,0.2);" : ""}
+                              display:flex;flex-direction:column;gap:6px;
                             "
                             onClick=${() => {
             setActiveItemId(String(item.id || ""));
             openItemDetail(navigate, pipelineScope, item);
           }}
                           >
-                            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-                              <strong style="font-size:13px;color:#0A1628;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                              <strong style="font-size:13px;color:#0A1628;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">
                                 ${item.vendor_name || item.vendor || "Unknown"}
                               </strong>
-                              <span style="font-size:12px;font-family:var(--font-mono);color:#0A1628;font-weight:500">
+                              <span style="font-size:12px;font-family:var(--font-mono);color:#0A1628;font-weight:600;white-space:nowrap">
                                 ${getAmountLabel(item)}
                               </span>
                             </div>
-                            <div class="muted" style="font-size:11px;margin-bottom:4px">
-                              ${item.invoice_number || item.reference || ""}
-                              ${item.due_date ? ` · Due ${fmtDate(item.due_date)}` : ""}
+                            ${reference ? html15`<div class="muted" style="font-size:11px;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                                  ${reference}
+                                </div>` : null}
+                            ${primaryBlocker ? html15`<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                                  <span style="
+                                    font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;
+                                    background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
+                                  ">${primaryBlocker.chip_label || primaryBlocker.title || primaryBlocker.label || BLOCKER_LABELS[String(primaryBlocker.kind || "").toLowerCase()] || primaryBlocker.kind || "Blocker"}</span>
+                                  ${extraBlockers > 0 ? html15`<span class="muted" style="font-size:10px;font-weight:600">+${extraBlockers}</span>` : null}
+                                </div>` : null}
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:2px">
+                              <span class="muted" style="font-size:10px">
+                                ${formatDurationMinutes(getQueueAgeMinutes(item))} in queue
+                              </span>
+                              ${dueBadge ? html15`<span style="
+                                    font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;
+                                    background:${dueBadge.bg};color:${dueBadge.color};
+                                    border:1px solid ${dueBadge.border};
+                                  ">${dueBadge.label}</span>` : null}
                             </div>
-                            ${pipelineBlockers.length > 0 ? html15`<div style="font-size:11px;color:#92400E;margin-top:2px">
-                                  ${pipelineBlockers[0]?.label || pipelineBlockers[0]?.kind || "Blocker"}
-                                </div>` : ""}
-                            <div class="muted" style="font-size:10px;margin-top:4px">${formatDurationMinutes(getQueueAgeMinutes(item))} in queue</div>
                           </div>
                         `;
         })}
