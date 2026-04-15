@@ -211,37 +211,64 @@ def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
 
 
 # ---------------------------------------------------------------------------
-# Per-(org, erp_type) refresh-token dedupe.
+# Per-(org, erp_type) refresh-token dedupe — two-tier locking.
 #
-# QuickBooks invalidates the previous refresh_token on every successful
-# refresh — that's a documented OAuth tightening they made years ago.
-# Xero behaves similarly. So if N concurrent posts hit a stale token,
-# they all get 401, all call refresh_*_token in parallel, and only the
-# FIRST refresh succeeds. The other N-1 callers send the now-burned
-# refresh_token to the OAuth endpoint, get invalid_grant back, and the
-# org's connection is permanently broken until an admin re-OAuths.
+# Why this matters: QuickBooks invalidates the previous refresh_token
+# on every successful refresh. Xero is similar. If N concurrent posts
+# hit a stale access token, all N get 401, all N call refresh in
+# parallel, the first wins, the other N-1 send a now-burned RT to
+# Intuit and get invalid_grant — connection permanently broken until
+# an admin re-OAuths.
 #
-# Workspace semaphore (services/workspace_semaphore.py) bounds N at
-# 5-50 per workspace per worker process, but doesn't prevent the race
-# inside that window. This wrapper does:
+# Two layers of protection, walked in order on every refresh attempt:
 #
-#   1. Acquire a per-(org, erp_type) asyncio.Lock so only one refresh
-#      runs at a time inside the same process.
-#   2. Once we hold the lock, RE-READ the connection from DB. If the
-#      refresh_token has changed since the caller loaded their copy
-#      (i.e. another caller already refreshed before we got the lock),
-#      we copy the new tokens back into the caller's connection object
-#      and return success without calling OAuth.
-#   3. Otherwise, run the actual refresh + persist the new tokens.
+#   1. **Cross-process Redis SETNX lock** (clearledgr:erp_refresh_lock:
+#      <org>:<erp>). 30s TTL so a crashed worker can't pin the lock
+#      forever. Holders carry a unique token; release uses a Lua
+#      compare-and-delete so we can't release someone else's lock.
+#      If acquired: we're the only refresher across the whole fleet.
+#      If not acquired: another pod or process is refreshing — we
+#      poll the DB connection row briefly waiting for the new tokens
+#      to land, then adopt them. On poll timeout (rare), we fail the
+#      caller's request rather than refresh in parallel.
 #
-# The lock is in-process. Multiple worker pods could still race
-# cross-process — but the workspace_semaphore (Redis-backed) already
-# serializes most paths to one event per org per worker pod, so the
-# residual cross-process risk is small. A Redis SETNX upgrade for
-# proper distributed locking is a follow-up.
+#   2. **In-process asyncio.Lock** (per (org, erp_type)). Inside one
+#      worker pod, multiple coroutines hit 401 simultaneously; the
+#      asyncio lock collapses them to one Redis-lock contender, which
+#      is the cheapest possible serialization layer.
+#
+# When Redis is unreachable we fall back to in-process-only locking —
+# same behaviour as the original ship — so dev (no Redis) and Redis
+# outages still work, just without the cross-process guarantee.
 # ---------------------------------------------------------------------------
 import asyncio as _asyncio_for_lock
+import secrets as _secrets_for_lock
+import time as _time_for_lock
+
 _REFRESH_LOCKS: Dict[str, _asyncio_for_lock.Lock] = {}
+
+# How long the Redis lock TTL is — bounds blast radius if the holder
+# crashes. 30s comfortably covers the typical QB/Xero refresh round-
+# trip (200-800ms) plus retry budget; way under any practical "stuck
+# refresh" window.
+_REDIS_LOCK_TTL_SECONDS = 30
+# How long a non-acquiring caller waits for the holder to land new
+# tokens in the DB. Tuned a touch above the typical refresh latency
+# so the slow callers piggyback rather than fail. If the holder
+# really is stuck, we'd rather fail this one request than block forever.
+_REDIS_LOCK_WAIT_SECONDS = 8.0
+_REDIS_LOCK_POLL_INTERVAL = 0.25
+
+# Lua script: delete the lock key only if its current value matches
+# the token we passed in. Atomic on the Redis side — without this we
+# could DELETE a key that another holder set after our TTL expired.
+_REDIS_RELEASE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+else
+    return 0
+end
+"""
 
 
 def _refresh_lock_for(organization_id: str, erp_type: str) -> _asyncio_for_lock.Lock:
@@ -251,6 +278,78 @@ def _refresh_lock_for(organization_id: str, erp_type: str) -> _asyncio_for_lock.
         lock = _asyncio_for_lock.Lock()
         _REFRESH_LOCKS[key] = lock
     return lock
+
+
+def _redis_for_refresh_lock():
+    """Return the rate_limit module's Redis client, or None if Redis
+    isn't configured / reachable. Reusing rate_limit's client means
+    we don't spin up a second connection pool just for refresh locks.
+    """
+    try:
+        from clearledgr.services import rate_limit
+        return rate_limit._redis_client
+    except Exception:
+        return None
+
+
+def _try_acquire_redis_lock(redis_client, key: str) -> Optional[str]:
+    """SETNX with TTL. Returns the unique token on acquire, None
+    otherwise. Failures (Redis blip) return None — caller falls back
+    to in-process-only locking, which is strictly weaker but better
+    than failing the user's post."""
+    if redis_client is None:
+        return None
+    token = _secrets_for_lock.token_urlsafe(16)
+    try:
+        ok = redis_client.set(key, token, nx=True, ex=_REDIS_LOCK_TTL_SECONDS)
+        return token if ok else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[refresh_lock] SETNX failed for %s: %s", key, exc)
+        return None
+
+
+def _release_redis_lock(redis_client, key: str, token: str) -> None:
+    if redis_client is None or not token:
+        return
+    try:
+        redis_client.eval(_REDIS_RELEASE_SCRIPT, 1, key, token)
+    except Exception as exc:  # noqa: BLE001
+        # Releasing failed — the lock will TTL-expire in
+        # _REDIS_LOCK_TTL_SECONDS, so the worst case is one held lock
+        # per failure. Not worth raising.
+        logger.warning("[refresh_lock] release failed for %s: %s", key, exc)
+
+
+async def _wait_for_other_refresher(
+    organization_id: str,
+    erp_type: str,
+    connection,
+) -> Optional[str]:
+    """Poll the DB connection row until the refresh_token changes
+    (the holder of the lock landed new tokens) or we time out.
+    Returns the new access_token on success."""
+    deadline = _time_for_lock.monotonic() + _REDIS_LOCK_WAIT_SECONDS
+    original_rt = connection.refresh_token
+    while _time_for_lock.monotonic() < deadline:
+        try:
+            fresh = get_erp_connection(organization_id)
+        except Exception:
+            fresh = None
+        if (
+            fresh
+            and str(fresh.type or "").lower() == str(erp_type or "").lower()
+            and getattr(fresh, "refresh_token", None)
+            and fresh.refresh_token != original_rt
+        ):
+            connection.access_token = fresh.access_token
+            connection.refresh_token = fresh.refresh_token
+            return connection.access_token
+        await _asyncio_for_lock.sleep(_REDIS_LOCK_POLL_INTERVAL)
+    logger.warning(
+        "[refresh_lock] gave up waiting for cross-process refresher on %s/%s",
+        organization_id, erp_type,
+    )
+    return None
 
 
 async def refresh_with_dedupe(
@@ -268,10 +367,10 @@ async def refresh_with_dedupe(
     caller's), or None on failure. Caller is responsible for writing
     the (potentially mutated) connection back via set_erp_connection.
     """
-    lock = _refresh_lock_for(organization_id, erp_type)
-    async with lock:
-        # Re-read connection — another caller may have refreshed
-        # between our 401 response and the moment we acquired the lock.
+    in_proc_lock = _refresh_lock_for(organization_id, erp_type)
+    async with in_proc_lock:
+        # Cheapest check first: did another in-process coroutine
+        # refresh while we were waiting for the asyncio lock?
         try:
             fresh = get_erp_connection(organization_id)
         except Exception:
@@ -282,12 +381,38 @@ async def refresh_with_dedupe(
             and getattr(fresh, "refresh_token", None)
             and fresh.refresh_token != connection.refresh_token
         ):
-            # Already refreshed by someone else. Adopt their tokens.
             connection.access_token = fresh.access_token
             connection.refresh_token = fresh.refresh_token
             return connection.access_token
-        # Nobody refreshed under us — do the refresh ourselves.
-        return await refresh_fn(connection)
+
+        # Cross-process gate: try to claim the Redis lock. If a different
+        # worker pod is refreshing the same org's token, we wait for them
+        # to land new tokens in the DB rather than hammering the OAuth
+        # endpoint with a now-burned RT.
+        redis_client = _redis_for_refresh_lock()
+        redis_key = f"clearledgr:erp_refresh_lock:{organization_id}:{erp_type}"
+        redis_token = _try_acquire_redis_lock(redis_client, redis_key)
+
+        if redis_client is not None and redis_token is None:
+            # Another pod owns the lock. Poll the DB for their result.
+            adopted = await _wait_for_other_refresher(
+                organization_id, erp_type, connection,
+            )
+            if adopted:
+                return adopted
+            # Timed out — rather than refresh in parallel and risk
+            # burning the RT, fail this request. The caller will see
+            # a non-success post and the next attempt will retry under
+            # a (likely-now-released) lock.
+            return None
+
+        # Either we got the Redis lock, or Redis is unavailable and
+        # we're proceeding under in-process-only protection. Either
+        # way, do the refresh and persist.
+        try:
+            return await refresh_fn(connection)
+        finally:
+            _release_redis_lock(redis_client, redis_key, redis_token or "")
 
 
 def get_erp_connection(
