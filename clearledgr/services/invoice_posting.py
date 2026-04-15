@@ -560,13 +560,21 @@ class InvoicePostingMixin:
                         )
                     except Exception as _meta_err:
                         logger.debug("payment metadata persist failed: %s", _meta_err)
-                # Slack notification for payment readiness (fire-and-forget)
+                # Slack notification for payment readiness (fire-and-forget).
+                # Don't block the approval flow on Slack — the user has
+                # already been told the invoice is posted, and a slow
+                # Slack API shouldn't hold the approve endpoint open.
+                # But `ensure_future` without a task reference is a
+                # silent-failure trap: if Slack raises, the exception
+                # is only logged when the task is GC'd (if at all). Use
+                # create_task + a done callback so any error lands in
+                # our own logger where we can actually find it.
                 try:
                     from clearledgr.services.slack_notifications import (
                         send_payment_ready_notification,
                     )
                     import asyncio
-                    asyncio.ensure_future(send_payment_ready_notification(
+                    _task = asyncio.create_task(send_payment_ready_notification(
                         organization_id=self.organization_id,
                         ap_item_id=ap_item_id or gmail_id,
                         vendor_name=invoice.vendor_name,
@@ -575,6 +583,15 @@ class InvoicePostingMixin:
                         due_date=getattr(invoice, "due_date", None),
                         erp_reference=erp_reference,
                     ))
+
+                    def _log_slack_notify_result(t: "asyncio.Task") -> None:
+                        exc = t.exception()
+                        if exc is not None:
+                            logger.warning(
+                                "payment_ready slack notification failed: %s", exc
+                            )
+
+                    _task.add_done_callback(_log_slack_notify_result)
                 except Exception as _slack_err:
                     logger.debug("payment ready slack notification skipped: %s", _slack_err)
             except Exception as pay_err:

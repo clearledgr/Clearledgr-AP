@@ -47,6 +47,13 @@ class AgentPlanningEngine:
 
     def __init__(self) -> None:
         self._skills: Dict[str, FinanceSkill] = {}
+        # Hold strong references to background planning loops we kick
+        # off in resume_pending_tasks. Without this, the asyncio tasks
+        # are weak-referenced only and can be GC'd mid-flight — and
+        # any exception they raise is swallowed silently (just a
+        # "Task exception was never retrieved" line in stderr, which
+        # Railway logs bury). See resume_pending_tasks for usage.
+        self._resumed_task_refs: "set[asyncio.Task]" = set()
 
     # ------------------------------------------------------------------
     # Skills registry
@@ -621,7 +628,20 @@ class AgentPlanningEngine:
                 idempotency_key=row.get("idempotency_key"),
                 correlation_id=row.get("correlation_id"),
             )
-            asyncio.create_task(self._planning_loop(task, skill, row))
+            resumed = asyncio.create_task(self._planning_loop(task, skill, row))
+            self._resumed_task_refs.add(resumed)
+
+            def _on_resume_done(t: "asyncio.Task", _row=row) -> None:
+                self._resumed_task_refs.discard(t)
+                exc = t.exception() if not t.cancelled() else None
+                if exc is not None:
+                    logger.exception(
+                        "[AgentRuntime] resumed task_run id=%s failed",
+                        _row.get("id"),
+                        exc_info=exc,
+                    )
+
+            resumed.add_done_callback(_on_resume_done)
             logger.info("[AgentRuntime] resuming task_run id=%s", row.get("id"))
             count += 1
         return count
