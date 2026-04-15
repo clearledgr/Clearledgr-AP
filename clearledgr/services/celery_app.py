@@ -90,6 +90,16 @@ app.config_from_object(
                 "task": "clearledgr.services.celery_tasks.reap_completed_retry_jobs",
                 "schedule": 24 * 60 * 60.0,  # Daily
             },
+            # Daily hard-purge of soft-deleted orgs past the legal-hold
+            # window (ORG_LEGAL_HOLD_DAYS, default 30). Completes the
+            # right-to-be-forgotten path: deleted_at marks the tomb-
+            # stone, this task drops every tenant row across the ~30
+            # org-scoped tables. Audit events are preserved by design
+            # (append-only trigger + 7-year regulatory retention).
+            "purge-soft-deleted-orgs": {
+                "task": "clearledgr.services.celery_tasks.purge_soft_deleted_orgs",
+                "schedule": 24 * 60 * 60.0,  # Daily
+            },
         },
     }
 )

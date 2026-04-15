@@ -1333,6 +1333,23 @@ def _v24_migration_state(cur, db):
             pass
 
 
+@migration(36, "Hard-purge marker on organizations (purged_at)")
+def _v36_organizations_purged_at(cur, db):
+    """Marker for "soft-deleted + legal-hold expired + data purged".
+
+    Pairs with deleted_at from v35. The retention job runs daily,
+    finds orgs where deleted_at is older than ORG_LEGAL_HOLD_DAYS,
+    calls purge_organization_data (drops every org-scoped row
+    except the append-only audit trails), and stamps purged_at.
+    The organizations row itself stays — it's the tombstone that
+    anchors the still-retained audit events.
+    """
+    try:
+        cur.execute("ALTER TABLE organizations ADD COLUMN purged_at TEXT")
+    except Exception:
+        pass
+
+
 @migration(35, "Soft-delete organizations (deleted_at)")
 def _v35_organizations_deleted_at(cur, db):
     """Soft-delete support for organizations.

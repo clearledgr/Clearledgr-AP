@@ -532,6 +532,86 @@ def reclaim_stale_events() -> dict:
 
 
 @app.task
+def purge_soft_deleted_orgs() -> dict:
+    """Hard-purge tenant data for orgs past their legal-hold window.
+
+    Soft-delete (organizations.deleted_at) marks an org as dead but
+    leaves every ap_item, vendor, OAuth token, ERP credential in
+    place for a legal-hold window so compliance / legal can export
+    data and confirm nothing live is still using it. After that
+    window, this task runs the destructive purge:
+
+      1. DELETE FROM every org-scoped table WHERE organization_id = ?
+         (audit_events and ap_policy_audit_events are excluded — they
+          have append-only triggers and a separate 7-year regulatory
+          retention obligation that outlives the tenant).
+      2. Stamp organizations.purged_at so we don't re-purge.
+      3. Emit an `organization_hard_purged` audit event so the data
+         destruction itself lives in the audit trail.
+
+    Window controlled by ORG_LEGAL_HOLD_DAYS (default 30). Runs daily.
+    Idempotent: re-running on an already-purged org is a no-op
+    (caught by the purged_at filter in list_orgs_eligible_for_purge).
+    """
+    import os
+    from clearledgr.core.clock import now_utc_iso
+    from clearledgr.core.database import get_db
+
+    try:
+        legal_hold_days = int(os.getenv("ORG_LEGAL_HOLD_DAYS", "30"))
+        db = get_db()
+        eligible = db.list_orgs_eligible_for_purge(legal_hold_days=legal_hold_days)
+        if not eligible:
+            return {"status": "ok", "purged": 0, "legal_hold_days": legal_hold_days}
+
+        total_orgs = 0
+        total_rows = 0
+        for org_row in eligible:
+            org_id = str(org_row.get("id") or "").strip()
+            if not org_id:
+                continue
+            counts = db.purge_organization_data(org_id)
+            rows_deleted = sum(counts.values())
+            total_orgs += 1
+            total_rows += rows_deleted
+            purged_at = now_utc_iso()
+            try:
+                db.update_organization(org_id, purged_at=purged_at)
+            except Exception as exc:
+                logger.warning(
+                    "[purge] stamping purged_at failed for org=%s: %s", org_id, exc
+                )
+            try:
+                db.append_ap_audit_event({
+                    "event_type": "organization_hard_purged",
+                    "actor_type": "system",
+                    "actor_id": "retention_job",
+                    "organization_id": org_id,
+                    "source": "retention",
+                    "payload_json": {
+                        "legal_hold_days": legal_hold_days,
+                        "deleted_at": org_row.get("deleted_at"),
+                        "purged_at": purged_at,
+                        "rows_deleted": rows_deleted,
+                        "tables_touched": sorted(counts.keys()),
+                    },
+                })
+            except Exception as exc:
+                logger.warning(
+                    "[purge] audit write failed for org=%s: %s", org_id, exc
+                )
+        return {
+            "status": "ok",
+            "orgs_purged": total_orgs,
+            "rows_deleted": total_rows,
+            "legal_hold_days": legal_hold_days,
+        }
+    except Exception as exc:
+        logger.error("[CeleryBeat] purge_soft_deleted_orgs failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.task
 def reap_completed_retry_jobs() -> dict:
     """Daily reaper for terminal agent_retry_jobs rows.
 

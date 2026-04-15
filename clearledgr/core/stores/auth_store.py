@@ -239,6 +239,140 @@ class AuthStore:
             conn.commit()
         return self.get_organization(row_id) or {}
 
+    # ------------------------------------------------------------------
+    # Organization hard purge (GDPR right-to-be-forgotten)
+    # ------------------------------------------------------------------
+    #
+    # Audit tables are intentionally excluded. They carry an append-only
+    # trigger (`trg_*_no_delete`) that RAISEs on any DELETE, and for a
+    # finance product they have a separate 7-year regulatory retention
+    # window that outlives a tenant's lifetime. The `organizations` row
+    # itself is also kept — it's the tombstone other systems reference
+    # via deleted_at / purged_at, and dropping it would orphan the
+    # audit rows.
+    # ------------------------------------------------------------------
+    PURGE_EXCLUDED_TABLES: frozenset = frozenset({
+        "audit_events",
+        "ap_policy_audit_events",
+        "organizations",
+    })
+
+    def list_org_scoped_tables(self) -> List[str]:
+        """Discover tables with an ``organization_id`` column.
+
+        Cross-dialect: uses information_schema on Postgres and the
+        sqlite_master catalog on SQLite. Discovery is intentional —
+        if a developer adds a new org-scoped table tomorrow, the
+        purge picks it up without a code change to this mixin.
+        """
+        self.initialize()
+        org_tables: List[str] = []
+        with self.connect() as conn:
+            cur = conn.cursor()
+            if self.use_postgres:
+                cur.execute(
+                    """
+                    SELECT table_name FROM information_schema.columns
+                     WHERE column_name = 'organization_id'
+                       AND table_schema = 'public'
+                    """
+                )
+                rows = cur.fetchall()
+                org_tables = sorted({str(r["table_name"]) for r in rows})
+            else:
+                cur.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                )
+                tables = [str(r["name"]) for r in cur.fetchall()]
+                for t in tables:
+                    cols = self._table_columns(cur, t)
+                    if "organization_id" in cols:
+                        org_tables.append(t)
+                org_tables.sort()
+        return [t for t in org_tables if t not in self.PURGE_EXCLUDED_TABLES]
+
+    def purge_organization_data(
+        self,
+        organization_id: str,
+        *,
+        extra_skip_tables: Optional[List[str]] = None,
+    ) -> Dict[str, int]:
+        """Hard-delete every row scoped to ``organization_id``.
+
+        Runs across every discovered org-scoped table except the
+        append-only audit logs (see PURGE_EXCLUDED_TABLES). Returns
+        a {table: rows_deleted} map for the caller to log.
+
+        Individual table deletes are independent — a trigger abort
+        (e.g. a new audit-like table added without updating the
+        exclude list) fails that table only. The rest still get
+        purged, and the caller sees which tables tripped via the
+        result dict (missing entries) + the warning log.
+
+        Idempotent: re-running after a successful purge finds zero
+        rows and returns an all-zeros map.
+        """
+        self.initialize()
+        org_id = str(organization_id or "").strip()
+        if not org_id:
+            return {}
+        skip = set(self.PURGE_EXCLUDED_TABLES)
+        if extra_skip_tables:
+            skip.update(str(t) for t in extra_skip_tables)
+
+        tables = [t for t in self.list_org_scoped_tables() if t not in skip]
+        counts: Dict[str, int] = {}
+        with self.connect() as conn:
+            cur = conn.cursor()
+            for table in tables:
+                try:
+                    sql = self._prepare_sql(
+                        f"DELETE FROM {table} WHERE organization_id = ?"
+                    )
+                    cur.execute(sql, (org_id,))
+                    counts[table] = int(cur.rowcount or 0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[purge] %s DELETE failed for org=%s: %s",
+                        table, org_id, exc,
+                    )
+            conn.commit()
+        total = sum(counts.values())
+        logger.info(
+            "[purge] org=%s purged %d rows across %d tables",
+            org_id, total, len(counts),
+        )
+        return counts
+
+    def list_orgs_eligible_for_purge(self, *, legal_hold_days: int) -> List[Dict[str, Any]]:
+        """Orgs whose ``deleted_at`` is older than the legal-hold window
+        and that have not yet been hard-purged.
+
+        Ordered oldest-first so a run that processes N per tick always
+        makes forward progress on the longest-tombstoned rows.
+        """
+        self.initialize()
+        days = max(1, int(legal_hold_days))
+        from clearledgr.core.clock import now_utc
+        from datetime import timedelta
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        sql = self._prepare_sql(
+            """
+            SELECT id, deleted_at, purged_at FROM organizations
+             WHERE deleted_at IS NOT NULL
+               AND deleted_at < ?
+               AND (purged_at IS NULL OR purged_at = '')
+             ORDER BY deleted_at ASC
+             LIMIT 50
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (cutoff,))
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
     def get_organization(self, organization_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
         sql = self._prepare_sql("SELECT * FROM organizations WHERE id = ?")
