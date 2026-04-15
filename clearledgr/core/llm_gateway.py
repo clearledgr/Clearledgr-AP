@@ -167,6 +167,73 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 _API_URL = "https://api.anthropic.com/v1/messages"
 
 
+# ---------------------------------------------------------------------------
+# Process-local circuit breaker for Anthropic rate limits.
+#
+# The existing retry loop bounds a single caller's behaviour: at most 3
+# retries over ~2.5 minutes, then raise. That's fine in isolation but
+# degenerate at scale — if the API is returning 429 globally (account
+# quota exhausted, sustained traffic spike), 100 concurrent callers each
+# run their own 3-retry loop against an already-throttling endpoint,
+# burning credits on calls that will 429 again and adding load that
+# makes the throttling worse.
+#
+# The circuit breaker flips the switch for the whole process: when any
+# call sees a 429, we stash a "cooldown until" timestamp. While the
+# cooldown is live, other callers fail fast with the same error shape
+# as an exhausted retry — no API call, no spend, no added load. The
+# cooldown honours Anthropic's Retry-After header when present, falling
+# back to a conservative default.
+#
+# Process-local is intentional: we don't need cross-worker coordination
+# here. Each worker has its own view of "is Anthropic throttling us
+# right now?", and once one caller trips the breaker the next few
+# callers in the same process get the fast-fail. If the throttle ends,
+# the cooldown expires and traffic resumes organically.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_COOLDOWN_SECONDS = 30
+_MAX_COOLDOWN_SECONDS = 300  # cap so a buggy Retry-After doesn't stall us forever
+_rate_limit_cooldown_until: float = 0.0
+
+
+def _circuit_open() -> bool:
+    return time.monotonic() < _rate_limit_cooldown_until
+
+
+def _circuit_remaining() -> int:
+    return max(int(_rate_limit_cooldown_until - time.monotonic()), 0)
+
+
+def _trip_circuit(retry_after_header: Optional[str]) -> None:
+    """Open the circuit for ``retry_after_header`` seconds (clamped).
+
+    Anthropic returns Retry-After as seconds when they want us to back
+    off. We honour it up to _MAX_COOLDOWN_SECONDS so a malformed or
+    hostile header can't keep us offline for hours.
+    """
+    global _rate_limit_cooldown_until
+    cooldown = _DEFAULT_COOLDOWN_SECONDS
+    if retry_after_header:
+        try:
+            cooldown = int(float(str(retry_after_header).strip()))
+        except (TypeError, ValueError):
+            cooldown = _DEFAULT_COOLDOWN_SECONDS
+    cooldown = max(1, min(cooldown, _MAX_COOLDOWN_SECONDS))
+    new_until = time.monotonic() + cooldown
+    if new_until > _rate_limit_cooldown_until:
+        _rate_limit_cooldown_until = new_until
+        logger.warning(
+            "[LLMGateway] circuit breaker OPEN for %ds (Anthropic 429)", cooldown
+        )
+
+
+def _reset_circuit() -> None:
+    """Clear the cooldown — call this after a successful API call."""
+    global _rate_limit_cooldown_until
+    _rate_limit_cooldown_until = 0.0
+
+
 class LLMGateway:
     """Centralized Claude API gateway.
 
@@ -305,10 +372,36 @@ class LLMGateway:
         truncated = False
         start_time = time.monotonic()
 
+        # Fast-fail if another caller in this process recently tripped
+        # the rate-limit circuit breaker. Avoid the outbound call, avoid
+        # the retry loop, avoid adding load to an already-throttling
+        # endpoint. Callers see the same RuntimeError shape as a real
+        # 429 so no special handling is needed upstream.
+        if _circuit_open():
+            remaining = _circuit_remaining()
+            last_error = f"429: circuit breaker open, retry in {remaining}s"
+            self._log_call(
+                action=action, model=model,
+                input_tokens=0, output_tokens=0,
+                latency_ms=0, cost_estimate=0.0,
+                truncated=False, error=last_error,
+                organization_id=organization_id,
+            )
+            raise RuntimeError(
+                f"[LLMGateway] {action.value} skipped: Anthropic rate limit "
+                f"cooldown active ({remaining}s remaining)"
+            )
+
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
                     resp = await client.post(_API_URL, headers=headers, json=body)
+
+                if resp.status_code == 429:
+                    # Trip the process-local breaker so the next N
+                    # callers don't each repeat this dance. Honour
+                    # Retry-After if the server gave us one.
+                    _trip_circuit(resp.headers.get("Retry-After"))
 
                 if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
@@ -336,6 +429,11 @@ class LLMGateway:
                     )
 
                 data = resp.json()
+                # Successful call — close the circuit if it was open
+                # from a previous caller. Anthropic is answering us
+                # again, so subsequent calls in this process don't need
+                # to fast-fail.
+                _reset_circuit()
                 usage = data.get("usage", {})
                 input_tokens = usage.get("input_tokens", 0)
                 output_tokens = usage.get("output_tokens", 0)
