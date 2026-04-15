@@ -984,27 +984,43 @@ class ExecutionEngine:
         return {"ok": True}
 
     async def _handle_schedule_payment(self, action: Action, plan: Plan) -> dict:
-        """§3: Create a payment schedule entry in the ERP."""
+        """Mark the AP item as ready for payment (V1: ERP-intermediated).
+
+        V1 scope per the thesis: Clearledgr posts the bill to the ERP
+        and the customer runs the payment from their ERP / treasury
+        tool. Direct payment execution is Q4 roadmap and not wired
+        here. This handler therefore does NOT create an actual
+        ERP payment record or bank instruction — it only records on
+        our side that the invoice has cleared approval and is ready
+        to pay.
+
+        The real ERP payment_reference is populated later by the
+        payment-polling path in agent_background when the customer's
+        pay run settles the bill and we detect it.
+        """
         if not plan.box_id:
             return {"ok": True}
         item = self.db.get_ap_item(plan.box_id)
         if not item or not item.get("erp_reference"):
-            return {"ok": True}  # No ERP bill to schedule against
+            return {"ok": True, "scheduled": False, "reason": "no_erp_bill"}
         try:
-            from clearledgr.integrations.erp_router import get_erp_connection
-            connection = get_erp_connection(self.organization_id)
-            if connection:
-                # Generate payment reference and persist
-                payment_ref = f"PAY-{uuid.uuid4().hex[:8]}"
-                self.db.update_ap_item(plan.box_id,
-                    payment_reference=payment_ref,
-                    metadata={
-                        **(item.get("metadata") or {}),
-                        "payment_scheduled": True,
-                        "payment_scheduled_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-            return {"ok": True, "scheduled": True}
+            now_iso = datetime.now(timezone.utc).isoformat()
+            existing_meta = dict(item.get("metadata") or {})
+            # Preserve any real payment_reference already captured by
+            # the polling path — never overwrite a settled reference
+            # with our local "ready to pay" marker.
+            existing_meta.update({
+                "payment_scheduled": True,
+                "payment_scheduled_at": now_iso,
+                # Settled=False is the V1 contract: we've said the bill
+                # is ready to pay, but the actual pay run is external.
+                "payment_settled": existing_meta.get("payment_settled", False),
+            })
+            self.db.update_ap_item(
+                plan.box_id,
+                metadata=existing_meta,
+            )
+            return {"ok": True, "scheduled": True, "settled": False}
         except Exception as exc:
             logger.debug("[ExecutionEngine] schedule_payment non-fatal: %s", exc)
             return {"ok": True}
