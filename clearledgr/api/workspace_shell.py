@@ -317,10 +317,16 @@ def _workspace_capabilities(role: Optional[str]) -> Dict[str, bool]:
 
 
 def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:
+    """Resolve + enforce tenant scope.
+
+    Previously allowed owner role to access any org — cross-tenant
+    vulnerability. Owner controls authority within the org, not across
+    orgs. No platform-level super-admin concept exists on tenant APIs.
+    """
     resolved = (organization_id or user.organization_id or "default").strip()
     if not resolved:
         resolved = "default"
-    if user.role != "owner" and resolved != user.organization_id:
+    if resolved != str(user.organization_id or "").strip():
         raise HTTPException(status_code=403, detail="org_access_denied")
     return resolved
 

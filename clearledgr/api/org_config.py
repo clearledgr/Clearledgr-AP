@@ -45,10 +45,14 @@ def _require_admin(user: TokenData) -> None:
 
 
 def _resolve_org_id_for_user(user: TokenData, organization_id: str) -> str:
+    """Resolve + enforce tenant scope.
+
+    Role controls what the user can do within their org (see
+    _require_admin for the separate role gate). It does NOT grant
+    cross-tenant access; previous implementation let any admin of
+    any org access any other org by specifying organization_id.
+    """
     org_id = str(organization_id or user.organization_id or "default").strip() or "default"
-    role = str(getattr(user, "role", "") or "").strip().lower()
-    if role in _ORG_ADMIN_ROLES:
-        return org_id
     if org_id != str(getattr(user, "organization_id", "") or "").strip():
         raise HTTPException(status_code=403, detail="org_mismatch")
     return org_id

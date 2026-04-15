@@ -38,10 +38,12 @@ _ADMIN_ROLES = {"admin", "owner"}
 
 
 def _resolve_org_id(user: TokenData, requested_org: str) -> str:
+    """Resolve + enforce tenant scope.
+
+    Admin/owner role elevates WHAT the user can do within their org,
+    never WHICH org they can access. No cross-tenant access via role.
+    """
     org_id = str(requested_org or user.organization_id or "default").strip() or "default"
-    role = str(getattr(user, "role", "") or "").strip().lower()
-    if role in _ADMIN_ROLES:
-        return org_id
     if org_id != str(user.organization_id or "").strip():
         raise HTTPException(status_code=403, detail="org_mismatch")
     return org_id

@@ -27,9 +27,10 @@ class UpsertAPPolicyRequest(BaseModel):
 
 
 def _resolve_org_id(user: TokenData, requested_org: str) -> str:
+    """Resolve + enforce tenant scope. Admin role does NOT grant
+    cross-tenant access — it only widens what the user can do within
+    their own org."""
     org = str(requested_org or user.organization_id or "default").strip() or "default"
-    if str(user.role or "").strip().lower() in _ADMIN_ROLES:
-        return org
     if org != str(user.organization_id or "").strip():
         raise HTTPException(status_code=403, detail="org_mismatch")
     return org

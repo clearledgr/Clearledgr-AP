@@ -16,10 +16,21 @@ def is_admin_user(user: Any) -> bool:
 
 
 def assert_user_org_access(user: Any, organization_id: str) -> None:
-    org_id = str(organization_id or "default")
-    user_org = str(getattr(user, "organization_id", "") or "")
-    if is_admin_user(user):
-        return
+    """Assert the user belongs to ``organization_id``.
+
+    Role (admin / owner / ap_clerk / etc.) controls WHAT the user can
+    do within their org — NOT WHICH org they can access. Previously
+    this function returned early for admin/owner, which meant an admin
+    of Org A could pass organization_id=Org_B in a request and read/
+    write Org B's data. That was a cross-tenant vulnerability active
+    the moment we had 2+ tenants.
+
+    There is no super-admin concept in the product. If one is ever
+    needed (platform operator tooling), it belongs on a separate,
+    internal-only route — not a role check on the tenant-facing API.
+    """
+    org_id = str(organization_id or "default").strip() or "default"
+    user_org = str(getattr(user, "organization_id", "") or "").strip()
     if user_org != org_id:
         raise HTTPException(status_code=403, detail="org_mismatch")
 
