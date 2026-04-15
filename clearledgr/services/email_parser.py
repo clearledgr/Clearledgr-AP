@@ -1473,7 +1473,7 @@ class EmailParser:
     
     def _validate_date(self, date: datetime) -> bool:
         """Validate that a date is reasonable for a financial document."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         # Date shouldn't be more than 2 years in the past
         min_date = datetime(now.year - 2, 1, 1)

@@ -17,7 +17,9 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+from clearledgr.core.clock import now_utc_iso
 from enum import Enum
 import uuid
 
@@ -70,7 +72,7 @@ def build_agent_timeline_entry(
         "reason": why.strip().rstrip(".") + "." if why else "",
         "next_action": next_step.strip().rstrip(".") + "." if next_step else "",
         "actor": actor,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": now_utc_iso(),
         **extra,
     }
 
@@ -289,7 +291,7 @@ class AuditTrailService:
         event = AuditEvent(
             event_id=str(uuid.uuid4())[:8],
             event_type=event_type,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             actor=actor,
             summary=summary,
             details=details or {},
@@ -307,13 +309,13 @@ class AuditTrailService:
                 amount=amount or 0,
                 events=[],
                 current_status="new",
-                created_at=datetime.now().isoformat(),
-                last_updated=datetime.now().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
+                last_updated=datetime.now(timezone.utc).isoformat(),
             )
         
         trail = self._trails[invoice_id]
         trail.events.append(event)
-        trail.last_updated = datetime.now().isoformat()
+        trail.last_updated = datetime.now(timezone.utc).isoformat()
         
         # Update status based on event type
         status_map = {
@@ -619,7 +621,7 @@ class AuditTrailService:
                 }
                 for e in trail.events
             ],
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
         }
     
     # =========================================================================
@@ -801,7 +803,7 @@ class AuditTrailService:
         
         return json.dumps({
             "organization_id": self.organization_id,
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "trails": [t.to_dict() for t in trails],
             "summary": self.get_summary_stats(),
         }, indent=2)
@@ -846,7 +848,7 @@ class AuditTrailService:
         return {
             "report_period": {
                 "start": start_date or "All time",
-                "end": end_date or datetime.now().isoformat(),
+                "end": end_date or datetime.now(timezone.utc).isoformat(),
             },
             "total_invoices": len(trails),
             "total_amount": sum(t.amount for t in trails),
@@ -863,7 +865,7 @@ class AuditTrailService:
                 "auto_approval_rate": round(auto_approved / (auto_approved + manual_approved) * 100, 1) if (auto_approved + manual_approved) > 0 else 0,
             },
             "rejection_reasons": rejection_reasons,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     
     def get_all_trails(self) -> List[AuditTrail]:

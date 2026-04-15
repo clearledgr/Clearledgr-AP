@@ -13,7 +13,7 @@ Different from invoices - these are ad-hoc payment requests without formal invoi
 import re
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -250,7 +250,7 @@ class PaymentRequestService:
         request = PaymentRequest(
             request_id=f"REQ-{uuid.uuid4().hex[:8].upper()}",
             source=RequestSource.UI,
-            source_id=f"ui-{datetime.now().timestamp()}",
+            source_id=f"ui-{datetime.now(timezone.utc).timestamp()}",
             requester_name=user_name,
             requester_email=user_email,
             request_type=RequestType(request_type),
@@ -309,8 +309,8 @@ class PaymentRequestService:
         
         request.status = RequestStatus.APPROVED
         request.approved_by = approved_by
-        request.approved_at = datetime.now()
-        request.updated_at = datetime.now()
+        request.approved_at = datetime.now(timezone.utc)
+        request.updated_at = datetime.now(timezone.utc)
         
         if gl_code:
             request.gl_code = gl_code
@@ -332,7 +332,7 @@ class PaymentRequestService:
         
         request.status = RequestStatus.REJECTED
         request.rejection_reason = reason
-        request.updated_at = datetime.now()
+        request.updated_at = datetime.now(timezone.utc)
         request.metadata["rejected_by"] = rejected_by
         
         logger.info(f"Payment request {request_id} rejected: {reason}")
@@ -346,7 +346,7 @@ class PaymentRequestService:
             raise ValueError(f"Request {request_id} not found")
         
         request.status = RequestStatus.PAID
-        request.updated_at = datetime.now()
+        request.updated_at = datetime.now(timezone.utc)
         request.metadata["payment_id"] = payment_id
         
         return request

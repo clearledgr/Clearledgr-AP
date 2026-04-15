@@ -283,7 +283,7 @@ def build_approval_blocks(
     4. Actions (1 block)
     5. Footer context (1 block)
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # ========== CONFIDENCE ==========
     if invoice.confidence >= 0.9:
@@ -305,8 +305,11 @@ def build_approval_blocks(
             due_warning = f" _{days_until}d left_"
     elif invoice.due_date:
         try:
-            due = datetime.strptime(invoice.due_date, "%Y-%m-%d")
-            days_until = (due - datetime.now()).days
+            # Parse the date-only string as midnight UTC so we can compare
+            # against an aware `now()` without raising TypeError. Day-level
+            # arithmetic stays correct because both sides are in the same tz.
+            due = datetime.strptime(invoice.due_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            days_until = (due - datetime.now(timezone.utc)).days
             if days_until < 0:
                 due_warning = f" *OVERDUE {abs(days_until)}d*"
             elif days_until <= 3:

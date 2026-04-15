@@ -9,7 +9,7 @@ Complete PO lifecycle:
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -395,8 +395,8 @@ def _po_from_dict(d: Optional[Dict[str, Any]]) -> Optional[PurchaseOrder]:
         department=str(d.get("department") or ""),
         project=str(d.get("project") or ""),
         ship_to_address=str(d.get("ship_to_address") or ""),
-        created_at=_parse_datetime(d.get("created_at")) or datetime.now(),
-        updated_at=_parse_datetime(d.get("updated_at")) or datetime.now(),
+        created_at=_parse_datetime(d.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_parse_datetime(d.get("updated_at")) or datetime.now(timezone.utc),
         organization_id=str(d.get("organization_id") or "default"),
         erp_po_id=str(d.get("erp_po_id") or ""),
     )
@@ -406,7 +406,7 @@ def _po_from_dict(d: Optional[Dict[str, Any]]) -> Optional[PurchaseOrder]:
 def _po_to_store_dict(po: PurchaseOrder) -> Dict[str, Any]:
     data = po.to_dict()
     data["organization_id"] = po.organization_id
-    data["updated_at"] = datetime.now().isoformat()
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
     data["erp_po_id"] = po.erp_po_id
     data["ship_to_address"] = po.ship_to_address
     data["project"] = po.project
@@ -450,7 +450,7 @@ def _gr_from_dict(d: Optional[Dict[str, Any]]) -> Optional[GoodsReceipt]:
         line_items=lines,
         status=status,
         notes=str(d.get("notes") or ""),
-        created_at=_parse_datetime(d.get("created_at")) or datetime.now(),
+        created_at=_parse_datetime(d.get("created_at")) or datetime.now(timezone.utc),
         organization_id=str(d.get("organization_id") or "default"),
     )
 
@@ -483,7 +483,7 @@ def _match_from_dict(d: Optional[Dict[str, Any]]) -> Optional[ThreeWayMatch]:
         quantity_variance=float(d.get("quantity_variance") or 0.0),
         override_by=d.get("override_by") or None,
         override_reason=str(d.get("override_reason") or ""),
-        matched_at=_parse_datetime(d.get("matched_at")) or datetime.now(),
+        matched_at=_parse_datetime(d.get("matched_at")) or datetime.now(timezone.utc),
     )
 
 
@@ -551,7 +551,7 @@ class PurchaseOrderService:
             except Exception:
                 existing_count = 0
             po.po_number = (
-                f"PO-{datetime.now().strftime('%Y%m%d')}-{existing_count + 1:04d}"
+                f"PO-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{existing_count + 1:04d}"
             )
         if line_items:
             for item_data in line_items:
@@ -567,8 +567,8 @@ class PurchaseOrderService:
             raise ValueError(f"PO {po_id} not found")
         po.status = POStatus.APPROVED
         po.approved_by = approved_by
-        po.approved_at = datetime.now()
-        po.updated_at = datetime.now()
+        po.approved_at = datetime.now(timezone.utc)
+        po.updated_at = datetime.now(timezone.utc)
         self._db.save_purchase_order(_po_to_store_dict(po))
         logger.info("Approved PO: %s by %s", po.po_number, approved_by)
         return po
@@ -643,7 +643,7 @@ class PurchaseOrderService:
         except Exception:
             existing_grs = 0
         gr.gr_number = (
-            f"GR-{datetime.now().strftime('%Y%m%d')}-{existing_grs + 1:04d}"
+            f"GR-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{existing_grs + 1:04d}"
         )
         for item_data in line_items:
             gr_line = GoodsReceiptLine(**item_data)
@@ -893,7 +893,7 @@ class PurchaseOrderService:
             if po.is_fully_invoiced
             else POStatus.PARTIALLY_INVOICED
         )
-        po.updated_at = datetime.now()
+        po.updated_at = datetime.now(timezone.utc)
         self._db.save_purchase_order(_po_to_store_dict(po))
 
     # ------------------------------------------------------------------

@@ -14,7 +14,7 @@ The correction → learning loop:
 import logging
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from clearledgr.core.database import get_db
@@ -43,7 +43,7 @@ class GLCorrection:
     
     # Metadata
     corrected_by: str = "user"
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     applied_to_invoice: bool = False
     learned: bool = False
     

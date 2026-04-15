@@ -18,7 +18,7 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from clearledgr.core.database import get_db
@@ -209,7 +209,7 @@ class PriorityDetectionService:
         
         try:
             due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             days_until = (due_date - today).days
             
             # Score based on days until due

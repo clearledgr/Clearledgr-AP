@@ -17,7 +17,7 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 from clearledgr.core.database import get_db
@@ -299,7 +299,7 @@ class ProactiveInsightsService:
         
         return InsightReport(
             organization_id=self.organization_id,
-            generated_at=datetime.now().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
             insights=insights,
             summary=summary,
         )
@@ -374,7 +374,7 @@ class ProactiveInsightsService:
 
         return InsightReport(
             organization_id=self.organization_id,
-            generated_at=datetime.now().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
             insights=insights,
             summary=summary,
         )
@@ -466,7 +466,7 @@ class ProactiveInsightsService:
         
         # Count invoices in last 7 days
         recent_count = 0
-        cutoff = datetime.now() - timedelta(days=7)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         
         for inv in vendor_history:
             created = inv.get("created_at")

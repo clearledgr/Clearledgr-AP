@@ -78,9 +78,16 @@ def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # Normalise to tz-aware UTC so callers can compare against now_utc()
+    # without hitting "can't subtract offset-naive and offset-aware" at
+    # runtime. Strings without a tz suffix (older records) are assumed
+    # UTC rather than local, matching how we write timestamps elsewhere.
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _amount_from_extraction(extraction: Dict[str, Any]) -> float:

@@ -53,7 +53,7 @@ def detect_period_end(current_date: Optional[datetime] = None) -> Dict[str, bool
         Dict with period_end flags
     """
     if current_date is None:
-        current_date = datetime.now()
+        current_date = datetime.now(timezone.utc)
     
     # Check if today is last day of month
     next_month = current_date.replace(day=28) + timedelta(days=4)
@@ -109,7 +109,7 @@ def should_trigger_reconciliation(
     
     try:
         last_run = datetime.strptime(last_run_date, "%Y-%m-%d")
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         days_since = (now - last_run).days
         
         if schedule_type == "daily":
@@ -170,7 +170,7 @@ def get_suggested_period(
         Dict with period_start and period_end
     """
     if current_date is None:
-        current_date = datetime.now()
+        current_date = datetime.now(timezone.utc)
     
     if period_type == "monthly":
         period_start = current_date.replace(day=1)

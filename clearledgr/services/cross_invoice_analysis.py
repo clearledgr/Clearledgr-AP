@@ -16,7 +16,7 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import re
 
@@ -536,7 +536,7 @@ class CrossInvoiceAnalyzer:
             if isinstance(date_value, str):
                 date_value = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
             
-            cutoff = datetime.now() - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             return date_value.replace(tzinfo=None) >= cutoff
         except Exception:
             return False

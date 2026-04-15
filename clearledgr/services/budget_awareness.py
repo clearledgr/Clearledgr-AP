@@ -17,7 +17,7 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from clearledgr.core.database import get_db
@@ -425,7 +425,7 @@ class BudgetAwarenessService:
         return BudgetReport(
             organization_id=self.organization_id,
             period="monthly",
-            report_date=datetime.now().isoformat(),
+            report_date=datetime.now(timezone.utc).isoformat(),
             budgets=checks,
             total_budgeted=total_budgeted,
             total_spent=total_spent,

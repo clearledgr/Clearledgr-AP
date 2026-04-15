@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from enum import Enum
 
@@ -352,7 +352,7 @@ class CorrectionLearningService:
         if not prefs:
             return
         rule_id = f"vendor_pref_{vendor.lower().replace(' ', '_')}"
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -574,7 +574,7 @@ class CorrectionLearningService:
         )
         input_payload = self._normalize_input_payload(context)
         return {
-            "event_id": f"cevt_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "event_id": f"cevt_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
             "ap_item_id": str(context.get("ap_item_id") or "").strip() or None,
             "invoice_id": correction.invoice_id,
             "field_name": field_name,
@@ -599,7 +599,7 @@ class CorrectionLearningService:
 
     def _persist_normalized_correction_event(self, normalized: Dict[str, Any]):
         """Persist a normalized correction event. Returns event_id on success, False on failure."""
-        event_id = str(normalized.get("event_id") or f"cevt_{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
+        event_id = str(normalized.get("event_id") or f"cevt_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}")
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -651,7 +651,7 @@ class CorrectionLearningService:
             return None
         stat_id = f"vles_{self.organization_id}_{vendor_name}_{layout_key}_{field_name}"
         stat_id = re.sub(r"[^a-zA-Z0-9_:-]+", "_", stat_id)[:180]
-        now = str(normalized.get("created_at") or datetime.now().isoformat())
+        now = str(normalized.get("created_at") or datetime.now(timezone.utc).isoformat())
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -710,7 +710,7 @@ class CorrectionLearningService:
             return None
 
         case_id = f"reviewed_{ap_item_id}"
-        now = str(normalized.get("created_at") or datetime.now().isoformat())
+        now = str(normalized.get("created_at") or datetime.now(timezone.utc).isoformat())
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -852,7 +852,7 @@ class CorrectionLearningService:
         return stats
 
     def _persist_review_outcome_event(self, normalized: Dict[str, Any]) -> str:
-        event_id = str(normalized.get("event_id") or f"review_{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
+        event_id = str(normalized.get("event_id") or f"review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}")
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
@@ -904,7 +904,7 @@ class CorrectionLearningService:
         email_increment = 1 if selected_source == "email" else 0
         attachment_increment = 1 if selected_source == "attachment" else 0
         manual_increment = 1 if selected_source == "manual" else 0
-        now = str(normalized.get("created_at") or datetime.now().isoformat())
+        now = str(normalized.get("created_at") or datetime.now(timezone.utc).isoformat())
 
         try:
             with self.db.connect() as conn:
@@ -979,7 +979,7 @@ class CorrectionLearningService:
 
         sender = str(normalized_context.get("sender") or normalized_context.get("sender_email") or "").strip()
         normalized = {
-            "event_id": f"review_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "event_id": f"review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
             "ap_item_id": str(normalized_context.get("ap_item_id") or "").strip() or None,
             "field_name": normalized_field,
             "outcome_type": normalized_outcome,
@@ -1000,7 +1000,7 @@ class CorrectionLearningService:
             ) or None,
             "layout_key": str(normalized_context.get("layout_key") or self._derive_layout_key(normalized_context)).strip() or None,
             "confidence_profile_id": str(normalized_context.get("confidence_profile_id") or "").strip() or None,
-            "created_at": str(created_at or datetime.now().isoformat()),
+            "created_at": str(created_at or datetime.now(timezone.utc).isoformat()),
         }
         event_id = self._persist_review_outcome_event(normalized)
         stat_id = self._update_vendor_layout_review_stats(normalized)
@@ -1230,7 +1230,7 @@ class CorrectionLearningService:
         path.parent.mkdir(parents=True, exist_ok=True)
         cases = self.list_reviewed_extraction_cases()
         payload = {
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "organization_id": self.organization_id,
             "cases": cases,
         }
@@ -1260,13 +1260,13 @@ class CorrectionLearningService:
         Returns info about what was learned.
         """
         correction = Correction(
-            correction_id=f"corr_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            correction_id=f"corr_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             correction_type=correction_type,
             original_value=original_value,
             corrected_value=corrected_value,
             context=context,
             user_id=user_id,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             invoice_id=invoice_id,
             vendor=context.get("vendor"),
             feedback=feedback,
@@ -1379,7 +1379,7 @@ class CorrectionLearningService:
                 action={"gl_code": correction.corrected_value},
                 confidence=min(0.7, gl_correction_count / 5.0),
                 learned_from=gl_correction_count,
-                created_at=datetime.now().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
             self._learned_rules[rule_id] = rule
             self._persist_rule(rule)
@@ -1400,7 +1400,7 @@ class CorrectionLearningService:
             action={"normalized_vendor": corrected},
             confidence=0.9,
             learned_from=1,
-            created_at=datetime.now().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._learned_rules[rule_id] = rule
         self._persist_rule(rule)
@@ -1448,7 +1448,7 @@ class CorrectionLearningService:
             action={"classification": correction.corrected_value},
             confidence=0.8,
             learned_from=1,
-            created_at=datetime.now().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._learned_rules[rule_id] = rule
         self._persist_rule(rule)
@@ -1541,14 +1541,14 @@ class CorrectionLearningService:
             effective_confidence = rule.confidence
             try:
                 created = datetime.fromisoformat(rule.created_at)
-                age_days = (datetime.now() - created).days
+                age_days = (datetime.now(timezone.utc) - created).days
                 decay = max(0.3, 1.0 - (age_days / 365))
                 effective_confidence = rule.confidence * decay
             except (ValueError, TypeError):
                 pass  # If created_at is unparseable, skip decay
 
             # Update last applied
-            rule.last_applied = datetime.now().isoformat()
+            rule.last_applied = datetime.now(timezone.utc).isoformat()
 
             return {
                 "value": rule.action.get("gl_code"),
@@ -1644,7 +1644,7 @@ class CorrectionLearningService:
             "min_signals_for_pattern": self.MIN_SIGNALS_FOR_SYSTEMIC_PATTERN,
             "recent_corrections": len([
                 c for c in self._corrections
-                if (datetime.now() - datetime.fromisoformat(c.timestamp)).days <= 7
+                if (datetime.now(timezone.utc) - datetime.fromisoformat(c.timestamp)).days <= 7
             ]),
         }
 

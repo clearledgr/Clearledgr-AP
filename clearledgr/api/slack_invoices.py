@@ -1259,6 +1259,7 @@ def _answer_query_rule_based(query: str, items: list) -> str:
     """
     q = query.lower()
     from datetime import datetime, timedelta
+    from clearledgr.core.clock import now_utc
 
     _state_labels = {
         "needs_approval": "pending your approval",
@@ -1296,7 +1297,7 @@ def _answer_query_rule_based(query: str, items: list) -> str:
         return f"{len(open_items)} open items totalling {total:,.0f}."
 
     if "due" in q:
-        now = datetime.utcnow()
+        now = now_utc()
         week_end = now + timedelta(days=7)
         due_items = [
             i for i in items

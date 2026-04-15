@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 
 from clearledgr.services.llm_multimodal import MultiModalLLMService
@@ -660,8 +660,8 @@ Be precise. If uncertain about a field, say so in the reasoning."""
         if due_date:
             try:
                 due = datetime.strptime(due_date, "%Y-%m-%d")
-                if due < datetime.now():
-                    days_overdue = (datetime.now() - due).days
+                if due < datetime.now(timezone.utc):
+                    days_overdue = (datetime.now(timezone.utc) - due).days
                     risks.append(f"Invoice is {days_overdue} days overdue")
             except (ValueError, TypeError):
                 logger.debug("date parse failed for due_date: %s", due_date)

@@ -744,8 +744,8 @@ class SlackNotifier:
     
     def _get_date(self) -> str:
         """Get formatted current date."""
-        from datetime import datetime
-        return datetime.now().strftime("%B %d, %Y")
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).strftime("%B %d, %Y")
     
     def _estimate_time_saved(self, matched_count: int) -> str:
         """Estimate time saved based on matched transactions."""
@@ -1405,8 +1405,8 @@ class SlackNotificationService:
         Returns:
             True if sent successfully
         """
-        from datetime import datetime
-        
+        from datetime import datetime, timezone
+
         match_rate = (matched / total_transactions * 100) if total_transactions > 0 else 0
         
         blocks = [
@@ -1414,7 +1414,7 @@ class SlackNotificationService:
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"Bank Statement Imported - {datetime.now().strftime('%B %d, %Y')}",
+                    "text": f"Bank Statement Imported - {datetime.now(timezone.utc).strftime('%B %d, %Y')}",
                 }
             },
             {

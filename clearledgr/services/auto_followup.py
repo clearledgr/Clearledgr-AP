@@ -255,7 +255,7 @@ Best regards"""
             body=body,
             original_thread_id=original_thread_id,
             missing_info=missing_info,
-            created_at=datetime.now()
+            created_at=datetime.now(timezone.utc)
         )
         
         self._drafts[original_thread_id] = draft

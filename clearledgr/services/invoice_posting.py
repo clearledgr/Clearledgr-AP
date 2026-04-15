@@ -1390,7 +1390,7 @@ class InvoicePostingMixin:
             amount=invoice.amount,
             currency=invoice.currency,
             invoice_number=invoice.invoice_number,
-            invoice_date=datetime.now().strftime("%Y-%m-%d"),
+            invoice_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             due_date=invoice.due_date,
             description=f"Invoice from {invoice.vendor_name}",
             po_number=invoice.po_number,
