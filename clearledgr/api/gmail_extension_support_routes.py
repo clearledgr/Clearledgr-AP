@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from clearledgr.api.gmail_extension_common import resolve_org_id_for_user
 from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.services.rate_limit import enforce_daily_quota
 from clearledgr.services.gmail_extension_support import (
     build_amount_validation_payload,
     build_form_prefill_payload,
@@ -21,6 +22,21 @@ from clearledgr.services.gmail_extension_support import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Per-user daily budgets. The global 300 req/min middleware stops burst DoS;
+# these caps stop a single authenticated user from torching Claude credits
+# or spamming the feedback channel over a full day.
+_LLM_SIDEBAR_DAILY_LIMIT = int(os.getenv("LLM_SIDEBAR_DAILY_LIMIT", "150"))
+_FEEDBACK_DAILY_LIMIT = int(os.getenv("FEEDBACK_DAILY_LIMIT", "30"))
+
+
+def _quota_identity(user: Any) -> str:
+    return (
+        str(getattr(user, "user_id", "") or "").strip()
+        or str(getattr(user, "email", "") or "").strip()
+        or "anon"
+    )
 
 
 router = APIRouter()
@@ -203,6 +219,13 @@ async def answer_sidebar_query(
     if len(query) > 1000:
         raise HTTPException(status_code=413, detail="query_too_long")
 
+    enforce_daily_quota(
+        "llm_sidebar",
+        _quota_identity(_user),
+        _LLM_SIDEBAR_DAILY_LIMIT,
+        friendly_name="sidebar question",
+    )
+
     ctx = _load_sidebar_context(request.ap_item_id, request.organization_id, _user)
     history = [(t.q, t.a) for t in (request.history or [])][-6:]  # cap at last 3 turns
 
@@ -244,6 +267,13 @@ async def stream_sidebar_query(
         raise HTTPException(status_code=400, detail="empty_query")
     if len(query) > 1000:
         raise HTTPException(status_code=413, detail="query_too_long")
+
+    enforce_daily_quota(
+        "llm_sidebar",
+        _quota_identity(_user),
+        _LLM_SIDEBAR_DAILY_LIMIT,
+        friendly_name="sidebar question",
+    )
 
     ctx = _load_sidebar_context(request.ap_item_id, request.organization_id, _user)
     history = [(t.q, t.a) for t in (request.history or [])][-6:]
@@ -446,6 +476,13 @@ async def submit_feedback(
         raise HTTPException(status_code=400, detail="empty_message")
     if len(message) > 4000:
         raise HTTPException(status_code=413, detail="message_too_long")
+
+    enforce_daily_quota(
+        "feedback",
+        _quota_identity(_user),
+        _FEEDBACK_DAILY_LIMIT,
+        friendly_name="feedback submission",
+    )
 
     org_id = resolve_org_id_for_user(_user, request.organization_id)
     kind = (request.kind or "bug").strip().lower()

@@ -166,6 +166,115 @@ def check_rate_limit(client_id: str) -> Tuple[bool, int, int]:
     return _check_rate_limit_memory(client_id)
 
 
+# ---------------------------------------------------------------------------
+# Per-user daily quotas (separate from the per-process burst limiter above).
+#
+# The middleware at the bottom of this file bounds burst traffic (e.g. 300
+# req/min). That alone does not bound *cost*: a single authenticated user can
+# still issue ~300 LLM streams a minute, burning credits we never meant to
+# spend. These helpers add a second, coarser budget keyed to (scope, identity)
+# with a rolling 24h window — intended for expensive endpoints only (LLM
+# streams, feedback anti-spam), not hot paths.
+#
+# Same backend story as above: Redis when available, in-memory fallback for
+# dev. In production-like envs without Redis we fail closed to match the
+# burst limiter's behaviour.
+# ---------------------------------------------------------------------------
+
+_DAILY_WINDOW_SECONDS = 24 * 60 * 60
+_quota_memory_store: Dict[str, Tuple[int, float]] = defaultdict(lambda: (0, time.time()))
+
+
+def _daily_quota_check_redis(key: str, limit: int) -> Tuple[bool, int, int]:
+    try:
+        pipe = _redis_client.pipeline()
+        pipe.incr(key)
+        pipe.ttl(key)
+        count, ttl = pipe.execute()
+        if ttl == -1:
+            _redis_client.expire(key, _DAILY_WINDOW_SECONDS)
+            ttl = _DAILY_WINDOW_SECONDS
+        reset_after = max(int(ttl), 1)
+        if count > limit:
+            # We already incremented; roll back so the denied call doesn't
+            # permanently cost the user a slot. Best-effort — if DECR fails
+            # the user loses one slot but the limit is still enforced.
+            try:
+                _redis_client.decr(key)
+            except Exception:  # noqa: BLE001
+                pass
+            return False, 0, reset_after
+        return True, max(limit - int(count), 0), reset_after
+    except Exception as exc:  # noqa: BLE001
+        if _is_production_like_env() and not _allow_memory_backend_in_production():
+            logger.error("Redis quota error in production-like env: %s — denying", exc)
+            return False, 0, _DAILY_WINDOW_SECONDS
+        logger.error("Redis quota error: %s — allowing", exc)
+        return True, limit, _DAILY_WINDOW_SECONDS
+
+
+def _daily_quota_check_memory(key: str, limit: int) -> Tuple[bool, int, int]:
+    now = time.time()
+    count, window_start = _quota_memory_store[key]
+    if now - window_start >= _DAILY_WINDOW_SECONDS:
+        _quota_memory_store[key] = (1, now)
+        return True, max(limit - 1, 0), _DAILY_WINDOW_SECONDS
+    if count >= limit:
+        reset_after = int(_DAILY_WINDOW_SECONDS - (now - window_start))
+        return False, 0, max(reset_after, 1)
+    _quota_memory_store[key] = (count + 1, window_start)
+    remaining = max(limit - (count + 1), 0)
+    reset_after = int(_DAILY_WINDOW_SECONDS - (now - window_start))
+    return True, remaining, max(reset_after, 1)
+
+
+def check_daily_quota(scope: str, identity: str, limit: int) -> Tuple[bool, int, int]:
+    """Check + increment a daily quota.
+
+    scope: namespace for the quota ("llm_sidebar", "feedback", ...).
+    identity: stable per-user key (user_id or email).
+    limit: max calls per rolling 24h window.
+
+    Returns (allowed, remaining, reset_after_seconds). When ``allowed`` is
+    False, the caller should respond 429 with the reset hint.
+    """
+    if not RATE_LIMIT_ENABLED or limit <= 0:
+        return True, limit, _DAILY_WINDOW_SECONDS
+    safe_scope = (scope or "default").strip() or "default"
+    safe_identity = (identity or "anon").strip() or "anon"
+    key = f"quota:{safe_scope}:{safe_identity}"
+    if _redis_client is not None:
+        return _daily_quota_check_redis(key, limit)
+    if _is_production_like_env() and not _allow_memory_backend_in_production():
+        return False, 0, _DAILY_WINDOW_SECONDS
+    return _daily_quota_check_memory(key, limit)
+
+
+def enforce_daily_quota(
+    scope: str,
+    identity: str,
+    limit: int,
+    *,
+    friendly_name: str = "requests",
+) -> None:
+    """Raise 429 if the (scope, identity) has exhausted its daily quota."""
+    from fastapi import HTTPException  # local import — avoid circular
+
+    allowed, remaining, reset_after = check_daily_quota(scope, identity, limit)
+    if allowed:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail={
+            "message": f"Daily {friendly_name} quota exceeded",
+            "scope": scope,
+            "limit": limit,
+            "reset_after_seconds": reset_after,
+        },
+        headers={"Retry-After": str(reset_after)},
+    )
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware to enforce rate limiting."""
 
