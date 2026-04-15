@@ -1331,3 +1331,28 @@ def _v24_migration_state(cur, db):
             cur.execute(f"ALTER TABLE organizations ADD COLUMN {col} {col_type}")
         except Exception:
             pass
+
+
+@migration(35, "Soft-delete organizations (deleted_at)")
+def _v35_organizations_deleted_at(cur, db):
+    """Soft-delete support for organizations.
+
+    The old DELETE /organizations/{id} endpoint only removed the
+    org_config key from settings — it claimed "Organization deleted"
+    but left every ap_item, vendor profile, audit event, OAuth token
+    and Gmail token behind, orphaned but still queryable. That's a
+    compliance problem (right-to-be-forgotten), a hygiene problem
+    (data grows forever), and a re-use hazard (if the same org_id
+    were ever reissued, the new tenant would inherit the old
+    tenant's data).
+
+    Real cascading delete across 15+ tables is risky for a one-shot
+    endpoint. Soft-delete is safer: set deleted_at, block further
+    auth + API access for the org, hand off hard-purge to an async
+    retention job. This migration adds the column; the endpoint
+    change + auth guard are in this same PR.
+    """
+    try:
+        cur.execute("ALTER TABLE organizations ADD COLUMN deleted_at TEXT")
+    except Exception:
+        pass  # Already exists on a re-run or older schema

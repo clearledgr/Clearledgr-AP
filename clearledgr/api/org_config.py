@@ -184,17 +184,81 @@ async def delete_organization(
     organization_id: str,
     current_user: TokenData = Depends(get_current_user),
 ):
-    """Delete an organization (requires owner role)."""
+    """Soft-delete an organization (requires owner role).
+
+    Marks ``organizations.deleted_at`` so the org can no longer
+    authenticate or be accessed via the API. Does NOT immediately
+    purge ap_items, vendors, audit events, OAuth tokens, etc. —
+    that hard-purge is handled by a retention job so compliance /
+    legal has a window to export data and confirm no live
+    workflows are attached. Repeated deletes are idempotent.
+
+    Previous behaviour dropped only the org_config JSON blob and
+    left every tenant table intact, which was misleading (the
+    endpoint said "deleted" but nothing was gone) and a latent
+    re-use hazard (same org_id reissued would inherit old data).
+    """
+    from clearledgr.core.clock import now_utc_iso
+    from clearledgr.core.database import get_db
+
     _require_admin(current_user)
     org_id = _resolve_org_id_for_user(current_user, organization_id)
 
-    config = get_org_config(org_id)
-    if not config:
+    db = get_db()
+    org = db.get_organization(org_id)
+    if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    delete_org_config(org_id)
+    # Idempotent: re-deleting an already-soft-deleted org is a no-op 200.
+    already_deleted_at = org.get("deleted_at")
+    if already_deleted_at:
+        return {
+            "status": "already_deleted",
+            "organization_id": org_id,
+            "deleted_at": already_deleted_at,
+        }
 
-    return {"status": "success", "message": f"Organization {org_id} deleted"}
+    now_iso = now_utc_iso()
+    # Remove the org_config blob from settings AND stamp deleted_at.
+    # We keep delete_org_config for back-compat (some callers still
+    # use it directly), but the authoritative "is this org usable?"
+    # signal is organizations.deleted_at, checked at auth time.
+    try:
+        delete_org_config(org_id)
+    except Exception:
+        pass
+    try:
+        db.update_organization(org_id, deleted_at=now_iso)
+    except Exception:
+        logger.warning("delete_organization: failed to stamp deleted_at for %s", org_id)
+
+    # Audit event — every admin action that changes tenant lifecycle
+    # must be greppable in the audit trail.
+    try:
+        db.append_ap_audit_event({
+            "event_type": "organization_soft_deleted",
+            "actor_type": "user",
+            "actor_id": str(current_user.user_id or "unknown"),
+            "organization_id": org_id,
+            "source": "admin",
+            "payload_json": {
+                "actor_email": getattr(current_user, "email", None),
+                "deleted_at": now_iso,
+            },
+        })
+    except Exception:
+        logger.warning("delete_organization: audit write failed for %s", org_id)
+
+    return {
+        "status": "soft_deleted",
+        "organization_id": org_id,
+        "deleted_at": now_iso,
+        "message": (
+            "Organization is soft-deleted and no longer accessible. "
+            "Hard data purge runs via the retention job; contact ops "
+            "for an immediate purge if required for compliance."
+        ),
+    }
 
 
 # ==================== GL MAPPINGS ====================

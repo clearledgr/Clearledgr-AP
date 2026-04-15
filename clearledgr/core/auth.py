@@ -261,6 +261,36 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
         return token_data
 
 
+def _assert_org_not_deleted(token_data: TokenData) -> TokenData:
+    """Reject requests scoped to a soft-deleted organization.
+
+    The admin "DELETE /organizations/{id}" flow stamps
+    organizations.deleted_at as a tombstone. A JWT minted before the
+    deletion is still cryptographically valid, but we don't want it
+    granting access to tenant data — the tenant is gone. Any valid
+    token for a deleted org gets 403. Failure to read the org row
+    (DB hiccup, unknown org) fails OPEN to preserve availability;
+    we log and rely on tenant-isolation elsewhere. Defence in depth,
+    not the only line.
+    """
+    try:
+        org_id = str(getattr(token_data, "organization_id", "") or "").strip()
+        if not org_id:
+            return token_data
+        db = _get_db()
+        org = db.get_organization(org_id)
+        if org and org.get("deleted_at"):
+            raise HTTPException(
+                status_code=403,
+                detail="organization_deleted",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("org deletion guard check failed: %s", exc)
+    return token_data
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -280,14 +310,16 @@ def get_current_user(
         try:
             payload = decode_token(token)
             if payload.get("type") == "access":
-                return _reconcile_token_data(_token_data_from_payload(payload))
+                return _assert_org_not_deleted(
+                    _reconcile_token_data(_token_data_from_payload(payload))
+                )
         except HTTPException:
             pass  # Not a Clearledgr JWT — try Google OAuth below
 
         # Try Google OAuth token (Streak pattern: extension passes Google token directly)
         google_user = _validate_google_token(token)
         if google_user:
-            return google_user
+            return _assert_org_not_deleted(google_user)
 
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -295,26 +327,28 @@ def get_current_user(
         db = _get_db()
         key_record = db.validate_api_key(x_api_key)
         if key_record:
-            return TokenData(
+            return _assert_org_not_deleted(TokenData(
                 user_id=key_record.get("user_id", "api_user"),
                 email="api@system",
                 organization_id=key_record["organization_id"],
                 role="api",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
-            )
+            ))
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     if workspace_access_cookie:
         try:
             payload = decode_token(workspace_access_cookie)
             if payload.get("type") == "access":
-                return _reconcile_token_data(_token_data_from_payload(payload))
+                return _assert_org_not_deleted(
+                    _reconcile_token_data(_token_data_from_payload(payload))
+                )
         except HTTPException:
             pass
         # Cookie might also be a Google token
         google_user = _validate_google_token(workspace_access_cookie)
         if google_user:
-            return google_user
+            return _assert_org_not_deleted(google_user)
 
     raise HTTPException(
         status_code=401,
