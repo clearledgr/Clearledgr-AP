@@ -1951,9 +1951,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                         for item in items
                         if str(item.get("vendor_name") or "").strip().lower() == vendor_key
                     ]
-                    summary["vendor_spend_to_date"] = round(
-                        sum(float(item.get("amount") or 0) for item in vendor_items),
-                        2,
+                    from clearledgr.core.money import money_sum, money_to_float
+                    summary["vendor_spend_to_date"] = money_to_float(
+                        money_sum(item.get("amount") for item in vendor_items)
                     )
                     summary["vendor_open_invoices"] = sum(
                         1

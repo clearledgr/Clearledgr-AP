@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
     _build_xero_vendor_lookup_where,
     _escape_query_literal,
@@ -203,13 +204,15 @@ async def post_bill_to_xero(
     if bill_currency and len(bill_currency) == 3:
         xero_bill["CurrencyCode"] = bill_currency
 
-    # Add line items
+    # Add line items.  Money boundary: quantize every amount before
+    # serialising to the Xero payload so the wire value matches what
+    # we stored internally in Decimal.
     if bill.line_items:
         for item in bill.line_items:
             xero_bill["LineItems"].append({
                 "Description": item.get("description", ""),
                 "Quantity": item.get("quantity", 1),
-                "UnitAmount": item.get("unit_amount", item.get("amount", 0)),
+                "UnitAmount": money_to_float(item.get("unit_amount", item.get("amount", 0))),
                 "AccountCode": item.get("account_code", expense_account),
                 "TaxType": item.get("tax_type", "NONE"),
             })
@@ -217,7 +220,7 @@ async def post_bill_to_xero(
         xero_bill["LineItems"].append({
             "Description": bill.description or f"Invoice {bill.invoice_number}",
             "Quantity": 1,
-            "UnitAmount": bill.amount,
+            "UnitAmount": money_to_float(bill.amount),
             "AccountCode": expense_account,
             "TaxType": "NONE",
         })
@@ -226,14 +229,14 @@ async def post_bill_to_xero(
     if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
         for li in xero_bill["LineItems"]:
             li["TaxType"] = "OUTPUT"  # Standard tax
-        xero_bill["TotalTax"] = bill.tax_amount
+        xero_bill["TotalTax"] = money_to_float(bill.tax_amount)
 
     # Apply discount as negative line
     if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
         xero_bill["LineItems"].append({
             "Description": f"Discount ({bill.discount_terms or 'early payment'})",
             "Quantity": 1,
-            "UnitAmount": -bill.discount_amount,
+            "UnitAmount": money_to_float(-bill.discount_amount),
             "AccountCode": expense_account,
             "TaxType": "NONE",
         })

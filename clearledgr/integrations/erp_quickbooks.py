@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
     _build_quickbooks_vendor_credit_lookup_query,
     _build_quickbooks_vendor_lookup_query,
@@ -196,13 +197,15 @@ async def post_bill_to_quickbooks(
     if bill_currency and len(bill_currency) == 3:
         qb_bill["CurrencyRef"] = {"value": bill_currency}
 
-    # Add line items or create single expense line
+    # Add line items or create single expense line.
+    # money_to_float quantizes to 2dp exactly before serialisation so
+    # the number we ship to QB matches what we stored internally.
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             qb_bill["Line"].append({
                 "Id": str(i + 1),
                 "DetailType": "AccountBasedExpenseLineDetail",
-                "Amount": item.get("amount", 0),
+                "Amount": money_to_float(item.get("amount", 0)),
                 "Description": item.get("description", ""),
                 "AccountBasedExpenseLineDetail": {
                     "AccountRef": {"value": item.get("account_id", expense_account)},
@@ -213,7 +216,7 @@ async def post_bill_to_quickbooks(
         qb_bill["Line"].append({
             "Id": "1",
             "DetailType": "AccountBasedExpenseLineDetail",
-            "Amount": bill.amount,
+            "Amount": money_to_float(bill.amount),
             "Description": bill.description or f"Invoice {bill.invoice_number}",
             "AccountBasedExpenseLineDetail": {
                 "AccountRef": {"value": expense_account},
@@ -223,7 +226,7 @@ async def post_bill_to_quickbooks(
     # Add tax line if tax_amount is provided
     if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
         qb_bill["TxnTaxDetail"] = {
-            "TotalTax": bill.tax_amount,
+            "TotalTax": money_to_float(bill.tax_amount),
         }
 
     # Apply discount if provided
@@ -231,7 +234,7 @@ async def post_bill_to_quickbooks(
         qb_bill["Line"].append({
             "Id": str(len(qb_bill["Line"]) + 1),
             "DetailType": "DiscountLineDetail",
-            "Amount": bill.discount_amount,
+            "Amount": money_to_float(bill.discount_amount),
             "DiscountLineDetail": {
                 "PercentBased": False,
             },

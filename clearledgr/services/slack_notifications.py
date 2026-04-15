@@ -726,12 +726,13 @@ class SlackNotifier:
         
         lines = []
         
+        from clearledgr.core.money import money_sum, money_to_float
         if by_priority["critical"]:
-            total = sum(e.get("amount", 0) for e in by_priority["critical"])
+            total = money_to_float(money_sum(e.get("amount") for e in by_priority["critical"]))
             lines.append(f"- {len(by_priority['critical'])} critical (EUR {total:,.2f})")
-        
+
         if by_priority["high"]:
-            total = sum(e.get("amount", 0) for e in by_priority["high"])
+            total = money_to_float(money_sum(e.get("amount") for e in by_priority["high"]))
             lines.append(f"- {len(by_priority['high'])} high priority (EUR {total:,.2f})")
         
         if by_priority["medium"]:

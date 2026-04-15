@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta, timezone
+
+from clearledgr.core.money import money_sum, money_to_float
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -116,8 +118,11 @@ class VendorStatementRecon:
                         "created_at": ap.get("created_at", ""),
                     })
 
-            total_statement = sum(float(s.get("amount") or 0) for s in statement_items)
-            total_clearledgr = sum(float(a.get("amount") or 0) for a in ap_items)
+            # Penny-exact totals — reconciliation compares these two.
+            # Float sums drift by a cent across ~100 line items which
+            # masquerades as a real discrepancy.
+            total_statement = money_sum(s.get("amount") for s in statement_items)
+            total_clearledgr = money_sum(a.get("amount") for a in ap_items)
 
             return {
                 "organization_id": self.organization_id,
@@ -131,9 +136,9 @@ class VendorStatementRecon:
                     "discrepancy_count": len(discrepancies),
                     "unmatched_on_statement": len(unmatched_statement),
                     "unmatched_in_clearledgr": len(unmatched_clearledgr),
-                    "statement_total": round(total_statement, 2),
-                    "clearledgr_total": round(total_clearledgr, 2),
-                    "difference": round(total_statement - total_clearledgr, 2),
+                    "statement_total": money_to_float(total_statement),
+                    "clearledgr_total": money_to_float(total_clearledgr),
+                    "difference": money_to_float(total_statement - total_clearledgr),
                     "match_rate_pct": round(
                         len(matched) / len(statement_items) * 100, 1
                     ) if statement_items else 0.0,

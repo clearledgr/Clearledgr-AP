@@ -1273,6 +1273,7 @@ def _answer_query_rule_based(query: str, items: list) -> str:
     }
 
     if "outstanding" in q or "open" in q:
+        from clearledgr.core.money import money_sum, to_decimal
         # Find vendor if mentioned
         for item in items:
             vendor = (item.get("vendor_name") or "").lower()
@@ -1280,12 +1281,12 @@ def _answer_query_rule_based(query: str, items: list) -> str:
                 vendor_items = [i for i in items if (i.get("vendor_name") or "").lower() == vendor and i.get("state") not in ("closed", "rejected", "posted_to_erp")]
                 if not vendor_items:
                     return f"No open items with {item.get('vendor_name')} this month."
-                total = sum(float(i.get("amount") or 0) for i in vendor_items)
+                total = money_sum(i.get("amount") for i in vendor_items)
                 currency = vendor_items[0].get("currency") or "USD"
                 lines = [f"{item.get('vendor_name')} has {len(vendor_items)} open invoice(s) this month:"]
                 for vi in vendor_items[:5]:
                     ref = vi.get("invoice_number") or "N/A"
-                    amt = float(vi.get("amount") or 0)
+                    amt = to_decimal(vi.get("amount"))
                     state_desc = _state_labels.get(vi.get("state"), vi.get("state", ""))
                     due = vi.get("due_date", "")[:10]
                     lines.append(f"  {ref} ({currency} {amt:,.2f} — {state_desc}" + (f", due {due}" if due else "") + ")")
@@ -1293,7 +1294,7 @@ def _answer_query_rule_based(query: str, items: list) -> str:
                 return "\n".join(lines)
 
         open_items = [i for i in items if i.get("state") not in ("closed", "rejected", "posted_to_erp")]
-        total = sum(float(i.get("amount") or 0) for i in open_items)
+        total = money_sum(i.get("amount") for i in open_items)
         return f"{len(open_items)} open items totalling {total:,.0f}."
 
     if "due" in q:

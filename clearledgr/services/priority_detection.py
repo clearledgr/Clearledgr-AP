@@ -521,11 +521,12 @@ class PriorityDetectionService:
         critical = [i for i in prioritized if i["priority"] == "critical"]
         high = [i for i in prioritized if i["priority"] == "high"]
         
+        from clearledgr.core.money import money_sum, money_to_float
         return {
             "critical_count": len(critical),
-            "critical_total": sum(i.get("amount", 0) for i in critical),
+            "critical_total": money_to_float(money_sum(i.get("amount") for i in critical)),
             "high_count": len(high),
-            "high_total": sum(i.get("amount", 0) for i in high),
+            "high_total": money_to_float(money_sum(i.get("amount") for i in high)),
             "critical_items": critical[:5],  # Top 5 most critical
             "high_items": high[:5],
         }

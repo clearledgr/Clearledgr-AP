@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from clearledgr.core.auth import get_current_user
+from clearledgr.core.money import money_sum, money_to_float
 from clearledgr.api.deps import verify_org_access
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
 
@@ -469,7 +470,7 @@ def get_consolidated_pipeline(
                 "count": len(items),
                 "in_flight": sum(1 for i in items if i.get("state") not in ("closed", "rejected")),
                 "exceptions": sum(1 for i in items if i.get("state") in ("needs_info", "failed_post")),
-                "total_amount": sum(float(i.get("amount") or 0) for i in items),
+                "total_amount": money_to_float(money_sum(i.get("amount") for i in items)),
             },
         }
 
@@ -484,7 +485,7 @@ def get_consolidated_pipeline(
                 "count": len(unassigned_items),
                 "in_flight": sum(1 for i in unassigned_items if i.get("state") not in ("closed", "rejected")),
                 "exceptions": sum(1 for i in unassigned_items if i.get("state") in ("needs_info", "failed_post")),
-                "total_amount": sum(float(i.get("amount") or 0) for i in unassigned_items),
+                "total_amount": money_to_float(money_sum(i.get("amount") for i in unassigned_items)),
             },
         }
 
@@ -493,7 +494,7 @@ def get_consolidated_pipeline(
         "total_items": sum(e["totals"]["count"] for e in by_entity.values()),
         "total_in_flight": sum(e["totals"]["in_flight"] for e in by_entity.values()),
         "total_exceptions": sum(e["totals"]["exceptions"] for e in by_entity.values()),
-        "total_amount": sum(e["totals"]["total_amount"] for e in by_entity.values()),
+        "total_amount": money_to_float(money_sum(e["totals"]["total_amount"] for e in by_entity.values())),
     }
 
     return {

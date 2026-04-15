@@ -273,8 +273,16 @@ class AgentReflection:
         total = extraction.get("total_amount") or extraction.get("amount")
 
         if line_items and total:
-            line_sum = sum(item.get("amount", 0) for item in line_items)
-            if line_sum > 0 and abs(line_sum - total) > 1.0:
+            from clearledgr.core.money import money_sum, to_decimal
+            # Penny-exact line-sum vs invoice-total check. The previous
+            # implementation used a $1 tolerance because of float drift
+            # across ~20 line items; Decimal sums exactly so we could
+            # tighten it, but keep $1 to allow for legitimate rounding
+            # in vendor-produced totals.
+            line_sum_d = money_sum(item.get("amount") for item in line_items)
+            total_d = to_decimal(total)
+            line_sum = float(line_sum_d)
+            if line_sum > 0 and abs(line_sum_d - total_d) > to_decimal(1):
                 # H8: Before flagging mismatch, check if the difference looks like tax.
                 # If total / line_sum matches a known tax multiplier (within 1%), it's
                 # likely a tax-inclusive total rather than an extraction error.

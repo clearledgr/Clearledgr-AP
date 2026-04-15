@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from clearledgr.api.gmail_extension_common import resolve_org_id_for_user
 from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.core.money import money_sum, money_to_float
 from clearledgr.services.rate_limit import enforce_daily_quota
 from clearledgr.services.gmail_extension_support import (
     build_amount_validation_payload,
@@ -761,7 +762,7 @@ def _answer_sidebar_query_rule_based(
     if asks_vendor:
         if not vendor_items:
             return f"This is the only open invoice from {vendor} right now."
-        total = sum(float(vi.get("amount") or 0) for vi in vendor_items) + float(focus_item.get("amount") or 0)
+        total = money_to_float(money_sum([focus_item.get("amount"), *[vi.get("amount") for vi in vendor_items]]))
         lines = [f"{vendor} has {len(vendor_items) + 1} open invoices totalling roughly {_fmt_amount(total, focus_item.get('currency'))}:"]
         for vi in [focus_item] + vendor_items[:8]:
             ref = str(vi.get("invoice_number") or "").strip() or "(no ref)"
@@ -936,7 +937,7 @@ def _build_sidebar_context(
 
     # Vendor siblings
     if vendor_items:
-        total = sum(float(vi.get("amount") or 0) for vi in vendor_items) + float(focus_item.get("amount") or 0)
+        total = money_to_float(money_sum([focus_item.get("amount"), *[vi.get("amount") for vi in vendor_items]]))
         lines.append("")
         lines.append(
             f"OTHER OPEN INVOICES FROM {vendor} "

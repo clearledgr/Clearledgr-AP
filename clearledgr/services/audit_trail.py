@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from clearledgr.core.clock import now_utc_iso
+from clearledgr.core.money import money_sum, money_to_float
 from enum import Enum
 import uuid
 
@@ -759,9 +760,9 @@ class AuditTrailService:
             "status_distribution": status_counts,
             "event_type_distribution": event_counts,
             "actor_distribution": actor_counts,
-            "total_amount": sum(t.amount for t in trails),
+            "total_amount": money_to_float(money_sum(t.amount for t in trails)),
         }
-    
+
     def export_to_csv(self, invoice_ids: Optional[List[str]] = None) -> str:
         """Export audit trails to CSV format."""
         import io
@@ -851,12 +852,12 @@ class AuditTrailService:
                 "end": end_date or datetime.now(timezone.utc).isoformat(),
             },
             "total_invoices": len(trails),
-            "total_amount": sum(t.amount for t in trails),
+            "total_amount": money_to_float(money_sum(t.amount for t in trails)),
             "status_summary": {
-                "approved": {"count": len(approved), "amount": sum(t.amount for t in approved)},
-                "rejected": {"count": len(rejected), "amount": sum(t.amount for t in rejected)},
-                "pending": {"count": len(pending), "amount": sum(t.amount for t in pending)},
-                "posted": {"count": len(posted), "amount": sum(t.amount for t in posted)},
+                "approved": {"count": len(approved), "amount": money_to_float(money_sum(t.amount for t in approved))},
+                "rejected": {"count": len(rejected), "amount": money_to_float(money_sum(t.amount for t in rejected))},
+                "pending": {"count": len(pending), "amount": money_to_float(money_sum(t.amount for t in pending))},
+                "posted": {"count": len(posted), "amount": money_to_float(money_sum(t.amount for t in posted))},
                 "paid": {"count": len(paid), "amount": sum(t.amount for t in paid)},
             },
             "approval_method": {

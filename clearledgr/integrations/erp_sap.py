@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from decimal import Decimal, ROUND_HALF_UP
+from clearledgr.core.money import Q2, money_to_float, to_decimal
 from clearledgr.integrations.erp_sanitization import _sanitize_odata_value
 
 logger = logging.getLogger(__name__)
@@ -278,26 +280,33 @@ async def post_bill_to_sap(
     if bill_currency and len(bill_currency) == 3:
         sap_bill["DocCurrency"] = bill_currency
 
+    # SAP B1 wants numeric LineTotals; we serialise quantized floats so
+    # the payload matches what we hold in Decimal on our side.
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             sap_bill["DocumentLines"].append({
                 "LineNum": i,
                 "ItemDescription": item.get("description", ""),
                 "AccountCode": item.get("gl_code") or item.get("account_code") or expense_account,
-                "LineTotal": item.get("amount", 0),
+                "LineTotal": money_to_float(item.get("amount", 0)),
             })
     else:
         sap_bill["DocumentLines"].append({
             "LineNum": 0,
             "ItemDescription": bill.description or f"Invoice {bill.invoice_number}",
             "AccountCode": expense_account,
-            "LineTotal": bill.amount,
+            "LineTotal": money_to_float(bill.amount),
         })
 
-    # Tax handling for SAP
+    # Tax handling for SAP. Divide tax evenly across lines; Decimal
+    # division with ROUND_HALF_UP keeps each line's tax value penny-
+    # exact and the totals reconcile.
     if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        tax_total = to_decimal(bill.tax_amount)
+        n_lines = max(len(sap_bill["DocumentLines"]), 1)
+        per_line = (tax_total / n_lines).quantize(Q2, rounding=ROUND_HALF_UP)
         for dl in sap_bill["DocumentLines"]:
-            dl["TaxTotal"] = bill.tax_amount / max(len(sap_bill["DocumentLines"]), 1)
+            dl["TaxTotal"] = float(per_line)
 
     # Discount as negative line
     if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:
@@ -305,7 +314,7 @@ async def post_bill_to_sap(
             "LineNum": len(sap_bill["DocumentLines"]),
             "ItemDescription": f"Discount ({getattr(bill, 'discount_terms', '') or 'early payment'})",
             "AccountCode": expense_account,
-            "LineTotal": -bill.discount_amount,
+            "LineTotal": money_to_float(-bill.discount_amount),
         })
 
     url = f"{connection.base_url}/PurchaseInvoices"

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
     _build_netsuite_vendor_lookup_query,
     _escape_query_literal,
@@ -323,26 +324,28 @@ async def post_bill_to_netsuite(
     if bill_currency and len(bill_currency) == 3:
         ns_bill["currency"] = {"refName": bill_currency}
 
-    # Add line items as expenses
+    # Add line items as expenses. Money boundary: quantize before
+    # serialising so what we send to NetSuite matches our internal
+    # Decimal value exactly.
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
             ns_bill["expense"]["items"].append({
                 "line": i + 1,
                 "account": {"id": item.get("gl_code") or item.get("account_id") or expense_account},
-                "amount": item.get("amount", 0),
+                "amount": money_to_float(item.get("amount", 0)),
                 "memo": item.get("description", ""),
             })
     else:
         ns_bill["expense"]["items"].append({
             "line": 1,
             "account": {"id": expense_account},
-            "amount": bill.amount,
+            "amount": money_to_float(bill.amount),
             "memo": bill.description or f"Invoice {bill.invoice_number}",
         })
 
     # Add tax if provided
     if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
-        ns_bill["taxTotal"] = bill.tax_amount
+        ns_bill["taxTotal"] = money_to_float(bill.tax_amount)
 
     # Discount as negative expense line
     if getattr(bill, "discount_amount", None) and bill.discount_amount > 0:

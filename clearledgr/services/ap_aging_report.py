@@ -12,7 +12,10 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
+
+from clearledgr.core.money import ZERO, money_sum, money_to_float, to_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -168,37 +171,42 @@ class APAgingReport:
                 "items": [],
             }
 
+        # Track per-currency totals in Decimal so a bucket with 1000
+        # invoices doesn't drift by a cent. At render time we convert
+        # to float for the JSON response.
+        decimal_totals: Dict[str, Dict[str, Decimal]] = {
+            label: defaultdict(lambda: ZERO) for label in result
+        }
+
         for item in items:
             due = self._parse_date(item.get("due_date"))
             if due is None:
                 continue
             days_past = (today - due).days
             label = _bucket_label(days_past)
-            amount = float(item.get("amount") or 0)
+            amount = to_decimal(item.get("amount"))
             currency = item.get("currency") or "USD"
 
             bucket = result[label]
-            bucket["totals_by_currency"][currency] = (
-                bucket["totals_by_currency"].get(currency, 0.0) + amount
-            )
+            decimal_totals[label][currency] = decimal_totals[label][currency] + amount
             bucket["count"] += 1
             if len(bucket["items"]) < items_per_bucket:
                 bucket["items"].append({
                     "id": item.get("id"),
                     "vendor_name": item.get("vendor_name"),
                     "invoice_number": item.get("invoice_number"),
-                    "amount": amount,
+                    "amount": money_to_float(amount),
                     "currency": currency,
                     "due_date": str(item.get("due_date") or ""),
                     "days_past_due": max(0, days_past),
                     "state": item.get("state"),
                 })
 
-        # Round currency totals
+        # Convert Decimal per-currency totals to floats at the JSON boundary.
         for label in result:
             result[label]["totals_by_currency"] = {
-                cur: round(amt, 2)
-                for cur, amt in result[label]["totals_by_currency"].items()
+                cur: money_to_float(amt)
+                for cur, amt in decimal_totals[label].items()
             }
 
         return result
@@ -211,12 +219,9 @@ class APAgingReport:
         self, items: List[Dict[str, Any]], today: date
     ) -> List[Dict[str, Any]]:
         """Aging breakdown per vendor, grouped by currency."""
-        # vendor -> currency -> bucket -> amount
-        data: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
-            lambda: defaultdict(lambda: {label: 0.0 for label in BUCKET_LABELS})
-        )
-        vendor_totals: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: defaultdict(float)
+        # vendor -> currency -> bucket -> Decimal amount
+        data: Dict[str, Dict[str, Dict[str, Decimal]]] = defaultdict(
+            lambda: defaultdict(lambda: {label: ZERO for label in BUCKET_LABELS})
         )
 
         for item in items:
@@ -226,11 +231,10 @@ class APAgingReport:
                 continue
             days_past = (today - due).days
             label = _bucket_label(days_past)
-            amount = float(item.get("amount") or 0)
+            amount = to_decimal(item.get("amount"))
             currency = item.get("currency") or "USD"
 
-            data[vendor][currency][label] += amount
-            vendor_totals[vendor][currency] += amount
+            data[vendor][currency][label] = data[vendor][currency][label] + amount
 
         rows = []
         for vendor, currencies in data.items():
@@ -238,10 +242,10 @@ class APAgingReport:
                 row: Dict[str, Any] = {
                     "vendor_name": vendor,
                     "currency": currency,
-                    "total": round(sum(bucket_amounts.values()), 2),
+                    "total": money_to_float(money_sum(bucket_amounts.values())),
                 }
                 for label in BUCKET_LABELS:
-                    row[label] = round(bucket_amounts[label], 2)
+                    row[label] = money_to_float(bucket_amounts[label])
                 rows.append(row)
 
         # Sort by total descending

@@ -14,6 +14,8 @@ import re
 import uuid
 import logging
 from datetime import datetime, timezone
+
+from clearledgr.core.money import money_sum, money_to_float
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -448,11 +450,11 @@ class PaymentRequestService:
         return {
             "total_requests": len(requests),
             "pending": len(pending),
-            "pending_amount": sum(r.amount for r in pending),
+            "pending_amount": money_to_float(money_sum(r.amount for r in pending)),
             "approved": len(approved),
-            "approved_amount": sum(r.amount for r in approved),
+            "approved_amount": money_to_float(money_sum(r.amount for r in approved)),
             "paid": len(paid),
-            "paid_amount": sum(r.amount for r in paid),
+            "paid_amount": money_to_float(money_sum(r.amount for r in paid)),
             "by_source": {
                 "email": len([r for r in requests if r.source == RequestSource.EMAIL]),
                 "slack": len([r for r in requests if r.source == RequestSource.SLACK]),

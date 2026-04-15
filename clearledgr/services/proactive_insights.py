@@ -18,6 +18,8 @@ import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+
+from clearledgr.core.money import money_sum, money_to_float
 from collections import defaultdict
 
 from clearledgr.core.database import get_db
@@ -255,7 +257,7 @@ class ProactiveInsightsService:
         # Insight: Upcoming payments (if due dates available)
         upcoming = self._get_upcoming_due()
         if upcoming:
-            total_upcoming = sum(u.get("amount", 0) for u in upcoming)
+            total_upcoming = money_to_float(money_sum(u.get("amount") for u in upcoming))
             insights.append(Insight(
                 insight_id="upcoming_payments",
                 category="budget",
@@ -339,7 +341,7 @@ class ProactiveInsightsService:
         overdue = [u for u in upcoming if u.get("days_until_due", 1) <= 0]
         due_today = [u for u in upcoming if u.get("days_until_due", 99) == 0]
         if overdue:
-            total = sum(u.get("amount", 0) for u in overdue)
+            total = money_to_float(money_sum(u.get("amount") for u in overdue))
             insights.append(Insight(
                 insight_id="overdue_daily",
                 category="budget",
@@ -350,7 +352,7 @@ class ProactiveInsightsService:
                 recommendations=["Review and action overdue invoices immediately."],
             ))
         if due_today:
-            total = sum(u.get("amount", 0) for u in due_today)
+            total = money_to_float(money_sum(u.get("amount") for u in due_today))
             insights.append(Insight(
                 insight_id="due_today",
                 category="budget",
