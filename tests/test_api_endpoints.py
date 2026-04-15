@@ -104,40 +104,34 @@ class TestAuthEndpoints:
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
-    def test_register_requires_auth(self):
-        """Registration without auth returns 401."""
+    def test_register_endpoint_removed(self):
+        """The /auth/register endpoint was deleted along with /auth/login
+        and /auth/refresh when we aligned with Streak's Google-only auth
+        model. The only auth path is now Google OAuth via
+        /auth/google/callback + /auth/google/exchange."""
         response = client.post("/auth/register", json={
             "email": "test@example.com",
             "password": "StrongPass123!",
             "name": "Test User",
             "organization_id": "test-org",
         })
-        assert response.status_code == 401
+        assert response.status_code in (404, 405)
 
-    def test_register_validation(self):
-        """Test registration validates password strength."""
-        self._admin_override()
-        # Weak password should fail
-        response = client.post("/auth/register", json={
+    def test_login_endpoint_removed(self):
+        """Email/password /auth/login is gone — Streak alignment."""
+        response = client.post("/auth/login", json={
             "email": "test@example.com",
-            "password": "weak",
-            "name": "Test User",
-            "organization_id": "test-org",
-        })
-        assert response.status_code == 422  # Validation error
-
-    def test_register_success(self):
-        """Test successful registration."""
-        self._admin_override()
-        response = client.post("/auth/register", json={
-            "email": "newuser@example.com",
             "password": "StrongPass123!",
-            "name": "New User",
-            "organization_id": "test-org",
         })
-        # May fail if user exists, but should be 200 or 400
-        assert response.status_code in [200, 400]
-    
+        assert response.status_code in (404, 405)
+
+    def test_refresh_endpoint_removed(self):
+        """Clearledgr no longer mints its own refresh token; the Gmail
+        extension silently re-runs Google's token flow when the access
+        JWT expires and re-exchanges via /auth/google/exchange."""
+        response = client.post("/auth/refresh", json={"refresh_token": "x"})
+        assert response.status_code in (404, 405)
+
     def test_google_identity_endpoint_removed(self):
         """The /google-identity endpoint was a security backdoor — it minted
         JWTs from self-reported email without validating a Google token.

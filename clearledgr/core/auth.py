@@ -34,7 +34,6 @@ _users_db: dict = {}
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
-REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Bearer token security
 security = HTTPBearer(auto_error=False)
@@ -126,13 +125,6 @@ class User(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class LoginRequest(BaseModel):
-    """Login request."""
-
-    email: EmailStr
-    password: str
-
-
 class TokenResponse(BaseModel):
     """Token response."""
 
@@ -198,18 +190,6 @@ def create_access_token(
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": "access",
-    }
-    return _jwt_module().encode(payload, _secret_key(), algorithm=ALGORITHM)
-
-
-def create_refresh_token(user_id: str) -> str:
-    """Create a JWT refresh token."""
-    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {
-        "sub": user_id,
-        "exp": expire,
-        "iat": datetime.now(timezone.utc),
-        "type": "refresh",
     }
     return _jwt_module().encode(payload, _secret_key(), algorithm=ALGORITHM)
 
@@ -755,19 +735,6 @@ def create_user(
         password_hash=hash_password(password),
         is_active=True,
     )
-    return _row_to_user(row)
-
-
-def authenticate_user(email: str, password: str) -> Optional[User]:
-    """Authenticate a user by email and password."""
-    db = _get_db()
-    row = db.get_user_by_email(email)
-    if not row:
-        return None
-    if not verify_password(password, row.get("password_hash")):
-        return None
-    if not bool(row.get("is_active", True)):
-        return None
     return _row_to_user(row)
 
 

@@ -18,15 +18,14 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 logger = logging.getLogger(__name__)
 
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Query, Response, Cookie
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, EmailStr, Field, field_validator
-import re
+from pydantic import BaseModel, EmailStr, Field
 
 from clearledgr.core.auth import (
-    LoginRequest, TokenResponse, User,
-    create_user, authenticate_user,
-    create_access_token, create_refresh_token,
+    TokenResponse, User,
+    create_user,
+    create_access_token,
     decode_token, get_current_user, get_optional_user, TokenData,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
@@ -35,7 +34,6 @@ from clearledgr.core.database import get_db
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 WORKSPACE_ACCESS_COOKIE_NAME = "clearledgr_workspace_access"
-WORKSPACE_REFRESH_COOKIE_NAME = "clearledgr_workspace_refresh"
 WORKSPACE_CSRF_COOKIE_NAME = "clearledgr_workspace_csrf"
 SESSION_TOKEN_PLACEHOLDER = "__cookie_session__"
 
@@ -50,7 +48,16 @@ def _session_cookie_domain() -> Optional[str]:
     return raw or None
 
 
-def _set_workspace_session_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+def _set_workspace_session_cookies(response: Response, access_token: str) -> None:
+    """Set the short-lived access cookie + CSRF cookie.
+
+    Streak-aligned model: there is no Clearledgr-issued refresh token.
+    When the access JWT expires, the Gmail extension silently re-runs
+    Google's token flow (chrome.identity.getAuthToken) and re-exchanges
+    via /auth/google/exchange to get a new access JWT. Google's grant
+    is the source of truth for "is this user still allowed in" — we
+    don't keep our own long-lived refresh credential around.
+    """
     secure = _session_cookie_secure()
     domain = _session_cookie_domain()
     csrf_token = secrets.token_urlsafe(32)
@@ -68,68 +75,18 @@ def _set_workspace_session_cookies(response: Response, access_token: str, refres
         **cookie_kwargs,
     )
     response.set_cookie(
-        WORKSPACE_REFRESH_COOKIE_NAME,
-        refresh_token,
-        httponly=True,
-        max_age=7 * 24 * 60 * 60,
-        **cookie_kwargs,
-    )
-    response.set_cookie(
         WORKSPACE_CSRF_COOKIE_NAME,
         csrf_token,
         httponly=False,
-        max_age=7 * 24 * 60 * 60,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         **cookie_kwargs,
     )
 
 
 def _clear_workspace_session_cookies(response: Response) -> None:
     domain = _session_cookie_domain()
-    for name in (WORKSPACE_ACCESS_COOKIE_NAME, WORKSPACE_REFRESH_COOKIE_NAME, WORKSPACE_CSRF_COOKIE_NAME):
+    for name in (WORKSPACE_ACCESS_COOKIE_NAME, WORKSPACE_CSRF_COOKIE_NAME):
         response.delete_cookie(name, path="/", domain=domain)
-
-
-class RegisterRequest(BaseModel):
-    """Registration request with validation."""
-    email: EmailStr
-    password: str = Field(..., min_length=8)
-    name: str = Field(..., min_length=2, max_length=100)
-    organization_id: str = Field(..., min_length=1, max_length=50)
-    
-    @field_validator("password")
-    @classmethod
-    def password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one digit")
-        return v
-    
-    @field_validator("name")
-    @classmethod
-    def sanitize_name(cls, v: str) -> str:
-        # Remove any HTML/script tags
-        v = re.sub(r"<[^>]*>", "", v)
-        # Remove SQL-dangerous characters but preserve hyphens/apostrophes in names
-        v = re.sub(r"[;\"\\]", "", v)
-        return v.strip()
-    
-    @field_validator("organization_id")
-    @classmethod
-    def sanitize_org_id(cls, v: str) -> str:
-        # Only allow alphanumeric and hyphens
-        if not re.match(r"^[a-zA-Z0-9\-_]+$", v):
-            raise ValueError("Organization ID can only contain letters, numbers, hyphens, and underscores")
-        return v.lower()
-
-
-class RefreshRequest(BaseModel):
-    """Token refresh request."""
-    refresh_token: Optional[str] = None
 
 
 class InviteAcceptRequest(BaseModel):
@@ -249,115 +206,14 @@ def _consume_google_auth_code(code: str) -> Dict[str, Any]:
     return payload
 
 
-@router.post("/register", response_model=User)
-async def register(
-    request: RegisterRequest,
-    current_user: TokenData = Depends(get_current_user),
-):
-    """
-    Register a new user.  Requires admin/owner authentication.
-
-    Password requirements:
-    - At least 8 characters
-    - At least one uppercase letter
-    - At least one lowercase letter
-    - At least one digit
-    """
-    from clearledgr.core.auth import has_admin_access
-    if not has_admin_access(current_user.role):
-        raise HTTPException(status_code=403, detail="admin_required")
-    if str(request.organization_id) != str(current_user.organization_id):
-        raise HTTPException(status_code=403, detail="org_mismatch")
-    try:
-        user = create_user(
-            email=request.email,
-            password=request.password,
-            name=request.name,
-            organization_id=request.organization_id,
-        )
-        return user
-    except HTTPException:
-        raise
-    except Exception as e:
-        from clearledgr.core.errors import safe_error
-        raise HTTPException(status_code=500, detail=safe_error(e, "user registration"))
-
-
-@router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, response: Response):
-    """
-    Login with email and password.
-    
-    Returns:
-    - Cookie-backed admin session (HttpOnly access + refresh cookies)
-    - Placeholder token fields for backward compatibility with existing clients
-    """
-    user = authenticate_user(request.email, request.password)
-    
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid email or password",
-        )
-    
-    access_token = create_access_token(
-        user_id=user.id,
-        email=user.email,
-        organization_id=user.organization_id,
-        role=user.role,
-    )
-    
-    refresh_token = create_refresh_token(user_id=user.id)
-    _set_workspace_session_cookies(response, access_token, refresh_token)
-    
-    return TokenResponse(
-        access_token=SESSION_TOKEN_PLACEHOLDER,
-        refresh_token=SESSION_TOKEN_PLACEHOLDER,
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
-
-
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(
-    request: RefreshRequest,
-    response: Response,
-    refresh_cookie: Optional[str] = Cookie(default=None, alias=WORKSPACE_REFRESH_COOKIE_NAME),
-):
-    """
-    Get new access token using refresh token.
-    """
-    refresh_token_value = str(request.refresh_token or refresh_cookie or "").strip()
-    if not refresh_token_value:
-        raise HTTPException(status_code=401, detail="Refresh token required")
-    payload = decode_token(refresh_token_value)
-    
-    if payload.get("type") != "refresh":
-        raise HTTPException(status_code=401, detail="Invalid token type")
-    
-    user_id = payload["sub"]
-    
-    # In production, look up user in database
-    from clearledgr.core.auth import get_user_by_id
-    user = get_user_by_id(user_id)
-    
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    
-    access_token = create_access_token(
-        user_id=user.id,
-        email=user.email,
-        organization_id=user.organization_id,
-        role=user.role,
-    )
-    
-    new_refresh_token = create_refresh_token(user_id=user.id)
-    _set_workspace_session_cookies(response, access_token, new_refresh_token)
-    
-    return TokenResponse(
-        access_token=SESSION_TOKEN_PLACEHOLDER,
-        refresh_token=SESSION_TOKEN_PLACEHOLDER,
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
+# NOTE: /auth/register, /auth/login, /auth/refresh have been deleted.
+# Clearledgr is a Gmail-native product (Streak-aligned). The only auth
+# path is "Continue with Google", which lands on /auth/google/callback
+# and exchanges via /auth/google/exchange. There is no email/password
+# login surface and no Clearledgr-issued refresh token — when the
+# access JWT expires, the extension silently re-runs Google's token
+# flow and re-exchanges. See _set_workspace_session_cookies for the
+# cookie shape.
 
 
 @router.get("/me", response_model=User)
@@ -848,10 +704,9 @@ async def google_web_auth_callback(
         organization_id=user.organization_id,
         role=user.role,
     )
-    refresh = create_refresh_token(user.id)
     auth_code = _issue_google_auth_code(
         access_token=jwt_token,
-        refresh_token=refresh,
+        refresh_token=None,
         organization_id=user.organization_id,
     )
     redirect_path = _sanitize_redirect_path(state_payload.get("redirect_path"))
@@ -869,10 +724,9 @@ async def google_web_auth_callback(
 async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, response: Response):
     payload = _consume_google_auth_code(request.auth_code)
     access_token = str(payload.get("access_token") or "").strip()
-    refresh_token = str(payload.get("refresh_token") or "").strip()
-    if not access_token or not refresh_token:
+    if not access_token:
         raise HTTPException(status_code=400, detail="invalid_auth_code_payload")
-    _set_workspace_session_cookies(response, access_token, refresh_token)
+    _set_workspace_session_cookies(response, access_token)
     return TokenResponse(
         access_token=SESSION_TOKEN_PLACEHOLDER,
         refresh_token=SESSION_TOKEN_PLACEHOLDER,
@@ -1028,8 +882,7 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
 
     db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
     access = create_access_token(user.id, user.email, user.organization_id, user.role)
-    refresh = create_refresh_token(user.id)
-    _set_workspace_session_cookies(response, access, refresh)
+    _set_workspace_session_cookies(response, access)
     return {
         "success": True,
         "user": user,

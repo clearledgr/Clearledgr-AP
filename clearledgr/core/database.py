@@ -65,6 +65,7 @@ def _load_store_symbols() -> None:
     global OverrideWindowStore
     global OnboardingTokenStore
     global PipelineStore
+    global PurchaseOrderStore
 
     if "APStore" in globals():
         return
