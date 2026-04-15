@@ -1716,11 +1716,24 @@ class EmailParser:
         
         return 'USD'  # Default to USD as most common
 
+    # Zip-bomb guardrails. A hostile sender can ship a 100KB ZIP that
+    # expands to many GB because `info.file_size` is read from the
+    # archive's own central directory — i.e. attacker-controlled. We
+    # bound two dimensions:
+    #   - per-file expansion ratio (file_size / compress_size)
+    #   - total decompressed bytes across the whole archive
+    # Anything that trips either limit is skipped (we don't raise — the
+    # caller already treats an empty extraction list as "no usable
+    # attachments" and falls back to the email body).
+    _MAX_ZIP_RATIO = 100
+    _MAX_ZIP_TOTAL_DECOMPRESSED = 200 * 1024 * 1024  # 200 MB across all members
+
     def _extract_archive_attachments(self, content_base64: str, filename: str) -> List[Dict[str, Any]]:
         """Extract files from a ZIP archive attachment."""
         try:
             data = base64.b64decode(content_base64)
             extracted: List[Dict[str, Any]] = []
+            total_decompressed = 0
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 for info in zf.infolist():
                     if info.is_dir():
@@ -1732,7 +1745,26 @@ class EmailParser:
                     # Size limit: skip files > 25MB
                     if info.file_size > 25 * 1024 * 1024:
                         continue
+                    # Zip-bomb checks — attacker controls the claimed
+                    # file_size, but any extreme compression ratio is a
+                    # red flag regardless of what the header claims.
+                    if info.compress_size > 0 and info.file_size / info.compress_size > self._MAX_ZIP_RATIO:
+                        logger.warning(
+                            "Skipping suspicious archive member %s: ratio %d exceeds %d",
+                            info.filename,
+                            int(info.file_size / max(info.compress_size, 1)),
+                            self._MAX_ZIP_RATIO,
+                        )
+                        continue
+                    if total_decompressed + info.file_size > self._MAX_ZIP_TOTAL_DECOMPRESSED:
+                        logger.warning(
+                            "Stopping archive %s extraction: total decompressed size would exceed %d bytes",
+                            filename,
+                            self._MAX_ZIP_TOTAL_DECOMPRESSED,
+                        )
+                        break
                     file_data = zf.read(info.filename)
+                    total_decompressed += len(file_data)
                     # Determine content type
                     if name_lower.endswith('.pdf'):
                         content_type = "application/pdf"

@@ -192,28 +192,13 @@ def to_http_exception(error: ClearledgrError) -> HTTPException:
     )
 
 
-def handle_safely(operation: str):
-    """
-    Decorator to handle errors gracefully with context.
-    
-    Usage:
-        @handle_safely("reconciliation")
-        async def run_reconciliation(...):
-            ...
-    """
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            except ClearledgrError:
-                raise
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise ReconciliationError(
-                    stage=operation,
-                    detail=str(e)
-                )
-        return wrapper
-    return decorator
+# NOTE: a `handle_safely` decorator used to live here. It caught every
+# Exception and wrapped it in ReconciliationError(detail=str(e)), which
+# surfaced through to_http_exception with the raw exception message in
+# the JSON response — i.e. a drop-in leak of SQL errors, KeyErrors,
+# internal path strings, and anything else that happened to land in
+# __str__. Deleted rather than "fixed" because there were zero callers,
+# so there is no need to preserve the shape. If a similar wrapper is
+# ever re-added, it must funnel through clearledgr.core.errors.safe_error
+# so a ref id is logged and only a generic message goes to the client.
 
