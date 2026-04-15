@@ -73,6 +73,7 @@ from clearledgr.integrations.erp_quickbooks import (  # noqa: F401, E402
     _attach_to_quickbooks,
     get_payment_status_quickbooks,
     get_chart_of_accounts_quickbooks,
+    list_all_purchase_orders_quickbooks,
     list_all_vendors_quickbooks,
 )
 
@@ -95,6 +96,7 @@ from clearledgr.integrations.erp_xero import (  # noqa: F401, E402
     _attach_to_xero,
     get_payment_status_xero,
     get_chart_of_accounts_xero,
+    list_all_purchase_orders_xero,
     list_all_vendors_xero,
 )
 
@@ -1785,6 +1787,63 @@ _VENDOR_LIST_FETCHERS = {
     "netsuite": list_all_vendors_netsuite,
     "sap": list_all_vendors_sap,
 }
+
+# PO list fetchers. NetSuite and SAP will 404 until their PO listers
+# are built — they return empty so the sync path is safe to invoke.
+_PO_LIST_FETCHERS = {
+    "quickbooks": list_all_purchase_orders_quickbooks,
+    "xero": list_all_purchase_orders_xero,
+}
+
+
+async def sync_purchase_orders_from_erp(organization_id: str) -> Dict[str, Any]:
+    """Pull all open POs from the org's ERP and upsert to our DB.
+
+    Returns a summary dict so the background scheduler can log what
+    happened. Safe to call repeatedly — save_purchase_order is an upsert
+    keyed on po_id, so re-runs are idempotent.
+
+    Skips orgs that don't have an ERP connected and ERPs without a
+    PO fetcher wired. Never raises — errors are logged and returned
+    in the summary so the background loop stays healthy.
+    """
+    summary: Dict[str, Any] = {
+        "organization_id": organization_id,
+        "erp_type": None,
+        "pos_fetched": 0,
+        "pos_upserted": 0,
+        "errors": [],
+    }
+    try:
+        connection = get_erp_connection(organization_id)
+        if not connection:
+            summary["errors"].append("no_erp_connected")
+            return summary
+        summary["erp_type"] = connection.type
+        fetcher = _PO_LIST_FETCHERS.get(connection.type)
+        if not fetcher:
+            summary["errors"].append(f"no_po_fetcher_for_{connection.type}")
+            return summary
+        po_rows = await fetcher(connection) or []
+        summary["pos_fetched"] = len(po_rows)
+        db = _get_db()
+        for row in po_rows:
+            # Upsert. Attach organization_id so the store row is
+            # tenant-scoped; the fetchers don't know the org.
+            row["organization_id"] = organization_id
+            try:
+                db.save_purchase_order(row)
+                summary["pos_upserted"] += 1
+            except Exception as exc:
+                summary["errors"].append(f"save_failed:{row.get('po_id')}:{exc}")
+    except Exception as exc:
+        logger.warning(
+            "[sync_purchase_orders_from_erp] org=%s failed: %s",
+            organization_id, exc,
+        )
+        summary["errors"].append(str(exc))
+    return summary
+
 
 # Cache TTL: 24 hours
 _VENDOR_LIST_CACHE_TTL_SECONDS = 24 * 60 * 60

@@ -1440,3 +1440,94 @@ async def list_all_vendors_quickbooks(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch QuickBooks vendor list: %s", type(e).__name__)
         return all_vendors or []
+
+
+async def list_all_purchase_orders_quickbooks(connection) -> List[Dict[str, Any]]:
+    """Fetch all Purchase Orders from QuickBooks Online with pagination.
+
+    Returns normalized dicts compatible with PurchaseOrderStore.save_purchase_order.
+    Only OPEN POs (not closed/cancelled) come back — those are the
+    only ones invoice matching should consider. Returns [] on any error.
+    """
+    if not connection.access_token or not connection.realm_id:
+        return []
+
+    url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+    page_size = 1000
+    start_position = 1
+    all_pos: List[Dict[str, Any]] = []
+
+    def _status_from_qb(po: Dict[str, Any]) -> str:
+        """Map QuickBooks PO state to our POStatus values."""
+        status = str(po.get("POStatus") or "").strip().lower()
+        tx_status = str(po.get("TxnStatus") or "").strip().lower()
+        if status == "closed" or tx_status == "closed":
+            return "closed"
+        # QB doesn't track receipt/invoice progress against POs directly;
+        # match_invoice_to_po advances our copy when the invoice posts.
+        # Treat everything else as "approved" (i.e. matchable).
+        return "approved"
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            while True:
+                query = (
+                    f"SELECT * FROM PurchaseOrder STARTPOSITION {start_position} "
+                    f"MAXRESULTS {page_size}"
+                )
+                response = await client.get(
+                    url,
+                    params={"query": query},
+                    headers=_quickbooks_headers(connection),
+                    timeout=60,
+                )
+                if response.status_code == 401:
+                    logger.warning("QuickBooks token expired during PO list fetch")
+                    break
+                response.raise_for_status()
+                result = response.json()
+                pos = result.get("QueryResponse", {}).get("PurchaseOrder", [])
+                if not pos:
+                    break
+                for po in pos:
+                    vendor_ref = po.get("VendorRef") or {}
+                    lines = []
+                    for li in (po.get("Line") or []):
+                        detail = li.get("ItemBasedExpenseLineDetail") or li.get(
+                            "AccountBasedExpenseLineDetail"
+                        ) or {}
+                        item_ref = detail.get("ItemRef") or {}
+                        acct_ref = detail.get("AccountRef") or {}
+                        lines.append({
+                            "line_id": str(li.get("Id") or ""),
+                            "item_number": str(item_ref.get("value") or ""),
+                            "description": str(li.get("Description") or item_ref.get("name") or acct_ref.get("name") or ""),
+                            "quantity": float(detail.get("Qty") or 0.0),
+                            "unit_price": float(detail.get("UnitPrice") or 0.0),
+                            "gl_code": str(acct_ref.get("value") or ""),
+                        })
+                    all_pos.append({
+                        "po_id": f"qb-po-{po.get('Id')}",
+                        "po_number": str(po.get("DocNumber") or ""),
+                        "vendor_id": str(vendor_ref.get("value") or ""),
+                        "vendor_name": str(vendor_ref.get("name") or ""),
+                        "order_date": str(po.get("TxnDate") or ""),
+                        "expected_delivery": str(po.get("DueDate") or "") or None,
+                        "line_items": lines,
+                        "subtotal": float(po.get("TotalAmt") or 0.0),
+                        "tax_amount": 0.0,
+                        "total_amount": float(po.get("TotalAmt") or 0.0),
+                        "currency": str((po.get("CurrencyRef") or {}).get("value") or "USD"),
+                        "status": _status_from_qb(po),
+                        "requested_by": "quickbooks_sync",
+                        "erp_po_id": str(po.get("Id") or ""),
+                    })
+                if len(pos) < page_size:
+                    break
+                start_position += page_size
+
+        return all_pos
+
+    except Exception as e:
+        logger.error("Failed to fetch QuickBooks PO list: %s", type(e).__name__)
+        return all_pos or []

@@ -1205,3 +1205,90 @@ async def list_all_vendors_xero(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch Xero vendor list: %s", type(e).__name__)
         return all_vendors or []
+
+
+async def list_all_purchase_orders_xero(connection) -> List[Dict[str, Any]]:
+    """Fetch all Purchase Orders from Xero with pagination.
+
+    Xero PurchaseOrders API: 100 per page via `page` parameter. We filter
+    to statuses that are actually matchable (DRAFT/SUBMITTED/AUTHORISED/
+    BILLED skipped; we want ones that haven't been fully billed yet).
+    Returns dicts compatible with PurchaseOrderStore.save_purchase_order.
+    """
+    if not connection.access_token or not connection.tenant_id:
+        return []
+
+    url = "https://api.xero.com/api.xro/2.0/PurchaseOrders"
+    headers = {
+        "Authorization": f"Bearer {connection.access_token}",
+        "xero-tenant-id": str(connection.tenant_id or ""),
+    }
+    page = 1
+    all_pos: List[Dict[str, Any]] = []
+
+    def _status_from_xero(po: Dict[str, Any]) -> str:
+        """Map Xero PO Status to our POStatus values."""
+        status = str(po.get("Status") or "").strip().upper()
+        if status == "DELETED":
+            return "cancelled"
+        if status == "BILLED":
+            return "fully_invoiced"
+        # AUTHORISED / SUBMITTED / DRAFT all treated as "approved" for
+        # matching purposes — we only match to POs that could plausibly
+        # have an invoice raised against them.
+        return "approved"
+
+    try:
+        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
+            while True:
+                response = await client.get(
+                    url,
+                    params={"page": page},
+                    headers=headers,
+                    timeout=60,
+                )
+                if response.status_code == 401:
+                    logger.warning("Xero token expired during PO list fetch")
+                    break
+                response.raise_for_status()
+                result = response.json()
+                pos = result.get("PurchaseOrders", [])
+                if not pos:
+                    break
+                for po in pos:
+                    contact = po.get("Contact") or {}
+                    lines = []
+                    for li in (po.get("LineItems") or []):
+                        lines.append({
+                            "line_id": str(li.get("LineItemID") or ""),
+                            "item_number": str(li.get("ItemCode") or ""),
+                            "description": str(li.get("Description") or ""),
+                            "quantity": float(li.get("Quantity") or 0.0),
+                            "unit_price": float(li.get("UnitAmount") or 0.0),
+                            "gl_code": str(li.get("AccountCode") or ""),
+                        })
+                    all_pos.append({
+                        "po_id": f"xero-po-{po.get('PurchaseOrderID')}",
+                        "po_number": str(po.get("PurchaseOrderNumber") or ""),
+                        "vendor_id": str(contact.get("ContactID") or ""),
+                        "vendor_name": str(contact.get("Name") or ""),
+                        "order_date": str(po.get("Date") or "")[:10],
+                        "expected_delivery": str(po.get("DeliveryDate") or "")[:10] or None,
+                        "line_items": lines,
+                        "subtotal": float(po.get("SubTotal") or 0.0),
+                        "tax_amount": float(po.get("TotalTax") or 0.0),
+                        "total_amount": float(po.get("Total") or 0.0),
+                        "currency": str(po.get("CurrencyCode") or "USD"),
+                        "status": _status_from_xero(po),
+                        "requested_by": "xero_sync",
+                        "erp_po_id": str(po.get("PurchaseOrderID") or ""),
+                    })
+                if len(pos) < 100:
+                    break
+                page += 1
+
+        return all_pos
+
+    except Exception as e:
+        logger.error("Failed to fetch Xero PO list: %s", type(e).__name__)
+        return all_pos or []

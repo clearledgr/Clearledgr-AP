@@ -514,6 +514,14 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _sync_vendor_master_data(org_id)
 
+            # Daily Purchase Order sync at 3am UTC — pulls open POs
+            # from the org's ERP into our DB so three-way match has
+            # something to match against. Runs AFTER vendor sync so
+            # POs reference vendors we already know about.
+            if tick % 4 == 0 and now.hour == 3:
+                for org_id in org_ids:
+                    await _sync_purchase_orders(org_id)
+
             # Scheduled report delivery — check every hour
             if tick % 4 == 0:
                 for org_id in org_ids:
@@ -1808,6 +1816,39 @@ async def _check_period_end(org_id: str):
             )
     except Exception as e:
         logger.error("Period-end detection failed: %s", e)
+
+
+async def _sync_purchase_orders(org_id: str):
+    """Pull all open POs from the org's ERP into our DB (daily).
+
+    Powers 3-way match. ERPs without a PO fetcher wired (NetSuite / SAP
+    at time of writing) come back as no-ops; errors are logged but
+    never crash the background loop.
+    """
+    try:
+        from clearledgr.integrations.erp_router import sync_purchase_orders_from_erp
+
+        summary = await sync_purchase_orders_from_erp(org_id)
+        fetched = summary.get("pos_fetched", 0)
+        upserted = summary.get("pos_upserted", 0)
+        errors = summary.get("errors") or []
+        if fetched:
+            logger.info(
+                "PO sync for org=%s erp=%s: %d fetched, %d upserted, %d error(s)",
+                org_id, summary.get("erp_type"), fetched, upserted, len(errors),
+            )
+        # Only alert if there was a substantive error — a missing
+        # fetcher (no_po_fetcher_for_netsuite) is expected and shouldn't
+        # page the team.
+        fatal = [e for e in errors if not str(e).startswith(("no_po_fetcher_for_", "no_erp_connected"))]
+        if fatal:
+            await _slack_alert(
+                f":warning: *PO Sync had errors* (org={org_id}, erp={summary.get('erp_type')}): "
+                + "; ".join(str(e) for e in fatal[:3]),
+                organization_id=org_id,
+            )
+    except Exception as e:
+        logger.error("PO sync failed for org=%s: %s", org_id, e)
 
 
 async def _sync_vendor_master_data(org_id: str):
