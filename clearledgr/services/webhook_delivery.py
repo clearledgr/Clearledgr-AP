@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,13 @@ async def deliver_webhook(
         headers["X-Clearledgr-Signature"] = f"sha256={sig}"
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                content=body_bytes,
-                headers=headers,
-                timeout=WEBHOOK_TIMEOUT,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            content=body_bytes,
+            headers=headers,
+            timeout=WEBHOOK_TIMEOUT,
+        )
         if 200 <= response.status_code < 300:
             logger.debug("[Webhook] Delivered %s to %s (HTTP %d)", event_type, url, response.status_code)
             return True

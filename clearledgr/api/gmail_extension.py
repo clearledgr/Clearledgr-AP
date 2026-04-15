@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 import httpx
+from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
 from pydantic import BaseModel, Field
 
@@ -901,22 +902,22 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
     profile_email: Optional[str] = None
     validation_error: Optional[str] = None
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        profile_response = await client.get(_gmail_profile_url(), headers=headers)
-        if profile_response.status_code < 400:
-            profile = profile_response.json()
-            profile_email = str(profile.get("emailAddress") or "").strip() or None
+    client = get_http_client()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    profile_response = await client.get(_gmail_profile_url(), headers=headers)
+    if profile_response.status_code < 400:
+        profile = profile_response.json()
+        profile_email = str(profile.get("emailAddress") or "").strip() or None
+    else:
+        userinfo_response = await client.get(_google_userinfo_url(), headers=headers)
+        if userinfo_response.status_code < 400:
+            payload = userinfo_response.json()
+            profile_email = str(payload.get("email") or "").strip() or None
         else:
-            userinfo_response = await client.get(_google_userinfo_url(), headers=headers)
-            if userinfo_response.status_code < 400:
-                payload = userinfo_response.json()
-                profile_email = str(payload.get("email") or "").strip() or None
-            else:
-                validation_error = (
-                    f"profile_status={profile_response.status_code},"
-                    f"userinfo_status={userinfo_response.status_code}"
-                )
+            validation_error = (
+                f"profile_status={profile_response.status_code},"
+                f"userinfo_status={userinfo_response.status_code}"
+            )
 
     if not profile_email:
         detail = "invalid_google_access_token"

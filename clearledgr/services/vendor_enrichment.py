@@ -20,6 +20,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -44,31 +45,31 @@ async def _companies_house_search(
     headers: Dict[str, str] = {"Accept": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            if api_key:
-                resp = await client.get(
-                    url, params=params, headers=headers, auth=(api_key, "")
-                )
-            else:
-                resp = await client.get(url, params=params, headers=headers)
+        client = get_http_client()
+        if api_key:
+            resp = await client.get(
+                url, params=params, headers=headers, auth=(api_key, "")
+            )
+        else:
+            resp = await client.get(url, params=params, headers=headers, timeout=_TIMEOUT)
 
-            if resp.status_code != 200:
-                logger.warning(
-                    "[vendor_enrichment] Companies House search returned %s for %r",
-                    resp.status_code, name,
-                )
-                return None
+        if resp.status_code != 200:
+            logger.warning(
+                "[vendor_enrichment] Companies House search returned %s for %r",
+                resp.status_code, name,
+            )
+            return None
 
-            data = resp.json()
-            items = data.get("items") or []
-            if not items:
-                logger.info(
-                    "[vendor_enrichment] Companies House search: no results for %r",
-                    name,
-                )
-                return None
+        data = resp.json()
+        items = data.get("items") or []
+        if not items:
+            logger.info(
+                "[vendor_enrichment] Companies House search: no results for %r",
+                name,
+            )
+            return None
 
-            return items[0]
+        return items[0]
 
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
         logger.warning(
@@ -88,20 +89,20 @@ async def _companies_house_by_number(
     headers: Dict[str, str] = {"Accept": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            if api_key:
-                resp = await client.get(url, headers=headers, auth=(api_key, ""))
-            else:
-                resp = await client.get(url, headers=headers)
+        client = get_http_client()
+        if api_key:
+            resp = await client.get(url, headers=headers, auth=(api_key, ""))
+        else:
+            resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
 
-            if resp.status_code != 200:
-                logger.warning(
-                    "[vendor_enrichment] Companies House company/%s returned %s",
-                    company_number, resp.status_code,
-                )
-                return None
+        if resp.status_code != 200:
+            logger.warning(
+                "[vendor_enrichment] Companies House company/%s returned %s",
+                company_number, resp.status_code,
+            )
+            return None
 
-            return resp.json()
+        return resp.json()
 
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
         logger.warning(
@@ -121,23 +122,23 @@ async def _companies_house_officers(
     headers: Dict[str, str] = {"Accept": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            if api_key:
-                resp = await client.get(url, headers=headers, auth=(api_key, ""))
-            else:
-                resp = await client.get(url, headers=headers)
+        client = get_http_client()
+        if api_key:
+            resp = await client.get(url, headers=headers, auth=(api_key, ""))
+        else:
+            resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
 
-            if resp.status_code != 200:
-                return []
+        if resp.status_code != 200:
+            return []
 
-            data = resp.json()
-            items = data.get("items") or []
-            # Only include active officers (no resigned_on date).
-            return [
-                item.get("name", "")
-                for item in items
-                if item.get("name") and not item.get("resigned_on")
-            ]
+        data = resp.json()
+        items = data.get("items") or []
+        # Only include active officers (no resigned_on date).
+        return [
+            item.get("name", "")
+            for item in items
+            if item.get("name") and not item.get("resigned_on")
+        ]
 
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
         logger.warning(
@@ -258,38 +259,38 @@ async def lookup_hmrc_vat(vat_number: str) -> Dict[str, Any]:
     headers = {"Accept": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(url, headers=headers)
+        client = get_http_client()
+        resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
 
-            if resp.status_code != 200:
-                logger.warning(
-                    "[vendor_enrichment] HMRC VAT lookup returned %s for %s",
-                    resp.status_code, cleaned,
-                )
-                return result
-
-            data = resp.json()
-            target = data.get("target") or {}
-
-            result["vat_number"] = cleaned
-            result["target_name"] = target.get("name")
-            result["processing_date"] = data.get("processingDate")
-
-            # HMRC address is a dict with line1..line5 + postcode + countryCode.
-            addr = target.get("address") or {}
-            addr_parts = [
-                addr.get(f"line{i}") for i in range(1, 6)
-            ] + [addr.get("postcode"), addr.get("countryCode")]
-            formatted = ", ".join(
-                p.strip() for p in addr_parts if p and str(p).strip()
+        if resp.status_code != 200:
+            logger.warning(
+                "[vendor_enrichment] HMRC VAT lookup returned %s for %s",
+                resp.status_code, cleaned,
             )
-            if formatted:
-                result["target_address"] = formatted
+            return result
 
-            result["fields_populated"] = [
-                k for k in ("target_name", "target_address", "processing_date", "vat_number")
-                if k in result and result[k]
-            ]
+        data = resp.json()
+        target = data.get("target") or {}
+
+        result["vat_number"] = cleaned
+        result["target_name"] = target.get("name")
+        result["processing_date"] = data.get("processingDate")
+
+        # HMRC address is a dict with line1..line5 + postcode + countryCode.
+        addr = target.get("address") or {}
+        addr_parts = [
+            addr.get(f"line{i}") for i in range(1, 6)
+        ] + [addr.get("postcode"), addr.get("countryCode")]
+        formatted = ", ".join(
+            p.strip() for p in addr_parts if p and str(p).strip()
+        )
+        if formatted:
+            result["target_address"] = formatted
+
+        result["fields_populated"] = [
+            k for k in ("target_name", "target_address", "processing_date", "vat_number")
+            if k in result and result[k]
+        ]
 
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
         logger.warning(

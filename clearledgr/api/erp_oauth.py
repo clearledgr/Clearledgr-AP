@@ -1,3 +1,4 @@
+from clearledgr.core.http_client import get_http_client
 """
 ERP OAuth API Endpoints
 
@@ -291,17 +292,17 @@ async def connect_sap(request: SAPConnectRequest):
     # Test connection
     import httpx
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{request.base_url}/$metadata",
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Accept": "application/json",
-                },
-                timeout=30,
-            )
-            if response.status_code not in [200, 401]:  # 401 might mean auth is different
-                response.raise_for_status()
+        client = get_http_client()
+        response = await client.get(
+            f"{request.base_url}/$metadata",
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+        if response.status_code not in [200, 401]:  # 401 might mean auth is different
+            response.raise_for_status()
     except Exception as e:
         logger.error(f"SAP connection test failed: {e}")
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")

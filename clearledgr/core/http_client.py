@@ -93,3 +93,16 @@ async def close_http_client() -> None:
             await client.aclose()
         except Exception as exc:  # noqa: BLE001
             logger.warning("[http_client] aclose raised: %s", exc)
+
+
+def _reset_for_testing() -> None:
+    """Drop the cached shared client without awaiting aclose.
+
+    Tests that patch ``httpx.AsyncClient`` to inject mocks need the
+    next ``get_http_client()`` call to hit the patched constructor,
+    which means the cached instance has to be cleared first. Using
+    the async ``close_http_client`` would need an event loop; this
+    synchronous variant is a no-op for test setup.
+    """
+    global _shared_client
+    _shared_client = None

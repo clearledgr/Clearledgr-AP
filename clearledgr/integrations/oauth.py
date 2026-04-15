@@ -18,6 +18,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -133,20 +134,20 @@ async def exchange_quickbooks_code(code: str, realm_id: str) -> Dict[str, Any]:
     """Exchange QuickBooks authorization code for tokens."""
     config = get_quickbooks_config()
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            config.token_url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": config.redirect_uri,
-            },
-            auth=(config.client_id, config.client_secret),
-            headers={"Accept": "application/json"},
-        )
-        response.raise_for_status()
-        tokens = response.json()
-    
+    client = get_http_client()
+    response = await client.post(
+        config.token_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": config.redirect_uri,
+        },
+        auth=(config.client_id, config.client_secret),
+        headers={"Accept": "application/json"},
+    )
+    response.raise_for_status()
+    tokens = response.json()
+
     return {
         "access_token": tokens.get("access_token"),
         "refresh_token": tokens.get("refresh_token"),
@@ -160,32 +161,32 @@ async def exchange_xero_code(code: str) -> Dict[str, Any]:
     """Exchange Xero authorization code for tokens."""
     config = get_xero_config()
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            config.token_url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": config.redirect_uri,
-            },
-            auth=(config.client_id, config.client_secret),
-            headers={"Accept": "application/json"},
-        )
-        response.raise_for_status()
-        tokens = response.json()
-    
+    client = get_http_client()
+    response = await client.post(
+        config.token_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": config.redirect_uri,
+        },
+        auth=(config.client_id, config.client_secret),
+        headers={"Accept": "application/json"},
+    )
+    response.raise_for_status()
+    tokens = response.json()
+
     # Get tenant ID (Xero organization)
     tenant_id = None
-    async with httpx.AsyncClient() as client:
-        conn_response = await client.get(
-            "https://api.xero.com/connections",
-            headers={"Authorization": f"Bearer {tokens.get('access_token')}"},
-        )
-        if conn_response.status_code == 200:
-            connections = conn_response.json()
-            if connections:
-                tenant_id = connections[0].get("tenantId")
-    
+    client = get_http_client()
+    conn_response = await client.get(
+        "https://api.xero.com/connections",
+        headers={"Authorization": f"Bearer {tokens.get('access_token')}"},
+    )
+    if conn_response.status_code == 200:
+        connections = conn_response.json()
+        if connections:
+            tenant_id = connections[0].get("tenantId")
+
     return {
         "access_token": tokens.get("access_token"),
         "refresh_token": tokens.get("refresh_token"),
@@ -199,34 +200,34 @@ async def refresh_quickbooks_token(refresh_token: str) -> Dict[str, Any]:
     """Refresh QuickBooks OAuth token."""
     config = get_quickbooks_config()
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            config.token_url,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            },
-            auth=(config.client_id, config.client_secret),
-        )
-        response.raise_for_status()
-        return response.json()
+    client = get_http_client()
+    response = await client.post(
+        config.token_url,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        auth=(config.client_id, config.client_secret),
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 async def refresh_xero_token(refresh_token: str) -> Dict[str, Any]:
     """Refresh Xero OAuth token."""
     config = get_xero_config()
     
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            config.token_url,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            },
-            auth=(config.client_id, config.client_secret),
-        )
-        response.raise_for_status()
-        return response.json()
+    client = get_http_client()
+    response = await client.post(
+        config.token_url,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        auth=(config.client_id, config.client_secret),
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 # ==================== CONNECTION STORAGE ====================

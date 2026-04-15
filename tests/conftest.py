@@ -23,6 +23,26 @@ def allow_in_memory_rate_limit_backend_for_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def reset_shared_http_client():
+    """Drop the cached shared httpx.AsyncClient between tests.
+
+    Many tests monkey-patch ``httpx.AsyncClient`` (via module-alias
+    patches like ``clearledgr.integrations.erp_router.httpx.AsyncClient``)
+    to inject mocks for outbound HTTP calls. The shared-client module
+    caches one AsyncClient instance for the process lifetime; if that
+    cache got populated before the patch (either by production import
+    path or an earlier test), patching the class does nothing to the
+    already-created instance. Clearing the cache before and after each
+    test means the next ``get_http_client()`` call hits the patched
+    constructor and the mock intercepts.
+    """
+    from clearledgr.core.http_client import _reset_for_testing
+    _reset_for_testing()
+    yield
+    _reset_for_testing()
+
+
+@pytest.fixture(autouse=True)
 def reset_rate_limit_store():
     """Reset the in-memory rate-limit counter before every test.
 

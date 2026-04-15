@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
@@ -239,35 +240,35 @@ async def exchange_code_for_tokens(code: str) -> OutlookToken:
     tenant = config["tenant_id"]
     token_url = MS_TOKEN_URL.format(tenant=tenant)
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            token_url,
-            data={
-                "client_id": config["client_id"],
-                "client_secret": config["client_secret"],
-                "code": code,
-                "redirect_uri": config["redirect_uri"],
-                "grant_type": "authorization_code",
-                "scope": " ".join(OUTLOOK_SCOPES),
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
+    client = get_http_client()
+    response = await client.post(
+        token_url,
+        data={
+            "client_id": config["client_id"],
+            "client_secret": config["client_secret"],
+            "code": code,
+            "redirect_uri": config["redirect_uri"],
+            "grant_type": "authorization_code",
+            "scope": " ".join(OUTLOOK_SCOPES),
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
 
     access_token = data["access_token"]
     refresh_token = data.get("refresh_token", "")
     expires_in = data.get("expires_in", 3600)
 
     # Resolve user identity
-    async with httpx.AsyncClient() as client:
-        profile_resp = await client.get(
-            f"{GRAPH_API_BASE}/me",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-        profile_resp.raise_for_status()
-        profile = profile_resp.json()
+    client = get_http_client()
+    profile_resp = await client.get(
+        f"{GRAPH_API_BASE}/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    profile_resp.raise_for_status()
+    profile = profile_resp.json()
 
     email = profile.get("mail") or profile.get("userPrincipalName") or ""
     user_id = profile.get("id") or email
@@ -320,20 +321,20 @@ class OutlookAPIClient:
         tenant = config["tenant_id"]
         token_url = MS_TOKEN_URL.format(tenant=tenant)
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                token_url,
-                data={
-                    "client_id": config["client_id"],
-                    "client_secret": config["client_secret"],
-                    "refresh_token": self._token.refresh_token,
-                    "grant_type": "refresh_token",
-                    "scope": " ".join(OUTLOOK_SCOPES),
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = get_http_client()
+        response = await client.post(
+            token_url,
+            data={
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "refresh_token": self._token.refresh_token,
+                "grant_type": "refresh_token",
+                "scope": " ".join(OUTLOOK_SCOPES),
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         self._token = OutlookToken(
             user_id=self._token.user_id,
@@ -375,36 +376,36 @@ class OutlookAPIClient:
             params["$filter"] = filter_query
 
         url = f"{GRAPH_API_BASE}/me/mailFolders/{folder}/messages"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url, headers=self._headers(), params=params, timeout=30,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.get(
+            url, headers=self._headers(), params=params, timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def get_message(self, message_id: str) -> OutlookMessage:
         """Get a specific message by ID with full body and attachment metadata."""
         url = f"{GRAPH_API_BASE}/me/messages/{message_id}"
         params = {"$expand": "attachments"}
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url, headers=self._headers(), params=params, timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = get_http_client()
+        response = await client.get(
+            url, headers=self._headers(), params=params, timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         return self._parse_message(data)
 
     async def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
         """Download an attachment's raw bytes."""
         url = f"{GRAPH_API_BASE}/me/messages/{message_id}/attachments/{attachment_id}"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url, headers=self._headers(), timeout=60,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = get_http_client()
+        response = await client.get(
+            url, headers=self._headers(), timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         content_bytes = data.get("contentBytes", "")
         return base64.b64decode(content_bytes) if content_bytes else b""
@@ -426,44 +427,44 @@ class OutlookAPIClient:
             message["conversationId"] = conversation_id
 
         url = f"{GRAPH_API_BASE}/me/sendMail"
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=self._headers(),
-                json={"message": message, "saveToSentItems": True},
-                timeout=30,
-            )
-            response.raise_for_status()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            headers=self._headers(),
+            json={"message": message, "saveToSentItems": True},
+            timeout=30,
+        )
+        response.raise_for_status()
         return {"status": "sent", "to": to}
 
     async def create_category(self, name: str, color: str = "preset0") -> Dict[str, Any]:
         """Create an Outlook category (equivalent of Gmail label)."""
         url = f"{GRAPH_API_BASE}/me/outlook/masterCategories"
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=self._headers(),
-                json={"displayName": name, "color": color},
-                timeout=15,
-            )
-            if response.status_code == 409:
-                return {"displayName": name, "exists": True}
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            headers=self._headers(),
+            json={"displayName": name, "color": color},
+            timeout=15,
+        )
+        if response.status_code == 409:
+            return {"displayName": name, "exists": True}
+        response.raise_for_status()
+        return response.json()
 
     async def add_category(self, message_id: str, category_name: str) -> None:
         """Add a category to a message (equivalent of Gmail add_label)."""
         msg = await self.get_message(message_id)
         categories = list(set(msg.categories + [category_name]))
         url = f"{GRAPH_API_BASE}/me/messages/{message_id}"
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                url,
-                headers=self._headers(),
-                json={"categories": categories},
-                timeout=15,
-            )
-            response.raise_for_status()
+        client = get_http_client()
+        response = await client.patch(
+            url,
+            headers=self._headers(),
+            json={"categories": categories},
+            timeout=15,
+        )
+        response.raise_for_status()
 
     # ------------------------------------------------------------------
     # Change notification subscription (equivalent of Gmail Watch)
@@ -486,12 +487,12 @@ class OutlookAPIClient:
             ).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
             "clientState": client_state,
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url, headers=self._headers(), json=payload, timeout=30,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(
+            url, headers=self._headers(), json=payload, timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def renew_subscription(self, subscription_id: str, expiration_minutes: int = 4230) -> Dict[str, Any]:
         """Renew an existing subscription."""
@@ -501,22 +502,22 @@ class OutlookAPIClient:
                 _utc_now() + timedelta(minutes=expiration_minutes)
             ).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                url, headers=self._headers(), json=payload, timeout=30,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.patch(
+            url, headers=self._headers(), json=payload, timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def delete_subscription(self, subscription_id: str) -> None:
         """Delete a subscription."""
         url = f"{GRAPH_API_BASE}/subscriptions/{subscription_id}"
-        async with httpx.AsyncClient() as client:
-            response = await client.delete(
-                url, headers=self._headers(), timeout=15,
-            )
-            if response.status_code != 404:
-                response.raise_for_status()
+        client = get_http_client()
+        response = await client.delete(
+            url, headers=self._headers(), timeout=15,
+        )
+        if response.status_code != 404:
+            response.raise_for_status()
 
     # ------------------------------------------------------------------
     # Helpers

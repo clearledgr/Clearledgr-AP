@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 from decimal import Decimal, ROUND_HALF_UP
 from clearledgr.core.money import Q2, money_to_float, to_decimal
@@ -194,27 +195,27 @@ async def post_to_sap(
     url = f"{connection.base_url}/JournalEntries"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=sap_entry,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=60,  # SAP can be slow
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=sap_entry,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=60,  # SAP can be slow
+        )
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            entry_num = result.get("JdtNum") or result.get("DocEntry")
-            logger.info(f"Posted to SAP: {entry_num}")
-            return {
-                "status": "success",
-                "erp": "sap",
-                "entry_id": entry_num,
-            }
+        entry_num = result.get("JdtNum") or result.get("DocEntry")
+        logger.info(f"Posted to SAP: {entry_num}")
+        return {
+            "status": "success",
+            "erp": "sap",
+            "entry_id": entry_num,
+        }
 
     except httpx.HTTPStatusError as e:
         logger.error("SAP OData error: %s", e.response.status_code)
@@ -320,32 +321,32 @@ async def post_bill_to_sap(
     url = f"{connection.base_url}/PurchaseInvoices"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
-            if session.get("status") != "success":
-                return session
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+        if session.get("status") != "success":
+            return session
 
-            response = await client.post(
-                url,
-                json=sap_bill,
-                headers={**session["headers"], "Content-Type": "application/json"},
-                timeout=60,
-            )
+        response = await client.post(
+            url,
+            json=sap_bill,
+            headers={**session["headers"], "Content-Type": "application/json"},
+            timeout=60,
+        )
 
-            if response.status_code == 401:
-                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+        if response.status_code == 401:
+            return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            doc_entry = result.get("DocEntry")
-            logger.info("Posted A/P Invoice to SAP: %s", doc_entry)
-            return {
-                "status": "success",
-                "erp": "sap",
-                "bill_id": doc_entry,
-                "doc_num": result.get("DocNum"),
-            }
+        doc_entry = result.get("DocEntry")
+        logger.info("Posted A/P Invoice to SAP: %s", doc_entry)
+        return {
+            "status": "success",
+            "erp": "sap",
+            "bill_id": doc_entry,
+            "doc_num": result.get("DocNum"),
+        }
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -448,71 +449,71 @@ async def reverse_bill_from_sap(
     url = f"{connection.base_url}/PurchaseInvoices({bill_ref})/Cancel"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(
-                connection, client, fetch_csrf_for=url
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(
+            connection, client, fetch_csrf_for=url
+        )
+        if session.get("status") != "success":
+            return session
+
+        response = await client.post(
+            url,
+            headers={**session["headers"], "Content-Type": "application/json"},
+            timeout=60,
+        )
+
+        if response.status_code == 401:
+            return {
+                "status": "error",
+                "erp": "sap",
+                "reference_id": erp_reference,
+                "reversal_method": "cancel_document",
+                "reason": "authentication_failed",
+                "needs_reauth": True,
+            }
+
+        if response.status_code == 404:
+            return {
+                "status": "already_reversed",
+                "erp": "sap",
+                "reference_id": erp_reference,
+                "reversal_method": "cancel_document",
+                "reversal_ref": None,
+                "reason": "bill_not_found_in_erp",
+            }
+
+        # SAP Cancel typically returns 204 No Content on success. Some
+        # versions return 200 with a body containing the new DocEntry
+        # of the cancellation document.
+        if response.status_code in (200, 204):
+            cancellation_doc_entry: Optional[str] = None
+            try:
+                if response.status_code == 200 and response.content:
+                    body = response.json() or {}
+                    if isinstance(body, dict):
+                        cancellation_doc_entry = (
+                            body.get("DocEntry")
+                            or body.get("CancellationDocEntry")
+                        )
+                        if cancellation_doc_entry is not None:
+                            cancellation_doc_entry = str(cancellation_doc_entry)
+            except Exception:
+                pass
+
+            logger.info(
+                "Cancelled SAP A/P Invoice %s (reason=%s, cancel_doc=%s)",
+                erp_reference, reason, cancellation_doc_entry,
             )
-            if session.get("status") != "success":
-                return session
+            return {
+                "status": "success",
+                "erp": "sap",
+                "reference_id": erp_reference,
+                "reversal_method": "cancel_document",
+                "reversal_ref": cancellation_doc_entry,
+                "erp_status": "Cancelled",
+            }
 
-            response = await client.post(
-                url,
-                headers={**session["headers"], "Content-Type": "application/json"},
-                timeout=60,
-            )
-
-            if response.status_code == 401:
-                return {
-                    "status": "error",
-                    "erp": "sap",
-                    "reference_id": erp_reference,
-                    "reversal_method": "cancel_document",
-                    "reason": "authentication_failed",
-                    "needs_reauth": True,
-                }
-
-            if response.status_code == 404:
-                return {
-                    "status": "already_reversed",
-                    "erp": "sap",
-                    "reference_id": erp_reference,
-                    "reversal_method": "cancel_document",
-                    "reversal_ref": None,
-                    "reason": "bill_not_found_in_erp",
-                }
-
-            # SAP Cancel typically returns 204 No Content on success. Some
-            # versions return 200 with a body containing the new DocEntry
-            # of the cancellation document.
-            if response.status_code in (200, 204):
-                cancellation_doc_entry: Optional[str] = None
-                try:
-                    if response.status_code == 200 and response.content:
-                        body = response.json() or {}
-                        if isinstance(body, dict):
-                            cancellation_doc_entry = (
-                                body.get("DocEntry")
-                                or body.get("CancellationDocEntry")
-                            )
-                            if cancellation_doc_entry is not None:
-                                cancellation_doc_entry = str(cancellation_doc_entry)
-                except Exception:
-                    pass
-
-                logger.info(
-                    "Cancelled SAP A/P Invoice %s (reason=%s, cancel_doc=%s)",
-                    erp_reference, reason, cancellation_doc_entry,
-                )
-                return {
-                    "status": "success",
-                    "erp": "sap",
-                    "reference_id": erp_reference,
-                    "reversal_method": "cancel_document",
-                    "reversal_ref": cancellation_doc_entry,
-                    "erp_status": "Cancelled",
-                }
-
-            response.raise_for_status()
+        response.raise_for_status()
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -621,30 +622,30 @@ async def get_purchase_invoice_sap(
 
     url = f"{connection.base_url}/PurchaseInvoices({bill_ref})"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client)
-            if session.get("status") != "success":
-                return session
-            response = await client.get(
-                url,
-                headers=session["headers"],
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
-            response.raise_for_status()
-            payload = response.json()
-            document_lines = payload.get("DocumentLines")
-            return {
-                "status": "success",
-                "erp": "sap",
-                "bill_id": str(payload.get("DocEntry") or bill_ref),
-                "vendor_id": str(payload.get("CardCode") or "").strip() or None,
-                "doc_num": payload.get("DocNum"),
-                "doc_currency": payload.get("DocCurrency"),
-                "doc_total": payload.get("DocTotal"),
-                "document_lines": document_lines if isinstance(document_lines, list) else [],
-            }
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            return session
+        response = await client.get(
+            url,
+            headers=session["headers"],
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+        response.raise_for_status()
+        payload = response.json()
+        document_lines = payload.get("DocumentLines")
+        return {
+            "status": "success",
+            "erp": "sap",
+            "bill_id": str(payload.get("DocEntry") or bill_ref),
+            "vendor_id": str(payload.get("CardCode") or "").strip() or None,
+            "doc_num": payload.get("DocNum"),
+            "doc_currency": payload.get("DocCurrency"),
+            "doc_total": payload.get("DocTotal"),
+            "document_lines": document_lines if isinstance(document_lines, list) else [],
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("SAP purchase invoice GET HTTP error: status=%d", status_code)
@@ -685,27 +686,27 @@ async def find_credit_note_sap(
         "$select": "DocEntry,DocNum,NumAtCard,DocTotal",
     }
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client)
-            if session.get("status") != "success":
-                return None
-            response = await client.get(
-                url,
-                params=params,
-                headers=session["headers"],
-                timeout=60,
-            )
-            response.raise_for_status()
-            items = response.json().get("value", [])
-            if items:
-                row = items[0]
-                return {
-                    "credit_note_id": str(row.get("DocEntry") or ""),
-                    "credit_note_number": row.get("NumAtCard"),
-                    "doc_num": row.get("DocNum"),
-                    "amount": row.get("DocTotal"),
-                    "erp": "sap",
-                }
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            return None
+        response = await client.get(
+            url,
+            params=params,
+            headers=session["headers"],
+            timeout=60,
+        )
+        response.raise_for_status()
+        items = response.json().get("value", [])
+        if items:
+            row = items[0]
+            return {
+                "credit_note_id": str(row.get("DocEntry") or ""),
+                "credit_note_number": row.get("NumAtCard"),
+                "doc_num": row.get("DocNum"),
+                "amount": row.get("DocTotal"),
+                "erp": "sap",
+            }
     except Exception as e:
         logger.error("SAP credit note lookup error: %s", e)
     return None
@@ -846,34 +847,34 @@ async def apply_credit_note_to_sap(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
-            if session.get("status") != "success":
-                return session
-            response = await client.post(
-                url,
-                json=payload,
-                headers={**session["headers"], "Content-Type": "application/json"},
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
-            response.raise_for_status()
-            try:
-                result = response.json()
-            except Exception:
-                result = {}
-            credit_id = result.get("DocEntry") or result.get("DocNum") or application.credit_note_number
-            return {
-                "status": "success",
-                "erp": "sap",
-                "erp_reference": str(credit_id),
-                "credit_note_reference": str(result.get("DocEntry") or credit_id),
-                "credit_note_number": application.credit_note_number,
-                "target_erp_reference": target_ref,
-                "amount": round(float(application.amount or 0.0), 2),
-                "idempotency_key": idempotency_key,
-            }
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+        if session.get("status") != "success":
+            return session
+        response = await client.post(
+            url,
+            json=payload,
+            headers={**session["headers"], "Content-Type": "application/json"},
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+        response.raise_for_status()
+        try:
+            result = response.json()
+        except Exception:
+            result = {}
+        credit_id = result.get("DocEntry") or result.get("DocNum") or application.credit_note_number
+        return {
+            "status": "success",
+            "erp": "sap",
+            "erp_reference": str(credit_id),
+            "credit_note_reference": str(result.get("DocEntry") or credit_id),
+            "credit_note_number": application.credit_note_number,
+            "target_erp_reference": target_ref,
+            "amount": round(float(application.amount or 0.0), 2),
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("SAP credit memo HTTP error: status=%d", status_code)
@@ -969,34 +970,34 @@ async def apply_settlement_to_sap(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
-            if session.get("status") != "success":
-                return session
-            response = await client.post(
-                url,
-                json=payload,
-                headers={**session["headers"], "Content-Type": "application/json"},
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
-            response.raise_for_status()
-            try:
-                result = response.json()
-            except Exception:
-                result = {}
-            payment_id = result.get("DocEntry") or result.get("DocNum") or application.source_reference or target_ref
-            return {
-                "status": "success",
-                "erp": "sap",
-                "erp_reference": str(payment_id),
-                "payment_id": str(payment_id),
-                "target_erp_reference": target_ref,
-                "amount": round(float(application.amount or 0.0), 2),
-                "source_reference": application.source_reference,
-                "idempotency_key": idempotency_key,
-            }
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client, fetch_csrf_for=url)
+        if session.get("status") != "success":
+            return session
+        response = await client.post(
+            url,
+            json=payload,
+            headers={**session["headers"], "Content-Type": "application/json"},
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "sap", "reason": "authentication_failed", "needs_reauth": True}
+        response.raise_for_status()
+        try:
+            result = response.json()
+        except Exception:
+            result = {}
+        payment_id = result.get("DocEntry") or result.get("DocNum") or application.source_reference or target_ref
+        return {
+            "status": "success",
+            "erp": "sap",
+            "erp_reference": str(payment_id),
+            "payment_id": str(payment_id),
+            "target_erp_reference": target_ref,
+            "amount": round(float(application.amount or 0.0), 2),
+            "source_reference": application.source_reference,
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("SAP vendor payment HTTP error: status=%d", status_code)
@@ -1039,24 +1040,24 @@ async def create_vendor_sap(
     url = f"{connection.base_url}/BusinessPartners"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=sap_bp,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=sap_bp,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            return {
-                "status": "success",
-                "vendor_id": result.get("CardCode"),
-                "name": result.get("CardName"),
-            }
+        return {
+            "status": "success",
+            "vendor_id": result.get("CardCode"),
+            "name": result.get("CardName"),
+        }
     except Exception as e:
         logger.error("SAP vendor creation error: %s", type(e).__name__)
         return {"status": "error", "erp": "sap", "reason": "vendor_creation_failed"}
@@ -1083,24 +1084,24 @@ async def find_vendor_sap(
     params = {"$filter": " and ".join(filters), "$top": 1}
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params=params,
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            items = result.get("value", [])
-            if items:
-                v = items[0]
-                return {
-                    "vendor_id": v.get("CardCode"),
-                    "name": v.get("CardName"),
-                    "email": v.get("EmailAddress"),
-                }
+        items = result.get("value", [])
+        if items:
+            v = items[0]
+            return {
+                "vendor_id": v.get("CardCode"),
+                "name": v.get("CardName"),
+                "email": v.get("EmailAddress"),
+            }
     except Exception as e:
         logger.error(f"SAP vendor search error: {e}")
 
@@ -1126,23 +1127,23 @@ async def find_bill_sap(
         "$select": "DocEntry,NumAtCard,DocTotal",
     }
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params=params,
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=60,
-            )
-            response.raise_for_status()
-            items = response.json().get("value", [])
-            if items:
-                row = items[0]
-                return {
-                    "bill_id": str(row.get("DocEntry")),
-                    "doc_number": row.get("NumAtCard"),
-                    "amount": row.get("DocTotal"),
-                    "erp": "sap",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=60,
+        )
+        response.raise_for_status()
+        items = response.json().get("value", [])
+        if items:
+            row = items[0]
+            return {
+                "bill_id": str(row.get("DocEntry")),
+                "doc_number": row.get("NumAtCard"),
+                "amount": row.get("DocTotal"),
+                "erp": "sap",
+            }
     except Exception as e:
         logger.error("SAP bill lookup error: %s", e)
     return None
@@ -1172,10 +1173,10 @@ async def _attach_to_sap(
             "Override": "tNO",
         }],
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Create attachment record
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
+    client = get_http_client()
+    # Create attachment record
+    resp = await client.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
     return {"attached": True, "erp": "sap"}
 
 
@@ -1198,71 +1199,71 @@ async def get_payment_status_sap(
 
     url = f"{connection.base_url}/PurchaseInvoices({bill_ref})"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client)
-            if session.get("status") != "success":
-                return {"paid": False, "error": session.get("reason", "session_failed")}
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            return {"paid": False, "error": session.get("reason", "session_failed")}
 
-            response = await client.get(
-                url,
-                headers=session["headers"],
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
+        response = await client.get(
+            url,
+            headers=session["headers"],
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            payload = response.json()
+        response.raise_for_status()
+        payload = response.json()
 
-            doc_total = float(payload.get("DocTotal") or 0)
-            paid_to_date = float(payload.get("PaidToDate") or 0)
-            remaining = round(doc_total - paid_to_date, 2)
+        doc_total = float(payload.get("DocTotal") or 0)
+        paid_to_date = float(payload.get("PaidToDate") or 0)
+        remaining = round(doc_total - paid_to_date, 2)
 
-            # Detect cancelled invoices
-            cancelled = str(payload.get("Cancelled") or "").lower()
-            if cancelled in ("tyes", "y", "true", "yes"):
-                return {
-                    "paid": False,
-                    "payment_failed": True,
-                    "reason": "invoice_cancelled",
-                }
+        # Detect cancelled invoices
+        cancelled = str(payload.get("Cancelled") or "").lower()
+        if cancelled in ("tyes", "y", "true", "yes"):
+            return {
+                "paid": False,
+                "payment_failed": True,
+                "reason": "invoice_cancelled",
+            }
 
-            if paid_to_date >= doc_total and doc_total > 0:
-                # Detect closure method: credit memo vs payment
-                closure_method = "payment"
-                # SAP: if paid but no outgoing payment reference, check for
-                # credit memo closure
-                doc_type = str(payload.get("DocObjectCode") or "").lower()
-                if doc_type in ("ocreditnote", "creditnote"):
-                    closure_method = "credit_applied"
-                elif not str(payload.get("PaymentReference") or "").strip():
-                    # No explicit payment reference — may be credit
-                    closure_method = "unknown_non_payment"
+        if paid_to_date >= doc_total and doc_total > 0:
+            # Detect closure method: credit memo vs payment
+            closure_method = "payment"
+            # SAP: if paid but no outgoing payment reference, check for
+            # credit memo closure
+            doc_type = str(payload.get("DocObjectCode") or "").lower()
+            if doc_type in ("ocreditnote", "creditnote"):
+                closure_method = "credit_applied"
+            elif not str(payload.get("PaymentReference") or "").strip():
+                # No explicit payment reference — may be credit
+                closure_method = "unknown_non_payment"
 
-                result = {
-                    "paid": True,
-                    "payment_amount": round(paid_to_date, 2),
-                    "payment_date": str(payload.get("UpdateDate") or ""),
-                    "payment_method": "",
-                    "payment_reference": str(payload.get("DocEntry") or bill_ref),
-                    "partial": False,
-                    "remaining_balance": 0.0,
-                }
-                if closure_method != "payment":
-                    result["closure_method"] = closure_method
-                return result
-            elif paid_to_date > 0 and remaining > 0:
-                return {
-                    "paid": False,
-                    "payment_amount": round(paid_to_date, 2),
-                    "payment_date": str(payload.get("UpdateDate") or ""),
-                    "payment_method": "",
-                    "payment_reference": str(payload.get("DocEntry") or bill_ref),
-                    "partial": True,
-                    "remaining_balance": remaining,
-                }
-            else:
-                return {"paid": False, "reason": "unpaid"}
+            result = {
+                "paid": True,
+                "payment_amount": round(paid_to_date, 2),
+                "payment_date": str(payload.get("UpdateDate") or ""),
+                "payment_method": "",
+                "payment_reference": str(payload.get("DocEntry") or bill_ref),
+                "partial": False,
+                "remaining_balance": 0.0,
+            }
+            if closure_method != "payment":
+                result["closure_method"] = closure_method
+            return result
+        elif paid_to_date > 0 and remaining > 0:
+            return {
+                "paid": False,
+                "payment_amount": round(paid_to_date, 2),
+                "payment_date": str(payload.get("UpdateDate") or ""),
+                "payment_method": "",
+                "payment_reference": str(payload.get("DocEntry") or bill_ref),
+                "partial": True,
+                "remaining_balance": remaining,
+            }
+        else:
+            return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("SAP payment status HTTP error: status=%d", e.response.status_code)
         return {"paid": False, "error": f"http_{e.response.status_code}"}
@@ -1301,52 +1302,52 @@ async def get_chart_of_accounts_sap(connection) -> List[Dict[str, Any]]:
         return []
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client)
-            if session.get("status") != "success":
-                logger.warning("SAP session setup failed for chart-of-accounts fetch")
-                return []
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            logger.warning("SAP session setup failed for chart-of-accounts fetch")
+            return []
 
-            headers = session.get("headers", {})
+        headers = session.get("headers", {})
 
-            url = (
-                f"{connection.base_url}/b1s/v1/ChartOfAccounts"
-                "?$select=Code,Name,AcctCurrency,ActiveAccount,GroupCode"
-                "&$top=5000"
-            )
-            response = await client.get(url, headers=headers, timeout=60)
+        url = (
+            f"{connection.base_url}/b1s/v1/ChartOfAccounts"
+            "?$select=Code,Name,AcctCurrency,ActiveAccount,GroupCode"
+            "&$top=5000"
+        )
+        response = await client.get(url, headers=headers, timeout=60)
 
-            if response.status_code == 401:
-                logger.warning("SAP token expired during chart-of-accounts fetch")
-                return []
+        if response.status_code == 401:
+            logger.warning("SAP token expired during chart-of-accounts fetch")
+            return []
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            accounts: List[Dict[str, Any]] = []
-            for acc in result.get("value", []):
-                group_code = str(acc.get("GroupCode") or "")
-                active_flag = acc.get("ActiveAccount")
+        accounts: List[Dict[str, Any]] = []
+        for acc in result.get("value", []):
+            group_code = str(acc.get("GroupCode") or "")
+            active_flag = acc.get("ActiveAccount")
+            active = True
+            if isinstance(active_flag, str):
+                active = active_flag.strip().lower() in {"y", "yes", "true", "tyes"}
+            elif isinstance(active_flag, bool):
+                active = active_flag
+            elif active_flag == "tNO":
+                active = False
+            elif active_flag == "tYES":
                 active = True
-                if isinstance(active_flag, str):
-                    active = active_flag.strip().lower() in {"y", "yes", "true", "tyes"}
-                elif isinstance(active_flag, bool):
-                    active = active_flag
-                elif active_flag == "tNO":
-                    active = False
-                elif active_flag == "tYES":
-                    active = True
 
-                accounts.append({
-                    "id": str(acc.get("Code") or ""),
-                    "code": str(acc.get("Code") or ""),
-                    "name": str(acc.get("Name") or ""),
-                    "type": _SAP_GROUP_CODE_MAP.get(group_code, "other"),
-                    "sub_type": f"group_{group_code}" if group_code else "",
-                    "active": active,
-                    "currency": str(acc.get("AcctCurrency") or ""),
-                })
-            return accounts
+            accounts.append({
+                "id": str(acc.get("Code") or ""),
+                "code": str(acc.get("Code") or ""),
+                "name": str(acc.get("Name") or ""),
+                "type": _SAP_GROUP_CODE_MAP.get(group_code, "other"),
+                "sub_type": f"group_{group_code}" if group_code else "",
+                "active": active,
+                "currency": str(acc.get("AcctCurrency") or ""),
+            })
+        return accounts
 
     except Exception as e:
         logger.error("Failed to fetch SAP chart of accounts: %s", type(e).__name__)
@@ -1371,63 +1372,63 @@ async def list_all_vendors_sap(connection) -> List[Dict[str, Any]]:
     all_vendors: List[Dict[str, Any]] = []
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            session = await _open_sap_service_layer_session(connection, client)
-            if session.get("status") != "success":
-                logger.warning("SAP session setup failed for vendor list fetch")
-                return []
+        client = get_http_client()
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            logger.warning("SAP session setup failed for vendor list fetch")
+            return []
 
-            headers = session.get("headers", {})
+        headers = session.get("headers", {})
 
-            while True:
-                url = (
-                    f"{connection.base_url}/b1s/v1/BusinessPartners"
-                    f"?$filter=CardType eq 'cSupplier'"
-                    f"&$select=CardCode,CardName,EmailAddress,Phone1,"
-                    f"Address,FederalTaxID,Currency,PayTermsGrpCode,CurrentAccountBalance,Valid"
-                    f"&$top={page_size}&$skip={skip}"
-                )
-                response = await client.get(url, headers=headers, timeout=60)
+        while True:
+            url = (
+                f"{connection.base_url}/b1s/v1/BusinessPartners"
+                f"?$filter=CardType eq 'cSupplier'"
+                f"&$select=CardCode,CardName,EmailAddress,Phone1,"
+                f"Address,FederalTaxID,Currency,PayTermsGrpCode,CurrentAccountBalance,Valid"
+                f"&$top={page_size}&$skip={skip}"
+            )
+            response = await client.get(url, headers=headers, timeout=60)
 
-                if response.status_code == 401:
-                    logger.warning("SAP token expired during vendor list fetch")
-                    break
+            if response.status_code == 401:
+                logger.warning("SAP token expired during vendor list fetch")
+                break
 
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-                items = result.get("value", [])
-                if not items:
-                    break
+            items = result.get("value", [])
+            if not items:
+                break
 
-                for v in items:
-                    valid_flag = v.get("Valid")
+            for v in items:
+                valid_flag = v.get("Valid")
+                active = True
+                if isinstance(valid_flag, str):
+                    active = valid_flag.strip().lower() in {"y", "yes", "true", "tyes"}
+                elif isinstance(valid_flag, bool):
+                    active = valid_flag
+                elif valid_flag == "tNO":
+                    active = False
+                elif valid_flag == "tYES":
                     active = True
-                    if isinstance(valid_flag, str):
-                        active = valid_flag.strip().lower() in {"y", "yes", "true", "tyes"}
-                    elif isinstance(valid_flag, bool):
-                        active = valid_flag
-                    elif valid_flag == "tNO":
-                        active = False
-                    elif valid_flag == "tYES":
-                        active = True
 
-                    all_vendors.append({
-                        "vendor_id": str(v.get("CardCode") or ""),
-                        "name": str(v.get("CardName") or ""),
-                        "email": str(v.get("EmailAddress") or ""),
-                        "phone": str(v.get("Phone1") or ""),
-                        "tax_id": str(v.get("FederalTaxID") or ""),
-                        "currency": str(v.get("Currency") or ""),
-                        "active": active,
-                        "address": str(v.get("Address") or ""),
-                        "payment_terms": str(v.get("PayTermsGrpCode") or ""),
-                        "balance": float(v.get("CurrentAccountBalance") or 0),
-                    })
+                all_vendors.append({
+                    "vendor_id": str(v.get("CardCode") or ""),
+                    "name": str(v.get("CardName") or ""),
+                    "email": str(v.get("EmailAddress") or ""),
+                    "phone": str(v.get("Phone1") or ""),
+                    "tax_id": str(v.get("FederalTaxID") or ""),
+                    "currency": str(v.get("Currency") or ""),
+                    "active": active,
+                    "address": str(v.get("Address") or ""),
+                    "payment_terms": str(v.get("PayTermsGrpCode") or ""),
+                    "balance": float(v.get("CurrentAccountBalance") or 0),
+                })
 
-                if len(items) < page_size:
-                    break
-                skip += page_size
+            if len(items) < page_size:
+                break
+            skip += page_size
 
         return all_vendors
 

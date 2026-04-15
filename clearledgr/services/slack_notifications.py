@@ -8,6 +8,7 @@ Following the spec: Exception-only notifications with one-click approval.
 import os
 import logging
 import httpx
+from clearledgr.core.http_client import get_http_client
 from typing import Dict, Any, Optional, List
 from clearledgr.services.slack_api import resolve_slack_runtime
 
@@ -236,29 +237,29 @@ async def _post_slack_dm(
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
         # Look up Slack user by email
-        async with httpx.AsyncClient(timeout=10) as client:
-            lookup = await client.post(
-                "https://slack.com/api/users.lookupByEmail",
-                json={"email": user_email},
-                headers=headers,
-            )
-            data = lookup.json()
-            if not data.get("ok"):
-                logger.warning("[intelligent_routing] user lookup failed for %s: %s", user_email, data.get("error"))
-                return False
-            slack_user_id = data["user"]["id"]
+        client = get_http_client()
+        lookup = await client.post(
+            "https://slack.com/api/users.lookupByEmail",
+            json={"email": user_email},
+            headers=headers,
+        )
+        data = lookup.json()
+        if not data.get("ok"):
+            logger.warning("[intelligent_routing] user lookup failed for %s: %s", user_email, data.get("error"))
+            return False
+        slack_user_id = data["user"]["id"]
 
-            # Send DM
-            resp = await client.post(
-                "https://slack.com/api/chat.postMessage",
-                json={"channel": slack_user_id, "text": text, "blocks": blocks},
-                headers=headers,
-            )
-            dm_data = resp.json()
-            if not dm_data.get("ok"):
-                logger.warning("[intelligent_routing] DM failed: %s", dm_data.get("error"))
-                return False
-            return True
+        # Send DM
+        resp = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            json={"channel": slack_user_id, "text": text, "blocks": blocks},
+            headers=headers,
+        )
+        dm_data = resp.json()
+        if not dm_data.get("ok"):
+            logger.warning("[intelligent_routing] DM failed: %s", dm_data.get("error"))
+            return False
+        return True
     except Exception as exc:
         logger.warning("[intelligent_routing] DM to %s failed: %s", user_email, exc)
         return False
@@ -301,58 +302,58 @@ async def _post_slack_blocks(
 
     if webhook_url:
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    webhook_url,
-                    json={"text": text, "blocks": blocks},
-                    timeout=15,
-                )
-                response.raise_for_status()
+            client = get_http_client()
+            response = await client.post(
+                webhook_url,
+                json={"text": text, "blocks": blocks},
+                timeout=15,
+            )
+            response.raise_for_status()
             return {"ok": True, "via": "webhook"}
         except Exception as e:
             logger.warning(f"Slack webhook send failed, trying bot token fallback: {e}")
 
     if bot_token:
         try:
-            async with httpx.AsyncClient() as client:
-                headers = {
-                    "Authorization": f"Bearer {bot_token}",
-                    "Content-Type": "application/json; charset=utf-8",
-                }
+            client = get_http_client()
+            headers = {
+                "Authorization": f"Bearer {bot_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            }
 
-                async def _send_to(target_channel: str):
-                    return await client.post(
-                        "https://slack.com/api/chat.postMessage",
-                        headers=headers,
-                        json={
-                            "channel": target_channel,
-                            "text": text,
-                            "blocks": blocks,
-                            "unfurl_links": False,
-                            "unfurl_media": False,
-                        },
-                        timeout=15,
-                    )
+            async def _send_to(target_channel: str):
+                return await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers=headers,
+                    json={
+                        "channel": target_channel,
+                        "text": text,
+                        "blocks": blocks,
+                        "unfurl_links": False,
+                        "unfurl_media": False,
+                    },
+                    timeout=15,
+                )
 
-                response = await _send_to(channel)
-                payload = response.json() if response.content else {}
-                if response.status_code < 400 and payload.get("ok", False):
-                    return {"ok": True, "ts": payload.get("ts"), "channel": payload.get("channel"), "via": "bot"}
+            response = await _send_to(channel)
+            payload = response.json() if response.content else {}
+            if response.status_code < 400 and payload.get("ok", False):
+                return {"ok": True, "ts": payload.get("ts"), "channel": payload.get("channel"), "via": "bot"}
 
-                if payload.get("error") == "channel_not_found":
-                    for retry_channel in _retry_candidates(channel):
-                        retry_response = await _send_to(retry_channel)
-                        retry_payload = retry_response.json() if retry_response.content else {}
-                        if retry_response.status_code < 400 and retry_payload.get("ok", False):
-                            logger.warning(
-                                "Slack primary channel %s not found; delivered via fallback %s",
-                                channel,
-                                retry_channel,
-                            )
-                            return {"ok": True, "ts": retry_payload.get("ts"), "channel": retry_payload.get("channel"), "via": "bot_fallback"}
+            if payload.get("error") == "channel_not_found":
+                for retry_channel in _retry_candidates(channel):
+                    retry_response = await _send_to(retry_channel)
+                    retry_payload = retry_response.json() if retry_response.content else {}
+                    if retry_response.status_code < 400 and retry_payload.get("ok", False):
+                        logger.warning(
+                            "Slack primary channel %s not found; delivered via fallback %s",
+                            channel,
+                            retry_channel,
+                        )
+                        return {"ok": True, "ts": retry_payload.get("ts"), "channel": retry_payload.get("channel"), "via": "bot_fallback"}
 
-                logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
-                return None
+            logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
+            return None
         except Exception as e:
             logger.error(f"Slack bot token send failed: {e}")
             return None
@@ -412,9 +413,9 @@ async def _retry_slack_response_url(payload: dict) -> bool:
     if not response_url:
         return False
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(response_url, json=body)
-            resp.raise_for_status()
+        client = get_http_client()
+        resp = await client.post(response_url, json=body, timeout=10)
+        resp.raise_for_status()
         return True
     except Exception as exc:
         logger.warning("Slack response_url retry failed: %s", exc)
@@ -647,10 +648,10 @@ class SlackNotifier:
         payload = {"blocks": blocks}
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(self.webhook_url, json=payload)
-                response.raise_for_status()
-            
+            client = get_http_client()
+            response = await client.post(self.webhook_url, json=payload)
+            response.raise_for_status()
+
             logger.info("Sent reconciliation notification to Slack")
             return True
         
@@ -705,9 +706,9 @@ class SlackNotifier:
         ]
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(self.webhook_url, json={"blocks": blocks})
-                response.raise_for_status()
+            client = get_http_client()
+            response = await client.post(self.webhook_url, json={"blocks": blocks})
+            response.raise_for_status()
             return True
         except Exception as e:
             logger.error(f"Failed to send exception alert: {e}")
@@ -1149,16 +1150,16 @@ async def send_invoice_exception_notification(
                 runtime = resolve_slack_runtime(organization_id or "default")
                 if runtime and runtime.get("token"):
                     headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.post(
-                            "https://slack.com/api/chat.postMessage",
-                            json={
-                                "channel": parent_channel,
-                                "thread_ts": parent_ts,
-                                "text": f"*Full match detail*\n{context_text}",
-                            },
-                            headers=headers,
-                        )
+                    client = get_http_client()
+                    await client.post(
+                        "https://slack.com/api/chat.postMessage",
+                        json={
+                            "channel": parent_channel,
+                            "thread_ts": parent_ts,
+                            "text": f"*Full match detail*\n{context_text}",
+                        },
+                        headers=headers,
+                    )
             except Exception:
                 pass
 

@@ -18,6 +18,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 logger = logging.getLogger(__name__)
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -623,28 +624,28 @@ async def google_web_auth_callback(
     if not client_id or not client_secret:
         raise HTTPException(status_code=503, detail="google_oauth_not_configured")
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        token_resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": _google_oauth_redirect_uri(),
-                "grant_type": "authorization_code",
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    client = get_http_client()
+    token_resp = await client.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": _google_oauth_redirect_uri(),
+            "grant_type": "authorization_code",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
     token_payload = token_resp.json() if token_resp.content else {}
     if token_resp.status_code >= 400 or "access_token" not in token_payload:
         raise HTTPException(status_code=400, detail={"message": "google_token_exchange_failed", "payload": token_payload})
 
     access_token = token_payload["access_token"]
-    async with httpx.AsyncClient(timeout=30) as client:
-        profile_resp = await client.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+    client = get_http_client()
+    profile_resp = await client.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     profile = profile_resp.json() if profile_resp.content else {}
     if profile_resp.status_code >= 400:
         raise HTTPException(status_code=401, detail={"message": "google_profile_fetch_failed", "payload": profile})

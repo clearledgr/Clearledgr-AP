@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.http_client import get_http_client
+
 logger = logging.getLogger(__name__)
 
 # Sheet tab names per report type
@@ -100,8 +102,8 @@ async def _ensure_tab(client, spreadsheet_id: str, sheet_name: str) -> None:
             }
         }]
     }
-    async with httpx.AsyncClient(timeout=15) as http_client:
-        resp = await http_client.post(url, headers=client._headers(), json=body)
-        if resp.status_code == 400 and "already exists" in resp.text.lower():
-            return
-        resp.raise_for_status()
+    http_client = get_http_client()
+    resp = await http_client.post(url, headers=client._headers(), json=body)
+    if resp.status_code == 400 and "already exists" in resp.text.lower():
+        return
+    resp.raise_for_status()

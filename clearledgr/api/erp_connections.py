@@ -23,6 +23,7 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, parse_qs, urlparse
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -414,19 +415,19 @@ async def quickbooks_callback(
 
     # Exchange code for tokens
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                QUICKBOOKS_TOKEN_URL,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": QUICKBOOKS_REDIRECT_URI,
-                },
-                auth=(QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET),
-                headers={"Accept": "application/json"},
-            )
-            response.raise_for_status()
-            tokens = response.json()
+        client = get_http_client()
+        response = await client.post(
+            QUICKBOOKS_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": QUICKBOOKS_REDIRECT_URI,
+            },
+            auth=(QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET),
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        tokens = response.json()
     except Exception as e:
         logger.error(f"QuickBooks token exchange failed: {e}")
         return _popup_close_response(
@@ -546,19 +547,19 @@ async def xero_callback(
 
     # Exchange code for tokens
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                XERO_TOKEN_URL,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": XERO_REDIRECT_URI,
-                },
-                auth=(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            response.raise_for_status()
-            tokens = response.json()
+        client = get_http_client()
+        response = await client.post(
+            XERO_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": XERO_REDIRECT_URI,
+            },
+            auth=(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        tokens = response.json()
     except Exception as e:
         logger.error(f"Xero token exchange failed: {e}")
         return _popup_close_response(
@@ -571,15 +572,15 @@ async def xero_callback(
     # Get tenant ID (Xero organization)
     tenant_id = None
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.xero.com/connections",
-                headers={"Authorization": f"Bearer {tokens.get('access_token')}"},
-            )
-            response.raise_for_status()
-            connections = response.json()
-            if connections:
-                tenant_id = connections[0].get("tenantId")
+        client = get_http_client()
+        response = await client.get(
+            "https://api.xero.com/connections",
+            headers={"Authorization": f"Bearer {tokens.get('access_token')}"},
+        )
+        response.raise_for_status()
+        connections = response.json()
+        if connections:
+            tenant_id = connections[0].get("tenantId")
     except Exception as e:
         logger.warning(f"Failed to get Xero tenant: {e}")
 
@@ -768,26 +769,26 @@ async def _get_quickbooks_accounts(connection: ERPConnection) -> list:
         return []
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query",
-                params={"query": "SELECT * FROM Account MAXRESULTS 1000"},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            accounts = []
-            for acc in result.get("QueryResponse", {}).get("Account", []):
-                accounts.append({
-                    "id": acc.get("Id"),
-                    "name": acc.get("Name"),
-                    "number": acc.get("AcctNum"),
-                    "type": acc.get("AccountType"),
-                    "subtype": acc.get("AccountSubType"),
-                })
-            return accounts
-            
+        client = get_http_client()
+        response = await client.get(
+            f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query",
+            params={"query": "SELECT * FROM Account MAXRESULTS 1000"},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        accounts = []
+        for acc in result.get("QueryResponse", {}).get("Account", []):
+            accounts.append({
+                "id": acc.get("Id"),
+                "name": acc.get("Name"),
+                "number": acc.get("AcctNum"),
+                "type": acc.get("AccountType"),
+                "subtype": acc.get("AccountSubType"),
+            })
+        return accounts
+
     except Exception as e:
         logger.error(f"Failed to get QuickBooks accounts: {e}")
         return []
@@ -799,28 +800,28 @@ async def _get_xero_accounts(connection: ERPConnection) -> list:
         return []
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.xero.com/api.xro/2.0/Accounts",
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            accounts = []
-            for acc in result.get("Accounts", []):
-                accounts.append({
-                    "id": acc.get("AccountID"),
-                    "name": acc.get("Name"),
-                    "number": acc.get("Code"),
-                    "type": acc.get("Type"),
-                    "class": acc.get("Class"),
-                })
-            return accounts
-            
+        client = get_http_client()
+        response = await client.get(
+            "https://api.xero.com/api.xro/2.0/Accounts",
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": connection.tenant_id,
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        accounts = []
+        for acc in result.get("Accounts", []):
+            accounts.append({
+                "id": acc.get("AccountID"),
+                "name": acc.get("Name"),
+                "number": acc.get("Code"),
+                "type": acc.get("Type"),
+                "class": acc.get("Class"),
+            })
+        return accounts
+
     except Exception as e:
         logger.error(f"Failed to get Xero accounts: {e}")
         return []

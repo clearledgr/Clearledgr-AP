@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +86,19 @@ class SlackAPIClient:
             "Content-Type": "application/json; charset=utf-8",
         }
         
-        async with httpx.AsyncClient() as client:
-            if method == "GET":
-                response = await client.get(url, headers=headers, params=params, timeout=30)
-            else:
-                response = await client.post(url, headers=headers, json=data, timeout=30)
-            
-            result = response.json()
-            
-            if not result.get("ok"):
-                error = result.get("error", "Unknown error")
-                raise SlackAPIError(error, result)
-            
-            return result
+        client = get_http_client()
+        if method == "GET":
+            response = await client.get(url, headers=headers, params=params, timeout=30)
+        else:
+            response = await client.post(url, headers=headers, json=data, timeout=30)
+
+        result = response.json()
+
+        if not result.get("ok"):
+            error = result.get("error", "Unknown error")
+            raise SlackAPIError(error, result)
+
+        return result
 
     async def auth_test(self) -> Dict[str, Any]:
         """Validate the bot token and return the Slack auth context."""

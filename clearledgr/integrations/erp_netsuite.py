@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
@@ -178,34 +179,34 @@ async def post_to_netsuite(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/journalEntry",
-                json=ns_entry,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "respond-async, transient",
-                },
-                timeout=60,
-            )
+        client = get_http_client()
+        response = await client.post(
+            f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/journalEntry",
+            json=ns_entry,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "respond-async, transient",
+            },
+            timeout=60,
+        )
 
-            if response.status_code == 401:
-                logger.warning("NetSuite authentication failed")
-                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+        if response.status_code == 401:
+            logger.warning("NetSuite authentication failed")
+            return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            entry_id = result.get("id") or result.get("internalId")
-            logger.info(f"Posted to NetSuite: {entry_id}")
+        entry_id = result.get("id") or result.get("internalId")
+        logger.info(f"Posted to NetSuite: {entry_id}")
 
-            return {
-                "status": "success",
-                "erp": "netsuite",
-                "entry_id": entry_id,
-                "tran_id": result.get("tranId"),
-            }
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "entry_id": entry_id,
+            "tran_id": result.get("tranId"),
+        }
 
     except httpx.HTTPStatusError as e:
         logger.error("NetSuite API error: %s", e.response.status_code)
@@ -233,29 +234,29 @@ async def get_netsuite_accounts(connection) -> List[Dict[str, Any]]:
     )
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/account",
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                },
-                params={"limit": 1000},
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.get(
+            f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/account",
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+            },
+            params={"limit": 1000},
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            accounts = []
-            for item in result.get("items", []):
-                accounts.append({
-                    "id": item.get("id"),
-                    "name": item.get("acctName"),
-                    "number": item.get("acctNumber"),
-                    "type": item.get("acctType", {}).get("refName"),
-                })
+        accounts = []
+        for item in result.get("items", []):
+            accounts.append({
+                "id": item.get("id"),
+                "name": item.get("acctName"),
+                "number": item.get("acctNumber"),
+                "type": item.get("acctType", {}).get("refName"),
+            })
 
-            return accounts
+        return accounts
 
     except Exception as e:
         logger.error(f"Failed to get NetSuite accounts: {e}")
@@ -364,63 +365,63 @@ async def post_bill_to_netsuite(
     auth_header = _oauth_header(connection, "POST", url)
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=ns_bill,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "respond-async",
-                },
-                timeout=60,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=ns_bill,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "respond-async",
+            },
+            timeout=60,
+        )
 
-            if response.status_code == 401:
-                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+        if response.status_code == 401:
+            return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
 
-            response.raise_for_status()
+        response.raise_for_status()
 
-            # H6: Handle async 202 response — poll Location header for result
-            if response.status_code == 202:
-                location = response.headers.get("Location", "").strip()
-                if location:
-                    # Poll for the result (up to 5 attempts with 2s delay)
-                    import asyncio as _asyncio
-                    for _attempt in range(5):
-                        await _asyncio.sleep(2)
-                        poll_resp = await client.get(
-                            location,
-                            headers={"Authorization": auth_header},
-                            timeout=30,
-                        )
-                        if poll_resp.status_code == 200:
-                            poll_result = poll_resp.json()
-                            bill_id = poll_result.get("id") or poll_result.get("internalId")
-                            logger.info("Posted Vendor Bill to NetSuite (async): %s", bill_id)
-                            return {
-                                "status": "success",
-                                "erp": "netsuite",
-                                "bill_id": bill_id,
-                                "tran_id": poll_result.get("tranId"),
-                            }
-                        if poll_resp.status_code != 202:
-                            break
-                    logger.warning("NetSuite async job did not complete within polling window")
-                    return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
-                # No Location header — treat 202 body as best-effort
-                logger.warning("NetSuite returned 202 without Location header")
+        # H6: Handle async 202 response — poll Location header for result
+        if response.status_code == 202:
+            location = response.headers.get("Location", "").strip()
+            if location:
+                # Poll for the result (up to 5 attempts with 2s delay)
+                import asyncio as _asyncio
+                for _attempt in range(5):
+                    await _asyncio.sleep(2)
+                    poll_resp = await client.get(
+                        location,
+                        headers={"Authorization": auth_header},
+                        timeout=30,
+                    )
+                    if poll_resp.status_code == 200:
+                        poll_result = poll_resp.json()
+                        bill_id = poll_result.get("id") or poll_result.get("internalId")
+                        logger.info("Posted Vendor Bill to NetSuite (async): %s", bill_id)
+                        return {
+                            "status": "success",
+                            "erp": "netsuite",
+                            "bill_id": bill_id,
+                            "tran_id": poll_result.get("tranId"),
+                        }
+                    if poll_resp.status_code != 202:
+                        break
+                logger.warning("NetSuite async job did not complete within polling window")
+                return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+            # No Location header — treat 202 body as best-effort
+            logger.warning("NetSuite returned 202 without Location header")
 
-            result = response.json()
+        result = response.json()
 
-            bill_id = result.get("id") or result.get("internalId")
-            logger.info("Posted Vendor Bill to NetSuite: %s", bill_id)
-            return {
-                "status": "success",
-                "erp": "netsuite",
-                "bill_id": bill_id,
-                "tran_id": result.get("tranId"),
-            }
+        bill_id = result.get("id") or result.get("internalId")
+        logger.info("Posted Vendor Bill to NetSuite: %s", bill_id)
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "bill_id": bill_id,
+            "tran_id": result.get("tranId"),
+        }
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -526,59 +527,59 @@ async def reverse_bill_from_netsuite(
     auth_header = _oauth_header(connection, "DELETE", url)
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.delete(
-                url,
-                headers={
-                    "Authorization": auth_header,
-                    "Accept": "application/json",
-                },
-                timeout=60,
+        client = get_http_client()
+        response = await client.delete(
+            url,
+            headers={
+                "Authorization": auth_header,
+                "Accept": "application/json",
+            },
+            timeout=60,
+        )
+
+        if response.status_code == 401:
+            return {
+                "status": "error",
+                "erp": "netsuite",
+                "reason": "Authentication failed",
+                "needs_reauth": True,
+            }
+
+        if response.status_code == 404:
+            return {
+                "status": "already_reversed",
+                "erp": "netsuite",
+                "reference_id": erp_reference,
+                "reversal_method": "delete",
+                "reversal_ref": erp_reference,
+                "reason": "bill_not_found_in_erp",
+            }
+
+        # NetSuite DELETE returns 204 No Content on success
+        if response.status_code in (200, 204):
+            logger.info(
+                "Deleted NetSuite Vendor Bill %s (reason=%s)",
+                erp_reference, reason,
             )
-
-            if response.status_code == 401:
-                return {
-                    "status": "error",
-                    "erp": "netsuite",
-                    "reason": "Authentication failed",
-                    "needs_reauth": True,
-                }
-
-            if response.status_code == 404:
-                return {
-                    "status": "already_reversed",
-                    "erp": "netsuite",
-                    "reference_id": erp_reference,
-                    "reversal_method": "delete",
-                    "reversal_ref": erp_reference,
-                    "reason": "bill_not_found_in_erp",
-                }
-
-            # NetSuite DELETE returns 204 No Content on success
-            if response.status_code in (200, 204):
-                logger.info(
-                    "Deleted NetSuite Vendor Bill %s (reason=%s)",
-                    erp_reference, reason,
-                )
-                return {
-                    "status": "success",
-                    "erp": "netsuite",
-                    "reference_id": erp_reference,
-                    "reversal_method": "delete",
-                    "reversal_ref": erp_reference,
-                    "erp_status": "Deleted",
-                }
-
-            response.raise_for_status()
-            # Fallthrough — unexpected success status
             return {
                 "status": "success",
                 "erp": "netsuite",
                 "reference_id": erp_reference,
                 "reversal_method": "delete",
                 "reversal_ref": erp_reference,
-                "erp_status": f"http_{response.status_code}",
+                "erp_status": "Deleted",
             }
+
+        response.raise_for_status()
+        # Fallthrough — unexpected success status
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "reference_id": erp_reference,
+            "reversal_method": "delete",
+            "reversal_ref": erp_reference,
+            "erp_status": f"http_{response.status_code}",
+        }
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -673,33 +674,33 @@ async def get_vendor_bill_netsuite(
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorBill/{bill_ref}"
     auth_header = _oauth_header(connection, "GET", url)
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                },
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            payload = response.json()
-            entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
-            return {
-                "status": "success",
-                "erp": "netsuite",
-                "bill_id": str(payload.get("id") or bill_ref),
-                "vendor_id": str(entity.get("id") or "").strip() or None,
-                "tran_id": payload.get("tranId"),
-                "currency": (
-                    str((payload.get("currency") or {}).get("id") or "").strip()
-                    if isinstance(payload.get("currency"), dict)
-                    else None
-                ),
-            }
+        response.raise_for_status()
+        payload = response.json()
+        entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "bill_id": str(payload.get("id") or bill_ref),
+            "vendor_id": str(entity.get("id") or "").strip() or None,
+            "tran_id": payload.get("tranId"),
+            "currency": (
+                str((payload.get("currency") or {}).get("id") or "").strip()
+                if isinstance(payload.get("currency"), dict)
+                else None
+            ),
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("NetSuite vendor bill GET HTTP error: status=%d", status_code)
@@ -741,32 +742,32 @@ async def find_credit_note_netsuite(
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
     auth_header = _oauth_header(connection, "POST", url)
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"q": query},
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "transient",
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            items = response.json().get("items", [])
-            if items:
-                row = items[0]
-                return {
-                    "credit_note_id": str(row.get("id")),
-                    "credit_note_number": row.get("tranid"),
-                    "amount_remaining": row.get("amountremaining"),
-                    "vendor_id": (
-                        str(row.get("entity"))
-                        if row.get("entity") is not None
-                        else None
-                    ),
-                    "erp": "netsuite",
-                }
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"q": query},
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "transient",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        items = response.json().get("items", [])
+        if items:
+            row = items[0]
+            return {
+                "credit_note_id": str(row.get("id")),
+                "credit_note_number": row.get("tranid"),
+                "amount_remaining": row.get("amountremaining"),
+                "vendor_id": (
+                    str(row.get("entity"))
+                    if row.get("entity") is not None
+                    else None
+                ),
+                "erp": "netsuite",
+            }
     except Exception as e:
         logger.error("NetSuite credit note lookup error: %s", e)
     return None
@@ -838,41 +839,41 @@ async def apply_credit_note_to_netsuite(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.patch(
-                url,
-                json=payload,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "respond-async",
-                },
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.patch(
+            url,
+            json=payload,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "respond-async",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            if response.status_code == 202:
-                location = response.headers.get("Location", "").strip()
-                if location:
-                    poll_result = await _poll_netsuite_async_result(
-                        client,
-                        auth_header=auth_header,
-                        location=location,
-                    )
-                    if poll_result is None:
-                        return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
-            return {
-                "status": "success",
-                "erp": "netsuite",
-                "erp_reference": f"{credit_id}:{target_ref}",
-                "credit_note_reference": credit_id,
-                "credit_note_number": credit_note.get("credit_note_number"),
-                "target_erp_reference": target_ref,
-                "amount": round(float(application.amount or 0.0), 2),
-                "idempotency_key": idempotency_key,
-            }
+        response.raise_for_status()
+        if response.status_code == 202:
+            location = response.headers.get("Location", "").strip()
+            if location:
+                poll_result = await _poll_netsuite_async_result(
+                    client,
+                    auth_header=auth_header,
+                    location=location,
+                )
+                if poll_result is None:
+                    return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "erp_reference": f"{credit_id}:{target_ref}",
+            "credit_note_reference": credit_id,
+            "credit_note_number": credit_note.get("credit_note_number"),
+            "target_erp_reference": target_ref,
+            "amount": round(float(application.amount or 0.0), 2),
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("NetSuite credit application HTTP error: status=%d", status_code)
@@ -964,57 +965,57 @@ async def apply_settlement_to_netsuite(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "respond-async",
-                },
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "respond-async",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "netsuite", "reason": "Authentication failed", "needs_reauth": True}
 
-            response.raise_for_status()
+        response.raise_for_status()
 
-            if response.status_code == 202:
-                location = response.headers.get("Location", "").strip()
-                if location:
-                    poll_result = await _poll_netsuite_async_result(
-                        client,
-                        auth_header=auth_header,
-                        location=location,
-                    )
-                    if poll_result is None:
-                        return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
-                    payment_id = poll_result.get("id") or poll_result.get("internalId")
-                    return {
-                        "status": "success",
-                        "erp": "netsuite",
-                        "erp_reference": payment_id,
-                        "payment_id": payment_id,
-                        "target_erp_reference": str(application.target_erp_reference).strip(),
-                        "amount": round(float(application.amount or 0.0), 2),
-                        "source_reference": application.source_reference,
-                        "idempotency_key": idempotency_key,
-                    }
-                return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+        if response.status_code == 202:
+            location = response.headers.get("Location", "").strip()
+            if location:
+                poll_result = await _poll_netsuite_async_result(
+                    client,
+                    auth_header=auth_header,
+                    location=location,
+                )
+                if poll_result is None:
+                    return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
+                payment_id = poll_result.get("id") or poll_result.get("internalId")
+                return {
+                    "status": "success",
+                    "erp": "netsuite",
+                    "erp_reference": payment_id,
+                    "payment_id": payment_id,
+                    "target_erp_reference": str(application.target_erp_reference).strip(),
+                    "amount": round(float(application.amount or 0.0), 2),
+                    "source_reference": application.source_reference,
+                    "idempotency_key": idempotency_key,
+                }
+            return {"status": "error", "erp": "netsuite", "reason": "async_timeout"}
 
-            result = response.json()
-            payment_id = result.get("id") or result.get("internalId")
-            return {
-                "status": "success",
-                "erp": "netsuite",
-                "erp_reference": payment_id,
-                "payment_id": payment_id,
-                "target_erp_reference": str(application.target_erp_reference).strip(),
-                "amount": round(float(application.amount or 0.0), 2),
-                "source_reference": application.source_reference,
-                "idempotency_key": idempotency_key,
-            }
+        result = response.json()
+        payment_id = result.get("id") or result.get("internalId")
+        return {
+            "status": "success",
+            "erp": "netsuite",
+            "erp_reference": payment_id,
+            "payment_id": payment_id,
+            "target_erp_reference": str(application.target_erp_reference).strip(),
+            "amount": round(float(application.amount or 0.0), 2),
+            "source_reference": application.source_reference,
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("NetSuite settlement payment HTTP error: status=%d", status_code)
@@ -1061,24 +1062,24 @@ async def create_vendor_netsuite(
     auth_header = _oauth_header(connection, "POST", url)
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=ns_vendor,
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=ns_vendor,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            return {
-                "status": "success",
-                "vendor_id": result.get("id"),
-                "entity_id": result.get("entityId"),
-            }
+        return {
+            "status": "success",
+            "vendor_id": result.get("id"),
+            "entity_id": result.get("entityId"),
+        }
     except Exception as e:
         logger.error("NetSuite vendor creation error: %s", type(e).__name__)
         return {"status": "error", "erp": "netsuite", "reason": "vendor_creation_failed"}
@@ -1107,28 +1108,28 @@ async def find_vendor_netsuite(
     auth_header = _oauth_header(connection, "POST", url)
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"q": query},
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "transient",
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"q": query},
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "transient",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            items = result.get("items", [])
-            if items:
-                v = items[0]
-                return {
-                    "vendor_id": str(v.get("id")),
-                    "name": v.get("companyname"),
-                    "email": v.get("email"),
-                }
+        items = result.get("items", [])
+        if items:
+            v = items[0]
+            return {
+                "vendor_id": str(v.get("id")),
+                "name": v.get("companyname"),
+                "email": v.get("email"),
+            }
     except Exception as e:
         logger.error(f"NetSuite vendor search error: {e}")
 
@@ -1156,27 +1157,27 @@ async def find_bill_netsuite(
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
     auth_header = _oauth_header(connection, "POST", url)
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"q": query},
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "transient",
-                },
-                timeout=60,
-            )
-            response.raise_for_status()
-            items = response.json().get("items", [])
-            if items:
-                row = items[0]
-                return {
-                    "bill_id": str(row.get("id")),
-                    "doc_number": row.get("tranid"),
-                    "amount": row.get("amount"),
-                    "erp": "netsuite",
-                }
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"q": query},
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "transient",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        items = response.json().get("items", [])
+        if items:
+            row = items[0]
+            return {
+                "bill_id": str(row.get("id")),
+                "doc_number": row.get("tranid"),
+                "amount": row.get("amount"),
+                "erp": "netsuite",
+            }
     except Exception as e:
         logger.error("NetSuite bill lookup error: %s", e)
     return None
@@ -1200,9 +1201,9 @@ async def _attach_to_netsuite(
     headers = _oauth_header(connection, url, "POST")
     headers["Content-Type"] = "application/json"
     payload = {"name": filename, "content": encoded}
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
+    client = get_http_client()
+    resp = await client.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
     return {"attached": True, "erp": "netsuite"}
 
 
@@ -1232,73 +1233,73 @@ async def get_payment_status_netsuite(
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
     auth_header = _oauth_header(connection, "POST", url)
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"q": query},
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "transient",
-                },
-                timeout=60,
-            )
-            if response.status_code == 401:
-                return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"q": query},
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "transient",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {"paid": False, "error": "authentication_failed", "needs_reauth": True}
 
-            response.raise_for_status()
-            items = response.json().get("items", [])
-            if not items:
-                return {"paid": False, "reason": "not_found"}
+        response.raise_for_status()
+        items = response.json().get("items", [])
+        if not items:
+            return {"paid": False, "reason": "not_found"}
 
-            row = items[0]
-            total = float(row.get("amount") or 0)
-            remaining = float(row.get("amountremaining") or 0)
-            paid = float(row.get("amountpaid") or 0)
-            status_val = str(row.get("status") or "").strip()
+        row = items[0]
+        total = float(row.get("amount") or 0)
+        remaining = float(row.get("amountremaining") or 0)
+        paid = float(row.get("amountpaid") or 0)
+        status_val = str(row.get("status") or "").strip()
 
-            # Detect payment processing failures
-            if status_val.lower() in ("pendapprov", "pendingapproval"):
-                return {
-                    "paid": False,
-                    "payment_failed": True,
-                    "reason": "payment_pending_approval",
-                }
+        # Detect payment processing failures
+        if status_val.lower() in ("pendapprov", "pendingapproval"):
+            return {
+                "paid": False,
+                "payment_failed": True,
+                "reason": "payment_pending_approval",
+            }
 
-            if remaining <= 0 and total > 0:
-                # Determine closure method: if fully closed but no payment
-                # recorded, may be a credit memo application
+        if remaining <= 0 and total > 0:
+            # Determine closure method: if fully closed but no payment
+            # recorded, may be a credit memo application
+            closure_method = "payment"
+            if paid <= 0 and remaining <= 0:
+                closure_method = "credit_applied"
+            elif paid > 0 and paid < total and remaining <= 0:
+                # Part payment, part credit
                 closure_method = "payment"
-                if paid <= 0 and remaining <= 0:
-                    closure_method = "credit_applied"
-                elif paid > 0 and paid < total and remaining <= 0:
-                    # Part payment, part credit
-                    closure_method = "payment"
 
-                result = {
-                    "paid": True,
-                    "payment_amount": round(paid or total, 2),
-                    "payment_date": "",
-                    "payment_method": "",
-                    "payment_reference": str(row.get("id") or ""),
-                    "partial": False,
-                    "remaining_balance": 0.0,
-                }
-                if closure_method != "payment":
-                    result["closure_method"] = closure_method
-                return result
-            elif paid > 0 and remaining > 0:
-                return {
-                    "paid": False,
-                    "payment_amount": round(paid, 2),
-                    "payment_date": "",
-                    "payment_method": "",
-                    "payment_reference": str(row.get("id") or ""),
-                    "partial": True,
-                    "remaining_balance": round(remaining, 2),
-                }
-            else:
-                return {"paid": False, "reason": "unpaid"}
+            result = {
+                "paid": True,
+                "payment_amount": round(paid or total, 2),
+                "payment_date": "",
+                "payment_method": "",
+                "payment_reference": str(row.get("id") or ""),
+                "partial": False,
+                "remaining_balance": 0.0,
+            }
+            if closure_method != "payment":
+                result["closure_method"] = closure_method
+            return result
+        elif paid > 0 and remaining > 0:
+            return {
+                "paid": False,
+                "payment_amount": round(paid, 2),
+                "payment_date": "",
+                "payment_method": "",
+                "payment_reference": str(row.get("id") or ""),
+                "partial": True,
+                "remaining_balance": round(remaining, 2),
+            }
+        else:
+            return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("NetSuite payment status HTTP error: status=%d", e.response.status_code)
         return {"paid": False, "error": f"http_{e.response.status_code}"}
@@ -1349,48 +1350,48 @@ async def get_chart_of_accounts_netsuite(connection) -> List[Dict[str, Any]]:
 
     query = "SELECT id, acctnumber, acctname, accttype, isinactive, currency FROM account"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                suiteql_url,
-                json={"q": query},
-                headers={
-                    "Authorization": auth_header,
-                    "Content-Type": "application/json",
-                    "Prefer": "transient",
-                },
-                params={"limit": 1000},
-                timeout=60,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            suiteql_url,
+            json={"q": query},
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+                "Prefer": "transient",
+            },
+            params={"limit": 1000},
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            accounts: List[Dict[str, Any]] = []
-            for item in result.get("items", []):
-                raw_type = str(item.get("accttype") or "").strip().lower()
-                is_inactive = item.get("isinactive")
-                active = True
-                if isinstance(is_inactive, str):
-                    active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
-                elif isinstance(is_inactive, bool):
-                    active = not is_inactive
+        accounts: List[Dict[str, Any]] = []
+        for item in result.get("items", []):
+            raw_type = str(item.get("accttype") or "").strip().lower()
+            is_inactive = item.get("isinactive")
+            active = True
+            if isinstance(is_inactive, str):
+                active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
+            elif isinstance(is_inactive, bool):
+                active = not is_inactive
 
-                currency_val = item.get("currency")
-                currency = ""
-                if isinstance(currency_val, dict):
-                    currency = str(currency_val.get("refName") or currency_val.get("name") or "")
-                elif currency_val:
-                    currency = str(currency_val)
+            currency_val = item.get("currency")
+            currency = ""
+            if isinstance(currency_val, dict):
+                currency = str(currency_val.get("refName") or currency_val.get("name") or "")
+            elif currency_val:
+                currency = str(currency_val)
 
-                accounts.append({
-                    "id": str(item.get("id") or ""),
-                    "code": str(item.get("acctnumber") or ""),
-                    "name": str(item.get("acctname") or ""),
-                    "type": _NS_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
-                    "sub_type": raw_type,
-                    "active": active,
-                    "currency": currency,
-                })
-            return accounts
+            accounts.append({
+                "id": str(item.get("id") or ""),
+                "code": str(item.get("acctnumber") or ""),
+                "name": str(item.get("acctname") or ""),
+                "type": _NS_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                "sub_type": raw_type,
+                "active": active,
+                "currency": currency,
+            })
+        return accounts
 
     except Exception as e:
         logger.error("Failed to fetch NetSuite chart of accounts: %s", type(e).__name__)
@@ -1424,70 +1425,70 @@ async def list_all_vendors_netsuite(connection) -> List[Dict[str, Any]]:
     all_vendors: List[Dict[str, Any]] = []
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            while True:
-                auth_header = _oauth_header(connection, "POST", suiteql_url)
-                response = await client.post(
-                    suiteql_url,
-                    json={"q": query},
-                    headers={
-                        "Authorization": auth_header,
-                        "Content-Type": "application/json",
-                        "Prefer": "transient",
-                    },
-                    params={"limit": page_size, "offset": offset},
-                    timeout=60,
-                )
+        client = get_http_client()
+        while True:
+            auth_header = _oauth_header(connection, "POST", suiteql_url)
+            response = await client.post(
+                suiteql_url,
+                json={"q": query},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Prefer": "transient",
+                },
+                params={"limit": page_size, "offset": offset},
+                timeout=60,
+            )
 
-                if response.status_code == 401:
-                    logger.warning("NetSuite token expired during vendor list fetch")
-                    break
+            if response.status_code == 401:
+                logger.warning("NetSuite token expired during vendor list fetch")
+                break
 
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-                items = result.get("items", [])
-                if not items:
-                    break
+            items = result.get("items", [])
+            if not items:
+                break
 
-                for v in items:
-                    is_inactive = v.get("isinactive") or v.get("isInactive")
-                    active = True
-                    if isinstance(is_inactive, str):
-                        active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
-                    elif isinstance(is_inactive, bool):
-                        active = not is_inactive
+            for v in items:
+                is_inactive = v.get("isinactive") or v.get("isInactive")
+                active = True
+                if isinstance(is_inactive, str):
+                    active = is_inactive.strip().upper() not in {"T", "TRUE", "YES", "1"}
+                elif isinstance(is_inactive, bool):
+                    active = not is_inactive
 
-                    currency_val = v.get("currency")
-                    currency = ""
-                    if isinstance(currency_val, dict):
-                        currency = str(currency_val.get("refName") or currency_val.get("name") or "")
-                    elif currency_val:
-                        currency = str(currency_val)
+                currency_val = v.get("currency")
+                currency = ""
+                if isinstance(currency_val, dict):
+                    currency = str(currency_val.get("refName") or currency_val.get("name") or "")
+                elif currency_val:
+                    currency = str(currency_val)
 
-                    terms_val = v.get("terms")
-                    terms = ""
-                    if isinstance(terms_val, dict):
-                        terms = str(terms_val.get("refName") or terms_val.get("name") or "")
-                    elif terms_val:
-                        terms = str(terms_val)
+                terms_val = v.get("terms")
+                terms = ""
+                if isinstance(terms_val, dict):
+                    terms = str(terms_val.get("refName") or terms_val.get("name") or "")
+                elif terms_val:
+                    terms = str(terms_val)
 
-                    all_vendors.append({
-                        "vendor_id": str(v.get("id") or ""),
-                        "name": str(v.get("companyname") or v.get("companyName") or ""),
-                        "email": str(v.get("email") or ""),
-                        "phone": str(v.get("phone") or ""),
-                        "tax_id": "",
-                        "currency": currency,
-                        "active": active,
-                        "address": str(v.get("defaultaddress") or v.get("defaultAddress") or ""),
-                        "payment_terms": terms,
-                        "balance": 0.0,
-                    })
+                all_vendors.append({
+                    "vendor_id": str(v.get("id") or ""),
+                    "name": str(v.get("companyname") or v.get("companyName") or ""),
+                    "email": str(v.get("email") or ""),
+                    "phone": str(v.get("phone") or ""),
+                    "tax_id": "",
+                    "currency": currency,
+                    "active": active,
+                    "address": str(v.get("defaultaddress") or v.get("defaultAddress") or ""),
+                    "payment_terms": terms,
+                    "balance": 0.0,
+                })
 
-                if len(items) < page_size:
-                    break
-                offset += page_size
+            if len(items) < page_size:
+                break
+            offset += page_size
 
         return all_vendors
 

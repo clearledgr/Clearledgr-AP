@@ -14,6 +14,8 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.http_client import get_http_client
+
 logger = logging.getLogger(__name__)
 
 SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
@@ -67,10 +69,10 @@ class SheetsAPIClient:
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{range_notation}"
         params = {"valueRenderOption": value_render}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=self._headers(), params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = get_http_client()
+        response = await client.get(url, headers=self._headers(), params=params)
+        response.raise_for_status()
+        data = response.json()
 
         return data.get("values", [])
 
@@ -98,10 +100,10 @@ class SheetsAPIClient:
         params = {"valueInputOption": input_option}
         body = {"range": range_notation, "majorDimension": "ROWS", "values": values}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.put(url, headers=self._headers(), params=params, json=body)
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.put(url, headers=self._headers(), params=params, json=body)
+        response.raise_for_status()
+        return response.json()
 
     async def append_rows(
         self,
@@ -127,10 +129,10 @@ class SheetsAPIClient:
         params = {"valueInputOption": input_option, "insertDataOption": "INSERT_ROWS"}
         body = {"range": range_notation, "majorDimension": "ROWS", "values": rows}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=self._headers(), params=params, json=body)
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(url, headers=self._headers(), params=params, json=body)
+        response.raise_for_status()
+        return response.json()
 
     async def get_spreadsheet_metadata(self, spreadsheet_id: str) -> Dict[str, Any]:
         """Get spreadsheet title and sheet names."""
@@ -139,10 +141,10 @@ class SheetsAPIClient:
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}"
         params = {"fields": "spreadsheetId,properties.title,sheets.properties"}
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, headers=self._headers(), params=params)
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.get(url, headers=self._headers(), params=params)
+        response.raise_for_status()
+        return response.json()
 
 
 def extract_spreadsheet_id(url: str) -> Optional[str]:

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import httpx
+from clearledgr.core.http_client import get_http_client
 from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
@@ -307,14 +308,14 @@ class GmailAPIClient:
         if oauth["client_secret"]:
             payload["client_secret"] = oauth["client_secret"]
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                OAUTH_TOKEN_URL,
-                data=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-        
+        client = get_http_client()
+        response = await client.post(
+            OAUTH_TOKEN_URL,
+            data=payload
+        )
+        response.raise_for_status()
+        data = response.json()
+
         # Update token
         self._token = GmailToken(
             user_id=self._token.user_id,
@@ -362,15 +363,15 @@ class GmailAPIClient:
         if label_ids:
             params["labelIds"] = [str(label_id).strip() for label_id in label_ids if str(label_id).strip()]
         
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/messages",
-                headers=self._headers(),
-                params=params,
-            )
-            response.raise_for_status()
-            return response.json()
-    
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/messages",
+            headers=self._headers(),
+            params=params,
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def get_message(self, message_id: str, format: str = "full") -> GmailMessage:
         """
         Get a specific message by ID.
@@ -382,27 +383,27 @@ class GmailAPIClient:
         Returns:
             GmailMessage object
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/messages/{message_id}",
-                headers=self._headers(),
-                params={"format": format},
-            )
-            response.raise_for_status()
-            data = response.json()
-        
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/messages/{message_id}",
+            headers=self._headers(),
+            params={"format": format},
+        )
+        response.raise_for_status()
+        data = response.json()
+
         return self._parse_message(data)
 
     async def get_thread(self, thread_id: str, format: str = "full") -> List[GmailMessage]:
         """Get all messages in a Gmail thread."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/threads/{thread_id}",
-                headers=self._headers(),
-                params={"format": format},
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/threads/{thread_id}",
+            headers=self._headers(),
+            params={"format": format},
+        )
+        response.raise_for_status()
+        data = response.json()
 
         messages = data.get("messages", []) or []
         return [
@@ -489,14 +490,14 @@ class GmailAPIClient:
         Returns:
             Raw attachment bytes
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/messages/{message_id}/attachments/{attachment_id}",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            data = response.json()
-        
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/messages/{message_id}/attachments/{attachment_id}",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        data = response.json()
+
         # Decode base64url encoded data
         return base64.urlsafe_b64decode(data["data"])
     
@@ -516,69 +517,69 @@ class GmailAPIClient:
             Dict with history records (may contain messagesAdded and/or
             labelsAdded arrays per record)
         """
-        async with httpx.AsyncClient() as client:
-            # Gmail returns multiple historyTypes via repeated params
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/history",
-                headers=self._headers(),
-                params=[
-                    ("startHistoryId", start_history_id),
-                    ("historyTypes", "messageAdded"),
-                    ("historyTypes", "labelAdded"),
-                ],
-            )
-            
-            if response.status_code == 404:
-                # History ID too old, need full sync
-                return {"history": [], "needsFullSync": True}
-            
-            response.raise_for_status()
-            return response.json()
-    
+        client = get_http_client()
+        # Gmail returns multiple historyTypes via repeated params
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/history",
+            headers=self._headers(),
+            params=[
+                ("startHistoryId", start_history_id),
+                ("historyTypes", "messageAdded"),
+                ("historyTypes", "labelAdded"),
+            ],
+        )
+
+        if response.status_code == 404:
+            # History ID too old, need full sync
+            return {"history": [], "needsFullSync": True}
+
+        response.raise_for_status()
+        return response.json()
+
     async def add_label(self, message_id: str, label_ids: List[str]) -> None:
         """Add labels to a message."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/messages/{message_id}/modify",
-                headers=self._headers(),
-                json={"addLabelIds": label_ids},
-            )
-            response.raise_for_status()
-    
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/messages/{message_id}/modify",
+            headers=self._headers(),
+            json={"addLabelIds": label_ids},
+        )
+        response.raise_for_status()
+
     async def remove_label(self, message_id: str, label_ids: List[str]) -> None:
         """Remove labels from a message."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/messages/{message_id}/modify",
-                headers=self._headers(),
-                json={"removeLabelIds": label_ids},
-            )
-            response.raise_for_status()
-    
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/messages/{message_id}/modify",
+            headers=self._headers(),
+            json={"removeLabelIds": label_ids},
+        )
+        response.raise_for_status()
+
     async def create_label(self, name: str) -> Dict[str, Any]:
         """Create a new label."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/labels",
-                headers=self._headers(),
-                json={
-                    "name": name,
-                    "labelListVisibility": "labelShow",
-                    "messageListVisibility": "show",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/labels",
+            headers=self._headers(),
+            json={
+                "name": name,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show",
+            },
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def delete_label(self, label_id: str) -> None:
         """Delete a Gmail label."""
-        async with httpx.AsyncClient() as client:
-            response = await client.delete(
-                f"{GMAIL_API_BASE}/users/me/labels/{label_id}",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-    
+        client = get_http_client()
+        response = await client.delete(
+            f"{GMAIL_API_BASE}/users/me/labels/{label_id}",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+
     async def create_draft(
         self,
         thread_id: str,
@@ -608,15 +609,15 @@ class GmailAPIClient:
                 "threadId": thread_id,
             }
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/drafts",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("id", "")
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/drafts",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("id", "")
 
     async def send_draft(self, draft_id: str) -> Dict[str, Any]:
         """Send an existing draft. Returns the sent message metadata.
@@ -624,14 +625,14 @@ class GmailAPIClient:
         Requires the ``gmail.send`` OAuth scope.  After a successful send the
         draft is removed from the user's Drafts folder by Gmail automatically.
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/drafts/send",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json={"id": draft_id},
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/drafts/send",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json={"id": draft_id},
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def send_message(
         self,
@@ -685,38 +686,38 @@ class GmailAPIClient:
         send_headers = {**self._headers(), "Content-Type": "application/json"}
         retry_delays = (2, 5, 10)
         last_exc: Optional[Exception] = None
-        async with httpx.AsyncClient() as client:
-            for attempt in range(len(retry_delays) + 1):
-                try:
-                    response = await client.post(send_url, headers=send_headers, json=payload)
-                    if response.status_code == 429 or 500 <= response.status_code < 600:
-                        if attempt < len(retry_delays):
-                            delay = retry_delays[attempt]
-                            logger.warning(
-                                "Gmail send got %d, retrying in %ds (attempt %d/%d)",
-                                response.status_code, delay, attempt + 1, len(retry_delays),
-                            )
-                            import asyncio as _asyncio
-                            await _asyncio.sleep(delay)
-                            continue
-                    response.raise_for_status()
-                    return response.json()
-                except httpx.HTTPStatusError as exc:
-                    last_exc = exc
-                    raise  # 4xx other than 429 — non-retryable
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    # Network hiccup — retry same budget as 5xx.
-                    last_exc = exc
+        client = get_http_client()
+        for attempt in range(len(retry_delays) + 1):
+            try:
+                response = await client.post(send_url, headers=send_headers, json=payload)
+                if response.status_code == 429 or 500 <= response.status_code < 600:
                     if attempt < len(retry_delays):
                         delay = retry_delays[attempt]
                         logger.warning(
-                            "Gmail send network error (%s), retrying in %ds (attempt %d/%d)",
-                            type(exc).__name__, delay, attempt + 1, len(retry_delays),
+                            "Gmail send got %d, retrying in %ds (attempt %d/%d)",
+                            response.status_code, delay, attempt + 1, len(retry_delays),
                         )
                         import asyncio as _asyncio
                         await _asyncio.sleep(delay)
                         continue
-                    raise
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                raise  # 4xx other than 429 — non-retryable
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                # Network hiccup — retry same budget as 5xx.
+                last_exc = exc
+                if attempt < len(retry_delays):
+                    delay = retry_delays[attempt]
+                    logger.warning(
+                        "Gmail send network error (%s), retrying in %ds (attempt %d/%d)",
+                        type(exc).__name__, delay, attempt + 1, len(retry_delays),
+                    )
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(delay)
+                    continue
+                raise
         # Loop exhausted all retries with a retryable failure —
         # propagate the last exception so the caller's fallback path
         # (e.g. save-as-draft in the vendor-onboarding flow) runs.
@@ -735,14 +736,14 @@ class GmailAPIClient:
         Returns:
             The draft resource dict from the Gmail API.
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
-                headers=self._headers(),
-                params={"format": format},
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
+            headers=self._headers(),
+            params={"format": format},
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def schedule_draft_send(
         self,
@@ -796,36 +797,36 @@ class GmailAPIClient:
         new_raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
 
         # 3. Delete the original draft so we don't leave duplicates.
-        async with httpx.AsyncClient() as client:
-            await client.delete(
-                f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
-                headers=self._headers(),
-            )
-            # Ignore 404 — draft may already have been removed.
+        client = get_http_client()
+        await client.delete(
+            f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
+            headers=self._headers(),
+        )
+        # Ignore 404 — draft may already have been removed.
 
         # 4. Create a replacement draft with the schedule header.
         payload: Dict[str, Any] = {"message": {"raw": new_raw}}
         if thread_id:
             payload["message"]["threadId"] = thread_id
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/drafts",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/drafts",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/me/labels",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            return response.json().get("labels", [])
+        client = get_http_client()
+        response = await client.get(
+            f"{GMAIL_API_BASE}/users/me/labels",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json().get("labels", [])
 
 
 class GmailWatchService:
@@ -847,32 +848,32 @@ class GmailWatchService:
         if not await self.client.ensure_authenticated():
             raise ValueError("User not authenticated")
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/watch",
-                headers=self.client._headers(),
-                json={
-                    "topicName": PUBSUB_TOPIC,
-                    "labelIds": ["INBOX"],
-                    "labelFilterBehavior": "INCLUDE",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-    
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/watch",
+            headers=self.client._headers(),
+            json={
+                "topicName": PUBSUB_TOPIC,
+                "labelIds": ["INBOX"],
+                "labelFilterBehavior": "INCLUDE",
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def stop_watch(self) -> None:
         """Stop watching the user's inbox."""
         if not await self.client.ensure_authenticated():
             return
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/stop",
-                headers=self.client._headers(),
-            )
-            # 404 is OK - means no watch was active
-            if response.status_code not in [200, 204, 404]:
-                response.raise_for_status()
+        client = get_http_client()
+        response = await client.post(
+            f"{GMAIL_API_BASE}/users/me/stop",
+            headers=self.client._headers(),
+        )
+        # 404 is OK - means no watch was active
+        if response.status_code not in [200, 204, 404]:
+            response.raise_for_status()
 
 
 async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> GmailToken:
@@ -896,37 +897,37 @@ async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None
     if oauth["client_secret"]:
         payload["client_secret"] = oauth["client_secret"]
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            OAUTH_TOKEN_URL,
-            data=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
-    
+    client = get_http_client()
+    response = await client.post(
+        OAUTH_TOKEN_URL,
+        data=payload,
+    )
+    response.raise_for_status()
+    data = response.json()
+
     # Resolve user identity from OAuth token. Prefer Gmail profile because
     # Gmail scopes are guaranteed, while userinfo scopes may not be present.
     user_info: Dict[str, Any] = {}
-    async with httpx.AsyncClient() as client:
-        profile_response = await client.get(
-            GMAIL_PROFILE_URL,
+    client = get_http_client()
+    profile_response = await client.get(
+        GMAIL_PROFILE_URL,
+        headers={"Authorization": f"Bearer {data['access_token']}"},
+    )
+    if profile_response.status_code < 400:
+        profile = profile_response.json()
+        user_info = {
+            "id": profile.get("emailAddress") or "gmail-user",
+            "email": profile.get("emailAddress", ""),
+        }
+    else:
+        # Fallback for environments where Gmail profile endpoint is blocked.
+        response = await client.get(
+            GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {data['access_token']}"},
         )
-        if profile_response.status_code < 400:
-            profile = profile_response.json()
-            user_info = {
-                "id": profile.get("emailAddress") or "gmail-user",
-                "email": profile.get("emailAddress", ""),
-            }
-        else:
-            # Fallback for environments where Gmail profile endpoint is blocked.
-            response = await client.get(
-                GOOGLE_USERINFO_URL,
-                headers={"Authorization": f"Bearer {data['access_token']}"},
-            )
-            response.raise_for_status()
-            user_info = response.json()
-    
+        response.raise_for_status()
+        user_info = response.json()
+
     return GmailToken(
         user_id=user_info["id"],
         access_token=data["access_token"],

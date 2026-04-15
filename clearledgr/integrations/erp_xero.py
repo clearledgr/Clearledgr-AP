@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
@@ -96,36 +97,36 @@ async def post_to_xero(
     url = "https://api.xero.com/api.xro/2.0/ManualJournals"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"ManualJournals": [xero_journal]},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"ManualJournals": [xero_journal]},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
 
-            if response.status_code == 401:
-                logger.warning("Xero token expired, needs refresh")
-                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+        if response.status_code == 401:
+            logger.warning("Xero token expired, needs refresh")
+            return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            journals = result.get("ManualJournals", [])
-            if journals:
-                journal_id = journals[0].get("ManualJournalID")
-                logger.info(f"Posted to Xero: {journal_id}")
-                return {
-                    "status": "success",
-                    "erp": "xero",
-                    "entry_id": journal_id,
-                }
+        journals = result.get("ManualJournals", [])
+        if journals:
+            journal_id = journals[0].get("ManualJournalID")
+            logger.info(f"Posted to Xero: {journal_id}")
+            return {
+                "status": "success",
+                "erp": "xero",
+                "entry_id": journal_id,
+            }
 
-            return {"status": "error", "erp": "xero", "reason": "No journal returned"}
+        return {"status": "error", "erp": "xero", "reason": "No journal returned"}
 
     except httpx.HTTPStatusError as e:
         logger.error("Xero API error: %s", e.response.status_code)
@@ -143,22 +144,22 @@ async def refresh_xero_token(connection) -> Optional[str]:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                "https://identity.xero.com/connect/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": connection.refresh_token,
-                },
-                auth=(connection.client_id, connection.client_secret),
-            )
-            response.raise_for_status()
-            tokens = response.json()
+        client = get_http_client()
+        response = await client.post(
+            "https://identity.xero.com/connect/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": connection.refresh_token,
+            },
+            auth=(connection.client_id, connection.client_secret),
+        )
+        response.raise_for_status()
+        tokens = response.json()
 
-            connection.access_token = tokens.get("access_token")
-            connection.refresh_token = tokens.get("refresh_token")
+        connection.access_token = tokens.get("access_token")
+        connection.refresh_token = tokens.get("refresh_token")
 
-            return connection.access_token
+        return connection.access_token
     except Exception as e:
         logger.error("Failed to refresh Xero token: %s", type(e).__name__)
         return None
@@ -244,36 +245,36 @@ async def post_bill_to_xero(
     url = "https://api.xero.com/api.xro/2.0/Invoices"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"Invoices": [xero_bill]},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"Invoices": [xero_bill]},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
 
-            if response.status_code == 401:
-                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+        if response.status_code == 401:
+            return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            invoices = result.get("Invoices", [])
-            if invoices:
-                inv = invoices[0]
-                logger.info("Posted Bill to Xero: %s", inv.get("InvoiceID"))
-                return {
-                    "status": "success",
-                    "erp": "xero",
-                    "bill_id": inv.get("InvoiceID"),
-                    "invoice_number": inv.get("InvoiceNumber"),
-                }
+        invoices = result.get("Invoices", [])
+        if invoices:
+            inv = invoices[0]
+            logger.info("Posted Bill to Xero: %s", inv.get("InvoiceID"))
+            return {
+                "status": "success",
+                "erp": "xero",
+                "bill_id": inv.get("InvoiceID"),
+                "invoice_number": inv.get("InvoiceNumber"),
+            }
 
-            return {"status": "error", "erp": "xero", "reason": "no_invoice_returned"}
+        return {"status": "error", "erp": "xero", "reason": "no_invoice_returned"}
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -376,59 +377,59 @@ async def reverse_bill_from_xero(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=body,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=body,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
 
-            if response.status_code == 401:
-                return {
-                    "status": "error",
-                    "erp": "xero",
-                    "reason": "Token expired",
-                    "needs_reauth": True,
-                }
-
-            if response.status_code == 404:
-                return {
-                    "status": "already_reversed",
-                    "erp": "xero",
-                    "reference_id": erp_reference,
-                    "reversal_method": "void",
-                    "reversal_ref": erp_reference,
-                    "reason": "bill_not_found_in_erp",
-                }
-
-            response.raise_for_status()
-            result = response.json() or {}
-            invoices = result.get("Invoices") or []
-            erp_status_raw = ""
-            if invoices and isinstance(invoices[0], dict):
-                erp_status_raw = str(invoices[0].get("Status") or "")
-
-            if erp_status_raw.upper() != "VOIDED":
-                logger.warning(
-                    "Xero reversal for %s returned status=%r (expected VOIDED)",
-                    erp_reference, erp_status_raw,
-                )
-
-            logger.info("Voided Xero Bill %s (reason=%s)", erp_reference, reason)
+        if response.status_code == 401:
             return {
-                "status": "success",
+                "status": "error",
+                "erp": "xero",
+                "reason": "Token expired",
+                "needs_reauth": True,
+            }
+
+        if response.status_code == 404:
+            return {
+                "status": "already_reversed",
                 "erp": "xero",
                 "reference_id": erp_reference,
                 "reversal_method": "void",
                 "reversal_ref": erp_reference,
-                "erp_status": erp_status_raw or "VOIDED",
+                "reason": "bill_not_found_in_erp",
             }
+
+        response.raise_for_status()
+        result = response.json() or {}
+        invoices = result.get("Invoices") or []
+        erp_status_raw = ""
+        if invoices and isinstance(invoices[0], dict):
+            erp_status_raw = str(invoices[0].get("Status") or "")
+
+        if erp_status_raw.upper() != "VOIDED":
+            logger.warning(
+                "Xero reversal for %s returned status=%r (expected VOIDED)",
+                erp_reference, erp_status_raw,
+            )
+
+        logger.info("Voided Xero Bill %s (reason=%s)", erp_reference, reason)
+        return {
+            "status": "success",
+            "erp": "xero",
+            "reference_id": erp_reference,
+            "reversal_method": "void",
+            "reversal_ref": erp_reference,
+            "erp_status": erp_status_raw or "VOIDED",
+        }
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -518,28 +519,28 @@ async def find_credit_note_xero(
     where_clause = f'Type=="ACCPAYCREDIT" AND CreditNoteNumber=="{literal}"'
     url = "https://api.xero.com/api.xro/2.0/CreditNotes"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"where": where_clause},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            credit_notes = response.json().get("CreditNotes", [])
-            if credit_notes:
-                note = credit_notes[0]
-                return {
-                    "credit_note_id": note.get("CreditNoteID"),
-                    "credit_note_number": note.get("CreditNoteNumber"),
-                    "remaining_credit": note.get("RemainingCredit"),
-                    "status": note.get("Status"),
-                    "currency": note.get("CurrencyCode"),
-                    "erp": "xero",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"where": where_clause},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        credit_notes = response.json().get("CreditNotes", [])
+        if credit_notes:
+            note = credit_notes[0]
+            return {
+                "credit_note_id": note.get("CreditNoteID"),
+                "credit_note_number": note.get("CreditNoteNumber"),
+                "remaining_credit": note.get("RemainingCredit"),
+                "status": note.get("Status"),
+                "currency": note.get("CurrencyCode"),
+                "erp": "xero",
+            }
     except Exception as e:
         logger.error("Xero credit note lookup error: %s", e)
     return None
@@ -604,46 +605,46 @@ async def apply_credit_note_to_xero(
     url = f"https://api.xero.com/api.xro/2.0/CreditNotes/{credit_note['credit_note_id']}/Allocations"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.put(
-                url,
-                params={"summarizeErrors": "true"},
-                json=allocation_request,
-                headers=_xero_headers(connection, idempotency_key=idempotency_key),
-                timeout=30,
+        client = get_http_client()
+        response = await client.put(
+            url,
+            params={"summarizeErrors": "true"},
+            json=allocation_request,
+            headers=_xero_headers(connection, idempotency_key=idempotency_key),
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+
+        response.raise_for_status()
+        payload = response.json()
+        validation_message = _extract_xero_validation_message(payload)
+        if validation_message:
+            return {
+                "status": "error",
+                "erp": "xero",
+                "reason": validation_message,
+                "credit_note_number": application.credit_note_number,
+            }
+
+        allocations = payload.get("Allocations", [])
+        if allocations:
+            allocation = allocations[0]
+            application_reference = (
+                allocation.get("AllocationID")
+                or f"{credit_note['credit_note_id']}:{str(application.target_erp_reference).strip()}"
             )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+            return {
+                "status": "success",
+                "erp": "xero",
+                "erp_reference": application_reference,
+                "target_erp_reference": str(application.target_erp_reference).strip(),
+                "credit_note_reference": credit_note.get("credit_note_id"),
+                "credit_note_number": credit_note.get("credit_note_number"),
+                "amount": allocation.get("Amount"),
+            }
 
-            response.raise_for_status()
-            payload = response.json()
-            validation_message = _extract_xero_validation_message(payload)
-            if validation_message:
-                return {
-                    "status": "error",
-                    "erp": "xero",
-                    "reason": validation_message,
-                    "credit_note_number": application.credit_note_number,
-                }
-
-            allocations = payload.get("Allocations", [])
-            if allocations:
-                allocation = allocations[0]
-                application_reference = (
-                    allocation.get("AllocationID")
-                    or f"{credit_note['credit_note_id']}:{str(application.target_erp_reference).strip()}"
-                )
-                return {
-                    "status": "success",
-                    "erp": "xero",
-                    "erp_reference": application_reference,
-                    "target_erp_reference": str(application.target_erp_reference).strip(),
-                    "credit_note_reference": credit_note.get("credit_note_id"),
-                    "credit_note_number": credit_note.get("credit_note_number"),
-                    "amount": allocation.get("Amount"),
-                }
-
-            return {"status": "error", "erp": "xero", "reason": "no_allocation_returned"}
+        return {"status": "error", "erp": "xero", "reason": "no_allocation_returned"}
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("Xero credit allocation HTTP error: status=%d", status_code)
@@ -718,42 +719,42 @@ async def apply_settlement_to_xero(
 
     url = "https://api.xero.com/api.xro/2.0/Payments"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.put(
-                url,
-                params={"summarizeErrors": "true"},
-                json=payment_request,
-                headers=_xero_headers(connection, idempotency_key=idempotency_key),
-                timeout=30,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.put(
+            url,
+            params={"summarizeErrors": "true"},
+            json=payment_request,
+            headers=_xero_headers(connection, idempotency_key=idempotency_key),
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "xero", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            payload = response.json()
-            validation_message = _extract_xero_validation_message(payload)
-            if validation_message:
-                return {
-                    "status": "error",
-                    "erp": "xero",
-                    "reason": validation_message,
-                    "source_reference": application.source_reference,
-                }
+        response.raise_for_status()
+        payload = response.json()
+        validation_message = _extract_xero_validation_message(payload)
+        if validation_message:
+            return {
+                "status": "error",
+                "erp": "xero",
+                "reason": validation_message,
+                "source_reference": application.source_reference,
+            }
 
-            payments = payload.get("Payments", [])
-            if payments:
-                payment_result = payments[0]
-                return {
-                    "status": "success",
-                    "erp": "xero",
-                    "erp_reference": payment_result.get("PaymentID"),
-                    "payment_id": payment_result.get("PaymentID"),
-                    "target_erp_reference": str(application.target_erp_reference).strip(),
-                    "amount": payment_result.get("Amount"),
-                    "source_reference": payment_result.get("Reference") or application.source_reference,
-                }
+        payments = payload.get("Payments", [])
+        if payments:
+            payment_result = payments[0]
+            return {
+                "status": "success",
+                "erp": "xero",
+                "erp_reference": payment_result.get("PaymentID"),
+                "payment_id": payment_result.get("PaymentID"),
+                "target_erp_reference": str(application.target_erp_reference).strip(),
+                "amount": payment_result.get("Amount"),
+                "source_reference": payment_result.get("Reference") or application.source_reference,
+            }
 
-            return {"status": "error", "erp": "xero", "reason": "no_payment_returned"}
+        return {"status": "error", "erp": "xero", "reason": "no_payment_returned"}
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("Xero settlement payment HTTP error: status=%d", status_code)
@@ -806,29 +807,29 @@ async def create_vendor_xero(
     url = "https://api.xero.com/api.xro/2.0/Contacts"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json={"Contacts": [xero_contact]},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json={"Contacts": [xero_contact]},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            contacts = result.get("Contacts", [])
-            if contacts:
-                c = contacts[0]
-                return {
-                    "status": "success",
-                    "vendor_id": c.get("ContactID"),
-                    "name": c.get("Name"),
-                }
-            return {"status": "error", "erp": "xero", "reason": "No contact returned"}
+        contacts = result.get("Contacts", [])
+        if contacts:
+            c = contacts[0]
+            return {
+                "status": "success",
+                "vendor_id": c.get("ContactID"),
+                "name": c.get("Name"),
+            }
+        return {"status": "error", "erp": "xero", "reason": "No contact returned"}
     except Exception as e:
         logger.error("Xero vendor creation error: %s", type(e).__name__)
         return {"status": "error", "erp": "xero", "reason": "vendor_creation_failed"}
@@ -848,28 +849,28 @@ async def find_vendor_xero(
     params = {"where": _build_xero_vendor_lookup_where(name_operand=name_operand)}
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params=params,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            contacts = result.get("Contacts", [])
-            for c in contacts:
-                if email and c.get("EmailAddress") != email:
-                    continue
-                return {
-                    "vendor_id": c.get("ContactID"),
-                    "name": c.get("Name"),
-                    "email": c.get("EmailAddress"),
-                }
+        contacts = result.get("Contacts", [])
+        for c in contacts:
+            if email and c.get("EmailAddress") != email:
+                continue
+            return {
+                "vendor_id": c.get("ContactID"),
+                "name": c.get("Name"),
+                "email": c.get("EmailAddress"),
+            }
     except Exception as e:
         logger.error(f"Xero vendor search error: {e}")
 
@@ -892,26 +893,26 @@ async def find_bill_xero(
     where_clause = f'Type=="ACCPAY" AND InvoiceNumber=="{literal}"'
     url = "https://api.xero.com/api.xro/2.0/Invoices"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"where": where_clause},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": connection.tenant_id,
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            invoices = response.json().get("Invoices", [])
-            if invoices:
-                inv = invoices[0]
-                return {
-                    "bill_id": inv.get("InvoiceID"),
-                    "doc_number": inv.get("InvoiceNumber"),
-                    "amount": inv.get("Total"),
-                    "erp": "xero",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"where": where_clause},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": connection.tenant_id,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        invoices = response.json().get("Invoices", [])
+        if invoices:
+            inv = invoices[0]
+            return {
+                "bill_id": inv.get("InvoiceID"),
+                "doc_number": inv.get("InvoiceNumber"),
+                "amount": inv.get("Total"),
+                "erp": "xero",
+            }
     except Exception as e:
         logger.error("Xero bill lookup error: %s", e)
     return None
@@ -935,9 +936,9 @@ async def _attach_to_xero(
         "xero-tenant-id": tenant_id,
         "Content-Type": "application/pdf",
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.put(url, headers=headers, content=file_bytes)
-        resp.raise_for_status()
+    client = get_http_client()
+    resp = await client.put(url, headers=headers, content=file_bytes, timeout=30)
+    resp.raise_for_status()
     return {"attached": True, "erp": "xero"}
 
 
@@ -957,89 +958,89 @@ async def get_payment_status_xero(
 
     url = f"https://api.xero.com/api.xro/2.0/Invoices/{bill_id}"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": str(connection.tenant_id or ""),
-                },
-                timeout=30,
-            )
-            if response.status_code == 401:
-                return {"paid": False, "error": "token_expired", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": str(connection.tenant_id or ""),
+            },
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"paid": False, "error": "token_expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            invoices = response.json().get("Invoices", [])
-            if not invoices:
-                return {"paid": False, "reason": "not_found"}
+        response.raise_for_status()
+        invoices = response.json().get("Invoices", [])
+        if not invoices:
+            return {"paid": False, "reason": "not_found"}
 
-            invoice = invoices[0]
-            status = str(invoice.get("Status") or "").upper()
-            total = float(invoice.get("Total") or 0)
-            amount_due = float(invoice.get("AmountDue") or 0)
-            amount_paid = float(invoice.get("AmountPaid") or 0)
+        invoice = invoices[0]
+        status = str(invoice.get("Status") or "").upper()
+        total = float(invoice.get("Total") or 0)
+        amount_due = float(invoice.get("AmountDue") or 0)
+        amount_paid = float(invoice.get("AmountPaid") or 0)
 
-            # Extract payment details from Payments array if available
-            payments = invoice.get("Payments") or []
-            payment_date = ""
-            payment_reference = ""
-            has_voided_payment = False
-            if isinstance(payments, list) and payments:
-                last_payment = payments[-1]
-                if isinstance(last_payment, dict):
-                    payment_date = str(last_payment.get("Date") or "").strip()
-                    payment_reference = str(last_payment.get("PaymentID") or "").strip()
-                # Check for DELETED or VOIDED payments
-                for pmt in payments:
-                    if isinstance(pmt, dict):
-                        pmt_status = str(pmt.get("Status") or "").upper()
-                        if pmt_status in ("DELETED", "VOIDED"):
-                            has_voided_payment = True
+        # Extract payment details from Payments array if available
+        payments = invoice.get("Payments") or []
+        payment_date = ""
+        payment_reference = ""
+        has_voided_payment = False
+        if isinstance(payments, list) and payments:
+            last_payment = payments[-1]
+            if isinstance(last_payment, dict):
+                payment_date = str(last_payment.get("Date") or "").strip()
+                payment_reference = str(last_payment.get("PaymentID") or "").strip()
+            # Check for DELETED or VOIDED payments
+            for pmt in payments:
+                if isinstance(pmt, dict):
+                    pmt_status = str(pmt.get("Status") or "").upper()
+                    if pmt_status in ("DELETED", "VOIDED"):
+                        has_voided_payment = True
 
-            # Check for credit note applications
-            credit_notes = invoice.get("CreditNotes") or []
-            has_credits = isinstance(credit_notes, list) and len(credit_notes) > 0
+        # Check for credit note applications
+        credit_notes = invoice.get("CreditNotes") or []
+        has_credits = isinstance(credit_notes, list) and len(credit_notes) > 0
 
-            if status == "PAID" or (amount_due <= 0 and total > 0):
-                # Determine closure method
-                closure_method = "payment"
-                if has_credits and not payment_reference:
-                    closure_method = "credit_applied"
-                elif not payment_reference and not has_credits:
-                    closure_method = "unknown_non_payment"
+        if status == "PAID" or (amount_due <= 0 and total > 0):
+            # Determine closure method
+            closure_method = "payment"
+            if has_credits and not payment_reference:
+                closure_method = "credit_applied"
+            elif not payment_reference and not has_credits:
+                closure_method = "unknown_non_payment"
 
-                result = {
-                    "paid": True,
-                    "payment_amount": round(amount_paid or total, 2),
-                    "payment_date": payment_date,
-                    "payment_method": "",
-                    "payment_reference": payment_reference,
-                    "partial": False,
-                    "remaining_balance": 0.0,
-                }
-                if closure_method != "payment":
-                    result["closure_method"] = closure_method
-                return result
-            elif amount_paid > 0 and amount_due > 0:
+            result = {
+                "paid": True,
+                "payment_amount": round(amount_paid or total, 2),
+                "payment_date": payment_date,
+                "payment_method": "",
+                "payment_reference": payment_reference,
+                "partial": False,
+                "remaining_balance": 0.0,
+            }
+            if closure_method != "payment":
+                result["closure_method"] = closure_method
+            return result
+        elif amount_paid > 0 and amount_due > 0:
+            return {
+                "paid": False,
+                "payment_amount": round(amount_paid, 2),
+                "payment_date": payment_date,
+                "payment_method": "",
+                "payment_reference": payment_reference,
+                "partial": True,
+                "remaining_balance": round(amount_due, 2),
+            }
+        else:
+            # Check for voided/deleted payments indicating a failed payment
+            if has_voided_payment:
                 return {
                     "paid": False,
-                    "payment_amount": round(amount_paid, 2),
-                    "payment_date": payment_date,
-                    "payment_method": "",
-                    "payment_reference": payment_reference,
-                    "partial": True,
-                    "remaining_balance": round(amount_due, 2),
+                    "payment_failed": True,
+                    "reason": "payment_voided_or_deleted",
                 }
-            else:
-                # Check for voided/deleted payments indicating a failed payment
-                if has_voided_payment:
-                    return {
-                        "paid": False,
-                        "payment_failed": True,
-                        "reason": "payment_voided_or_deleted",
-                    }
-                return {"paid": False, "reason": "unpaid"}
+            return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("Xero payment status HTTP error: status=%d", e.response.status_code)
         return {"paid": False, "error": f"http_{e.response.status_code}"}
@@ -1086,36 +1087,36 @@ async def get_chart_of_accounts_xero(connection) -> List[Dict[str, Any]]:
 
     url = "https://api.xero.com/api.xro/2.0/Accounts"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "xero-tenant-id": str(connection.tenant_id or ""),
-                },
-                timeout=60,
-            )
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "xero-tenant-id": str(connection.tenant_id or ""),
+            },
+            timeout=60,
+        )
 
-            if response.status_code == 401:
-                logger.warning("Xero token expired during chart-of-accounts fetch")
-                return []
+        if response.status_code == 401:
+            logger.warning("Xero token expired during chart-of-accounts fetch")
+            return []
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            accounts: List[Dict[str, Any]] = []
-            for acc in result.get("Accounts", []):
-                raw_type = str(acc.get("Type") or "").strip().lower()
-                accounts.append({
-                    "id": str(acc.get("AccountID") or ""),
-                    "code": str(acc.get("Code") or ""),
-                    "name": str(acc.get("Name") or ""),
-                    "type": _XERO_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
-                    "sub_type": str(acc.get("Class") or ""),
-                    "active": str(acc.get("Status") or "").upper() == "ACTIVE",
-                    "currency": str(acc.get("CurrencyCode") or ""),
-                })
-            return accounts
+        accounts: List[Dict[str, Any]] = []
+        for acc in result.get("Accounts", []):
+            raw_type = str(acc.get("Type") or "").strip().lower()
+            accounts.append({
+                "id": str(acc.get("AccountID") or ""),
+                "code": str(acc.get("Code") or ""),
+                "name": str(acc.get("Name") or ""),
+                "type": _XERO_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                "sub_type": str(acc.get("Class") or ""),
+                "active": str(acc.get("Status") or "").upper() == "ACTIVE",
+                "currency": str(acc.get("CurrencyCode") or ""),
+            })
+        return accounts
 
     except Exception as e:
         logger.error("Failed to fetch Xero chart of accounts: %s", type(e).__name__)
@@ -1144,64 +1145,64 @@ async def list_all_vendors_xero(connection) -> List[Dict[str, Any]]:
     all_vendors: List[Dict[str, Any]] = []
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            while True:
-                response = await client.get(
-                    url,
-                    params={
-                        "where": "IsSupplier==true",
-                        "page": page,
-                    },
-                    headers=headers,
-                    timeout=60,
-                )
+        client = get_http_client()
+        while True:
+            response = await client.get(
+                url,
+                params={
+                    "where": "IsSupplier==true",
+                    "page": page,
+                },
+                headers=headers,
+                timeout=60,
+            )
 
-                if response.status_code == 401:
-                    logger.warning("Xero token expired during vendor list fetch")
-                    break
+            if response.status_code == 401:
+                logger.warning("Xero token expired during vendor list fetch")
+                break
 
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-                contacts = result.get("Contacts", [])
-                if not contacts:
-                    break
+            contacts = result.get("Contacts", [])
+            if not contacts:
+                break
 
-                for c in contacts:
-                    addrs = c.get("Addresses") or []
-                    addr_parts = []
-                    for a in addrs:
-                        if a.get("AddressType") == "POBOX" or a.get("AddressType") == "STREET":
-                            addr_parts = list(filter(None, [
-                                a.get("AddressLine1"), a.get("City"),
-                                a.get("Region"), a.get("PostalCode"),
-                                a.get("Country"),
-                            ]))
-                            break
+            for c in contacts:
+                addrs = c.get("Addresses") or []
+                addr_parts = []
+                for a in addrs:
+                    if a.get("AddressType") == "POBOX" or a.get("AddressType") == "STREET":
+                        addr_parts = list(filter(None, [
+                            a.get("AddressLine1"), a.get("City"),
+                            a.get("Region"), a.get("PostalCode"),
+                            a.get("Country"),
+                        ]))
+                        break
 
-                    phones = c.get("Phones") or []
-                    phone = ""
-                    for p in phones:
-                        if p.get("PhoneNumber"):
-                            phone = str(p["PhoneNumber"])
-                            break
+                phones = c.get("Phones") or []
+                phone = ""
+                for p in phones:
+                    if p.get("PhoneNumber"):
+                        phone = str(p["PhoneNumber"])
+                        break
 
-                    all_vendors.append({
-                        "vendor_id": str(c.get("ContactID") or ""),
-                        "name": str(c.get("Name") or ""),
-                        "email": str(c.get("EmailAddress") or ""),
-                        "phone": phone,
-                        "tax_id": str(c.get("TaxNumber") or ""),
-                        "currency": str(c.get("DefaultCurrency") or ""),
-                        "active": str(c.get("ContactStatus") or "").upper() == "ACTIVE",
-                        "address": ", ".join(addr_parts),
-                        "payment_terms": "",
-                        "balance": float(c.get("Balances", {}).get("AccountsPayable", {}).get("Outstanding") or 0),
-                    })
+                all_vendors.append({
+                    "vendor_id": str(c.get("ContactID") or ""),
+                    "name": str(c.get("Name") or ""),
+                    "email": str(c.get("EmailAddress") or ""),
+                    "phone": phone,
+                    "tax_id": str(c.get("TaxNumber") or ""),
+                    "currency": str(c.get("DefaultCurrency") or ""),
+                    "active": str(c.get("ContactStatus") or "").upper() == "ACTIVE",
+                    "address": ", ".join(addr_parts),
+                    "payment_terms": "",
+                    "balance": float(c.get("Balances", {}).get("AccountsPayable", {}).get("Outstanding") or 0),
+                })
 
-                if len(contacts) < 100:
-                    break
-                page += 1
+            if len(contacts) < 100:
+                break
+            page += 1
 
         return all_vendors
 
@@ -1242,53 +1243,53 @@ async def list_all_purchase_orders_xero(connection) -> List[Dict[str, Any]]:
         return "approved"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            while True:
-                response = await client.get(
-                    url,
-                    params={"page": page},
-                    headers=headers,
-                    timeout=60,
-                )
-                if response.status_code == 401:
-                    logger.warning("Xero token expired during PO list fetch")
-                    break
-                response.raise_for_status()
-                result = response.json()
-                pos = result.get("PurchaseOrders", [])
-                if not pos:
-                    break
-                for po in pos:
-                    contact = po.get("Contact") or {}
-                    lines = []
-                    for li in (po.get("LineItems") or []):
-                        lines.append({
-                            "line_id": str(li.get("LineItemID") or ""),
-                            "item_number": str(li.get("ItemCode") or ""),
-                            "description": str(li.get("Description") or ""),
-                            "quantity": float(li.get("Quantity") or 0.0),
-                            "unit_price": float(li.get("UnitAmount") or 0.0),
-                            "gl_code": str(li.get("AccountCode") or ""),
-                        })
-                    all_pos.append({
-                        "po_id": f"xero-po-{po.get('PurchaseOrderID')}",
-                        "po_number": str(po.get("PurchaseOrderNumber") or ""),
-                        "vendor_id": str(contact.get("ContactID") or ""),
-                        "vendor_name": str(contact.get("Name") or ""),
-                        "order_date": str(po.get("Date") or "")[:10],
-                        "expected_delivery": str(po.get("DeliveryDate") or "")[:10] or None,
-                        "line_items": lines,
-                        "subtotal": float(po.get("SubTotal") or 0.0),
-                        "tax_amount": float(po.get("TotalTax") or 0.0),
-                        "total_amount": float(po.get("Total") or 0.0),
-                        "currency": str(po.get("CurrencyCode") or "USD"),
-                        "status": _status_from_xero(po),
-                        "requested_by": "xero_sync",
-                        "erp_po_id": str(po.get("PurchaseOrderID") or ""),
+        client = get_http_client()
+        while True:
+            response = await client.get(
+                url,
+                params={"page": page},
+                headers=headers,
+                timeout=60,
+            )
+            if response.status_code == 401:
+                logger.warning("Xero token expired during PO list fetch")
+                break
+            response.raise_for_status()
+            result = response.json()
+            pos = result.get("PurchaseOrders", [])
+            if not pos:
+                break
+            for po in pos:
+                contact = po.get("Contact") or {}
+                lines = []
+                for li in (po.get("LineItems") or []):
+                    lines.append({
+                        "line_id": str(li.get("LineItemID") or ""),
+                        "item_number": str(li.get("ItemCode") or ""),
+                        "description": str(li.get("Description") or ""),
+                        "quantity": float(li.get("Quantity") or 0.0),
+                        "unit_price": float(li.get("UnitAmount") or 0.0),
+                        "gl_code": str(li.get("AccountCode") or ""),
                     })
-                if len(pos) < 100:
-                    break
-                page += 1
+                all_pos.append({
+                    "po_id": f"xero-po-{po.get('PurchaseOrderID')}",
+                    "po_number": str(po.get("PurchaseOrderNumber") or ""),
+                    "vendor_id": str(contact.get("ContactID") or ""),
+                    "vendor_name": str(contact.get("Name") or ""),
+                    "order_date": str(po.get("Date") or "")[:10],
+                    "expected_delivery": str(po.get("DeliveryDate") or "")[:10] or None,
+                    "line_items": lines,
+                    "subtotal": float(po.get("SubTotal") or 0.0),
+                    "tax_amount": float(po.get("TotalTax") or 0.0),
+                    "total_amount": float(po.get("Total") or 0.0),
+                    "currency": str(po.get("CurrencyCode") or "USD"),
+                    "status": _status_from_xero(po),
+                    "requested_by": "xero_sync",
+                    "erp_po_id": str(po.get("PurchaseOrderID") or ""),
+                })
+            if len(pos) < 100:
+                break
+            page += 1
 
         return all_pos
 

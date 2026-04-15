@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+
+from clearledgr.core.http_client import get_http_client
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -198,12 +200,12 @@ async def send_digest(org_id: str) -> bool:
             "text": "Clearledgr Daily Digest",
             "blocks": digest["blocks"],
         }
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers)
-            data = resp.json()
-            if not data.get("ok"):
-                logger.warning("[digest] Slack post failed: %s", data.get("error"))
-                return False
+        client = get_http_client()
+        resp = await client.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers, timeout=15)
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("[digest] Slack post failed: %s", data.get("error"))
+            return False
         return True
     except Exception as exc:
         logger.warning("[digest] send failed for org=%s: %s", org_id, exc)

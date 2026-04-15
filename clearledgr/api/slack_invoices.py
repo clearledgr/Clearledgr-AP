@@ -8,6 +8,7 @@ import urllib.parse
 from typing import Any, Dict, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from clearledgr.core.ap_item_resolution import (
@@ -269,9 +270,9 @@ async def _post_to_response_url(
     Returns True on success, False when POST failed (enqueue attempted).
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(response_url, json=payload)
-            resp.raise_for_status()
+        client = get_http_client()
+        resp = await client.post(response_url, json=payload, timeout=10)
+        resp.raise_for_status()
         return True
     except Exception as exc:
         logger.error("Slack response_url POST failed for ap_item=%s: %s", ap_item_id, exc)
@@ -1021,38 +1022,38 @@ async def _handle_mention_reply_sync(
 
         # Fetch the parent message to find the ap_item_id
         headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=10) as client:
-            # Get conversation history for the thread parent
-            resp = await client.get(
-                "https://slack.com/api/conversations.history",
-                params={"channel": channel, "latest": thread_ts, "inclusive": "true", "limit": "1"},
-                headers=headers,
-            )
-            data = resp.json()
-            messages = data.get("messages", [])
-            if not messages:
-                return
+        client = get_http_client()
+        # Get conversation history for the thread parent
+        resp = await client.get(
+            "https://slack.com/api/conversations.history",
+            params={"channel": channel, "latest": thread_ts, "inclusive": "true", "limit": "1"},
+            headers=headers,
+        )
+        data = resp.json()
+        messages = data.get("messages", [])
+        if not messages:
+            return
 
-            parent = messages[0]
-            metadata = parent.get("metadata") or {}
-            event_payload = metadata.get("event_payload") or {}
-            ap_item_id = event_payload.get("ap_item_id")
+        parent = messages[0]
+        metadata = parent.get("metadata") or {}
+        event_payload = metadata.get("event_payload") or {}
+        ap_item_id = event_payload.get("ap_item_id")
 
-            if not ap_item_id:
-                return
+        if not ap_item_id:
+            return
 
         # Look up user email for attribution
         user_email = user_id
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                user_resp = await client.get(
-                    "https://slack.com/api/users.info",
-                    params={"user": user_id},
-                    headers=headers,
-                )
-                user_data = user_resp.json()
-                if user_data.get("ok"):
-                    user_email = user_data["user"].get("profile", {}).get("email") or user_id
+            client = get_http_client()
+            user_resp = await client.get(
+                "https://slack.com/api/users.info",
+                params={"user": user_id},
+                headers=headers,
+            )
+            user_data = user_resp.json()
+            if user_data.get("ok"):
+                user_email = user_data["user"].get("profile", {}).get("email") or user_id
         except Exception:
             pass
 
@@ -1136,11 +1137,11 @@ async def _handle_conversational_query(
             "thread_ts": thread_ts,
             "text": answer,
         }
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers)
-            data = resp.json()
-            if not data.get("ok"):
-                logger.warning("[conversational] Slack reply failed: %s", data.get("error"))
+        client = get_http_client()
+        resp = await client.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers, timeout=15)
+        data = resp.json()
+        if not data.get("ok"):
+            logger.warning("[conversational] Slack reply failed: %s", data.get("error"))
 
     except Exception as exc:
         logger.error("[conversational] query handling failed: %s", exc)

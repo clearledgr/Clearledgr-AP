@@ -21,6 +21,7 @@ All public names are re-exported here so existing callers do not break.
 
 import logging
 import httpx
+from clearledgr.core.http_client import get_http_client
 import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
@@ -1482,10 +1483,10 @@ async def _download_attachment(url: str) -> Optional[bytes]:
     if not url:
         return None
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return resp.content
+        client = get_http_client()
+        resp = await client.get(url, timeout=30)
+        resp.raise_for_status()
+        return resp.content
     except Exception as exc:
         logger.warning("Attachment download failed from %s: %s", url, exc)
         return None

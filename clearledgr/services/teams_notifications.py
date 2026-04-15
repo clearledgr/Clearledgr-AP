@@ -15,6 +15,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +51,19 @@ async def _get_bot_token() -> str:
             "TEAMS_APP_ID and TEAMS_APP_SECRET must be set for Teams notifications"
         )
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            _TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": app_id,
-                "client_secret": app_secret,
-                "scope": _BOT_SCOPE,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        body = resp.json()
+    client = get_http_client()
+    resp = await client.post(
+        _TOKEN_URL,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "scope": _BOT_SCOPE,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    body = resp.json()
 
     _token_cache["access_token"] = body["access_token"]
     _token_cache["expires_at"] = now + body.get("expires_in", 3600)
@@ -94,18 +95,18 @@ async def _post_activity(
     url = f"{service_url.rstrip('/')}/v3/conversations/{conversation_id}/activities"
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=activity,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            return resp.json() if resp.content else {}
+        client = get_http_client()
+        resp = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=activity,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
     except httpx.HTTPStatusError as exc:
         logger.error(
             "Teams API error: status=%s body=%s",

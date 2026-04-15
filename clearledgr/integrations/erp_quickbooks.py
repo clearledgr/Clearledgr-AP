@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 
 from clearledgr.core.money import money_to_float
 from clearledgr.integrations.erp_sanitization import (
@@ -94,33 +95,33 @@ async def post_to_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/journalentry"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=qb_entry,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                timeout=30,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=qb_entry,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
 
-            if response.status_code == 401:
-                # Token expired - would need to refresh
-                logger.warning("QuickBooks token expired, needs refresh")
-                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+        if response.status_code == 401:
+            # Token expired - would need to refresh
+            logger.warning("QuickBooks token expired, needs refresh")
+            return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            logger.info(f"Posted to QuickBooks: {result.get('JournalEntry', {}).get('Id')}")
-            return {
-                "status": "success",
-                "erp": "quickbooks",
-                "entry_id": result.get("JournalEntry", {}).get("Id"),
-                "sync_token": result.get("JournalEntry", {}).get("SyncToken"),
-            }
+        logger.info(f"Posted to QuickBooks: {result.get('JournalEntry', {}).get('Id')}")
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "entry_id": result.get("JournalEntry", {}).get("Id"),
+            "sync_token": result.get("JournalEntry", {}).get("SyncToken"),
+        }
 
     except httpx.HTTPStatusError as e:
         logger.error("QuickBooks API error: %s", e.response.status_code)
@@ -138,22 +139,22 @@ async def refresh_quickbooks_token(connection) -> Optional[str]:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": connection.refresh_token,
-                },
-                auth=(connection.client_id, connection.client_secret),
-            )
-            response.raise_for_status()
-            tokens = response.json()
+        client = get_http_client()
+        response = await client.post(
+            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": connection.refresh_token,
+            },
+            auth=(connection.client_id, connection.client_secret),
+        )
+        response.raise_for_status()
+        tokens = response.json()
 
-            connection.access_token = tokens.get("access_token")
-            connection.refresh_token = tokens.get("refresh_token")
+        connection.access_token = tokens.get("access_token")
+        connection.refresh_token = tokens.get("refresh_token")
 
-            return connection.access_token
+        return connection.access_token
     except Exception as e:
         logger.error("Failed to refresh QuickBooks token: %s", type(e).__name__)
         return None
@@ -248,33 +249,33 @@ async def post_bill_to_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/bill"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=qb_bill,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                timeout=30,
-            )
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=qb_bill,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
 
-            if response.status_code == 401:
-                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+        if response.status_code == 401:
+            return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            bill_data = result.get("Bill", {})
-            logger.info("Posted Bill to QuickBooks: %s", bill_data.get("Id"))
-            return {
-                "status": "success",
-                "erp": "quickbooks",
-                "bill_id": bill_data.get("Id"),
-                "doc_number": bill_data.get("DocNumber"),
-                "sync_token": bill_data.get("SyncToken"),
-            }
+        bill_data = result.get("Bill", {})
+        logger.info("Posted Bill to QuickBooks: %s", bill_data.get("Id"))
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "bill_id": bill_data.get("Id"),
+            "doc_number": bill_data.get("DocNumber"),
+            "sync_token": bill_data.get("SyncToken"),
+        }
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -338,39 +339,39 @@ async def get_bill_quickbooks(
     )
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": query},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=30,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": query},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            bills = response.json().get("QueryResponse", {}).get("Bill", [])
-            if not bills:
-                return {
-                    "status": "error",
-                    "erp": "quickbooks",
-                    "reason": "bill_not_found",
-                    "target_erp_reference": bill_id,
-                }
-            bill = bills[0]
-            vendor_ref = bill.get("VendorRef") if isinstance(bill.get("VendorRef"), dict) else {}
-            ap_account_ref = bill.get("APAccountRef") if isinstance(bill.get("APAccountRef"), dict) else {}
+        response.raise_for_status()
+        bills = response.json().get("QueryResponse", {}).get("Bill", [])
+        if not bills:
             return {
-                "status": "success",
+                "status": "error",
                 "erp": "quickbooks",
-                "bill_id": bill.get("Id"),
-                "doc_number": bill.get("DocNumber"),
-                "total_amt": bill.get("TotalAmt"),
-                "balance": bill.get("Balance"),
-                "vendor_id": vendor_ref.get("value"),
-                "vendor_name": vendor_ref.get("name"),
-                "ap_account_id": ap_account_ref.get("value"),
+                "reason": "bill_not_found",
+                "target_erp_reference": bill_id,
             }
+        bill = bills[0]
+        vendor_ref = bill.get("VendorRef") if isinstance(bill.get("VendorRef"), dict) else {}
+        ap_account_ref = bill.get("APAccountRef") if isinstance(bill.get("APAccountRef"), dict) else {}
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "bill_id": bill.get("Id"),
+            "doc_number": bill.get("DocNumber"),
+            "total_amt": bill.get("TotalAmt"),
+            "balance": bill.get("Balance"),
+            "vendor_id": vendor_ref.get("value"),
+            "vendor_name": vendor_ref.get("name"),
+            "ap_account_id": ap_account_ref.get("value"),
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("QuickBooks bill GET HTTP error: status=%d", status_code)
@@ -422,47 +423,47 @@ async def _fetch_quickbooks_bill_with_sync_token(
         f"{connection.realm_id}/bill/{bill_id}"
     )
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Accept": "application/json",
-                },
-                params={"minorversion": "73"},
-                timeout=30,
-            )
-            if response.status_code == 401:
-                return {
-                    "status": "error",
-                    "erp": "quickbooks",
-                    "reason": "Token expired",
-                    "needs_reauth": True,
-                }
-            if response.status_code == 404:
-                return {
-                    "status": "error",
-                    "erp": "quickbooks",
-                    "reason": "bill_not_found",
-                }
-            response.raise_for_status()
-            body = response.json() or {}
-            bill = body.get("Bill") if isinstance(body, dict) else None
-            if not isinstance(bill, dict) or not bill.get("Id"):
-                return {
-                    "status": "error",
-                    "erp": "quickbooks",
-                    "reason": "bill_not_found",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Accept": "application/json",
+            },
+            params={"minorversion": "73"},
+            timeout=30,
+        )
+        if response.status_code == 401:
             return {
-                "status": "success",
+                "status": "error",
                 "erp": "quickbooks",
-                "bill_id": bill.get("Id"),
-                "sync_token": bill.get("SyncToken"),
-                "doc_number": bill.get("DocNumber"),
-                "status_raw": bill.get("status"),
-                "raw": bill,
+                "reason": "Token expired",
+                "needs_reauth": True,
             }
+        if response.status_code == 404:
+            return {
+                "status": "error",
+                "erp": "quickbooks",
+                "reason": "bill_not_found",
+            }
+        response.raise_for_status()
+        body = response.json() or {}
+        bill = body.get("Bill") if isinstance(body, dict) else None
+        if not isinstance(bill, dict) or not bill.get("Id"):
+            return {
+                "status": "error",
+                "erp": "quickbooks",
+                "reason": "bill_not_found",
+            }
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "bill_id": bill.get("Id"),
+            "sync_token": bill.get("SyncToken"),
+            "doc_number": bill.get("DocNumber"),
+            "status_raw": bill.get("status"),
+            "raw": bill,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         return {
@@ -540,18 +541,18 @@ async def reverse_bill_from_quickbooks(
     payload = {"Id": erp_reference, "SyncToken": str(effective_sync_token or "0")}
 
     async def _attempt_delete(token_to_use: str) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            return await client.post(
-                url,
-                json={**payload, "SyncToken": token_to_use},
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                params={"operation": "delete"},
-                timeout=30,
-            )
+        client = get_http_client()
+        return await client.post(
+            url,
+            json={**payload, "SyncToken": token_to_use},
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            params={"operation": "delete"},
+            timeout=30,
+        )
 
     try:
         response = await _attempt_delete(str(effective_sync_token or "0"))
@@ -692,25 +693,25 @@ async def find_vendor_credit_quickbooks(
         return None
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": query},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            credits = response.json().get("QueryResponse", {}).get("VendorCredit", [])
-            if credits:
-                credit = credits[0]
-                vendor_ref = credit.get("VendorRef") if isinstance(credit.get("VendorRef"), dict) else {}
-                return {
-                    "credit_note_id": credit.get("Id"),
-                    "credit_note_number": credit.get("DocNumber"),
-                    "remaining_credit": credit.get("Balance", credit.get("TotalAmt")),
-                    "vendor_id": vendor_ref.get("value"),
-                    "erp": "quickbooks",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": query},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        credits = response.json().get("QueryResponse", {}).get("VendorCredit", [])
+        if credits:
+            credit = credits[0]
+            vendor_ref = credit.get("VendorRef") if isinstance(credit.get("VendorRef"), dict) else {}
+            return {
+                "credit_note_id": credit.get("Id"),
+                "credit_note_number": credit.get("DocNumber"),
+                "remaining_credit": credit.get("Balance", credit.get("TotalAmt")),
+                "vendor_id": vendor_ref.get("value"),
+                "erp": "quickbooks",
+            }
     except Exception as e:
         logger.error("QuickBooks vendor credit lookup error: %s", e)
     return None
@@ -797,79 +798,79 @@ async def apply_credit_note_to_quickbooks(
     vendor_credit_id = str((vendor_credit or {}).get("credit_note_id") or "").strip()
     expense_account = get_account_code("quickbooks", "expenses", gl_map)
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            if not vendor_credit_id:
-                credit_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/vendorcredit"
-                credit_payload = {
-                    "VendorRef": {"value": bill["vendor_id"]},
-                    "APAccountRef": {"value": bill["ap_account_id"]},
-                    "TxnDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    "DocNumber": credit_note_number[:21],
-                    "PrivateNote": str(
-                        application.note or f"Vendor credit {credit_note_number} for bill {bill.get('doc_number') or target_ref}"
-                    )[:4000],
-                    "Line": [
-                        {
-                            "Amount": round(float(application.amount or 0.0), 2),
-                            "DetailType": "AccountBasedExpenseLineDetail",
-                            "AccountBasedExpenseLineDetail": {
-                                "AccountRef": {"value": expense_account},
-                            },
-                        }
-                    ],
-                }
-                credit_response = await client.post(
-                    credit_url,
-                    json=credit_payload,
-                    headers=_quickbooks_headers(connection),
-                    timeout=30,
-                )
-                if credit_response.status_code == 401:
-                    return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
-                credit_response.raise_for_status()
-                credit_result = credit_response.json().get("VendorCredit", {})
-                vendor_credit_id = str(credit_result.get("Id") or "").strip()
-                if not vendor_credit_id:
-                    return {"status": "error", "erp": "quickbooks", "reason": "no_vendor_credit_returned"}
-
-            payment_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/billpayment"
-            payment_payload = {
+        client = get_http_client()
+        if not vendor_credit_id:
+            credit_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/vendorcredit"
+            credit_payload = {
                 "VendorRef": {"value": bill["vendor_id"]},
-                "TotalAmt": round(float(application.amount or 0.0), 2),
+                "APAccountRef": {"value": bill["ap_account_id"]},
+                "TxnDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "DocNumber": credit_note_number[:21],
+                "PrivateNote": str(
+                    application.note or f"Vendor credit {credit_note_number} for bill {bill.get('doc_number') or target_ref}"
+                )[:4000],
                 "Line": [
                     {
                         "Amount": round(float(application.amount or 0.0), 2),
-                        "LinkedTxn": [
-                            {"TxnId": target_ref, "TxnType": "Bill"},
-                            {"TxnId": vendor_credit_id, "TxnType": "VendorCredit"},
-                        ],
+                        "DetailType": "AccountBasedExpenseLineDetail",
+                        "AccountBasedExpenseLineDetail": {
+                            "AccountRef": {"value": expense_account},
+                        },
                     }
                 ],
             }
-            payment_response = await client.post(
-                payment_url,
-                json=payment_payload,
+            credit_response = await client.post(
+                credit_url,
+                json=credit_payload,
                 headers=_quickbooks_headers(connection),
                 timeout=30,
             )
-            if payment_response.status_code == 401:
+            if credit_response.status_code == 401:
                 return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
-            payment_response.raise_for_status()
-            bill_payment = payment_response.json().get("BillPayment", {})
-            payment_id = bill_payment.get("Id")
-            if not payment_id:
-                return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
-            return {
-                "status": "success",
-                "erp": "quickbooks",
-                "erp_reference": payment_id,
-                "payment_id": payment_id,
-                "target_erp_reference": target_ref,
-                "credit_note_reference": vendor_credit_id,
-                "credit_note_number": credit_note_number,
-                "amount": round(float(application.amount or 0.0), 2),
-                "idempotency_key": idempotency_key,
-            }
+            credit_response.raise_for_status()
+            credit_result = credit_response.json().get("VendorCredit", {})
+            vendor_credit_id = str(credit_result.get("Id") or "").strip()
+            if not vendor_credit_id:
+                return {"status": "error", "erp": "quickbooks", "reason": "no_vendor_credit_returned"}
+
+        payment_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/billpayment"
+        payment_payload = {
+            "VendorRef": {"value": bill["vendor_id"]},
+            "TotalAmt": round(float(application.amount or 0.0), 2),
+            "Line": [
+                {
+                    "Amount": round(float(application.amount or 0.0), 2),
+                    "LinkedTxn": [
+                        {"TxnId": target_ref, "TxnType": "Bill"},
+                        {"TxnId": vendor_credit_id, "TxnType": "VendorCredit"},
+                    ],
+                }
+            ],
+        }
+        payment_response = await client.post(
+            payment_url,
+            json=payment_payload,
+            headers=_quickbooks_headers(connection),
+            timeout=30,
+        )
+        if payment_response.status_code == 401:
+            return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+        payment_response.raise_for_status()
+        bill_payment = payment_response.json().get("BillPayment", {})
+        payment_id = bill_payment.get("Id")
+        if not payment_id:
+            return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "erp_reference": payment_id,
+            "payment_id": payment_id,
+            "target_erp_reference": target_ref,
+            "credit_note_reference": vendor_credit_id,
+            "credit_note_number": credit_note_number,
+            "amount": round(float(application.amount or 0.0), 2),
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("QuickBooks credit application HTTP error: status=%d", status_code)
@@ -961,31 +962,31 @@ async def apply_settlement_to_quickbooks(
 
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/billpayment"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=payment_payload,
-                headers=_quickbooks_headers(connection),
-                timeout=30,
-            )
-            if response.status_code == 401:
-                return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=payment_payload,
+            headers=_quickbooks_headers(connection),
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
 
-            response.raise_for_status()
-            bill_payment = response.json().get("BillPayment", {})
-            payment_id = bill_payment.get("Id")
-            if not payment_id:
-                return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
-            return {
-                "status": "success",
-                "erp": "quickbooks",
-                "erp_reference": payment_id,
-                "payment_id": payment_id,
-                "target_erp_reference": target_ref,
-                "amount": round(float(application.amount or 0.0), 2),
-                "source_reference": application.source_reference,
-                "idempotency_key": idempotency_key,
-            }
+        response.raise_for_status()
+        bill_payment = response.json().get("BillPayment", {})
+        payment_id = bill_payment.get("Id")
+        if not payment_id:
+            return {"status": "error", "erp": "quickbooks", "reason": "no_bill_payment_returned"}
+        return {
+            "status": "success",
+            "erp": "quickbooks",
+            "erp_reference": payment_id,
+            "payment_id": payment_id,
+            "target_erp_reference": target_ref,
+            "amount": round(float(application.amount or 0.0), 2),
+            "source_reference": application.source_reference,
+            "idempotency_key": idempotency_key,
+        }
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
         logger.error("QuickBooks settlement payment HTTP error: status=%d", status_code)
@@ -1033,25 +1034,25 @@ async def create_vendor_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/vendor"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.post(
-                url,
-                json=qb_vendor,
-                headers={
-                    "Authorization": f"Bearer {connection.access_token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=qb_vendor,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            vendor_data = result.get("Vendor", {})
-            return {
-                "status": "success",
-                "vendor_id": vendor_data.get("Id"),
-                "display_name": vendor_data.get("DisplayName"),
-            }
+        vendor_data = result.get("Vendor", {})
+        return {
+            "status": "success",
+            "vendor_id": vendor_data.get("Id"),
+            "display_name": vendor_data.get("DisplayName"),
+        }
     except Exception as e:
         logger.error("QuickBooks vendor creation error: %s", type(e).__name__)
         return {"status": "error", "erp": "quickbooks", "reason": "vendor_creation_failed"}
@@ -1079,24 +1080,24 @@ async def find_vendor_quickbooks(
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": query},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            result = response.json()
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": query},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        result = response.json()
 
-            vendors = result.get("QueryResponse", {}).get("Vendor", [])
-            if vendors:
-                v = vendors[0]
-                return {
-                    "vendor_id": v.get("Id"),
-                    "name": v.get("DisplayName"),
-                    "email": v.get("PrimaryEmailAddr", {}).get("Address"),
-                }
+        vendors = result.get("QueryResponse", {}).get("Vendor", [])
+        if vendors:
+            v = vendors[0]
+            return {
+                "vendor_id": v.get("Id"),
+                "name": v.get("DisplayName"),
+                "email": v.get("PrimaryEmailAddr", {}).get("Address"),
+            }
     except Exception as e:
         logger.error(f"QuickBooks vendor search error: {e}")
 
@@ -1119,23 +1120,23 @@ async def find_bill_quickbooks(
     query = f"SELECT Id, DocNumber, TotalAmt FROM Bill WHERE DocNumber = '{literal}'"
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": query},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            bills = response.json().get("QueryResponse", {}).get("Bill", [])
-            if bills:
-                b = bills[0]
-                return {
-                    "bill_id": b.get("Id"),
-                    "doc_number": b.get("DocNumber"),
-                    "amount": b.get("TotalAmt"),
-                    "erp": "quickbooks",
-                }
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": query},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        bills = response.json().get("QueryResponse", {}).get("Bill", [])
+        if bills:
+            b = bills[0]
+            return {
+                "bill_id": b.get("Id"),
+                "doc_number": b.get("DocNumber"),
+                "amount": b.get("TotalAmt"),
+                "erp": "quickbooks",
+            }
     except Exception as e:
         logger.error("QuickBooks bill lookup error: %s", e)
     return None
@@ -1164,9 +1165,9 @@ async def _attach_to_quickbooks(
         "FileName": filename,
         "ContentType": "application/pdf",
     })
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=headers, files=files, data={"file_metadata_01": metadata})
-        resp.raise_for_status()
+    client = get_http_client()
+    resp = await client.post(url, headers=headers, files=files, data={"file_metadata_01": metadata}, timeout=30)
+    resp.raise_for_status()
     return {"attached": True, "erp": "quickbooks"}
 
 
@@ -1194,107 +1195,107 @@ async def get_payment_status_quickbooks(
     )
     url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": query},
-                headers={"Authorization": f"Bearer {connection.access_token}"},
-                timeout=30,
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": query},
+            headers={"Authorization": f"Bearer {connection.access_token}"},
+            timeout=30,
+        )
+        if response.status_code == 401:
+            return {"paid": False, "error": "token_expired", "needs_reauth": True}
+
+        response.raise_for_status()
+        bills = response.json().get("QueryResponse", {}).get("Bill", [])
+        if not bills:
+            return {"paid": False, "reason": "not_found"}
+
+        bill = bills[0]
+        total_amt = float(bill.get("TotalAmt") or 0)
+        balance = float(bill.get("Balance") or 0)
+        bill_id_val = bill.get("Id") or ""
+
+        if balance <= 0 and total_amt > 0:
+            # Fully paid — check if closed by VendorCredit instead of payment
+            # Query for BillPayment linked to this bill
+            bp_query = (
+                "SELECT Id FROM BillPayment WHERE Id IS NOT NULL "
+                f"STARTPOSITION 1 MAXRESULTS 1"
             )
-            if response.status_code == 401:
-                return {"paid": False, "error": "token_expired", "needs_reauth": True}
-
-            response.raise_for_status()
-            bills = response.json().get("QueryResponse", {}).get("Bill", [])
-            if not bills:
-                return {"paid": False, "reason": "not_found"}
-
-            bill = bills[0]
-            total_amt = float(bill.get("TotalAmt") or 0)
-            balance = float(bill.get("Balance") or 0)
-            bill_id_val = bill.get("Id") or ""
-
-            if balance <= 0 and total_amt > 0:
-                # Fully paid — check if closed by VendorCredit instead of payment
-                # Query for BillPayment linked to this bill
-                bp_query = (
-                    "SELECT Id FROM BillPayment WHERE Id IS NOT NULL "
+            closure_method = "payment"
+            try:
+                bp_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
+                bp_literal = _escape_query_literal(str(bill_id_val))
+                vc_query = (
+                    f"SELECT Id FROM VendorCredit "
+                    f"WHERE Id IS NOT NULL "
                     f"STARTPOSITION 1 MAXRESULTS 1"
                 )
-                closure_method = "payment"
-                try:
-                    bp_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
-                    bp_literal = _escape_query_literal(str(bill_id_val))
-                    vc_query = (
-                        f"SELECT Id FROM VendorCredit "
-                        f"WHERE Id IS NOT NULL "
-                        f"STARTPOSITION 1 MAXRESULTS 1"
-                    )
-                    # Heuristic: if bill is paid (Balance=0) but we can't find a
-                    # direct BillPayment reference, check for VendorCredits
-                    # For now, mark closure_method based on available data
-                    if not bill.get("LinkedTxn"):
-                        closure_method = "unknown_non_payment"
-                    else:
-                        linked = bill.get("LinkedTxn") or []
-                        has_payment = any(
-                            str(lt.get("TxnType") or "").lower() == "billpayment"
-                            for lt in (linked if isinstance(linked, list) else [])
-                        )
-                        has_credit = any(
-                            str(lt.get("TxnType") or "").lower() in ("vendorcredit", "creditcardcredit")
-                            for lt in (linked if isinstance(linked, list) else [])
-                        )
-                        if has_credit and not has_payment:
-                            closure_method = "credit_applied"
-                        elif has_payment:
-                            closure_method = "payment"
-                        else:
-                            closure_method = "unknown_non_payment"
-                except Exception:
-                    pass  # Fall through with default closure_method
-
-                result = {
-                    "paid": True,
-                    "payment_amount": round(total_amt, 2),
-                    "payment_date": "",
-                    "payment_method": "",
-                    "payment_reference": bill_id_val,
-                    "partial": False,
-                    "remaining_balance": 0.0,
-                }
-                if closure_method != "payment":
-                    result["closure_method"] = closure_method
-                return result
-
-            elif balance < total_amt:
-                # Partial payment
-                paid_amount = round(total_amt - balance, 2)
-                return {
-                    "paid": False,
-                    "payment_amount": paid_amount,
-                    "payment_date": "",
-                    "payment_method": "",
-                    "payment_reference": bill_id_val,
-                    "partial": True,
-                    "remaining_balance": round(balance, 2),
-                }
-            else:
-                # Check for voided payments (Balance == TotalAmt but voided
-                # BillPayments exist in LinkedTxn)
-                linked = bill.get("LinkedTxn") or []
-                if isinstance(linked, list):
-                    has_voided = any(
+                # Heuristic: if bill is paid (Balance=0) but we can't find a
+                # direct BillPayment reference, check for VendorCredits
+                # For now, mark closure_method based on available data
+                if not bill.get("LinkedTxn"):
+                    closure_method = "unknown_non_payment"
+                else:
+                    linked = bill.get("LinkedTxn") or []
+                    has_payment = any(
                         str(lt.get("TxnType") or "").lower() == "billpayment"
-                        for lt in linked
+                        for lt in (linked if isinstance(linked, list) else [])
                     )
-                    if has_voided and balance >= total_amt and total_amt > 0:
-                        return {
-                            "paid": False,
-                            "payment_failed": True,
-                            "reason": "payment_voided",
-                        }
-                return {"paid": False, "reason": "unpaid"}
+                    has_credit = any(
+                        str(lt.get("TxnType") or "").lower() in ("vendorcredit", "creditcardcredit")
+                        for lt in (linked if isinstance(linked, list) else [])
+                    )
+                    if has_credit and not has_payment:
+                        closure_method = "credit_applied"
+                    elif has_payment:
+                        closure_method = "payment"
+                    else:
+                        closure_method = "unknown_non_payment"
+            except Exception:
+                pass  # Fall through with default closure_method
+
+            result = {
+                "paid": True,
+                "payment_amount": round(total_amt, 2),
+                "payment_date": "",
+                "payment_method": "",
+                "payment_reference": bill_id_val,
+                "partial": False,
+                "remaining_balance": 0.0,
+            }
+            if closure_method != "payment":
+                result["closure_method"] = closure_method
+            return result
+
+        elif balance < total_amt:
+            # Partial payment
+            paid_amount = round(total_amt - balance, 2)
+            return {
+                "paid": False,
+                "payment_amount": paid_amount,
+                "payment_date": "",
+                "payment_method": "",
+                "payment_reference": bill_id_val,
+                "partial": True,
+                "remaining_balance": round(balance, 2),
+            }
+        else:
+            # Check for voided payments (Balance == TotalAmt but voided
+            # BillPayments exist in LinkedTxn)
+            linked = bill.get("LinkedTxn") or []
+            if isinstance(linked, list):
+                has_voided = any(
+                    str(lt.get("TxnType") or "").lower() == "billpayment"
+                    for lt in linked
+                )
+                if has_voided and balance >= total_amt and total_amt > 0:
+                    return {
+                        "paid": False,
+                        "payment_failed": True,
+                        "reason": "payment_voided",
+                    }
+            return {"paid": False, "reason": "unpaid"}
     except httpx.HTTPStatusError as e:
         logger.error("QuickBooks payment status HTTP error: status=%d", e.response.status_code)
         return {"paid": False, "error": f"http_{e.response.status_code}"}
@@ -1337,34 +1338,34 @@ async def get_chart_of_accounts_quickbooks(connection) -> List[Dict[str, Any]]:
         f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
     )
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            response = await client.get(
-                url,
-                params={"query": "SELECT * FROM Account MAXRESULTS 1000"},
-                headers=_quickbooks_headers(connection),
-                timeout=60,
-            )
+        client = get_http_client()
+        response = await client.get(
+            url,
+            params={"query": "SELECT * FROM Account MAXRESULTS 1000"},
+            headers=_quickbooks_headers(connection),
+            timeout=60,
+        )
 
-            if response.status_code == 401:
-                logger.warning("QuickBooks token expired during chart-of-accounts fetch")
-                return []
+        if response.status_code == 401:
+            logger.warning("QuickBooks token expired during chart-of-accounts fetch")
+            return []
 
-            response.raise_for_status()
-            result = response.json()
+        response.raise_for_status()
+        result = response.json()
 
-            accounts: List[Dict[str, Any]] = []
-            for acc in result.get("QueryResponse", {}).get("Account", []):
-                raw_type = str(acc.get("AccountType") or "").strip().lower()
-                accounts.append({
-                    "id": str(acc.get("Id") or ""),
-                    "code": str(acc.get("AcctNum") or ""),
-                    "name": str(acc.get("Name") or ""),
-                    "type": _QB_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
-                    "sub_type": str(acc.get("AccountSubType") or ""),
-                    "active": acc.get("Active", True) is True,
-                    "currency": str(acc.get("CurrencyRef", {}).get("value", "") if isinstance(acc.get("CurrencyRef"), dict) else ""),
-                })
-            return accounts
+        accounts: List[Dict[str, Any]] = []
+        for acc in result.get("QueryResponse", {}).get("Account", []):
+            raw_type = str(acc.get("AccountType") or "").strip().lower()
+            accounts.append({
+                "id": str(acc.get("Id") or ""),
+                "code": str(acc.get("AcctNum") or ""),
+                "name": str(acc.get("Name") or ""),
+                "type": _QB_ACCOUNT_TYPE_MAP.get(raw_type, raw_type),
+                "sub_type": str(acc.get("AccountSubType") or ""),
+                "active": acc.get("Active", True) is True,
+                "currency": str(acc.get("CurrencyRef", {}).get("value", "") if isinstance(acc.get("CurrencyRef"), dict) else ""),
+            })
+        return accounts
 
     except Exception as e:
         logger.error("Failed to fetch QuickBooks chart of accounts: %s", type(e).__name__)
@@ -1389,54 +1390,54 @@ async def list_all_vendors_quickbooks(connection) -> List[Dict[str, Any]]:
     all_vendors: List[Dict[str, Any]] = []
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            while True:
-                query = (
-                    f"SELECT * FROM Vendor STARTPOSITION {start_position} "
-                    f"MAXRESULTS {page_size}"
-                )
-                response = await client.get(
-                    url,
-                    params={"query": query},
-                    headers=_quickbooks_headers(connection),
-                    timeout=60,
-                )
+        client = get_http_client()
+        while True:
+            query = (
+                f"SELECT * FROM Vendor STARTPOSITION {start_position} "
+                f"MAXRESULTS {page_size}"
+            )
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers=_quickbooks_headers(connection),
+                timeout=60,
+            )
 
-                if response.status_code == 401:
-                    logger.warning("QuickBooks token expired during vendor list fetch")
-                    break
+            if response.status_code == 401:
+                logger.warning("QuickBooks token expired during vendor list fetch")
+                break
 
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-                vendors = result.get("QueryResponse", {}).get("Vendor", [])
-                if not vendors:
-                    break
+            vendors = result.get("QueryResponse", {}).get("Vendor", [])
+            if not vendors:
+                break
 
-                for v in vendors:
-                    addr = v.get("BillAddr") or {}
-                    all_vendors.append({
-                        "vendor_id": str(v.get("Id") or ""),
-                        "name": str(v.get("DisplayName") or ""),
-                        "email": str((v.get("PrimaryEmailAddr") or {}).get("Address") or ""),
-                        "phone": str((v.get("PrimaryPhone") or {}).get("FreeFormNumber") or ""),
-                        "tax_id": str(v.get("TaxIdentifier") or ""),
-                        "currency": str((v.get("CurrencyRef") or {}).get("value") or ""),
-                        "active": v.get("Active", True) is True,
-                        "address": ", ".join(
-                            filter(None, [
-                                addr.get("Line1"), addr.get("City"),
-                                addr.get("CountrySubDivisionCode"), addr.get("PostalCode"),
-                                addr.get("Country"),
-                            ])
-                        ),
-                        "payment_terms": "",
-                        "balance": float(v.get("Balance") or 0),
-                    })
+            for v in vendors:
+                addr = v.get("BillAddr") or {}
+                all_vendors.append({
+                    "vendor_id": str(v.get("Id") or ""),
+                    "name": str(v.get("DisplayName") or ""),
+                    "email": str((v.get("PrimaryEmailAddr") or {}).get("Address") or ""),
+                    "phone": str((v.get("PrimaryPhone") or {}).get("FreeFormNumber") or ""),
+                    "tax_id": str(v.get("TaxIdentifier") or ""),
+                    "currency": str((v.get("CurrencyRef") or {}).get("value") or ""),
+                    "active": v.get("Active", True) is True,
+                    "address": ", ".join(
+                        filter(None, [
+                            addr.get("Line1"), addr.get("City"),
+                            addr.get("CountrySubDivisionCode"), addr.get("PostalCode"),
+                            addr.get("Country"),
+                        ])
+                    ),
+                    "payment_terms": "",
+                    "balance": float(v.get("Balance") or 0),
+                })
 
-                if len(vendors) < page_size:
-                    break
-                start_position += page_size
+            if len(vendors) < page_size:
+                break
+            start_position += page_size
 
         return all_vendors
 
@@ -1472,62 +1473,62 @@ async def list_all_purchase_orders_quickbooks(connection) -> List[Dict[str, Any]
         return "approved"
 
     try:
-        async with httpx.AsyncClient(timeout=_ERP_TIMEOUT) as client:
-            while True:
-                query = (
-                    f"SELECT * FROM PurchaseOrder STARTPOSITION {start_position} "
-                    f"MAXRESULTS {page_size}"
-                )
-                response = await client.get(
-                    url,
-                    params={"query": query},
-                    headers=_quickbooks_headers(connection),
-                    timeout=60,
-                )
-                if response.status_code == 401:
-                    logger.warning("QuickBooks token expired during PO list fetch")
-                    break
-                response.raise_for_status()
-                result = response.json()
-                pos = result.get("QueryResponse", {}).get("PurchaseOrder", [])
-                if not pos:
-                    break
-                for po in pos:
-                    vendor_ref = po.get("VendorRef") or {}
-                    lines = []
-                    for li in (po.get("Line") or []):
-                        detail = li.get("ItemBasedExpenseLineDetail") or li.get(
-                            "AccountBasedExpenseLineDetail"
-                        ) or {}
-                        item_ref = detail.get("ItemRef") or {}
-                        acct_ref = detail.get("AccountRef") or {}
-                        lines.append({
-                            "line_id": str(li.get("Id") or ""),
-                            "item_number": str(item_ref.get("value") or ""),
-                            "description": str(li.get("Description") or item_ref.get("name") or acct_ref.get("name") or ""),
-                            "quantity": float(detail.get("Qty") or 0.0),
-                            "unit_price": float(detail.get("UnitPrice") or 0.0),
-                            "gl_code": str(acct_ref.get("value") or ""),
-                        })
-                    all_pos.append({
-                        "po_id": f"qb-po-{po.get('Id')}",
-                        "po_number": str(po.get("DocNumber") or ""),
-                        "vendor_id": str(vendor_ref.get("value") or ""),
-                        "vendor_name": str(vendor_ref.get("name") or ""),
-                        "order_date": str(po.get("TxnDate") or ""),
-                        "expected_delivery": str(po.get("DueDate") or "") or None,
-                        "line_items": lines,
-                        "subtotal": float(po.get("TotalAmt") or 0.0),
-                        "tax_amount": 0.0,
-                        "total_amount": float(po.get("TotalAmt") or 0.0),
-                        "currency": str((po.get("CurrencyRef") or {}).get("value") or "USD"),
-                        "status": _status_from_qb(po),
-                        "requested_by": "quickbooks_sync",
-                        "erp_po_id": str(po.get("Id") or ""),
+        client = get_http_client()
+        while True:
+            query = (
+                f"SELECT * FROM PurchaseOrder STARTPOSITION {start_position} "
+                f"MAXRESULTS {page_size}"
+            )
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers=_quickbooks_headers(connection),
+                timeout=60,
+            )
+            if response.status_code == 401:
+                logger.warning("QuickBooks token expired during PO list fetch")
+                break
+            response.raise_for_status()
+            result = response.json()
+            pos = result.get("QueryResponse", {}).get("PurchaseOrder", [])
+            if not pos:
+                break
+            for po in pos:
+                vendor_ref = po.get("VendorRef") or {}
+                lines = []
+                for li in (po.get("Line") or []):
+                    detail = li.get("ItemBasedExpenseLineDetail") or li.get(
+                        "AccountBasedExpenseLineDetail"
+                    ) or {}
+                    item_ref = detail.get("ItemRef") or {}
+                    acct_ref = detail.get("AccountRef") or {}
+                    lines.append({
+                        "line_id": str(li.get("Id") or ""),
+                        "item_number": str(item_ref.get("value") or ""),
+                        "description": str(li.get("Description") or item_ref.get("name") or acct_ref.get("name") or ""),
+                        "quantity": float(detail.get("Qty") or 0.0),
+                        "unit_price": float(detail.get("UnitPrice") or 0.0),
+                        "gl_code": str(acct_ref.get("value") or ""),
                     })
-                if len(pos) < page_size:
-                    break
-                start_position += page_size
+                all_pos.append({
+                    "po_id": f"qb-po-{po.get('Id')}",
+                    "po_number": str(po.get("DocNumber") or ""),
+                    "vendor_id": str(vendor_ref.get("value") or ""),
+                    "vendor_name": str(vendor_ref.get("name") or ""),
+                    "order_date": str(po.get("TxnDate") or ""),
+                    "expected_delivery": str(po.get("DueDate") or "") or None,
+                    "line_items": lines,
+                    "subtotal": float(po.get("TotalAmt") or 0.0),
+                    "tax_amount": 0.0,
+                    "total_amount": float(po.get("TotalAmt") or 0.0),
+                    "currency": str((po.get("CurrencyRef") or {}).get("value") or "USD"),
+                    "status": _status_from_qb(po),
+                    "requested_by": "quickbooks_sync",
+                    "erp_po_id": str(po.get("Id") or ""),
+                })
+            if len(pos) < page_size:
+                break
+            start_position += page_size
 
         return all_pos
 

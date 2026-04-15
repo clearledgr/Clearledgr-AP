@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
+from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -1066,17 +1067,17 @@ async def slack_install_callback(
     if not client_id or not client_secret:
         raise HTTPException(status_code=503, detail="slack_oauth_not_configured")
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            "https://slack.com/api/oauth.v2.access",
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "code": code,
-                "redirect_uri": redirect_uri,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    client = get_http_client()
+    response = await client.post(
+        "https://slack.com/api/oauth.v2.access",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
     payload = response.json() if response.content else {}
     if response.status_code >= 400 or not payload.get("ok"):
         raise HTTPException(status_code=400, detail={"message": "slack_install_failed", "payload": payload})
@@ -1400,14 +1401,14 @@ async def connect_sap(
     metadata_url = f"{base_url}/$metadata"
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(
-                metadata_url,
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Accept": "application/xml,application/json,*/*",
-                },
-            )
+        client = get_http_client()
+        response = await client.get(
+            metadata_url,
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Accept": "application/xml,application/json,*/*",
+            },
+        )
         if response.status_code >= 400:
             raise HTTPException(status_code=400, detail=f"sap_connection_test_failed:{response.status_code}")
     except HTTPException:
