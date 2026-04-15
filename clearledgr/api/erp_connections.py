@@ -79,6 +79,26 @@ NETSUITE_TOKEN_SECRET = os.getenv("NETSUITE_TOKEN_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "/")
 
 
+def _postmessage_target_origin() -> str:
+    """Origin to use for postMessage back to the opener window.
+
+    Using '*' lets ANY page that opens the OAuth popup intercept the
+    completion signal and spoof connection state in the opener. We lock
+    it to FRONTEND_URL's origin so only our own app can receive it.
+
+    If FRONTEND_URL is a relative path ('/' during local dev without an
+    explicit FRONTEND_URL env var), there is no origin to lock to —
+    fall back to '*' only in that case.
+    """
+    try:
+        parsed = urlparse(FRONTEND_URL)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        pass
+    return "*"
+
+
 def _popup_close_response(
     erp: str,
     success: bool,
@@ -129,9 +149,10 @@ def _popup_close_response(
           organizationId: {json.dumps(organization_id or '')},
           detail: {json.dumps(detail or '')}
         }};
+        var targetOrigin = {json.dumps(_postmessage_target_origin())};
         try {{
           if (window.opener && !window.opener.closed) {{
-            window.opener.postMessage(payload, '*');
+            window.opener.postMessage(payload, targetOrigin);
           }}
         }} catch (_) {{ /* opener may be gone */ }}
         setTimeout(function () {{ try {{ window.close(); }} catch (_) {{}} }}, 800);
