@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:731e0ec64736390c67980538033ec58687ba5943e37468ff371c8afbaae0520f */
+/* clearledgr-source-fingerprint:4612e19aa48d6af6d2a0504b75af89bbbf6a1eb478e927b9f92a7175d6ca7175 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59513,9 +59513,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return map[t5] || t5.replace(/_/g, " ");
   }
   function OverrideWindowBanner({ window_, onUndo, nowMs }) {
+    const [undoing, setUndoing] = d2(false);
     if (!window_ || !window_.expires_at)
       return null;
-    const [undoing, setUndoing] = d2(false);
     const remaining = formatCountdown(window_.expires_at, nowMs);
     const isOpen = remaining && remaining !== "closed";
     if (!isOpen)

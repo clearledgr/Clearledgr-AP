@@ -564,8 +564,13 @@ function humanizeWaitingType(type) {
 // ---------------------------------------------------------------------------
 
 function OverrideWindowBanner({ window_, onUndo, nowMs }) {
-  if (!window_ || !window_.expires_at) return null;
+  // Hooks MUST be called in the same order every render. If window_
+  // flips null ↔ object, bailing out via `return null` BEFORE useState
+  // changes the hook count and Preact throws
+  // "Rendered fewer hooks than expected." Call useState first,
+  // unconditionally, then apply the guards.
   const [undoing, setUndoing] = useState(false);
+  if (!window_ || !window_.expires_at) return null;
   const remaining = formatCountdown(window_.expires_at, nowMs);
   const isOpen = remaining && remaining !== 'closed';
   if (!isOpen) return null;
