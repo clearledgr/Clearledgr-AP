@@ -403,6 +403,96 @@ class InvoicePostingMixin:
             approved_at=approved_at,
         )
 
+        # Approval-chain gate — tripwire for future multi-step chains.
+        #
+        # Today, invoice_workflow.py creates single-step chains with
+        # approval_type="any" so the first authorized click both
+        # completes the step and releases posting. That's fine, and
+        # the Slack/Teams precedence contract already enforces the
+        # "only authorized approvers can click" rule upstream.
+        #
+        # The shape of ApprovalChain, ApprovalStep, and
+        # db_check_parallel_chain_complete already supports N steps,
+        # though. If a future feature creates a multi-step chain
+        # (L1 + L2 + L3 sign-offs, say) and approve_invoice keeps
+        # its current "mark step 0, mark whole chain approved, post"
+        # behaviour, every additional approver gets silently bypassed
+        # and a single L1 click posts the bill. That's a compliance
+        # bug waiting to happen — SoC2 and most finance policy
+        # frameworks mandate the full chain.
+        #
+        # Fix: find the step containing this actor, mark it approved,
+        # then ask db_check_parallel_chain_complete. If ANY step is
+        # still pending, skip the ERP post and return
+        # awaiting_additional_approvers. Single-step chains collapse
+        # to one-step-complete-therefore-proceed in zero extra DB
+        # calls, so no behaviour change today.
+        try:
+            if ap_item_id and hasattr(self.db, "db_get_chain_by_invoice"):
+                chain = self.db.db_get_chain_by_invoice(self.organization_id, gmail_id)
+                if chain and str(chain.get("status") or "").lower() == "pending":
+                    steps = chain.get("steps") or []
+                    actor_lookup = (actor_email or approved_by or "").strip().lower()
+                    matched_step_idx: Optional[int] = None
+                    for idx, step in enumerate(steps):
+                        if str(step.get("status") or "").lower() != "pending":
+                            continue
+                        approvers = step.get("approvers") or []
+                        if isinstance(approvers, str):
+                            try:
+                                approvers = json.loads(approvers)
+                            except Exception:
+                                approvers = []
+                        approvers_normalized = {
+                            str(a).strip().lower() for a in approvers if str(a).strip()
+                        }
+                        if not approvers_normalized or actor_lookup in approvers_normalized:
+                            matched_step_idx = idx
+                            break
+                    if matched_step_idx is not None:
+                        step_complete_at = datetime.now(timezone.utc).isoformat()
+                        self.db.db_update_chain_step(
+                            chain["id"], matched_step_idx,
+                            status="approved",
+                            approved_by=approved_by,
+                            approved_at=step_complete_at,
+                        )
+                        if hasattr(self.db, "db_check_parallel_chain_complete"):
+                            status_check = self.db.db_check_parallel_chain_complete(chain["id"])
+                            if not status_check.get("complete"):
+                                # Still-pending step(s) on the same chain
+                                # — this approver's job is done, but the
+                                # chain isn't, so we stop short of the
+                                # ERP post and let the remaining
+                                # approver(s) finish the job.
+                                return {
+                                    "status": "awaiting_additional_approvers",
+                                    "invoice_id": gmail_id,
+                                    "approved_by": approved_by,
+                                    "ap_item_id": ap_item_id,
+                                    "pending_count": int(status_check.get("pending_count") or 0),
+                                    "approved_count": int(status_check.get("approved_count") or 0),
+                                    "total_steps": int(status_check.get("total_steps") or 0),
+                                }
+        except Exception as exc:
+            # Chain-gate failure must never silently bypass itself into
+            # a post. If we can't determine completion state, treat as
+            # "unknown" and refuse the post — operator can retry after
+            # checking the chain manually. The alternative (fall through
+            # to posting) is a compliance incident class we'd rather
+            # surface as a user-facing error than mask.
+            logger.error(
+                "[approve_invoice] approval-chain gate failed for %s: %s",
+                ap_item_id, exc,
+            )
+            return {
+                "status": "error",
+                "invoice_id": gmail_id,
+                "ap_item_id": ap_item_id,
+                "reason": "approval_chain_gate_error",
+                "detail": str(exc)[:200],
+            }
+
         # Post to ERP
         if decision_idempotency_key:
             result = await self._post_to_erp(
@@ -514,21 +604,27 @@ class InvoicePostingMixin:
                 invoice_date=invoice.due_date,
             )
 
-            # Complete approval chain if one exists
+            # Complete approval chain if one exists.
+            #
+            # The per-step "approved" status was already written by the
+            # chain gate above (before _post_to_erp), so all we need
+            # to do here is roll the chain-level status to approved so
+            # downstream consumers see a terminal chain. No hardcoded
+            # step index: the gate writes the actor's matched step,
+            # and db_check_parallel_chain_complete confirmed all steps
+            # were approved before we got here.
             try:
                 chain = self.db.db_get_chain_by_invoice(self.organization_id, gmail_id)
                 if chain:
                     now_iso = datetime.now(timezone.utc).isoformat()
-                    self.db.db_update_chain_step(
-                        chain["id"], 0, status="approved",
-                        approved_by=approved_by, approved_at=now_iso,
-                    )
                     self.db.db_update_chain_status(
-                        chain["id"], status="approved",
-                        current_step=0, completed_at=now_iso,
+                        chain["id"],
+                        status="approved",
+                        current_step=len(chain.get("steps") or []) or 0,
+                        completed_at=now_iso,
                     )
             except Exception:
-                pass  # Non-fatal
+                pass  # Non-fatal — chain status is informational at this point
 
             # Create payment tracking record (informational — never executes payment)
             try:
