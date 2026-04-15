@@ -510,6 +510,31 @@ def pre_post_validate(
     if item.get("erp_reference"):
         return {"valid": False, "failures": [{"check": "already_posted", "reason": f"Already posted: {item['erp_reference']}"}]}
 
+    # 1a. State guard — TOCTOU defence.
+    #
+    # invoice_posting._post_to_erp checks state == ready_to_post near
+    # the top of the function, but then does a bunch of async work
+    # (vendor create, audit-event write, adapter resolution) before
+    # we land here. In that window, a concurrent reject_invoice call
+    # on the same AP item writes state="rejected" at the DB level
+    # (invoice_posting.py:784). Without this check, we'd then POST a
+    # bill to the ERP for an item our own DB says is rejected —
+    # ERP gets a live bill, local state says rejected, reconciliation
+    # diverges and the CFO asks uncomfortable questions.
+    #
+    # Only ``ready_to_post`` and ``approved`` can post. Anything else
+    # (rejected, needs_info, snoozed, failed_post not yet retried)
+    # bails out with a structured failure the caller can render.
+    current_state = str(item.get("state") or "").strip().lower()
+    if current_state not in ("ready_to_post", "approved"):
+        return {
+            "valid": False,
+            "failures": [{
+                "check": "state_guard",
+                "reason": f"AP item is in state '{current_state}', not ready_to_post",
+            }],
+        }
+
     # 2. Duplicate bill in trailing 90 days
     invoice_number = item.get("invoice_number") or ""
     vendor_name = item.get("vendor_name") or ""

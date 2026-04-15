@@ -641,10 +641,20 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
                 line_items=line_items,
             )
 
+            # Pass ap_item_id so post_bill runs pre_post_validate
+            # (state + duplicate + vendor-active checks). Without this
+            # kwarg, the erp_sync_drift re-post path was unchecked —
+            # a rejection landing between the verify_bill_posted call
+            # above and this post would silently re-post to the ERP
+            # with local state=rejected. Idempotency key derived from
+            # the ap_item so a concurrent legitimate post still
+            # dedupes correctly.
             result = await post_bill(
                 organization_id=self.organization_id,
                 bill=bill,
+                ap_item_id=ap_item_id,
                 entity_id=ap_item.get("entity_id"),
+                idempotency_key=f"auto:{ap_item_id}:erp_resync_repost",
             )
 
             if result.get("status") == "success":
