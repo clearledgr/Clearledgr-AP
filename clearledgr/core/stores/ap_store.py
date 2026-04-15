@@ -1780,6 +1780,46 @@ class APStore:
     # Durable agent retry jobs
     # ------------------------------------------------------------------
 
+    def reap_completed_agent_retry_jobs(self, *, older_than_days: int = 90) -> int:
+        """Delete agent_retry_jobs rows that are terminal + older than N days.
+
+        agent_retry_jobs.idempotency_key has a UNIQUE index — if the
+        table grows forever, both the index and the
+        get_agent_retry_job_by_key lookup degrade. Old completed /
+        failed / dead-letter rows have no business value (the actual
+        outcome is in audit_events, which IS append-only by design),
+        so we can safely drop them after a generous retention window.
+
+        Default 90 days mirrors the longest reasonable lookback for
+        debugging an incident; older than that, the operational value
+        is gone. Returns the number of rows deleted.
+        """
+        self.initialize()
+        days = max(1, int(older_than_days))
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        # Only delete terminal rows so an in-flight retry that's been
+        # paused for a long time is never collected. completed_at IS
+        # NOT NULL implies the row reached a terminal state (success,
+        # exhausted, dead-letter).
+        sql = self._prepare_sql(
+            """
+            DELETE FROM agent_retry_jobs
+             WHERE completed_at IS NOT NULL
+               AND completed_at < ?
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (cutoff,))
+            deleted = cur.rowcount or 0
+            conn.commit()
+        if deleted:
+            logger.info(
+                "[ap_store] reaped %d completed agent_retry_jobs older than %d days",
+                deleted, days,
+            )
+        return int(deleted)
+
     def create_agent_retry_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()

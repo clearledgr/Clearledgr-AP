@@ -21,8 +21,14 @@ def get_exception_router():
     return container.exceptions()
 
 
-def get_learning_service():
-    return container.learning()
+# Note: get_learning_service was removed. LearningService holds an
+# organization_id on self, so a process-wide singleton would pin to
+# the first caller's org and silently leak data into other tenants'
+# queries. There were zero callers of this dep, but having it on the
+# DI container was a tripwire — the next route to `Depends(...)` it
+# would have shipped a cross-tenant leak. Use the per-org factory
+# `clearledgr.services.learning.get_learning_service(organization_id)`
+# directly inside the handler instead.
 
 
 def get_sap_adapter():

@@ -81,6 +81,15 @@ app.config_from_object(
                 "task": "clearledgr.services.celery_tasks.reclaim_stale_events",
                 "schedule": 30.0,  # Every 30 seconds
             },
+            # Daily retention sweep for the agent_retry_jobs table.
+            # Without this, the UNIQUE idempotency_key index grows for
+            # the life of the deployment and lookups slow over time.
+            # Audit history lives elsewhere (append-only audit_events),
+            # so retiring terminal retry rows after 90 days is safe.
+            "reap-completed-retry-jobs": {
+                "task": "clearledgr.services.celery_tasks.reap_completed_retry_jobs",
+                "schedule": 24 * 60 * 60.0,  # Daily
+            },
         },
     }
 )

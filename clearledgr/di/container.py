@@ -1,4 +1,12 @@
-"""Dependency injection container for core services."""
+"""Dependency injection container for core services.
+
+Only stateless services live here. Anything that holds organization-
+scoped state (e.g., LearningService binds to one org_id on init) must
+NOT live as a process-wide singleton — the first caller's org would
+be pinned forever and subsequent callers from other tenants would
+silently see the wrong data. Per-org services use their own factory
+function (e.g., learning.get_learning_service(organization_id)).
+"""
 from typing import Any
 
 
@@ -7,7 +15,6 @@ class ServiceContainer:
         self._audit = None
         self._llm = None
         self._exceptions = None
-        self._learning = None
         self._sap = None
 
     def audit(self) -> Any:
@@ -30,13 +37,6 @@ class ServiceContainer:
 
             self._exceptions = ExceptionRoutingService()
         return self._exceptions
-
-    def learning(self) -> Any:
-        if not self._learning:
-            from clearledgr.services.learning import LearningService
-
-            self._learning = LearningService()
-        return self._learning
 
     def sap(self) -> Any:
         if not self._sap:

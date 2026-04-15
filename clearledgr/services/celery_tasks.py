@@ -529,3 +529,27 @@ def reclaim_stale_events() -> dict:
     except Exception as exc:
         logger.error("[CeleryBeat] reclaim_stale_events failed: %s", exc)
         return {"status": "error", "error": str(exc)}
+
+
+@app.task
+def reap_completed_retry_jobs() -> dict:
+    """Daily reaper for terminal agent_retry_jobs rows.
+
+    The agent_retry_jobs table carries a UNIQUE index on
+    idempotency_key. Without retention, the index grows for the life
+    of the deployment and the get_agent_retry_job_by_key lookup
+    degrades. Audit history lives in the (append-only) audit_events
+    table — agent_retry_jobs is a transient queue, not an audit log,
+    so it's safe to drop terminal rows after the retention window.
+    Default 90 days (override via RETRY_JOB_RETENTION_DAYS env var).
+    """
+    import os
+    from clearledgr.core.database import get_db
+
+    try:
+        days = int(os.getenv("RETRY_JOB_RETENTION_DAYS", "90"))
+        deleted = get_db().reap_completed_agent_retry_jobs(older_than_days=days)
+        return {"status": "ok", "deleted": int(deleted), "older_than_days": days}
+    except Exception as exc:
+        logger.error("[CeleryBeat] reap_completed_retry_jobs failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
