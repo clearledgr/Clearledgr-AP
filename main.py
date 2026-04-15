@@ -151,12 +151,18 @@ if _sentry_dsn:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
+        from clearledgr.core.sentry_config import build_sentry_before_send
 
         sentry_sdk.init(
             dsn=_sentry_dsn,
             environment=os.getenv("ENV", "development"),
             traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
             send_default_pii=False,
+            # before_send scrubs local-variable capture in exception
+            # frames — Sentry's default only hides "well-known" PII
+            # fields, not the invoice/vendor/bank_details objects that
+            # land in our exception scopes.
+            before_send=build_sentry_before_send(),
             integrations=[FastApiIntegration(), HttpxIntegration()],
         )
         logger.info("Sentry error tracking initialized")

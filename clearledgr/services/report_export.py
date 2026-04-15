@@ -65,13 +65,24 @@ def generate_report(
 
 
 def rows_to_csv(rows: List[Dict[str, Any]], columns: List[str]) -> str:
-    """Serialize rows to a CSV string."""
+    """Serialize rows to a CSV string.
+
+    Prepends a UTF-8 BOM (``\\ufeff``) so Excel on Windows opens the
+    file using UTF-8 decoding. Without the BOM, Excel falls back to
+    the OS code page (CP-1252 on en-US Windows) and mangles every
+    non-ASCII character — "Café Paris" becomes "CafÃ© Paris",
+    "Société Générale" becomes unreadable. Finance teams export
+    these CSVs regularly and "why are the vendor names broken?" is
+    not a support ticket we want. UTF-8-aware tools (macOS Numbers,
+    Google Sheets, modern LibreOffice, Excel on Mac) ignore the BOM
+    and see clean UTF-8, so the fix is free for them.
+    """
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
         writer.writerow({col: row.get(col, "") for col in columns})
-    return output.getvalue()
+    return "\ufeff" + output.getvalue()
 
 
 # ------------------------------------------------------------------

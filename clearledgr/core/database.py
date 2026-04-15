@@ -157,6 +157,22 @@ class _ClearledgrDBBase:
     def _sqlite_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL mode lets readers and writers coexist without blocking
+        # each other, which matters in dev/test where multiple async
+        # tasks and a pytest process can all hit the same DB at once.
+        # Default rollback-journal mode serializes everything and
+        # causes "database is locked" flakes on otherwise-healthy
+        # tests. synchronous=NORMAL is WAL's recommended pairing —
+        # same durability as FULL on modern filesystems, faster
+        # commits. Both PRAGMAs are per-connection; setting them on
+        # every connection is idempotent.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            # PRAGMA failure shouldn't take down the connection —
+            # fall back to SQLite defaults silently.
+            pass
         return conn
 
     @contextmanager

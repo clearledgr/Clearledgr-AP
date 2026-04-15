@@ -31,12 +31,18 @@ if _sentry_dsn:
         import sentry_sdk
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
+        from clearledgr.core.sentry_config import build_sentry_before_send
 
         sentry_sdk.init(
             dsn=_sentry_dsn,
             environment=os.getenv("ENV", "development"),
             traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
             send_default_pii=False,
+            # Scrub local-variable capture in exception frames — see
+            # sentry_config.build_sentry_before_send docstring.
+            # Critical for Celery because task payloads (invoice
+            # dicts, bank_details) routinely land in stack vars.
+            before_send=build_sentry_before_send(),
             integrations=[CeleryIntegration(), HttpxIntegration()],
         )
         logger.info("Sentry error tracking initialized for Celery")

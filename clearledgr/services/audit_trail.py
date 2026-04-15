@@ -793,8 +793,11 @@ class AuditTrailService:
                     event.reasoning or "",
                     event.confidence or "",
                 ])
-        
-        return output.getvalue()
+
+        # UTF-8 BOM so Excel on Windows doesn't mojibake vendor names
+        # with diacritics. See rows_to_csv in report_export.py for the
+        # same reasoning.
+        return "\ufeff" + output.getvalue()
     
     def export_to_json(self, invoice_ids: Optional[List[str]] = None) -> str:
         """Export audit trails to JSON format."""

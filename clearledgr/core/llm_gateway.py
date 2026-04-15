@@ -586,6 +586,26 @@ class LLMGateway:
                         f"[LLMGateway] {action.value} failed: {last_error}"
                     )
 
+                # Size gate before JSON parse. Anthropic normal responses
+                # are well under 1MB, but a malformed / MITM'd / replay
+                # injected response could balloon resp.content beyond
+                # reasonable bounds and OOM the parser. Cap at 10MB —
+                # generous enough for any legitimate long-form
+                # generation, tight enough to fail fast on garbage.
+                raw_body = resp.content
+                if len(raw_body) > 10_000_000:
+                    last_error = f"response_too_large:{len(raw_body)}_bytes"
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    self._log_call(
+                        action=action, model=model,
+                        input_tokens=0, output_tokens=0,
+                        latency_ms=latency_ms, cost_estimate=0.0,
+                        truncated=truncated, error=last_error,
+                        organization_id=organization_id,
+                    )
+                    raise RuntimeError(
+                        f"[LLMGateway] {action.value} refused oversized response: {last_error}"
+                    )
                 data = resp.json()
                 # Successful call — close the circuit if it was open
                 # from a previous caller. Anthropic is answering us
