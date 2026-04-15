@@ -1457,6 +1457,7 @@ class InvoiceValidationMixin:
                         invoice_vendor=invoice.vendor_name,
                         invoice_po_number=invoice.po_number,
                         invoice_lines=None,
+                        invoice_currency=str(invoice.currency or ""),
                     )
                 else:
                     match = po_service.match_invoice_to_gr(

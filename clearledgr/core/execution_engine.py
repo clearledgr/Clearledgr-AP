@@ -830,6 +830,7 @@ class ExecutionEngine:
                 invoice_vendor=extracted.get("vendor_name", ""),
                 invoice_po_number=po_number,
                 invoice_lines=extracted.get("line_items"),
+                invoice_currency=str(extracted.get("currency") or ""),
             )
             ctx["match_result"] = result
             status = result.status if hasattr(result, "status") else (result.get("status") if isinstance(result, dict) else "unknown")

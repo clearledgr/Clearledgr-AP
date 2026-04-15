@@ -368,6 +368,7 @@ def _collect_procurement_context(
                 invoice_vendor=vendor_name,
                 invoice_po_number=po.po_number,
                 invoice_lines=_as_list(metadata.get("line_items")),
+                invoice_currency=_normalize_text(item.get("currency") or metadata.get("currency") or ""),
             )
             payload["match"] = match.to_dict()
             discovered.append(

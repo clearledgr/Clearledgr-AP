@@ -675,8 +675,18 @@ class PurchaseOrderService:
         invoice_vendor: str,
         invoice_po_number: str = "",
         invoice_lines: List[Dict[str, Any]] = None,
+        invoice_currency: str = "",
     ) -> ThreeWayMatch:
-        """Perform 3-way matching: PO + Goods Receipt + Invoice."""
+        """Perform 3-way matching: PO + Goods Receipt + Invoice.
+
+        ``invoice_currency`` is used solely to refuse the match when
+        the invoice currency disagrees with the PO currency. Without
+        the check, a EUR 1,000 invoice and a USD 1,000 PO would compare
+        as variance=0 and silently MATCH, even though they're wildly
+        different amounts in real money. Optional + default empty so
+        existing callers stay backward-compatible; when missing, the
+        currency guard is skipped (same behaviour as before).
+        """
         match = ThreeWayMatch(
             invoice_id=invoice_id,
             invoice_amount=invoice_amount,
@@ -704,6 +714,31 @@ class PurchaseOrderService:
         match.po_id = po.po_id
         match.po_amount = po.total_amount
 
+        # Step 1a: currency guard — refuse the match if the invoice and
+        # PO disagree on currency. Without this, a EUR 1,000 invoice
+        # against a USD 1,000 PO compares as variance=0 and falls
+        # straight through to MATCHED, which is the wrong call by an
+        # order of magnitude on real money. We don't try to FX-convert
+        # here — that's a product decision that needs an explicit
+        # exchange-rate source. We just refuse and surface the
+        # mismatch.
+        invoice_ccy = (invoice_currency or "").strip().upper()
+        po_ccy = (str(po.currency or "")).strip().upper()
+        if invoice_ccy and po_ccy and invoice_ccy != po_ccy:
+            match.exceptions.append({
+                "type": MatchExceptionType.PRICE_MISMATCH.value,
+                "message": (
+                    f"Currency mismatch: invoice in {invoice_ccy}, "
+                    f"PO {po.po_number} in {po_ccy}"
+                ),
+                "severity": "high",
+                "invoice_currency": invoice_ccy,
+                "po_currency": po_ccy,
+            })
+            match.status = MatchStatus.EXCEPTION
+            self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
+            return match
+
         # Step 2: most-recent GR for this PO.
         goods_receipts = self.get_goods_receipts_for_po(po.po_id)
         if not goods_receipts:
@@ -715,10 +750,34 @@ class PurchaseOrderService:
         else:
             gr = max(goods_receipts, key=lambda g: g.created_at)
             match.gr_id = gr.gr_id
-            match.gr_amount = sum(
-                line.quantity_received * self._get_po_line_price(po, line.po_line_id)
-                for line in gr.line_items
-            )
+            # Sum GR line amounts but track which lines couldn't be
+            # priced against the PO. A missing PO line for a GR row
+            # used to silently contribute 0 to the GR total, which
+            # made the match look closer to the invoice than it
+            # actually was — concretely, a deleted PO line could let
+            # an inflated invoice slip through MATCHED instead of
+            # EXCEPTION. Now we flag it explicitly so a human can
+            # decide whether the GR data is wrong, the PO was edited,
+            # or the invoice is over.
+            gr_total = 0.0
+            orphan_lines = []
+            for gr_line in gr.line_items:
+                price, found = self._po_line_price_with_status(po, gr_line.po_line_id)
+                gr_total += gr_line.quantity_received * price
+                if not found:
+                    orphan_lines.append(gr_line.po_line_id)
+            match.gr_amount = gr_total
+            if orphan_lines:
+                match.exceptions.append({
+                    "type": MatchExceptionType.NO_GR.value,
+                    "message": (
+                        f"GR {gr.gr_id} references {len(orphan_lines)} PO "
+                        f"line(s) that no longer exist on PO {po.po_number}; "
+                        f"GR amount may be understated"
+                    ),
+                    "severity": "high",
+                    "orphan_po_line_ids": orphan_lines,
+                })
 
         # Step 3: price variance (tolerance pct AND absolute floor).
         match.price_variance = invoice_amount - po.total_amount
@@ -806,12 +865,36 @@ class PurchaseOrderService:
     def _get_po_line_price(
         self, po: Optional[PurchaseOrder], line_id: str
     ) -> float:
+        """Return the unit price for a PO line, or 0.0 if not found.
+
+        WARNING: unmatched line_id returns 0.0 silently — this means
+        any GR line that references a po_line_id that doesn't exist
+        on the PO (data drift, deleted PO line, ID mismatch on
+        upstream import) contributes 0 to the GR amount. Callers that
+        sum GR amounts should verify the line was actually found
+        (use ``_po_line_price_with_status`` below) so a missing line
+        doesn't silently make the GR look smaller than it is.
+        """
         if not po:
             return 0.0
         for line in po.line_items:
             if line.line_id == line_id:
                 return line.unit_price
         return 0.0
+
+    def _po_line_price_with_status(
+        self, po: Optional[PurchaseOrder], line_id: str
+    ) -> tuple:
+        """Like ``_get_po_line_price`` but also returns whether the
+        line was actually found on the PO. Returns ``(price, found)``
+        — callers that compute aggregates can flag a data-integrity
+        issue when ``found`` is False."""
+        if not po:
+            return 0.0, False
+        for line in po.line_items:
+            if line.line_id == line_id:
+                return line.unit_price, True
+        return 0.0, False
 
     def _find_matching_po_line(
         self,
