@@ -1374,10 +1374,24 @@ def get_db() -> ClearledgrDB:
     global _DB_INSTANCE
     if _DB_INSTANCE is None:
         _DB_INSTANCE = ClearledgrDB(db_path=os.getenv("CLEARLEDGR_DB_PATH", "clearledgr.db"))
-        # E10: Verify database connectivity on first creation
+        # E10: Verify database connectivity on first creation.
+        # In prod-like envs we fail loud: raise so the worker crashes
+        # and the container restarts, rather than silently returning
+        # a broken instance that 500s every request until someone
+        # notices. In dev we log + continue (SQLite creation is best-
+        # effort, tests and local runs shouldn't blow up on a
+        # transient file-system hiccup).
+        prod_like = str(os.getenv("ENV", "dev")).strip().lower() in {
+            "prod", "production", "staging", "stage",
+        }
         try:
             with _DB_INSTANCE.connect() as conn:
                 conn.execute("SELECT 1")
         except Exception as exc:
             logger.error("Database connectivity check failed: %s", exc)
+            if prod_like:
+                # Reset the singleton so a subsequent call retries
+                # instead of reusing the broken instance.
+                _DB_INSTANCE = None
+                raise
     return _DB_INSTANCE

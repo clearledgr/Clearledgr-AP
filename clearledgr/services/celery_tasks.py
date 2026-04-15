@@ -28,7 +28,30 @@ def process_agent_event(self, event_data: dict) -> dict:
     from clearledgr.core.events import AgentEvent
     from clearledgr.services.workspace_semaphore import WorkspaceSemaphore
 
-    event = AgentEvent.from_dict(event_data)
+    # Parse defensively. A malformed payload (missing keys, wrong
+    # types, non-dict) would otherwise raise inside the main try
+    # block AFTER the except clause has captured `event` — so the
+    # except fallback that references `event.id` and `event.type`
+    # would itself raise NameError and obscure the root cause.
+    # Worse, Celery would retry the parse 3× at 5s intervals before
+    # giving up. A poison payload is never going to parse on retry,
+    # so we ack it immediately with a structured failure result and
+    # don't waste workspace-semaphore slots or API quota on retries.
+    try:
+        event = AgentEvent.from_dict(event_data)
+    except Exception as exc:
+        logger.error(
+            "[CeleryTask] poison payload dropped (parse failed): %s | event_data keys=%s",
+            exc,
+            sorted(list((event_data or {}).keys()))[:10] if isinstance(event_data, dict) else type(event_data).__name__,
+        )
+        return {
+            "event_id": None,
+            "event_type": None,
+            "organization_id": None,
+            "status": "poison_payload",
+            "error": str(exc),
+        }
     org_id = event.organization_id
 
     # §11: Record queue_to_planning SLA latency
