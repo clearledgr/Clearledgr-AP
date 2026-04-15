@@ -599,7 +599,25 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
                 "suggestion": "Item is no longer in posted_to_erp state. Review manually.",
             }
 
-        # First, re-verify — the bill might have appeared since the last check
+        # First, re-verify — the bill might have appeared since the last check.
+        #
+        # verify_bill_posted's "verified=True" is a split value:
+        #   (a) verified=True, bill=<dict>            => actually found it
+        #   (b) verified=True, bill=None, reason=...  => fail-open (rate
+        #       limited, no finder for erp type, lookup raised). The
+        #       verifier's docstring says "callers should default to
+        #       verified=True on error so the pipeline is never blocked" —
+        #       which means the unlucky caller gets the "optimistic" answer.
+        #
+        # Treating (b) as "bill exists" clears the exception and moves
+        # the item along as if we'd confirmed the post. But we haven't.
+        # If the bill actually didn't land (mid-post network failure),
+        # we've now claimed success with no erp_reference and no bill
+        # in the ERP. Require bill to be present before declaring the
+        # exception resolved; fall through to the re-post branch on
+        # fail-open verifies so the next attempt either lands the bill
+        # (at-source idempotency prevents duplicates) or surfaces a
+        # definitive failure.
         try:
             from clearledgr.integrations.erp_router import verify_bill_posted
 
@@ -608,8 +626,8 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
                 invoice_number=str(invoice_number or erp_reference or ""),
                 expected_amount=float(ap_item["amount"]) if ap_item.get("amount") else None,
             )
-            if verify.get("verified"):
-                # Bill is actually there — false alarm, clear exception
+            if verify.get("verified") and verify.get("bill"):
+                # Genuine confirm: bill row actually returned by the ERP.
                 self.db.update_ap_item(
                     ap_item_id,
                     exception_code=None,
@@ -620,6 +638,22 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
                     "action": "erp_sync_confirmed_on_recheck",
                     "erp_bill": verify.get("bill"),
                 }
+            if verify.get("verified") and not verify.get("bill"):
+                # Fail-open verify: we asked the ERP but got rate-limited,
+                # or there's no finder for this ERP type, or the lookup
+                # itself raised. We DON'T know whether the bill exists.
+                # Re-posting would duplicate if it does; clearing the
+                # exception would lie if it doesn't. Leave the exception
+                # in place and bail — the next resolver tick might hit a
+                # less-loaded ERP window and get a definitive answer.
+                return {
+                    "resolved": False,
+                    "action": "verify_inconclusive",
+                    "reason": f"verify_open:{verify.get('reason')}",
+                    "suggestion": "Retry later or investigate ERP connectivity manually.",
+                }
+            # verify.get("verified") is False here → verifier actively
+            # queried the ERP and found no matching bill. Safe to re-post.
         except Exception as ver_exc:
             logger.debug("ERP re-verify failed for %s: %s", ap_item_id, ver_exc)
 
@@ -630,14 +664,23 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
             metadata = self._parse_metadata(ap_item)
             line_items = metadata.get("line_items")
 
+            # Construct Bill matching the dataclass at
+            # erp_router.Bill (vendor_id is required, the date field
+            # is invoice_date, gl_code lives on the line items not on
+            # Bill itself). The previous keyword set was wrong on
+            # three counts — never tripped at runtime because this
+            # branch only fires under genuine erp_sync_drift, but
+            # static analysis caught it once the surrounding code was
+            # touched. vendor_id is empty string when we don't know
+            # it; ERP adapters resolve vendor by name as a fallback.
             bill = Bill(
+                vendor_id=str(ap_item.get("vendor_id") or ""),
                 vendor_name=ap_item.get("vendor_name") or "",
                 amount=float(ap_item.get("amount") or 0),
-                invoice_number=invoice_number or "",
-                date=ap_item.get("invoice_date") or ap_item.get("due_date") or "",
                 currency=ap_item.get("currency") or "USD",
+                invoice_number=invoice_number or "",
+                invoice_date=ap_item.get("invoice_date") or ap_item.get("due_date") or "",
                 description=f"Re-post: {invoice_number or ap_item_id}",
-                gl_code=metadata.get("gl_code") or "",
                 line_items=line_items,
             )
 
