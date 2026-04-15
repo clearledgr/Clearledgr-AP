@@ -357,7 +357,16 @@ Return ONLY valid JSON."""
         result = _parse_llm_json(llm_resp.content)
         result["provider"] = "anthropic"
         result["method"] = "vision"
-        logger.info(f"Claude Vision extraction complete: vendor={result.get('vendor')}, amount={result.get('total_amount')}")
+        # Don't log vendor name / amount — those are customer PII and
+        # application logs flow into third-party aggregators. Emit only
+        # extraction-shape signals useful for debugging (did we get a
+        # vendor? did we get an amount? how confident?).
+        logger.info(
+            "Claude Vision extraction complete: has_vendor=%s has_amount=%s confidence=%s",
+            bool(result.get("vendor")),
+            bool(result.get("total_amount")),
+            result.get("confidence"),
+        )
         return result
     
     def _call_anthropic_text(self, prompt: str) -> Dict[str, Any]:
