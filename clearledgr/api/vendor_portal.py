@@ -353,10 +353,26 @@ def submit_bank_details(
     portal: PortalSession = Depends(require_portal_token),
 ):
     """Encrypt + save bank details, transition to microdeposit_pending."""
+    from clearledgr.core.stores.bank_details import normalize_iban, validate_iban
+
     db = get_db()
 
+    # IBAN structural + mod-97 checksum validation. A typo in any
+    # single digit of an IBAN fails the checksum, which is the only
+    # line of defence between "paid Acme" and "paid the stranger whose
+    # IBAN is one digit away". Fail fast here so the vendor re-types
+    # before we write anything to the encrypted bank_details column.
+    iban_normalised = normalize_iban(iban)
+    iban_error = validate_iban(iban_normalised)
+    if iban_error:
+        logger.info("[vendor_portal] IBAN rejected: %s", iban_error)
+        return _redirect_with_error(
+            token,
+            "That IBAN doesn't look right. Please double-check and re-enter.",
+        )
+
     bank_payload: Dict[str, Any] = {
-        "iban": iban.strip().replace(" ", ""),
+        "iban": iban_normalised,
         "account_holder_name": account_holder_name.strip(),
     }
     bank_clean = (bank_name or "").strip()

@@ -37,6 +37,51 @@ router = APIRouter(prefix="/erp", tags=["erp-connections"])
 _ADMIN_ROLES = {"admin", "owner"}
 
 
+def _audit_erp_admin_action(
+    *,
+    user: TokenData,
+    org_id: str,
+    erp: str,
+    action: str,
+    success: bool,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Append an admin-action audit event for ERP connection mutations.
+
+    Connect/disconnect/refresh of an ERP credential is a high-impact
+    admin action — it controls where bills get posted, which means it
+    controls where money moves. Compliance + incident response need a
+    record of who did what, when. Best-effort: if the audit write
+    fails we don't roll back the action (we'd rather complete the
+    user's intent than block them on telemetry), but we do log so the
+    gap is visible.
+    """
+    try:
+        db = get_db()
+        actor_id = str(getattr(user, "user_id", "") or "").strip() or "unknown"
+        actor_email = str(getattr(user, "email", "") or "").strip() or None
+        payload: Dict[str, Any] = {
+            "erp": erp,
+            "actor_email": actor_email,
+            "success": bool(success),
+        }
+        if extra:
+            payload.update(extra)
+        db.append_ap_audit_event({
+            "event_type": f"erp_admin_action:{action}",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": org_id,
+            "source": "erp_admin",
+            "payload_json": payload,
+        })
+    except Exception:
+        logger.warning(
+            "[erp_admin_audit] failed to write audit event for org=%s erp=%s action=%s",
+            org_id, erp, action,
+        )
+
+
 def _resolve_org_id(user: TokenData, requested_org: str) -> str:
     """Resolve + enforce tenant scope.
 
@@ -417,10 +462,13 @@ async def quickbooks_disconnect(
 ):
     """Disconnect QuickBooks from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
-    
+
     org_id = _resolve_org_id(user, request.organization_id)
     success = delete_erp_connection(org_id, "quickbooks")
-    
+    _audit_erp_admin_action(
+        user=user, org_id=org_id, erp="quickbooks",
+        action="disconnect", success=bool(success),
+    )
     return {"success": success, "erp": "quickbooks"}
 
 
@@ -561,10 +609,13 @@ async def xero_disconnect(
 ):
     """Disconnect Xero from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
-    
+
     org_id = _resolve_org_id(user, request.organization_id)
     success = delete_erp_connection(org_id, "xero")
-    
+    _audit_erp_admin_action(
+        user=user, org_id=org_id, erp="xero",
+        action="disconnect", success=bool(success),
+    )
     return {"success": success, "erp": "xero"}
 
 
@@ -602,9 +653,14 @@ async def netsuite_connect(
         
         # Store connection
         set_erp_connection(org_id, connection)
-        
+
         logger.info(f"NetSuite connected for org {org_id}")
-        
+        _audit_erp_admin_action(
+            user=user, org_id=org_id, erp="netsuite",
+            action="connect", success=True,
+            extra={"account_id": credentials.account_id},
+        )
+
         return {
             "success": True,
             "erp": "netsuite",
@@ -625,10 +681,13 @@ async def netsuite_disconnect(
 ):
     """Disconnect NetSuite from organization."""
     from clearledgr.integrations.erp_router import delete_erp_connection
-    
+
     org_id = _resolve_org_id(user, request.organization_id)
     success = delete_erp_connection(org_id, "netsuite")
-    
+    _audit_erp_admin_action(
+        user=user, org_id=org_id, erp="netsuite",
+        action="disconnect", success=bool(success),
+    )
     return {"success": success, "erp": "netsuite"}
 
 

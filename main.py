@@ -1080,17 +1080,44 @@ async def health():
         "mode": str(backend_info.get("mode") or "unknown"),
     }
 
-    # §11.2.1: Event queue depth for autoscaler
+    # §11.2.1: Event queue depth for autoscaler. In prod this is
+    # Redis-backed; if Redis is unreachable, get_event_queue() silently
+    # falls back to an in-process queue that does NOT persist across
+    # workers — which means losing events on the next deploy. Make the
+    # health endpoint flip to unhealthy in that case so Railway stops
+    # routing traffic to a backend that can't persist work. In dev
+    # (ENV=dev) we tolerate the in-memory backend so local `uvicorn`
+    # doesn't require Redis just to pass /health.
+    is_prod_like = str(os.getenv("ENV", "dev")).strip().lower() in {
+        "prod", "production", "staging", "stage",
+    }
     try:
         from clearledgr.core.event_queue import get_event_queue
         queue = get_event_queue()
+        pinging = False
+        try:
+            pinging = bool(queue.ping())
+        except Exception as ping_exc:  # noqa: BLE001
+            pinging = False
+            checks["event_queue_ping_error"] = str(ping_exc)
         pending = queue.pending_count()
+        if pinging:
+            queue_status = "healthy"
+        else:
+            # In production, a non-pinging queue is a real outage —
+            # we can't durably enqueue events. Flip the overall
+            # health so Railway pulls the worker out of rotation.
+            queue_status = "unhealthy" if is_prod_like else "degraded"
         checks["event_queue"] = {
-            "status": "healthy" if queue.ping() else "degraded",
+            "status": queue_status,
             "pending": pending,
         }
+        if queue_status == "unhealthy":
+            status = "unhealthy"
     except Exception as exc:
         checks["event_queue"] = {"status": "unknown", "error": str(exc)}
+        if is_prod_like:
+            status = "unhealthy"
 
     return {
         "status": status,

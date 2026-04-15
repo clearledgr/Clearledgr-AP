@@ -69,6 +69,112 @@ SENSITIVE_NUMBER_FIELDS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# IBAN validation
+#
+# An IBAN is country + 2-digit checksum + BBAN. The mod-97 rule is the
+# universal integrity check: move the first 4 chars to the end, replace
+# each letter with its A=10..Z=35 numeric equivalent, interpret the
+# result as a big integer, and assert (n % 97) == 1. A typo in any
+# position changes the checksum with overwhelming probability, which
+# is the only thing between "I paid Acme" and "I paid the stranger
+# whose IBAN differs by one digit from Acme's".
+#
+# Country-length table covers the SEPA zone + common non-SEPA IBANs we
+# see on vendor forms. Countries outside the table are rejected
+# (opt-in list, not opt-out) so an attacker can't invent a country
+# code to get past the length check.
+# ---------------------------------------------------------------------------
+
+# Source: https://www.swift.com/standards/data-standards/iban — lengths
+# are fixed per country.
+IBAN_COUNTRY_LENGTHS: Dict[str, int] = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28,
+    "BA": 20, "BE": 16, "BG": 22, "BH": 22, "BR": 29,
+    "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24,
+    "DE": 22, "DK": 18, "DO": 28, "EE": 20, "EG": 29,
+    "ES": 24, "FI": 18, "FO": 18, "FR": 27, "GB": 22,
+    "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28,
+    "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23,
+    "IS": 26, "IT": 27, "JO": 30, "KW": 30, "KZ": 20,
+    "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+    "LV": 21, "MC": 27, "MD": 24, "ME": 22, "MK": 19,
+    "MR": 27, "MT": 31, "MU": 30, "NL": 18, "NO": 15,
+    "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29,
+    "RO": 24, "RS": 22, "SA": 24, "SC": 31, "SE": 24,
+    "SI": 19, "SK": 24, "SM": 27, "ST": 25, "SV": 28,
+    "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22,
+    "VG": 24, "XK": 20,
+}
+
+
+def normalize_iban(raw: Any) -> str:
+    """Canonicalise an IBAN: strip whitespace, uppercase letters.
+
+    Returns the canonical form on any input without raising; caller
+    should then run ``validate_iban`` to decide if it's acceptable.
+    Empty / non-string input returns an empty string.
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip().replace(" ", "").replace("-", "").upper()
+    return text
+
+
+def validate_iban(raw: Any) -> Optional[str]:
+    """Return a human-readable error string if ``raw`` is not a valid
+    IBAN, or ``None`` if it passes.
+
+    Checks, in order:
+      - non-empty after normalisation
+      - two-letter country code present in IBAN_COUNTRY_LENGTHS
+      - two-digit checksum position
+      - length matches the country's fixed length
+      - characters outside BBAN are alphanumeric
+      - mod-97 equals 1
+
+    Not a replacement for "does this bank actually exist" — only a
+    structural + checksum check. Use in conjunction with whatever
+    production-stage verification (Plaid, bank-name match) your
+    compliance flow already runs.
+    """
+    iban = normalize_iban(raw)
+    if not iban:
+        return "iban_empty"
+    if len(iban) < 4:
+        return "iban_too_short"
+    country = iban[:2]
+    if not country.isalpha():
+        return "iban_country_not_letters"
+    expected_len = IBAN_COUNTRY_LENGTHS.get(country)
+    if expected_len is None:
+        return f"iban_country_unsupported:{country}"
+    if len(iban) != expected_len:
+        return f"iban_length_mismatch:expected_{expected_len}_got_{len(iban)}"
+    checksum = iban[2:4]
+    if not checksum.isdigit():
+        return "iban_checksum_not_digits"
+    bban = iban[4:]
+    if not bban.isalnum():
+        return "iban_bban_not_alphanumeric"
+    # Mod-97: move first 4 chars to end, letter→digit substitution, check
+    rearranged = bban + country + checksum
+    digits = []
+    for ch in rearranged:
+        if ch.isdigit():
+            digits.append(ch)
+        else:
+            digits.append(str(ord(ch) - 55))  # 'A' -> 10 ... 'Z' -> 35
+    as_int = int("".join(digits))
+    if as_int % 97 != 1:
+        return "iban_checksum_invalid"
+    return None
+
+
+def is_valid_iban(raw: Any) -> bool:
+    return validate_iban(raw) is None
+
+
 def normalize_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
     """Coerce arbitrary input to the canonical ``Dict[str, str]`` shape.
 
@@ -76,6 +182,12 @@ def normalize_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
     stripped. Unknown keys are dropped (defensive — we don't want random
     fields slipping into the encrypted payload). Values that are not
     strings are stringified.
+
+    Note: this function does NOT reject invalid IBANs — it only cleans
+    the shape. Validation is a separate step (``validate_iban``) so
+    callers can decide whether to hard-reject (vendor portal form),
+    soft-warn (agent-extracted IBAN from email text), or flag for
+    review.
     """
     if not isinstance(raw, dict):
         return None
@@ -87,6 +199,10 @@ def normalize_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
         text = str(value).strip()
         if not text:
             continue
+        if field == "iban":
+            text = normalize_iban(text)
+            if not text:
+                continue
         cleaned[field] = text
     return cleaned or None
 

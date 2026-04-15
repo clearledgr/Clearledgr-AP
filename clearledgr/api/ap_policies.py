@@ -114,6 +114,34 @@ def upsert_ap_policy(
         updated_by=request.updated_by or user.user_id,
         enabled=request.enabled,
     )
+
+    # Compliance: every mutation to a business policy must land in the
+    # append-only audit trail. Without this, "who turned off the
+    # auto-approve ceiling at 3am?" is unanswerable. Best-effort — if
+    # the audit write fails we don't roll back the policy change, but
+    # we do log so the gap is visible.
+    try:
+        db.append_ap_policy_audit_event(
+            organization_id=org_id,
+            policy_name=policy_name,
+            version=(policy or {}).get("version"),
+            action="upsert",
+            actor_id=str(user.user_id or user.email or "unknown"),
+            payload={
+                "actor_email": getattr(user, "email", None),
+                "updated_by_claim": request.updated_by,
+                "enabled": request.enabled,
+                "config_keys": sorted(list((request.config or {}).keys())),
+            },
+        )
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "policy audit event write failed for %s/%s",
+            org_id,
+            policy_name,
+        )
+
     effective = _get_effective_payload(
         organization_id=org_id,
         policy_name=policy_name,
