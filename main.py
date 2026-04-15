@@ -120,6 +120,15 @@ app = FastAPI(
         {"url": "http://localhost:8010", "description": "Development server"},
         {"url": "https://api.clearledgr.com", "description": "Production server"},
     ],
+    # Gate the interactive schema browser in production. /docs, /redoc
+    # and /openapi.json render the entire API surface (route paths,
+    # parameter shapes, example payloads). Fine in dev where we want
+    # to eyeball the shape, but in prod it's free reconnaissance for
+    # anyone who finds the domain. Dev/staging keep the default
+    # browsable schema; prod gets 404s.
+    docs_url=None if str(os.getenv("ENV", "dev")).strip().lower() in {"prod", "production"} else "/docs",
+    redoc_url=None if str(os.getenv("ENV", "dev")).strip().lower() in {"prod", "production"} else "/redoc",
+    openapi_url=None if str(os.getenv("ENV", "dev")).strip().lower() in {"prod", "production"} else "/openapi.json",
     lifespan=app_lifespan,
 )
 
@@ -775,6 +784,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "Content-Security-Policy",
             self._CONSOLE_CSP if is_console else self._API_CSP,
         )
+        # Tenant-scoped API responses contain invoices, vendor details,
+        # bank-detail masks, and audit events. "Cache-Control: private,
+        # no-store" tells every CDN, corporate proxy, and browser
+        # between us and the client: don't persist this, don't share
+        # across users. Missing this header means a misconfigured
+        # upstream cache could serve org A's invoice to org B on a
+        # URL collision. Applied to /api/* + /extension/* which are
+        # the authenticated data paths. Static assets, health, and
+        # docs keep their default behaviour.
+        path = request.url.path
+        if path.startswith("/api/") or path.startswith("/extension/") or path.startswith("/erp/") or path.startswith("/gmail/") or path.startswith("/slack/") or path.startswith("/portal/") or path == "/me":
+            response.headers.setdefault("Cache-Control", "private, no-store")
         return response
 
 # Add middleware in order (last added = outermost, executed first).
