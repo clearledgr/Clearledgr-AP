@@ -93,11 +93,12 @@ class OutlookAutopilot:
                 logger.info("Outlook catch-up: reset scan window for %s", token.email)
 
     async def _run_loop(self) -> None:
+        from clearledgr.core.observability import capture_background_exception
         while self._running:
             try:
                 await self._tick()
             except Exception as exc:
-                logger.exception("Outlook autopilot loop error: %s", exc)
+                capture_background_exception(logger, "outlook_autopilot", exc)
                 self._status = {"state": "error", "error": str(exc)}
             await asyncio.sleep(self.poll_interval)
 

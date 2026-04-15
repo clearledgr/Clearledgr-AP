@@ -673,14 +673,56 @@ class GmailAPIClient:
         if thread_id:
             payload["threadId"] = thread_id
 
+        # Retry on 429 / 5xx. Gmail returns transient 5xx under load
+        # (documented at developers.google.com/workspace/gmail/api/v1/reference/quota),
+        # and a single attempt silently drops the email. Exponential
+        # backoff with jitter-free delays so two concurrent retries
+        # don't stampede. 4 total attempts (initial + 3 retries) take
+        # at most ~18s, which is acceptable for the caller — this is
+        # always invoked from a background send, not a user-facing
+        # request that's waiting for the response.
+        send_url = f"{GMAIL_API_BASE}/users/me/messages/send"
+        send_headers = {**self._headers(), "Content-Type": "application/json"}
+        retry_delays = (2, 5, 10)
+        last_exc: Optional[Exception] = None
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{GMAIL_API_BASE}/users/me/messages/send",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
+            for attempt in range(len(retry_delays) + 1):
+                try:
+                    response = await client.post(send_url, headers=send_headers, json=payload)
+                    if response.status_code == 429 or 500 <= response.status_code < 600:
+                        if attempt < len(retry_delays):
+                            delay = retry_delays[attempt]
+                            logger.warning(
+                                "Gmail send got %d, retrying in %ds (attempt %d/%d)",
+                                response.status_code, delay, attempt + 1, len(retry_delays),
+                            )
+                            import asyncio as _asyncio
+                            await _asyncio.sleep(delay)
+                            continue
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.HTTPStatusError as exc:
+                    last_exc = exc
+                    raise  # 4xx other than 429 — non-retryable
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    # Network hiccup — retry same budget as 5xx.
+                    last_exc = exc
+                    if attempt < len(retry_delays):
+                        delay = retry_delays[attempt]
+                        logger.warning(
+                            "Gmail send network error (%s), retrying in %ds (attempt %d/%d)",
+                            type(exc).__name__, delay, attempt + 1, len(retry_delays),
+                        )
+                        import asyncio as _asyncio
+                        await _asyncio.sleep(delay)
+                        continue
+                    raise
+        # Loop exhausted all retries with a retryable failure —
+        # propagate the last exception so the caller's fallback path
+        # (e.g. save-as-draft in the vendor-onboarding flow) runs.
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("gmail_send_exhausted_retries_without_error")
 
     async def get_draft(self, draft_id: str, format: str = "raw") -> Dict[str, Any]:
         """Retrieve a draft by ID.

@@ -276,6 +276,8 @@ async def start_agent_background(app=None):
         logger.warning("Agent background already running")
         return
 
+    from clearledgr.core.observability import capture_background_exception
+
     async def _run_loop_with_restart():
         while True:
             try:
@@ -283,7 +285,7 @@ async def start_agent_background(app=None):
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.critical("Background loop crashed, restarting in 30s: %s", exc)
+                capture_background_exception(logger, "agent_background.main_loop", exc)
                 await asyncio.sleep(30)
 
     async def _reaper_loop_with_restart():
@@ -293,8 +295,8 @@ async def start_agent_background(app=None):
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.critical(
-                    "Override window reaper crashed, restarting in 30s: %s", exc
+                capture_background_exception(
+                    logger, "agent_background.override_window_reaper", exc
                 )
                 await asyncio.sleep(30)
 

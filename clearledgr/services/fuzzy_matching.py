@@ -8,6 +8,7 @@ Provides intelligent matching beyond exact/tolerance comparisons:
 - Amount clustering for related transactions
 """
 import logging
+import unicodedata
 from typing import Dict, List, Tuple, Optional
 import re
 from difflib import SequenceMatcher
@@ -18,35 +19,68 @@ logger = logging.getLogger(__name__)
 def normalize_vendor(vendor: str) -> str:
     """
     Normalize vendor name for comparison.
-    
+
     Examples:
         "STRIPE INC" -> "stripe"
         "Stripe.com" -> "stripe"
         "STRIPE PAYMENTS UK" -> "stripe payments uk"
+        "Café Société" -> "cafe societe"         (diacritics stripped)
+        "Acme Co.™" -> "acme co"                  (™ stripped like other punctuation)
+        "Acme Co."  -> "acme co"                  (same bucket as above)
+
+    The Unicode rules are load-bearing. Without them,
+      - "é" (precomposed U+00E9) and "e + combining acute" (U+0065
+        U+0301) landed in different buckets, so the same French
+        vendor typed two different ways looked like two vendors.
+      - "Acme Co.™" carried the trademark symbol through the regex
+        because it's neither \\w nor \\s, but only AFTER earlier
+        upstream code had mangled it; depending on the code path
+        callsites saw "acme co" or "acme cotm". Now uniform.
     """
     if not vendor:
         return ""
-    
-    # Lowercase
-    normalized = vendor.lower().strip()
-    
-    # Remove common suffixes
+
+    # 1. Strip symbol-category characters BEFORE NFKD so ™, ©, ® etc.
+    #    don't get expanded into stray letters ("TM", "C", "R") that
+    #    then leak into the normalized form. NFKD would otherwise turn
+    #    "Acme Co.™" into "Acme Co.TM" which regex \\w preserves as
+    #    "acme cotm" — different bucket than "Acme Co." → "acme co".
+    pre_stripped = "".join(
+        ch for ch in vendor
+        if not unicodedata.category(ch).startswith("S")  # So/Sm/Sk/Sc
+    )
+
+    # 2. NFKD decomposes compatibility sequences: é -> e + combining
+    #    acute, ﬁ -> fi, etc. Filter out combining marks (Mn) so
+    #    diacritic variants collapse to the base letter. Precomposed
+    #    "é" and decomposed "e + ́" now land on the same string.
+    decomposed = unicodedata.normalize("NFKD", pre_stripped)
+    stripped = "".join(
+        ch for ch in decomposed if not unicodedata.combining(ch)
+    )
+
+    # 3. Casefold (stronger than lower() — "ß" -> "ss", Turkish I).
+    normalized = stripped.casefold().strip()
+
+    # 4. Remove common suffixes (compares against casefolded strings).
     suffixes = [
         ' inc', ' inc.', ' llc', ' ltd', ' ltd.', ' limited',
         ' corp', ' corp.', ' corporation', ' co', ' co.',
         ' gmbh', ' ag', ' plc', ' pty', ' sa', ' nv', ' bv',
-        '.com', '.io', '.co', '.org', '.net'
+        '.com', '.io', '.co', '.org', '.net',
     ]
     for suffix in suffixes:
         if normalized.endswith(suffix):
-            normalized = normalized[:-len(suffix)]
-    
-    # Remove special characters but keep spaces
-    normalized = re.sub(r'[^\w\s]', '', normalized)
-    
-    # Collapse multiple spaces
-    normalized = ' '.join(normalized.split())
-    
+            normalized = normalized[: -len(suffix)]
+
+    # 5. Drop remaining non-word, non-space chars. Python's \w
+    #    matches Unicode letters by default — but after NFKD strip
+    #    above, anything that survives is already ASCII-friendly.
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+
+    # 6. Collapse runs of whitespace.
+    normalized = " ".join(normalized.split())
+
     return normalized
 
 

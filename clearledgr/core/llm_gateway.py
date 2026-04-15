@@ -72,6 +72,12 @@ class ActionConfig:
     model_tier: str  # "haiku" or "sonnet"
     temperature: float = 0.1
     timeout_seconds: int = 30
+    # Hard ceiling on input tokens. Claude 4.x context windows are 200k,
+    # but leaving margin for system prompts, tool defs, and the output
+    # reservation makes 150k the practical cap. Override per-action for
+    # anything known to be shorter (classification, decisioning) so a
+    # runaway OCR dump doesn't silently pay for 100k tokens of noise.
+    max_input_tokens: int = 150_000
 
 
 # Immutable registry — adding a new LLM action requires updating this dict
@@ -165,6 +171,130 @@ _MAX_RETRIES = 3
 _RETRY_DELAYS = [5, 30, 120]  # seconds
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 _API_URL = "https://api.anthropic.com/v1/messages"
+
+
+# Char-to-token ratio. Anthropic's tokenizer is not distributed as a
+# standalone lib (as of 2026-04), so we estimate from character count.
+# English averages ~4 chars/token; JSON and structured text come in a
+# bit denser. 3.5 is a conservative multiplier that errs on "assume
+# more tokens than we have" — the worst case is truncating slightly
+# early, which is fine. The alternative (underestimate → blow past
+# context window) would turn into an API error or silent cost spike.
+_CHARS_PER_TOKEN_ESTIMATE = 3.5
+
+
+def _estimate_text_tokens(text: str) -> int:
+    """Approximate token count for a piece of text without a tokenizer."""
+    if not text:
+        return 0
+    return int(len(text) / _CHARS_PER_TOKEN_ESTIMATE) + 1
+
+
+def _estimate_message_tokens(messages: List[Dict[str, Any]], system_prompt: str = "") -> int:
+    """Estimate total input tokens for a messages payload + system prompt.
+
+    Handles both plain-text ("content": str) and structured content
+    ("content": [{"type": "text", "text": "..."}, ...]). Image blocks
+    (multimodal) contribute a flat 1500 tokens per image — an
+    order-of-magnitude estimate sufficient to keep images from
+    sneaking through the budget even though the actual vision-token
+    count is model-dependent.
+    """
+    total = _estimate_text_tokens(system_prompt)
+    for msg in messages or []:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, str):
+            total += _estimate_text_tokens(content)
+            continue
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    total += _estimate_text_tokens(str(block.get("text") or ""))
+                elif btype == "image":
+                    total += 1500  # flat per-image estimate
+                elif btype == "tool_result":
+                    total += _estimate_text_tokens(str(block.get("content") or ""))
+                elif btype == "tool_use":
+                    total += _estimate_text_tokens(str(block.get("input") or ""))
+    return total
+
+
+def _truncate_messages_to_budget(
+    messages: List[Dict[str, Any]],
+    system_prompt: str,
+    max_input_tokens: int,
+) -> tuple[List[Dict[str, Any]], bool]:
+    """Return (possibly-truncated messages, truncated_flag).
+
+    Strategy: if we're over budget, shrink the LAST user text block
+    (the freshly-added request — typically the OCR dump or the large
+    email body). We leave system + earlier conversation intact because
+    those carry instructions and context the caller built up
+    deliberately. Shrinks by trimming the string tail and appending a
+    visible marker so the model + our own logs know truncation
+    happened. This is a safety net, not a precise budget manager —
+    callers that need exact control should size their inputs.
+    """
+    current = _estimate_message_tokens(messages, system_prompt)
+    if current <= max_input_tokens:
+        return messages, False
+
+    # Reserve budget for system + everything but the last message's
+    # biggest text block; truncate that block down to fit.
+    system_tokens = _estimate_text_tokens(system_prompt)
+    other_tokens = 0
+    last_text_block_ref: Optional[tuple[int, int]] = None  # (msg_index, block_index)
+    last_text_block_len = -1
+
+    for i, msg in enumerate(messages or []):
+        content = msg.get("content")
+        if isinstance(content, str):
+            tokens = _estimate_text_tokens(content)
+            if tokens > last_text_block_len:
+                last_text_block_ref = (i, -1)
+                last_text_block_len = tokens
+            other_tokens += tokens
+        elif isinstance(content, list):
+            for j, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    tokens = _estimate_text_tokens(str(block.get("text") or ""))
+                    if tokens > last_text_block_len:
+                        last_text_block_ref = (i, j)
+                        last_text_block_len = tokens
+                    other_tokens += tokens
+                elif isinstance(block, dict) and block.get("type") == "image":
+                    other_tokens += 1500
+    if last_text_block_ref is None:
+        # Nothing shrinkable (all images / no text) — can't truncate
+        # sensibly; return unchanged and let the API decide.
+        return messages, False
+
+    # Budget remaining for the biggest text block. Leave a 100-token
+    # safety margin for estimator rounding ("+1 per string" etc.).
+    remaining = max_input_tokens - system_tokens - (other_tokens - last_text_block_len) - 100
+    if remaining < 500:
+        # Extreme case — even the non-target payload alone is already
+        # near or past budget. Clamp to 500 tokens of the target block
+        # so the call at least fires with something meaningful.
+        remaining = 500
+    target_chars = int(remaining * _CHARS_PER_TOKEN_ESTIMATE)
+    truncation_marker = "\n\n[TRUNCATED BY GATEWAY — input exceeded context budget]"
+    target_chars = max(target_chars - len(truncation_marker), 200)
+
+    msg_idx, block_idx = last_text_block_ref
+    new_messages = [dict(m) for m in messages]
+    if block_idx == -1:
+        original = str(new_messages[msg_idx].get("content") or "")
+        new_messages[msg_idx]["content"] = original[:target_chars] + truncation_marker
+    else:
+        content_list = [dict(b) if isinstance(b, dict) else b for b in new_messages[msg_idx]["content"]]
+        original = str(content_list[block_idx].get("text") or "")
+        content_list[block_idx]["text"] = original[:target_chars] + truncation_marker
+        new_messages[msg_idx]["content"] = content_list
+    return new_messages, True
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +472,30 @@ class LLMGateway:
         max_tokens = max_tokens_override or config.max_output_tokens
         temp = temperature if temperature is not None else config.temperature
 
+        # Resolve the system prompt before truncation so it counts
+        # against the budget.
+        if system_prompt:
+            effective_system = system_prompt
+        elif action not in (LLMAction.AGENT_PLANNING, LLMAction.AP_DECISION):
+            effective_system = build_system_prompt()
+        else:
+            effective_system = ""
+
+        # Enforce input token budget BEFORE hitting the wire.
+        # A 100-page OCR dump would otherwise either blow past Claude's
+        # 200k window (hard error) or cost ~$0.60 per call silently.
+        # Truncation is logged via the `truncated` flag on the call
+        # record so we can spot callers that need to shrink their
+        # inputs instead of relying on the gateway's safety net.
+        messages, input_truncated = _truncate_messages_to_budget(
+            messages, effective_system, config.max_input_tokens,
+        )
+        if input_truncated:
+            logger.warning(
+                "[LLMGateway] %s input exceeded %d-token budget — truncated",
+                action.value, config.max_input_tokens,
+            )
+
         # Build request body
         body: Dict[str, Any] = {
             "model": model,
@@ -349,11 +503,8 @@ class LLMGateway:
             "temperature": temp,
             "messages": messages,
         }
-        if system_prompt:
-            body["system"] = system_prompt
-        elif action not in (LLMAction.AGENT_PLANNING, LLMAction.AP_DECISION):
-            # Use default 4-section template for most actions
-            body["system"] = build_system_prompt()
+        if effective_system:
+            body["system"] = effective_system
         if tools:
             body["tools"] = tools
         if tool_choice:
@@ -369,7 +520,7 @@ class LLMGateway:
         }
 
         last_error: Optional[str] = None
-        truncated = False
+        truncated = bool(input_truncated)
         start_time = time.monotonic()
 
         # Fast-fail if another caller in this process recently tripped
