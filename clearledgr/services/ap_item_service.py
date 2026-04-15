@@ -2307,10 +2307,35 @@ def _build_upcoming_tasks_payload(db: ClearledgrDB, organization_id: str, *, lim
     }
 
 
-def _require_item(db: ClearledgrDB, ap_item_id: str) -> Dict[str, Any]:
+def _require_item(
+    db: ClearledgrDB,
+    ap_item_id: str,
+    *,
+    expected_organization_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch an AP item and enforce tenant scope uniformly.
+
+    When ``expected_organization_id`` is provided, an item that exists
+    but belongs to a different tenant raises the same 404
+    ``ap_item_not_found`` as an item that doesn't exist at all. That's
+    deliberate: returning 403 for "exists but wrong org" vs 404 for
+    "doesn't exist" leaks membership information — an outside caller
+    could probe /api/ap/items/{id}/approve with sequential IDs and
+    enumerate valid AP IDs across every tenant by observing the
+    different status codes. Making both cases 404 closes that oracle.
+
+    Existing callers that don't pass ``expected_organization_id``
+    still get the original "not found" 404 behaviour; the guard only
+    activates when a caller opts in, so this is additive.
+    """
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
+    if expected_organization_id is not None:
+        actual = str(item.get("organization_id") or "").strip()
+        expected = str(expected_organization_id or "").strip()
+        if expected and actual and actual != expected:
+            raise HTTPException(status_code=404, detail="ap_item_not_found")
     return item
 
 

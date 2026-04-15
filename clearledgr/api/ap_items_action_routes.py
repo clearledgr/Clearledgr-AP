@@ -139,13 +139,13 @@ def _dispatch_mention_notifications(
 
 def _resolve_task_owner_item(db: Any, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     related_id = str(task.get("related_entity_id") or "").strip()
+    organization_id = str(task.get("organization_id") or "default").strip() or "default"
     if related_id:
         try:
-            return shared._require_item(db, related_id)
+            return shared._require_item(db, related_id, expected_organization_id=organization_id)
         except Exception:
             return None
     thread_id = str(task.get("source_thread_id") or "").strip()
-    organization_id = str(task.get("organization_id") or "default").strip() or "default"
     if thread_id and hasattr(db, "get_ap_item_by_thread"):
         try:
             return db.get_ap_item_by_thread(organization_id, thread_id)
@@ -276,7 +276,7 @@ async def resolve_non_invoice_review(
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
     metadata = shared._parse_json(item.get("metadata"))
@@ -401,7 +401,7 @@ async def resolve_non_invoice_review(
         )
         if isinstance(follow_on_result, dict) and isinstance(follow_on_result.get("related_item"), dict):
             linked_related = follow_on_result.get("related_item")
-        metadata = shared._parse_json((shared._require_item(db, ap_item_id)).get("metadata"))
+        metadata = shared._parse_json((shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))).get("metadata"))
         non_invoice_resolution = metadata.get("non_invoice_resolution")
         if isinstance(non_invoice_resolution, dict):
             non_invoice_resolution["linked_record"] = shared._summarize_related_item(linked_related)
@@ -415,7 +415,7 @@ async def resolve_non_invoice_review(
                 _decision_reason=outcome,
             )
 
-    refreshed = shared._require_item(db, ap_item_id)
+    refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     normalized_item = shared.build_worklist_item(db, refreshed)
     return {
         "status": "resolved",
@@ -435,7 +435,7 @@ async def resolve_ap_item_entity_route(
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
     metadata = shared._parse_json(item.get("metadata"))
@@ -507,7 +507,7 @@ async def resolve_ap_item_entity_route(
         _decision_reason="manual_entity_route_resolution",
     )
 
-    refreshed = shared._require_item(db, ap_item_id)
+    refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     normalized_item = shared.build_worklist_item(
         db,
         refreshed,
@@ -548,7 +548,7 @@ def link_ap_item_source(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     source = db.link_ap_item_source(
         {
@@ -571,7 +571,7 @@ def link_ap_item_gmail_thread(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     organization_id = str(item.get("organization_id") or "default").strip() or "default"
@@ -632,7 +632,7 @@ def link_ap_item_gmail_thread(
             },
         }
     )
-    updated = shared._require_item(db, ap_item_id)
+    updated = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     return {
         "status": "linked",
         "ap_item": shared.build_worklist_item(db, updated),
@@ -646,7 +646,7 @@ def link_ap_item_compose_draft(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     organization_id = str(item.get("organization_id") or "default").strip() or "default"
@@ -727,7 +727,7 @@ def link_ap_item_compose_draft(
             },
         }
     )
-    updated = shared._require_item(db, ap_item_id)
+    updated = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     return {
         "status": "linked",
         "ap_item": shared.build_worklist_item(db, updated),
@@ -855,7 +855,7 @@ def create_compose_record(
         }
     )
 
-    refreshed = shared._require_item(db, ap_item_id)
+    refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     return {
         "status": "created",
         "ap_item": shared.build_worklist_item(db, refreshed),
@@ -869,7 +869,7 @@ def update_ap_item_fields(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
 
@@ -931,7 +931,7 @@ def update_ap_item_fields(
             },
         }
     )
-    updated = shared._require_item(db, ap_item_id)
+    updated = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     return {
         "status": "updated",
         "changes": changes,
@@ -948,7 +948,7 @@ def create_ap_item_task(
     from clearledgr.services.email_tasks import create_task_from_email
 
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     task = create_task_from_email(
@@ -1061,7 +1061,7 @@ def add_ap_item_note(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     metadata = shared._parse_json(item.get("metadata"))
@@ -1116,7 +1116,7 @@ def add_ap_item_comment(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     metadata = shared._parse_json(item.get("metadata"))
@@ -1168,7 +1168,7 @@ def add_ap_item_file_link(
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
     metadata = shared._parse_json(item.get("metadata"))
@@ -1223,7 +1223,7 @@ def resubmit_rejected_item(
 ) -> Dict[str, Any]:
     db = shared.get_db()
     actor_id = shared._authenticated_actor(_user)
-    source = shared._require_item(db, ap_item_id)
+    source = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(source.get("organization_id") or "default", _user)
     source_state = shared._normalized_state_value(source.get("state"))
     if source_state != APState.REJECTED.value:
@@ -1386,9 +1386,9 @@ def resubmit_rejected_item(
 def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
     db = shared.get_db()
     actor_id = shared._authenticated_actor(_user)
-    target = shared._require_item(db, ap_item_id)
+    target = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(target.get("organization_id") or "default", _user)
-    source = shared._require_item(db, request.source_ap_item_id)
+    source = shared._require_item(db, request.source_ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
 
     if target.get("id") == source.get("id"):
         raise HTTPException(status_code=400, detail="cannot_merge_same_item")
@@ -1510,7 +1510,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(re
 def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
     db = shared.get_db()
     actor_id = shared._authenticated_actor(_user)
-    parent = shared._require_item(db, ap_item_id)
+    parent = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(parent.get("organization_id") or "default", _user)
     if not request.sources:
         raise HTTPException(status_code=400, detail="sources_required")
@@ -1725,7 +1725,7 @@ async def reverse_ap_item_post(
     reversal.
     """
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
     window = db.get_override_window_by_ap_item_id(ap_item_id)

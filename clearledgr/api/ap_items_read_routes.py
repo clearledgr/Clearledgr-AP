@@ -297,7 +297,7 @@ def get_ap_item_audit(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     events = db.list_ap_audit_events(ap_item_id)
     if browser_only:
@@ -311,7 +311,7 @@ def get_ap_item_sources(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     sources = db.list_ap_item_sources(ap_item_id)
     return {"sources": sources, "source_count": len(sources)}
@@ -327,7 +327,7 @@ def get_ap_item_tasks(
     from clearledgr.services.email_tasks import get_tasks_for_ap_item
 
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     tasks = get_tasks_for_ap_item(
         ap_item_id,
@@ -345,7 +345,7 @@ def get_ap_item_notes(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     metadata = shared._parse_json(item.get("metadata"))
     notes = metadata.get("record_notes")
@@ -360,7 +360,7 @@ def get_ap_item_comments(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     metadata = shared._parse_json(item.get("metadata"))
     comments = metadata.get("record_comments")
@@ -375,7 +375,7 @@ def get_ap_item_files(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     metadata = shared._parse_json(item.get("metadata"))
     files = metadata.get("record_file_links")
@@ -391,7 +391,7 @@ def get_ap_item_context(
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     db = shared.get_db()
-    item = shared._require_item(db, ap_item_id)
+    item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
 
     if not refresh:
