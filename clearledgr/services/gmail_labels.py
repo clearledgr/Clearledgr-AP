@@ -26,9 +26,11 @@ the thesis hierarchy.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+from collections import OrderedDict
 from typing import Any, Dict, Iterable, Mapping, Optional, Set
 
 from clearledgr.core.utils import safe_int
@@ -220,12 +222,59 @@ def intent_for_label(label_name: str) -> Optional[str]:
     return None
 
 
-# Cache label name → id per Gmail identity to avoid repeated list_labels calls.
-_label_name_cache: Dict[str, Dict[str, str]] = {}
+# Cache label name → id per Gmail identity to avoid repeated list_labels
+# calls. Bounded by _LABEL_CACHE_MAX_SCOPES (one entry per Gmail mailbox
+# we've seen recently) so a long-running worker that's processed many
+# tenants doesn't grow the cache forever. OrderedDict gives us cheap
+# LRU semantics: most recently used scope gets move_to_end'd, oldest
+# scope drops off the front when we breach the cap.
+_LABEL_CACHE_MAX_SCOPES = 128
+_label_name_cache: "OrderedDict[str, Dict[str, str]]" = OrderedDict()
+
+# Per-scope asyncio locks serialise ensure_label for the same mailbox.
+# Without this, two concurrent events racing to create the same label
+# both see a cache miss, both call create_label, and one of the two
+# returns a 409-style error that our exception handler silently swallows
+# — so the losing message never gets labeled. The lock is per-scope
+# (not global) so different mailboxes don't serialise against each
+# other.
+_label_scope_locks: Dict[str, asyncio.Lock] = {}
 
 
 def _cache_key(cache_scope: str = "") -> str:
     return str(cache_scope or "default").strip() or "default"
+
+
+def _scope_lock(cache_scope: str) -> asyncio.Lock:
+    key = _cache_key(cache_scope)
+    lock = _label_scope_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _label_scope_locks[key] = lock
+        # Evict old locks alongside cache entries to keep dict bounded.
+        # Lazy cleanup: if we've collected way more locks than scopes we
+        # serve, drop the oldest N. (The lock dict isn't LRU so we
+        # approximate via insertion order.)
+        if len(_label_scope_locks) > _LABEL_CACHE_MAX_SCOPES * 2:
+            for stale_key in list(_label_scope_locks.keys())[: _LABEL_CACHE_MAX_SCOPES]:
+                _label_scope_locks.pop(stale_key, None)
+    return lock
+
+
+def _cache_get(cache_scope: str) -> Optional[Dict[str, str]]:
+    key = _cache_key(cache_scope)
+    entry = _label_name_cache.get(key)
+    if entry is not None:
+        _label_name_cache.move_to_end(key)
+    return entry
+
+
+def _cache_set(cache_scope: str, mapping: Dict[str, str]) -> None:
+    key = _cache_key(cache_scope)
+    _label_name_cache[key] = mapping
+    _label_name_cache.move_to_end(key)
+    while len(_label_name_cache) > _LABEL_CACHE_MAX_SCOPES:
+        _label_name_cache.popitem(last=False)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -330,8 +379,7 @@ def _all_managed_label_names() -> Set[str]:
 
 
 async def _load_label_name_map(client, cache_scope: str = "") -> Dict[str, str]:
-    cache_key = _cache_key(cache_scope)
-    cached = _label_name_cache.get(cache_key)
+    cached = _cache_get(cache_scope)
     if cached is not None:
         return dict(cached)
 
@@ -341,20 +389,24 @@ async def _load_label_name_map(client, cache_scope: str = "") -> Dict[str, str]:
         for label in (labels or [])
         if str(label.get("name") or "").strip() and str(label.get("id") or "").strip()
     }
-    _label_name_cache[cache_key] = dict(mapping)
+    _cache_set(cache_scope, dict(mapping))
     return mapping
 
 
 def _remember_label(cache_scope: str, label_name: str, label_id: str) -> None:
     if not label_name or not label_id:
         return
-    cache_key = _cache_key(cache_scope)
-    _label_name_cache.setdefault(cache_key, {})[label_name] = label_id
+    key = _cache_key(cache_scope)
+    entry = _label_name_cache.get(key)
+    if entry is None:
+        entry = {}
+        _cache_set(cache_scope, entry)
+    entry[label_name] = label_id
+    _label_name_cache.move_to_end(key)
 
 
 def _forget_label(cache_scope: str, label_name: str) -> None:
-    cache_key = _cache_key(cache_scope)
-    cached = _label_name_cache.get(cache_key)
+    cached = _label_name_cache.get(_cache_key(cache_scope))
     if cached is not None:
         cached.pop(label_name, None)
 
@@ -370,26 +422,53 @@ def _label_names_for_key(label_key: str) -> Set[str]:
 
 
 async def ensure_label(client, label_key: str, user_email: str = "") -> Optional[str]:
-    """Get or create a canonical Clearledgr label and return its Gmail label ID."""
+    """Get or create a canonical Clearledgr label and return its Gmail label ID.
+
+    Serialised per mailbox so two concurrent events can't both miss the
+    cache and both try to create the same label (which fails on the
+    loser and used to silently drop the label from that message).
+    """
     resolved = _resolve_label_key(label_key)
     label_name = CLEARLEDGR_LABELS.get(resolved)
     if not label_name:
         return None
 
-    try:
-        labels = await _load_label_name_map(client, user_email)
-        label_id = labels.get(label_name)
-        if label_id:
-            return label_id
+    async with _scope_lock(user_email):
+        try:
+            labels = await _load_label_name_map(client, user_email)
+            label_id = labels.get(label_name)
+            if label_id:
+                return label_id
 
-        label = await client.create_label(label_name)
-        label_id = str((label or {}).get("id") or "").strip() or None
-        if label_id:
-            _remember_label(user_email, label_name, label_id)
-        return label_id
-    except Exception as exc:
-        logger.warning("Could not ensure label %s: %s", label_name, exc)
-        return None
+            try:
+                label = await client.create_label(label_name)
+            except Exception as create_exc:
+                # Gmail returns 409 when the label already exists (e.g.
+                # the other racer's label creation committed between our
+                # cache read and our create call, or an operator created
+                # it manually). Drop the stale cache and re-list once —
+                # if the label truly now exists, this recovers it for us
+                # without bubbling an error to the caller.
+                logger.info(
+                    "create_label('%s') raised (%s); reloading label map to recover",
+                    label_name,
+                    create_exc,
+                )
+                _forget_label(user_email, label_name)
+                _label_name_cache.pop(_cache_key(user_email), None)
+                labels = await _load_label_name_map(client, user_email)
+                label_id = labels.get(label_name)
+                if label_id:
+                    return label_id
+                raise
+
+            label_id = str((label or {}).get("id") or "").strip() or None
+            if label_id:
+                _remember_label(user_email, label_name, label_id)
+            return label_id
+        except Exception as exc:
+            logger.warning("Could not ensure label %s: %s", label_name, exc)
+            return None
 
 
 async def apply_label(client, message_id: str, label_key: str, user_email: str = ""):
