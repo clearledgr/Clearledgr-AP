@@ -387,7 +387,10 @@ def submit_bank_details(
             actor_id=f"vendor_portal:{portal.token_id}",
         )
 
-    # §2.2: Enqueue IBAN_CHANGE_SUBMITTED event (triggers three-factor verification)
+    # §2.2: Enqueue IBAN_CHANGE_SUBMITTED event. Passes the normalized
+    # IBAN so the agent's check_iban_change handler can compare against
+    # the vendor's stored IBAN (same-IBAN resubmissions should NOT
+    # trigger a payment freeze).
     try:
         from clearledgr.core.events import AgentEvent, AgentEventType
         from clearledgr.core.event_queue import get_event_queue
@@ -397,6 +400,7 @@ def submit_bank_details(
             payload={
                 "vendor_id": portal.vendor_name,
                 "session_id": portal.session_id,
+                "new_iban": bank_payload["iban"],
             },
             organization_id=portal.organization_id,
         ))

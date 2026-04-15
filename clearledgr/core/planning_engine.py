@@ -404,18 +404,39 @@ class DeterministicPlanningEngine:
         )
 
     def _plan_iban_change(self, event: AgentEvent, box_state: dict) -> Plan:
-        """IBAN change submitted — always triggers three-factor verification."""
+        """Bank details submitted — kick off three-factor verification.
+
+        Fired from the vendor portal when a vendor saves new bank details
+        (fresh onboarding OR a change to an already-verified IBAN).
+        session_id is carried through every action so the execution
+        engine can initiate micro-deposits against the right session
+        without re-resolving.
+        """
+        vendor_id = event.payload.get("vendor_id", "")
+        session_id = event.payload.get("session_id", "")
+        new_iban = event.payload.get("new_iban", "")
         return Plan(
             event_type="iban_change_submitted",
             actions=[
-                Action("check_iban_change", "DET",
-                       {"vendor_id": event.payload.get("vendor_id", "")},
-                       "Detect IBAN change and freeze payments"),
-                Action("freeze_vendor_payments", "DET",
-                       {"reason": "iban_change_detected"},
-                       "Apply payment hold on vendor"),
-                Action("initiate_iban_verification", "DET", {},
-                       "Start three-factor IBAN verification"),
+                Action(
+                    "check_iban_change", "DET",
+                    {
+                        "vendor_id": vendor_id,
+                        "session_id": session_id,
+                        "new_iban": new_iban,
+                    },
+                    "Detect IBAN change and flag payment hold if needed",
+                ),
+                Action(
+                    "freeze_vendor_payments", "DET",
+                    {"vendor_id": vendor_id, "reason": "iban_change_detected"},
+                    "Apply payment hold on vendor",
+                ),
+                Action(
+                    "initiate_iban_verification", "DET",
+                    {"vendor_id": vendor_id, "session_id": session_id},
+                    "Start micro-deposit IBAN verification",
+                ),
             ],
         )
 

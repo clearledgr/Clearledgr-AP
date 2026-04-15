@@ -1349,13 +1349,26 @@ class ExecutionEngine:
             return {"ok": True}
 
     async def _handle_freeze_payments(self, action: Action, plan: Plan) -> dict:
-        """§3: Apply payment hold on all invoices from a vendor."""
+        """§3: Apply payment hold on all invoices from a vendor.
+
+        For the iban_change flow, skips the freeze when the prior IBAN
+        was unverified / first submission — check_iban_change sets
+        ``iban_requires_freeze=False`` on the plan context in those
+        cases, and we honour it here so we don't spuriously freeze
+        fresh-onboarding vendors.
+        """
         vendor_id = action.params.get("vendor_id", "")
         reason = action.params.get("reason", "fraud_control")
         if not vendor_id:
             return {"ok": True}
+        ctx = self._ensure_ctx(plan)
+        if "iban_requires_freeze" in ctx and not ctx["iban_requires_freeze"]:
+            return {
+                "ok": True,
+                "frozen": False,
+                "reason": "first_submission_or_unchanged",
+            }
         try:
-            # Mark vendor as frozen in vendor_profiles
             if hasattr(self.db, "update_vendor_profile"):
                 self.db.update_vendor_profile(
                     self.organization_id, vendor_id,
@@ -1367,35 +1380,103 @@ class ExecutionEngine:
             return {"ok": True}
 
     async def _handle_iban_change(self, action: Action, plan: Plan) -> dict:
-        """§3: Detect IBAN change and trigger three-factor verification."""
-        vendor_id = action.params.get("vendor_id", "")
+        """§3: Decide whether the submitted IBAN is new vs. a change.
+
+        Three outcomes:
+          - No prior IBAN on record    → first-time bank details, NOT a
+                                         change. Downstream still runs
+                                         micro-deposit verification but
+                                         skips the payment freeze (there's
+                                         nothing to freeze — no prior
+                                         trust to protect).
+          - Same IBAN resubmitted      → no-op. Vendor clicked Save twice
+                                         or re-opened the portal.
+          - Different IBAN             → CHANGE. Downstream freezes
+                                         payments and restarts verification.
+
+        The previous implementation reported `changed=True` for ANY prior
+        IBAN regardless of whether the submitted one was actually
+        different — including same-IBAN resubmissions. That triggered
+        spurious payment freezes on vendors who were just reopening the
+        portal.
+        """
+        vendor_id = str(action.params.get("vendor_id") or "").strip()
+        new_iban = str(action.params.get("new_iban") or "").strip().upper().replace(" ", "")
+        ctx = self._ensure_ctx(plan)
         if not vendor_id:
+            ctx["iban_change_status"] = "no_vendor"
             return {"ok": True}
         try:
-            # Check if IBAN differs from current active IBAN
-            if hasattr(self.db, "get_vendor_profile"):
-                profile = self.db.get_vendor_profile(self.organization_id, vendor_id)
-                if profile and profile.get("iban_verified"):
-                    # IBAN change detected — freeze immediately
-                    return {"ok": True, "changed": True, "frozen": True}
-            return {"ok": True, "changed": False}
+            if not hasattr(self.db, "get_vendor_profile"):
+                ctx["iban_change_status"] = "no_profile_store"
+                return {"ok": True}
+            profile = self.db.get_vendor_profile(self.organization_id, vendor_id) or {}
+            existing_iban = str(profile.get("iban") or "").strip().upper().replace(" ", "")
+            was_verified = bool(profile.get("iban_verified"))
+            if not existing_iban:
+                ctx["iban_change_status"] = "first_submission"
+                ctx["iban_requires_freeze"] = False
+                return {"ok": True, "changed": False, "first_submission": True}
+            if new_iban and existing_iban == new_iban:
+                ctx["iban_change_status"] = "no_change"
+                ctx["iban_requires_freeze"] = False
+                return {"ok": True, "changed": False}
+            # IBAN actually changed. Freeze only if the prior IBAN was
+            # verified — we don't freeze mid-onboarding corrections.
+            ctx["iban_change_status"] = "changed"
+            ctx["iban_requires_freeze"] = was_verified
+            return {
+                "ok": True,
+                "changed": True,
+                "freeze_required": was_verified,
+            }
         except Exception as exc:
             logger.debug("[ExecutionEngine] iban_change non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_iban_verify(self, action: Action, plan: Plan) -> dict:
-        """§3: Initiate micro-deposit IBAN verification."""
+        """§3: Start micro-deposit IBAN verification for the session.
+
+        Routes to MicroDepositService.initiate(session_id, actor_id).
+        Previously passed vendor_id to a method that only accepts
+        session_id, so every call raised TypeError and verification
+        never actually started — vendors stayed stuck in
+        ``microdeposit_pending`` with no deposits.
+        """
+        session_id = str(action.params.get("session_id") or "").strip()
+        vendor_id = str(action.params.get("vendor_id") or "").strip()
+        if not session_id and vendor_id:
+            # Try to find the active onboarding session for this vendor.
+            try:
+                sessions = self.db.list_pending_onboarding_sessions() or []
+                for s in sessions:
+                    if (
+                        str(s.get("vendor_name") or "").lower() == vendor_id.lower()
+                        and str(s.get("state") or "") in ("awaiting_bank", "microdeposit_pending")
+                    ):
+                        session_id = str(s.get("id") or "")
+                        break
+            except Exception:
+                pass
+        if not session_id:
+            return {"ok": True, "initiated": False, "reason": "no_session"}
         try:
             from clearledgr.services.micro_deposit import MicroDepositService
             service = MicroDepositService(db=self.db)
-            vendor_id = action.params.get("vendor_id", "")
-            if vendor_id and hasattr(service, "initiate"):
-                result = service.initiate(vendor_id=vendor_id)
-                return {"ok": True, "initiated": True}
-            return {"ok": True}
+            result = service.initiate(
+                session_id=session_id,
+                actor_id=f"agent:iban_verify:{self.organization_id}",
+            )
+            ok = bool(getattr(result, "success", False))
+            return {
+                "ok": True,
+                "initiated": ok,
+                "session_id": session_id,
+                "error": getattr(result, "error", None) if not ok else None,
+            }
         except Exception as exc:
-            logger.debug("[ExecutionEngine] iban_verify non-fatal: %s", exc)
-            return {"ok": True}
+            logger.warning("[ExecutionEngine] iban_verify failed: %s", exc)
+            return {"ok": True, "initiated": False, "error": str(exc)}
 
     async def _handle_check_vendor_response(self, action: Action, plan: Plan) -> dict:
         """§4.3: Check if vendor has responded to a chase email."""
