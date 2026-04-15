@@ -1,0 +1,71 @@
+name: Deploy worker + beat
+
+# Belt-and-suspenders for worker/beat deploys.
+#
+# Railway auto-deploys `api` on every push to main. Worker and beat had
+# no branch-to-environment mapping for a long stretch, which meant a
+# push to main shipped fixes to api while workers stayed pinned to a
+# stale build — silently reintroducing bugs like the v33 PO store
+# NameError we already fixed in code.
+#
+# Even with the Railway dashboard mapping now in place, this action
+# runs on every push so the repo itself is the source of truth for
+# "these two services were deployed with this commit". If the
+# dashboard setting drifts again, this workflow keeps the deploys in
+# sync.
+#
+# Requires repo secret RAILWAY_TOKEN (generate from Railway dashboard
+# → Project Settings → Tokens, scoped to the Clearledgr project).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only redeploy on changes that actually affect the worker/beat
+      # runtime. Doc-only or UI-only pushes skip this workflow.
+      - 'clearledgr/**'
+      - 'scripts/start-worker.sh'
+      - 'scripts/start-beat.sh'
+      - 'scripts/*.py'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'Dockerfile'
+      - 'railway.worker.toml'
+      - 'railway.beat.toml'
+      - '.github/workflows/railway-deploy-workers.yml'
+  workflow_dispatch:
+
+# Only one deploy run at a time per service — queued runs collapse so
+# we don't stack up N redundant deploys on a rapid-fire push burst.
+concurrency:
+  group: railway-workers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [worker, beat]
+    steps:
+      - name: Checkout commit
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://railway.com/install.sh | sh
+          echo "$HOME/.railway/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::RAILWAY_TOKEN is not set. Add it as a repo secret (Settings → Secrets → Actions)."
+            exit 1
+          fi
+          railway up --service "${{ matrix.service }}" --ci --detach
