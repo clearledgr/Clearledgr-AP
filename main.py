@@ -689,6 +689,57 @@ class WorkspaceSessionCSRFMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+class RequestBodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject POST/PUT/PATCH requests whose body exceeds MAX_REQUEST_BODY_BYTES.
+
+    FastAPI/Starlette/uvicorn have no built-in cap on JSON body size
+    out of the box. Without this middleware a hostile (or buggy)
+    client can POST a 1GB JSON blob and force the worker to allocate
+    that much memory trying to decode it before any application code
+    runs — trivial DoS, OOM-kill on the worker.
+
+    The cap is generous (30MB default, env-overridable) because the
+    invoice extraction path needs to accept PDF-as-base64 up to ~25MB.
+    We check the Content-Length header: if absent on a body method,
+    reject (modern HTTP clients always send it; chunked encoding is
+    rarely used from legit callers and we don't want to stream-count
+    hostile uploads). Safe methods (GET/HEAD/DELETE/OPTIONS) bypass
+    because they have no body to cap.
+    """
+
+    _MAX_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(30 * 1024 * 1024)))
+    _BODY_METHODS = {"POST", "PUT", "PATCH"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in self._BODY_METHODS:
+            content_length = request.headers.get("content-length")
+            if content_length is None:
+                # Chunked / streamed body without Content-Length. We
+                # don't stream-count because the allocation would
+                # already have happened by the time we noticed. Reject
+                # the shape outright.
+                return JSONResponse(
+                    status_code=411,
+                    content={"detail": "content_length_required"},
+                )
+            try:
+                claimed = int(content_length)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "invalid_content_length"},
+                )
+            if claimed > self._MAX_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": "request_body_too_large",
+                        "max_bytes": self._MAX_BYTES,
+                    },
+                )
+        return await call_next(request)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject standard security headers into every response."""
 
@@ -731,6 +782,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # all downstream middleware and handlers.
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+# Body-size limit runs BEFORE the rate limiter so an oversized request
+# is rejected cheaply without counting against the rate-limit budget.
+# Add order: last added == outermost, so this stacks outside RateLimit.
+app.add_middleware(RequestBodySizeLimitMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(LegacySurfaceGuardMiddleware)
 app.add_middleware(WorkspaceSessionCSRFMiddleware)

@@ -497,6 +497,36 @@ class IntegrationStore:
             data["user_token"] = None
         return data
 
+    def deactivate_slack_installation(self, team_id: str) -> int:
+        """Mark every installation row for a Slack team as inactive.
+
+        Called when Slack fires `app_uninstalled` or `tokens_revoked`
+        — at that point the bot token is dead and any outbound Slack
+        call will 401 forever. Leaving the row is_active=1 keeps our
+        notification retry loop hammering a dead endpoint. Flipping
+        is_active=0 is enough; we keep the row for audit so we can
+        see "this workspace was installed and uninstalled on these
+        dates" without a tombstone table.
+
+        Returns the number of rows touched (usually 1; 0 if we never
+        had an installation for this team).
+        """
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql(
+            """
+            UPDATE slack_installations
+               SET is_active = 0, updated_at = ?
+             WHERE team_id = ?
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (now, team_id))
+            affected = int(cur.rowcount or 0)
+            conn.commit()
+        return affected
+
     # ------------------------------------------------------------------
     # Organization integrations
     # ------------------------------------------------------------------

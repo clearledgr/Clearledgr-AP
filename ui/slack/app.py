@@ -176,7 +176,30 @@ async def slack_events(request: Request):
     
     event = data.get("event", {})
     event_type = event.get("type")
-    
+
+    # Workspace uninstall: bot token is dead from here on. Deactivate
+    # the installation row so our notification retry loop stops
+    # hammering a 401-returning endpoint. Slack fires this for both
+    # `app_uninstalled` (whole workspace removed the app) and
+    # `tokens_revoked` (individual user revoked OAuth grant); treat
+    # them the same since in both cases the bot token is useless.
+    if event_type in ("app_uninstalled", "tokens_revoked"):
+        team_id = str(data.get("team_id") or event.get("team_id") or "").strip()
+        if team_id:
+            try:
+                from clearledgr.core.database import get_db
+                affected = get_db().deactivate_slack_installation(team_id)
+                logger.info(
+                    "Slack %s for team=%s — deactivated %d installation row(s)",
+                    event_type, team_id, affected,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Slack %s cleanup failed for team=%s: %s",
+                    event_type, team_id, exc,
+                )
+        return {"ok": True}
+
     # Handle app mentions (@clearledgr)
     if event_type == "app_mention":
         await handle_mention(event)
