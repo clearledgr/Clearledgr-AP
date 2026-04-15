@@ -32,6 +32,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.utils import safe_float
 
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Detect a UNIQUE-constraint violation across sqlite3 + psycopg.
+
+    We can't `except sqlite3.IntegrityError` directly in store code
+    because the same module also runs against Postgres in prod — those
+    raise `psycopg.errors.UniqueViolation` instead. Sniff by class name
+    + message so we don't need to import either backend here.
+    """
+    name = type(exc).__name__
+    if name in {"IntegrityError", "UniqueViolation"}:
+        return True
+    msg = str(exc).lower()
+    return "unique" in msg and ("constraint" in msg or "violat" in msg)
+
 logger = logging.getLogger(__name__)
 
 
@@ -1633,8 +1648,9 @@ class APStore:
         now = payload.get("ts") or datetime.now(timezone.utc).isoformat()
         event_id = payload.get("id") or f"EVT-{uuid.uuid4().hex}"
 
-        if payload.get("idempotency_key"):
-            existing = self.get_ap_audit_event_by_key(payload.get("idempotency_key"))
+        idempotency_key = payload.get("idempotency_key")
+        if idempotency_key:
+            existing = self.get_ap_audit_event_by_key(idempotency_key)
             if existing:
                 return existing
 
@@ -1656,28 +1672,43 @@ class APStore:
              decision_reason, organization_id, ts)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (
-                event_id,
-                payload.get("ap_item_id"),
-                payload.get("event_type"),
-                payload.get("from_state"),
-                payload.get("to_state"),
-                payload.get("actor_type"),
-                payload.get("actor_id"),
-                json.dumps(payload_json or {}),
-                json.dumps(external_refs or {}),
-                payload.get("idempotency_key"),
-                payload.get("source"),
-                payload.get("correlation_id"),
-                payload.get("workflow_id"),
-                payload.get("run_id"),
-                payload.get("decision_reason") or payload.get("reason"),
-                payload.get("organization_id"),
-                now,
-            ))
-            conn.commit()
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (
+                    event_id,
+                    payload.get("ap_item_id"),
+                    payload.get("event_type"),
+                    payload.get("from_state"),
+                    payload.get("to_state"),
+                    payload.get("actor_type"),
+                    payload.get("actor_id"),
+                    json.dumps(payload_json or {}),
+                    json.dumps(external_refs or {}),
+                    idempotency_key,
+                    payload.get("source"),
+                    payload.get("correlation_id"),
+                    payload.get("workflow_id"),
+                    payload.get("run_id"),
+                    payload.get("decision_reason") or payload.get("reason"),
+                    payload.get("organization_id"),
+                    now,
+                ))
+                conn.commit()
+        except Exception as exc:
+            # audit_events.idempotency_key has a UNIQUE constraint. The
+            # pre-check above catches the common case, but two concurrent
+            # callers with the same idempotency_key can both see "no row"
+            # and race to INSERT — one wins, the other trips the UNIQUE
+            # and raises IntegrityError (sqlite3) or UniqueViolation
+            # (psycopg). Treat that as "someone else already wrote this
+            # exact event" and return the winner's row, so the caller's
+            # idempotent path stays idempotent instead of bubbling a 500.
+            if idempotency_key and _is_unique_violation(exc):
+                winner = self.get_ap_audit_event_by_key(idempotency_key)
+                if winner:
+                    return winner
+            raise
         return self.get_ap_audit_event(event_id)
 
     def get_ap_audit_event(self, event_id: str) -> Optional[Dict[str, Any]]:
