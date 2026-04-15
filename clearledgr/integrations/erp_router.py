@@ -210,6 +210,86 @@ def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-(org, erp_type) refresh-token dedupe.
+#
+# QuickBooks invalidates the previous refresh_token on every successful
+# refresh — that's a documented OAuth tightening they made years ago.
+# Xero behaves similarly. So if N concurrent posts hit a stale token,
+# they all get 401, all call refresh_*_token in parallel, and only the
+# FIRST refresh succeeds. The other N-1 callers send the now-burned
+# refresh_token to the OAuth endpoint, get invalid_grant back, and the
+# org's connection is permanently broken until an admin re-OAuths.
+#
+# Workspace semaphore (services/workspace_semaphore.py) bounds N at
+# 5-50 per workspace per worker process, but doesn't prevent the race
+# inside that window. This wrapper does:
+#
+#   1. Acquire a per-(org, erp_type) asyncio.Lock so only one refresh
+#      runs at a time inside the same process.
+#   2. Once we hold the lock, RE-READ the connection from DB. If the
+#      refresh_token has changed since the caller loaded their copy
+#      (i.e. another caller already refreshed before we got the lock),
+#      we copy the new tokens back into the caller's connection object
+#      and return success without calling OAuth.
+#   3. Otherwise, run the actual refresh + persist the new tokens.
+#
+# The lock is in-process. Multiple worker pods could still race
+# cross-process — but the workspace_semaphore (Redis-backed) already
+# serializes most paths to one event per org per worker pod, so the
+# residual cross-process risk is small. A Redis SETNX upgrade for
+# proper distributed locking is a follow-up.
+# ---------------------------------------------------------------------------
+import asyncio as _asyncio_for_lock
+_REFRESH_LOCKS: Dict[str, _asyncio_for_lock.Lock] = {}
+
+
+def _refresh_lock_for(organization_id: str, erp_type: str) -> _asyncio_for_lock.Lock:
+    key = f"{organization_id}:{erp_type}"
+    lock = _REFRESH_LOCKS.get(key)
+    if lock is None:
+        lock = _asyncio_for_lock.Lock()
+        _REFRESH_LOCKS[key] = lock
+    return lock
+
+
+async def refresh_with_dedupe(
+    *,
+    organization_id: str,
+    erp_type: str,
+    connection,
+    refresh_fn,
+) -> Optional[str]:
+    """Run refresh_fn(connection) under a per-(org, erp_type) lock,
+    skipping the OAuth call entirely if another caller already
+    refreshed while we were waiting for the lock.
+
+    Returns the new access token on success (whether ours or the other
+    caller's), or None on failure. Caller is responsible for writing
+    the (potentially mutated) connection back via set_erp_connection.
+    """
+    lock = _refresh_lock_for(organization_id, erp_type)
+    async with lock:
+        # Re-read connection — another caller may have refreshed
+        # between our 401 response and the moment we acquired the lock.
+        try:
+            fresh = get_erp_connection(organization_id)
+        except Exception:
+            fresh = None
+        if (
+            fresh
+            and str(fresh.type or "").lower() == str(erp_type or "").lower()
+            and getattr(fresh, "refresh_token", None)
+            and fresh.refresh_token != connection.refresh_token
+        ):
+            # Already refreshed by someone else. Adopt their tokens.
+            connection.access_token = fresh.access_token
+            connection.refresh_token = fresh.refresh_token
+            return connection.access_token
+        # Nobody refreshed under us — do the refresh ourselves.
+        return await refresh_fn(connection)
+
+
 def get_erp_connection(
     organization_id: str,
     entity_id: Optional[str] = None,
@@ -683,14 +763,20 @@ async def post_bill(
     if connection.type == "quickbooks":
         result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_quickbooks_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="quickbooks",
+                connection=connection, refresh_fn=refresh_quickbooks_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
     elif connection.type == "xero":
         result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_xero_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="xero",
+                connection=connection, refresh_fn=refresh_xero_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
@@ -907,7 +993,10 @@ async def reverse_bill(
             refresh_fn = refresh_xero_token
         if refresh_fn is not None:
             try:
-                new_token = await refresh_fn(connection)
+                new_token = await refresh_with_dedupe(
+                    organization_id=org_id, erp_type=erp_type,
+                    connection=connection, refresh_fn=refresh_fn,
+                )
             except Exception as exc:
                 logger.warning(
                     "Token refresh raised during reversal for %s: %s",
@@ -1046,7 +1135,10 @@ async def apply_credit_note(
             idempotency_key=idempotency_key,
         )
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_xero_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="xero",
+                connection=connection, refresh_fn=refresh_xero_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await apply_credit_note_to_xero(
@@ -1063,7 +1155,10 @@ async def apply_credit_note(
             idempotency_key=idempotency_key,
         )
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_quickbooks_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="quickbooks",
+                connection=connection, refresh_fn=refresh_quickbooks_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await apply_credit_note_to_quickbooks(
@@ -1146,7 +1241,10 @@ async def apply_settlement(
             idempotency_key=idempotency_key,
         )
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_quickbooks_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="quickbooks",
+                connection=connection, refresh_fn=refresh_quickbooks_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await apply_settlement_to_quickbooks(
@@ -1164,7 +1262,10 @@ async def apply_settlement(
             idempotency_key=idempotency_key,
         )
         if isinstance(result, dict) and result.get("needs_reauth"):
-            new_token = await refresh_xero_token(connection)
+            new_token = await refresh_with_dedupe(
+                organization_id=organization_id, erp_type="xero",
+                connection=connection, refresh_fn=refresh_xero_token,
+            )
             if new_token:
                 set_erp_connection(organization_id, connection)
                 result = await apply_settlement_to_xero(
@@ -1652,9 +1753,15 @@ async def get_bill_payment_status(
         if isinstance(result, dict) and result.get("needs_reauth"):
             refreshed = False
             if erp_type == "quickbooks":
-                refreshed = bool(await refresh_quickbooks_token(connection))
+                refreshed = bool(await refresh_with_dedupe(
+                    organization_id=organization_id, erp_type="quickbooks",
+                    connection=connection, refresh_fn=refresh_quickbooks_token,
+                ))
             elif erp_type == "xero":
-                refreshed = bool(await refresh_xero_token(connection))
+                refreshed = bool(await refresh_with_dedupe(
+                    organization_id=organization_id, erp_type="xero",
+                    connection=connection, refresh_fn=refresh_xero_token,
+                ))
             if refreshed:
                 set_erp_connection(organization_id, connection)
                 result = await lookup(connection, erp_reference)

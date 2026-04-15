@@ -711,12 +711,27 @@ async def refresh_tokens(
     if not connection or connection.type != erp_type:
         raise HTTPException(status_code=404, detail="Connection not found")
     
+    # Route manual refresh through the same dedupe wrapper the post
+    # paths use, so a manual click that races with an in-flight auto-
+    # refresh doesn't burn the refresh_token (QB invalidates the prior
+    # RT on every successful refresh — concurrent refreshes lose the
+    # connection entirely).
     if erp_type == "quickbooks":
-        from clearledgr.integrations.erp_router import refresh_quickbooks_token
-        new_token = await refresh_quickbooks_token(connection)
+        from clearledgr.integrations.erp_router import (
+            refresh_quickbooks_token, refresh_with_dedupe,
+        )
+        new_token = await refresh_with_dedupe(
+            organization_id=org_id, erp_type="quickbooks",
+            connection=connection, refresh_fn=refresh_quickbooks_token,
+        )
     elif erp_type == "xero":
-        from clearledgr.integrations.erp_router import refresh_xero_token
-        new_token = await refresh_xero_token(connection)
+        from clearledgr.integrations.erp_router import (
+            refresh_xero_token, refresh_with_dedupe,
+        )
+        new_token = await refresh_with_dedupe(
+            organization_id=org_id, erp_type="xero",
+            connection=connection, refresh_fn=refresh_xero_token,
+        )
     else:
         raise HTTPException(status_code=400, detail="Token refresh not supported for this ERP")
     
