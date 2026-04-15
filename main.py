@@ -74,6 +74,15 @@ async def app_lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Agent background stop failed: {e}")
 
+        try:
+            # Drain the shared httpx pool cleanly so in-flight requests
+            # finish and keep-alive sockets close gracefully on exit.
+            from clearledgr.core.http_client import close_http_client
+
+            await close_http_client()
+        except Exception as e:
+            logger.warning(f"Shared HTTP client close failed: {e}")
+
 app = FastAPI(
     title="Clearledgr API",
     description="""

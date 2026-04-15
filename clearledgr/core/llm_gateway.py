@@ -543,10 +543,17 @@ class LLMGateway:
                 f"cooldown active ({remaining}s remaining)"
             )
 
+        from clearledgr.core.http_client import get_http_client
+        client = get_http_client()
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-                    resp = await client.post(_API_URL, headers=headers, json=body)
+                # Shared client — keeps TLS session + TCP connection
+                # alive across LLM calls. Per-call timeout override
+                # preserves the existing action-level budget.
+                resp = await client.post(
+                    _API_URL, headers=headers, json=body,
+                    timeout=config.timeout_seconds,
+                )
 
                 if resp.status_code == 429:
                     # Trip the process-local breaker so the next N
@@ -712,36 +719,40 @@ class LLMGateway:
         error: Optional[str] = None
 
         try:
-            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-                async with client.stream("POST", _API_URL, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        body_text = await resp.aread()
-                        err = f"{resp.status_code}: {body_text[:200].decode('utf-8', errors='replace')}"
-                        error = err
-                        raise RuntimeError(f"[LLMGateway] {action.value} stream failed: {err}")
-                    async for line in resp.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        payload_raw = line[5:].strip()
-                        if not payload_raw or payload_raw == "[DONE]":
-                            continue
-                        try:
-                            payload = _json.loads(payload_raw)
-                        except ValueError:
-                            continue
-                        event_type = payload.get("type")
-                        if event_type == "content_block_delta":
-                            delta = payload.get("delta") or {}
-                            if delta.get("type") == "text_delta":
-                                text = delta.get("text") or ""
-                                if text:
-                                    yield text
-                        elif event_type == "message_start":
-                            usage = (payload.get("message") or {}).get("usage") or {}
-                            input_tokens = int(usage.get("input_tokens") or 0)
-                        elif event_type == "message_delta":
-                            usage = payload.get("usage") or {}
-                            output_tokens = int(usage.get("output_tokens") or 0)
+            from clearledgr.core.http_client import get_http_client
+            client = get_http_client()
+            async with client.stream(
+                "POST", _API_URL, headers=headers, json=body,
+                timeout=config.timeout_seconds,
+            ) as resp:
+                if resp.status_code >= 400:
+                    body_text = await resp.aread()
+                    err = f"{resp.status_code}: {body_text[:200].decode('utf-8', errors='replace')}"
+                    error = err
+                    raise RuntimeError(f"[LLMGateway] {action.value} stream failed: {err}")
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload_raw = line[5:].strip()
+                    if not payload_raw or payload_raw == "[DONE]":
+                        continue
+                    try:
+                        payload = _json.loads(payload_raw)
+                    except ValueError:
+                        continue
+                    event_type = payload.get("type")
+                    if event_type == "content_block_delta":
+                        delta = payload.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text") or ""
+                            if text:
+                                yield text
+                    elif event_type == "message_start":
+                        usage = (payload.get("message") or {}).get("usage") or {}
+                        input_tokens = int(usage.get("input_tokens") or 0)
+                    elif event_type == "message_delta":
+                        usage = payload.get("usage") or {}
+                        output_tokens = int(usage.get("output_tokens") or 0)
         finally:
             latency_ms = int((_time.monotonic() - start_time) * 1000)
             cost = self._estimate_cost(config, input_tokens, output_tokens)

@@ -375,32 +375,63 @@ def get_org_config(organization_id: str) -> Optional[OrganizationConfig]:
 
 
 def save_org_config(config: OrganizationConfig):
-    """Persist organization configuration into organization settings."""
+    """Persist organization configuration into organization settings.
+
+    Uses optimistic CAS on organizations.updated_at so two concurrent
+    admins editing the same org don't silently overwrite each other.
+    If another writer beat us to the commit, re-read and retry up to
+    3 times before giving up. Three retries is empirically plenty —
+    the failure mode is "two admins clicking Save within milliseconds
+    of each other", which essentially never happens beyond a single
+    round of retry contention. On exhaustion we raise rather than
+    silently drop the write, so the caller gets a clear signal.
+    """
     from clearledgr.core.database import get_db
 
     db = get_db()
-    org = db.get_organization(config.organization_id)
-    if not org:
-        db.create_organization(
-            organization_id=config.organization_id,
-            name=config.organization_name or config.organization_id,
-            settings={},
-        )
-        org = db.get_organization(config.organization_id) or {}
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        org = db.get_organization(config.organization_id)
+        if not org:
+            db.create_organization(
+                organization_id=config.organization_id,
+                name=config.organization_name or config.organization_id,
+                settings={},
+            )
+            org = db.get_organization(config.organization_id) or {}
 
-    settings = org.get("settings_json") or org.get("settings") or {}
-    if isinstance(settings, str):
-        try:
-            settings = json.loads(settings)
-        except Exception:
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings)
+            except Exception:
+                settings = {}
+        if not isinstance(settings, dict):
             settings = {}
-    if not isinstance(settings, dict):
-        settings = {}
 
-    config.updated_at = datetime.now(timezone.utc).isoformat()
-    settings["org_config"] = config.to_dict()
-    db.update_organization(config.organization_id, settings=settings)
-    logger.info("Saved config for organization %s", config.organization_id)
+        config.updated_at = datetime.now(timezone.utc).isoformat()
+        settings["org_config"] = config.to_dict()
+        expected = org.get("updated_at")
+        written = db.update_organization(
+            config.organization_id,
+            settings=settings,
+            expected_updated_at=expected,
+        )
+        if written:
+            logger.info(
+                "Saved config for organization %s (attempt %d)",
+                config.organization_id, attempt + 1,
+            )
+            return
+        logger.warning(
+            "[org_config] CAS miss on %s attempt %d/%d — re-reading and retrying",
+            config.organization_id, attempt + 1, max_attempts,
+        )
+
+    raise RuntimeError(
+        f"save_org_config: CAS contention on {config.organization_id} "
+        f"after {max_attempts} attempts — another writer kept winning the race"
+    )
 
 
 def delete_org_config(organization_id: str):

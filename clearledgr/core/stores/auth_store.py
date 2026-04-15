@@ -426,7 +426,26 @@ class AuthStore:
         "subscription_tier", "is_active", "updated_at",
     })
 
-    def update_organization(self, organization_id: str, **kwargs) -> bool:
+    def update_organization(
+        self,
+        organization_id: str,
+        *,
+        expected_updated_at: Optional[str] = None,
+        **kwargs,
+    ) -> bool:
+        """Update an organization row.
+
+        When ``expected_updated_at`` is provided, the UPDATE runs with
+        a WHERE clause that includes the timestamp — optimistic CAS.
+        If another process wrote between the caller's read and this
+        write, the rowcount is 0 and we return False. The caller is
+        expected to re-read and retry (or surface a 409 to the user).
+
+        Without ``expected_updated_at``, behaviour matches the
+        pre-CAS era (last-writer-wins). That keeps non-racing callers
+        — migrations, single-shot admin actions, CLI tools — working
+        without every call needing to thread the token through.
+        """
         self.initialize()
         if not kwargs:
             return False
@@ -442,10 +461,20 @@ class AuthStore:
             payload.pop("integration_mode")
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in payload.keys())
-        sql = self._prepare_sql(f"UPDATE organizations SET {set_clause} WHERE id = ?")
+        if expected_updated_at is not None:
+            sql = self._prepare_sql(
+                f"UPDATE organizations SET {set_clause} "
+                "WHERE id = ? AND updated_at = ?"
+            )
+            params = (*payload.values(), organization_id, expected_updated_at)
+        else:
+            sql = self._prepare_sql(
+                f"UPDATE organizations SET {set_clause} WHERE id = ?"
+            )
+            params = (*payload.values(), organization_id)
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (*payload.values(), organization_id))
+            cur.execute(sql, params)
             conn.commit()
             return cur.rowcount > 0
 
