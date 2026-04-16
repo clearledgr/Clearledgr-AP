@@ -957,7 +957,23 @@ async def register_gmail_token(request: RegisterGmailTokenRequest):
 
     expires_in = int(request.expires_in or 3600)
     expires_in = max(60, min(expires_in, 86400))
-    user_id = str(getattr(user, "id", "") or "").strip() or profile_email
+    # The JWT's user_id claim must match users.id on the backend.
+    # The previous `or profile_email` fallback issued JWTs with the
+    # user's email as user_id whenever auto-provision returned a None
+    # User (e.g. expired read-only seat path in _row_to_user). Every
+    # downstream `db.get_user(user_id)` then 404'd because users.id
+    # is a UUID, not an email — most visibly on /api/user/preferences.
+    # Fail hard instead of issuing a broken token.
+    user_id = str(getattr(user, "id", "") or "").strip()
+    if not user_id or user_id.lower() == "none":
+        logger.error(
+            "[register-token] provisioned user missing id for %s (org=%s)",
+            profile_email, resolved_org_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="user_provision_failed",
+        )
     token_store = _token_store()
     existing_token = token_store.get(user_id)
     preserved_refresh_token = existing_token.refresh_token if existing_token else ""

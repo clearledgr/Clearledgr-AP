@@ -40,6 +40,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/user", tags=["user-preferences"])
 
 
+def _resolve_user_row(user: TokenData) -> Optional[Dict[str, Any]]:
+    """Resolve the users.id row for the authenticated token.
+
+    Look up by id first (the common path), then fall back to email if
+    the id lookup misses. This handles JWTs issued before the register-
+    token fallback fix — they carry the user's email in the user_id
+    claim, which never matches users.id. Once those JWTs cycle out
+    (7-day TTL) this fallback becomes dead-code that still costs
+    nothing, so it stays as belt-and-braces.
+    """
+    db = get_db()
+    by_id = db.get_user(user.user_id)
+    if by_id:
+        return by_id
+    email = (user.email or "").strip().lower()
+    if email:
+        by_email = db.get_user_by_email(email)
+        if by_email:
+            logger.info(
+                "[user_preferences] resolved user by email fallback "
+                "(JWT user_id=%r did not match users.id)",
+                user.user_id,
+            )
+            return by_email
+    return None
+
+
 class UserPreferencesPatchRequest(BaseModel):
     """Patch body for PATCH /api/user/preferences.
 
@@ -59,8 +86,7 @@ def get_user_preferences(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, organization_id)
-    db = get_db()
-    current_user = db.get_user(user.user_id)
+    current_user = _resolve_user_row(user)
     if not current_user:
         raise HTTPException(status_code=404, detail="user_not_found")
     if str(current_user.get("organization_id") or org_id) != org_id:
@@ -78,8 +104,7 @@ def patch_user_preferences(
     user: TokenData = Depends(get_current_user),
 ):
     org_id = _resolve_org_id(user, request.organization_id)
-    db = get_db()
-    current_user = db.get_user(user.user_id)
+    current_user = _resolve_user_row(user)
     if not current_user:
         raise HTTPException(status_code=404, detail="user_not_found")
     if str(current_user.get("organization_id") or org_id) != org_id:
