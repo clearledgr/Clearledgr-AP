@@ -80,7 +80,13 @@ CREATE TABLE IF NOT EXISTS vendor_onboarding_tokens (
 """
 
 _DEFAULT_TTL_DAYS = 14
-_TOKEN_BYTE_LENGTH = 48  # ~64 chars after urlsafe base64 — long enough to be unguessable
+# 24 bytes → 192 bits of entropy → 32 chars after urlsafe base64.
+# 128 bits is the computational-infeasibility floor for brute forcing;
+# 192 gives a comfortable margin without bloating the link. The old 48
+# byte (64 char) links read as "what is this" to non-technical vendors
+# opening the invite email; this size matches Stripe/Airtable/Notion
+# magic-link norms (~30-40 chars).
+_TOKEN_BYTE_LENGTH = 24
 
 
 def _now() -> datetime:
