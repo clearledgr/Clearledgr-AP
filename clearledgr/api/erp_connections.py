@@ -413,7 +413,19 @@ async def quickbooks_callback(
             "quickbooks", success=False, organization_id=organization_id, detail="missing_params"
         )
 
-    # Exchange code for tokens
+    # Exchange code for tokens. The try/except previously collapsed
+    # every failure mode (missing env var, Intuit 400 with error body,
+    # network timeout) to the opaque "token_exchange_failed" popup —
+    # which made field debugging impossible. Log the HTTP status + body
+    # when available so Sentry/Railway logs show exactly why Intuit said
+    # no, and surface a sub-detail in the popup so the operator can
+    # distinguish config errors from transient network issues.
+    if not QUICKBOOKS_CLIENT_ID or not QUICKBOOKS_CLIENT_SECRET:
+        logger.error("QuickBooks token exchange: client_id/secret not configured")
+        return _popup_close_response(
+            "quickbooks", success=False, organization_id=organization_id,
+            detail="token_exchange_failed:missing_credentials",
+        )
     try:
         client = get_http_client()
         response = await client.post(
@@ -426,15 +438,27 @@ async def quickbooks_callback(
             auth=(QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET),
             headers={"Accept": "application/json"},
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            body = (response.text or "")[:500]
+            logger.error(
+                "QuickBooks token exchange failed: status=%s redirect_uri=%s body=%s",
+                response.status_code, QUICKBOOKS_REDIRECT_URI, body,
+            )
+            return _popup_close_response(
+                "quickbooks", success=False, organization_id=organization_id,
+                detail=f"token_exchange_failed:http_{response.status_code}",
+            )
         tokens = response.json()
     except Exception as e:
-        logger.error(f"QuickBooks token exchange failed: {e}")
+        logger.error(
+            "QuickBooks token exchange raised %s: %s (redirect_uri=%s)",
+            type(e).__name__, e, QUICKBOOKS_REDIRECT_URI,
+        )
         return _popup_close_response(
             "quickbooks",
             success=False,
             organization_id=organization_id,
-            detail="token_exchange_failed",
+            detail=f"token_exchange_failed:{type(e).__name__}",
         )
 
     # Store connection
