@@ -1110,15 +1110,22 @@ export function ThreadSidebar({
   // onboarded yet — invite" banner or the "onboarding in progress"
   // badge. Fails silently — if the endpoint isn't available the
   // banner just stays hidden.
+  //
+  // Fetcher is held in a ref so identity churn (inline arrows from the
+  // parent in some call sites) doesn't re-fire the effect. We only
+  // refetch when the vendor actually changes.
+  const fetchOnboardingStatusRef = useRef(fetchOnboardingStatus);
+  useEffect(() => { fetchOnboardingStatusRef.current = fetchOnboardingStatus; }, [fetchOnboardingStatus]);
   useEffect(() => {
     const vendor = item?.vendor_name || item?.vendor;
-    if (!vendor || !fetchOnboardingStatus) { setOnboardingStatus(null); return; }
+    const fetcher = fetchOnboardingStatusRef.current;
+    if (!vendor || !fetcher) { setOnboardingStatus(null); return; }
     let cancelled = false;
-    fetchOnboardingStatus(vendor)
+    fetcher(vendor)
       .then((status) => { if (!cancelled) setOnboardingStatus(status || null); })
       .catch(() => { if (!cancelled) setOnboardingStatus(null); });
     return () => { cancelled = true; };
-  }, [item?.id, item?.vendor_name, item?.vendor, fetchOnboardingStatus]);
+  }, [item?.vendor_name, item?.vendor]);
 
   // Tick for live countdown when an override window is open
   useEffect(() => {

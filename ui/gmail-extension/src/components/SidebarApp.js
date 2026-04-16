@@ -1862,6 +1862,36 @@ export default function SidebarApp({ queueManager }) {
   };
   const openPipeline = useCallback(() => navigateInboxRoute('clearledgr/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
 
+  // Stable callbacks for ThreadSidebar's onboarding status fetch +
+  // invite POST. These props feed `useEffect` deps inside the sidebar;
+  // without useCallback they'd change identity on every SidebarApp
+  // render (queue tick, scan status, etc.) and re-fire the effect —
+  // which was hammering /onboarding/status dozens of times per tab.
+  const fetchOnboardingStatus = useCallback(async (vendorName) => {
+    try {
+      const orgIdVal = queueManager.runtimeConfig?.organizationId || 'default';
+      const url = queueManager.runtimeConfig?.backendUrl
+        + '/api/vendors/' + encodeURIComponent(vendorName)
+        + '/onboarding/status?organization_id=' + encodeURIComponent(orgIdVal);
+      const resp = await queueManager.backendFetch(url);
+      if (!resp || resp.detail) return null;
+      return resp;
+    } catch { return null; }
+  }, [queueManager]);
+
+  const inviteVendorApi = useCallback(async (url, opts = {}) => {
+    const fullUrl = (queueManager.runtimeConfig?.backendUrl || '') + url;
+    const resp = await queueManager.backendFetch(fullUrl, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    if (!resp || resp.detail || !resp.magic_link) {
+      const detail = resp?.detail || resp?.error || 'invite_failed';
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+    return resp;
+  }, [queueManager]);
+
   // Agent Q&A adapter handed to ThreadSidebar. Carries:
   //   - legacy non-streaming call (plain function form, back-compat)
   //   - .stream() for SSE streaming with history + references
@@ -2116,33 +2146,8 @@ export default function SidebarApp({ queueManager }) {
                     return data?.links || [];
                   } catch { return []; }
                 }}
-                fetchOnboardingStatus=${async (vendorName) => {
-                  try {
-                    const orgId = queueManager.runtimeConfig?.organizationId || 'default';
-                    const url = queueManager.runtimeConfig?.backendUrl
-                      + '/api/vendors/' + encodeURIComponent(vendorName)
-                      + '/onboarding/status?organization_id=' + encodeURIComponent(orgId);
-                    const resp = await queueManager.backendFetch(url);
-                    if (!resp || resp.detail) return null;
-                    return resp;
-                  } catch { return null; }
-                }}
-                inviteVendorApi=${async (url, opts = {}) => {
-                  const fullUrl = (queueManager.runtimeConfig?.backendUrl || '') + url;
-                  const resp = await queueManager.backendFetch(fullUrl, {
-                    ...opts,
-                    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-                  });
-                  // queueManager.backendFetch returns parsed JSON. FastAPI
-                  // error bodies come through as { detail: ... } and carry
-                  // no magic_link, so treat either "detail present" or
-                  // "magic_link missing" as a failure.
-                  if (!resp || resp.detail || !resp.magic_link) {
-                    const detail = resp?.detail || resp?.error || 'invite_failed';
-                    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-                  }
-                  return resp;
-                }}
+                fetchOnboardingStatus=${fetchOnboardingStatus}
+                inviteVendorApi=${inviteVendorApi}
                 onApprove=${async (approveItem) => {
                   try {
                     const result = await queueManager.approveAndPost(approveItem, { override: false });

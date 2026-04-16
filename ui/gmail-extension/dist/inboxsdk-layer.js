@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:9e34554fd6547f225afff6b3cbfc21d3de5a7381366f1c7de8a01478826e7783 */
+/* clearledgr-source-fingerprint:c326c1e4d4f904224caf0d346f0446266b78ed26e0502131413d7448b25858c3 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -60237,14 +60237,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         cancelled = true;
       };
     }, [item?.id, fetchBoxLinks]);
+    const fetchOnboardingStatusRef = A2(fetchOnboardingStatus);
+    y2(() => {
+      fetchOnboardingStatusRef.current = fetchOnboardingStatus;
+    }, [fetchOnboardingStatus]);
     y2(() => {
       const vendor = item?.vendor_name || item?.vendor;
-      if (!vendor || !fetchOnboardingStatus) {
+      const fetcher = fetchOnboardingStatusRef.current;
+      if (!vendor || !fetcher) {
         setOnboardingStatus(null);
         return;
       }
       let cancelled = false;
-      fetchOnboardingStatus(vendor).then((status) => {
+      fetcher(vendor).then((status) => {
         if (!cancelled)
           setOnboardingStatus(status || null);
       }).catch(() => {
@@ -60254,7 +60259,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return () => {
         cancelled = true;
       };
-    }, [item?.id, item?.vendor_name, item?.vendor, fetchOnboardingStatus]);
+    }, [item?.vendor_name, item?.vendor]);
     y2(() => {
       if (!item?.override_window?.expires_at)
         return;
@@ -62360,6 +62365,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       userEmail: queueManager?.runtimeConfig?.userEmail || ""
     };
     const openPipeline = q2(() => navigateInboxRoute("clearledgr/invoices", store_default.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
+    const fetchOnboardingStatus = q2(async (vendorName) => {
+      try {
+        const orgIdVal = queueManager.runtimeConfig?.organizationId || "default";
+        const url = queueManager.runtimeConfig?.backendUrl + "/api/vendors/" + encodeURIComponent(vendorName) + "/onboarding/status?organization_id=" + encodeURIComponent(orgIdVal);
+        const resp = await queueManager.backendFetch(url);
+        if (!resp || resp.detail)
+          return null;
+        return resp;
+      } catch {
+        return null;
+      }
+    }, [queueManager]);
+    const inviteVendorApi = q2(async (url, opts = {}) => {
+      const fullUrl = (queueManager.runtimeConfig?.backendUrl || "") + url;
+      const resp = await queueManager.backendFetch(fullUrl, {
+        ...opts,
+        headers: { "Content-Type": "application/json", ...opts.headers || {} }
+      });
+      if (!resp || resp.detail || !resp.magic_link) {
+        const detail = resp?.detail || resp?.error || "invite_failed";
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return resp;
+    }, [queueManager]);
     const agentQuery = T2(() => {
       const orgId = () => queueManager.runtimeConfig?.organizationId || "default";
       const baseUrl = () => queueManager.runtimeConfig?.backendUrl || "";
@@ -62601,30 +62630,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return [];
       }
     }}
-                fetchOnboardingStatus=${async (vendorName) => {
-      try {
-        const orgId = queueManager.runtimeConfig?.organizationId || "default";
-        const url = queueManager.runtimeConfig?.backendUrl + "/api/vendors/" + encodeURIComponent(vendorName) + "/onboarding/status?organization_id=" + encodeURIComponent(orgId);
-        const resp = await queueManager.backendFetch(url);
-        if (!resp || resp.detail)
-          return null;
-        return resp;
-      } catch {
-        return null;
-      }
-    }}
-                inviteVendorApi=${async (url, opts = {}) => {
-      const fullUrl = (queueManager.runtimeConfig?.backendUrl || "") + url;
-      const resp = await queueManager.backendFetch(fullUrl, {
-        ...opts,
-        headers: { "Content-Type": "application/json", ...opts.headers || {} }
-      });
-      if (!resp || resp.detail || !resp.magic_link) {
-        const detail = resp?.detail || resp?.error || "invite_failed";
-        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-      }
-      return resp;
-    }}
+                fetchOnboardingStatus=${fetchOnboardingStatus}
+                inviteVendorApi=${inviteVendorApi}
                 onApprove=${async (approveItem) => {
       try {
         const result = await queueManager.approveAndPost(approveItem, { override: false });
