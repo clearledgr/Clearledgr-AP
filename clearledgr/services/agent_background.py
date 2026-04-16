@@ -414,20 +414,29 @@ async def _run_loop():
             # Every tick (~15 min): reap expired snoozes (§3 Gmail Power Features)
             try:
                 unsnoozed = await _reap_expired_snoozes(org_ids)
-                if unsnoozed:
-                    logger.info("[background] unsnoozed %d expired AP items", unsnoozed)
-                    # §2.2: Enqueue TIMER_FIRED events for snooze expiry
+                total = sum(len(v) for v in unsnoozed.values())
+                if total:
+                    logger.info("[background] unsnoozed %d expired AP items", total)
+                    # §2.2: Enqueue per-item TIMER_FIRED events for snooze expiry
+                    # so the planner can act on a specific box (post-unsnooze
+                    # bookkeeping, observer cleanup) rather than an org-wide
+                    # event with no box_id.
                     try:
                         from clearledgr.core.events import AgentEvent, AgentEventType
                         from clearledgr.core.event_queue import get_event_queue
                         queue = get_event_queue()
-                        for oid in org_ids:
-                            queue.enqueue(AgentEvent(
-                                type=AgentEventType.TIMER_FIRED,
-                                source="background_loop",
-                                payload={"timer_type": "snooze_expired", "organization_id": oid},
-                                organization_id=oid,
-                            ))
+                        for oid, ap_ids in unsnoozed.items():
+                            for ap_id in ap_ids:
+                                queue.enqueue(AgentEvent(
+                                    type=AgentEventType.TIMER_FIRED,
+                                    source="background_loop",
+                                    payload={
+                                        "timer_type": "snooze_expired",
+                                        "organization_id": oid,
+                                        "box_id": ap_id,
+                                    },
+                                    organization_id=oid,
+                                ))
                     except Exception:
                         pass
             except Exception as snooze_exc:
@@ -648,19 +657,30 @@ async def _send_pending_chases(org_ids) -> int:
     return sent_count
 
 
-async def _reap_expired_snoozes(org_ids) -> int:
-    """Unsnooze AP items whose snooze timer has expired (§3 Gmail Power Features)."""
+async def _reap_expired_snoozes(org_ids) -> Dict[str, List[str]]:
+    """Unsnooze AP items whose snooze timer has expired (§3 Gmail Power Features).
+
+    Returns a dict mapping organization_id -> list of unsnoozed ap_item ids,
+    so the caller can fan out per-item TIMER_FIRED events with box_id rather
+    than a single org-level event the planner can't act on.
+    """
     from clearledgr.core.database import get_db
+    from clearledgr.services.invoice_workflow import get_invoice_workflow
 
     db = get_db()
     now = datetime.now(timezone.utc)
-    unsnoozed_count = 0
+    unsnoozed: Dict[str, List[str]] = {}
 
     for org_id in (org_ids if isinstance(org_ids, (list, tuple)) else [org_ids]):
         try:
             items = db.list_ap_items(organization_id=org_id, state="snoozed", limit=500)
         except Exception:
             items = []
+        try:
+            workflow = get_invoice_workflow(org_id)
+        except Exception as exc:
+            logger.warning("[snooze_reaper] could not load workflow for org=%s: %s", org_id, exc)
+            workflow = None
         for item in items:
             metadata = dict(item.get("metadata") or {})
             snoozed_until_str = metadata.get("snoozed_until")
@@ -676,17 +696,42 @@ async def _reap_expired_snoozes(org_ids) -> int:
             restore_state = metadata.pop("pre_snooze_state", "needs_approval")
             metadata.pop("snoozed_until", None)
             metadata.pop("snooze_note", None)
-            db.update_ap_item(item["id"], state=restore_state, metadata=metadata)
-            db.append_ap_item_timeline_entry(item["id"], {
+
+            ap_item_id = item.get("id")
+            gmail_id = item.get("thread_id") or item.get("gmail_id") or ap_item_id
+            transitioned = False
+            if workflow is not None and gmail_id:
+                try:
+                    transitioned = bool(workflow._transition_invoice_state(
+                        gmail_id,
+                        restore_state,
+                        source="snooze_reaper",
+                        metadata=metadata,
+                    ))
+                except Exception as exc:
+                    logger.warning(
+                        "[snooze_reaper] state transition snoozed→%s failed for %s: %s",
+                        restore_state, ap_item_id, exc,
+                    )
+            if not transitioned:
+                # Fallback so we don't strand items if workflow is unavailable.
+                # Leaves observers un-fired but at least clears the snooze.
+                try:
+                    db.update_ap_item(ap_item_id, state=restore_state, metadata=metadata)
+                except Exception as exc:
+                    logger.warning("[snooze_reaper] direct update failed for %s: %s", ap_item_id, exc)
+                    continue
+
+            db.append_ap_item_timeline_entry(ap_item_id, {
                 "event_type": "unsnoozed",
                 "summary": f"Snooze expired. Restored to {restore_state.replace('_', ' ')}.",
                 "next_action": "Item is back in the active queue.",
                 "actor": "agent",
                 "timestamp": now.isoformat(),
             })
-            unsnoozed_count += 1
+            unsnoozed.setdefault(org_id, []).append(ap_item_id)
 
-    return unsnoozed_count
+    return unsnoozed
 
 
 async def _check_anomalies(org_id: str):

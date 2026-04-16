@@ -54,6 +54,8 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -62,6 +64,65 @@ logger = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 3
 _AMOUNT_TOLERANCE = 0.015  # ±1.5p handles cross-currency rounding
+
+# Per-session serialization for verify(). The attempt counter is stored
+# in JSON metadata and updated via read-modify-write, so two concurrent
+# POSTs would both observe the same pre-increment value and both write
+# +1 — letting an attacker burst parallel guesses past the lockout. We
+# guard the critical section with a Redis SETNX lock (cross-process)
+# plus an in-process threading.Lock fallback (single-process / tests).
+
+_VERIFY_LOCK_TTL_SECONDS = 5
+_VERIFY_LOCK_WAIT_SECONDS = 2.0
+_VERIFY_PROC_LOCKS: Dict[str, threading.Lock] = {}
+_VERIFY_PROC_LOCKS_GUARD = threading.Lock()
+
+
+def _proc_lock_for(session_id: str) -> threading.Lock:
+    with _VERIFY_PROC_LOCKS_GUARD:
+        lock = _VERIFY_PROC_LOCKS.get(session_id)
+        if lock is None:
+            lock = threading.Lock()
+            _VERIFY_PROC_LOCKS[session_id] = lock
+        return lock
+
+
+def _redis_client():
+    try:
+        from clearledgr.services import rate_limit
+        return rate_limit._redis_client
+    except Exception:
+        return None
+
+
+def _try_acquire_redis_lock(client, key: str) -> Optional[str]:
+    if client is None:
+        return None
+    token = secrets.token_urlsafe(16)
+    try:
+        ok = client.set(key, token, nx=True, ex=_VERIFY_LOCK_TTL_SECONDS)
+        return token if ok else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[microdeposit] redis SETNX failed for %s: %s", key, exc)
+        return None
+
+
+_REDIS_RELEASE_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def _release_redis_lock(client, key: str, token: str) -> None:
+    if client is None or not token:
+        return
+    try:
+        client.eval(_REDIS_RELEASE_SCRIPT, 1, key, token)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[microdeposit] redis release failed for %s: %s", key, exc)
 
 
 @dataclass
@@ -211,11 +272,50 @@ class MicroDepositService:
     ) -> MicroDepositVerifyResult:
         """Compare vendor-submitted amounts against expected.
 
-        On success, transitions to ``bank_verified``. On failure,
-        increments the attempt counter. After ``_MAX_ATTEMPTS`` failed
-        attempts, kicks the session back to ``awaiting_bank`` so the
-        vendor can correct their IBAN.
+        Serialized per-session via Redis SETNX (with an in-process lock
+        fallback) so parallel POSTs cannot race the read-modify-write of
+        the attempt counter and slip past the lockout.
         """
+        proc_lock = _proc_lock_for(session_id)
+        acquired_proc = proc_lock.acquire(timeout=_VERIFY_LOCK_WAIT_SECONDS)
+        if not acquired_proc:
+            return MicroDepositVerifyResult(
+                success=False, error="verification_busy_try_again"
+            )
+        redis = _redis_client()
+        redis_key = f"microdeposit_verify:{session_id}"
+        redis_token: Optional[str] = None
+        if redis is not None:
+            deadline = time.monotonic() + _VERIFY_LOCK_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                redis_token = _try_acquire_redis_lock(redis, redis_key)
+                if redis_token:
+                    break
+                time.sleep(0.05)
+            if not redis_token:
+                proc_lock.release()
+                return MicroDepositVerifyResult(
+                    success=False, error="verification_busy_try_again"
+                )
+        try:
+            return self._verify_locked(
+                session_id,
+                submitted_amount_one,
+                submitted_amount_two,
+                actor_id,
+            )
+        finally:
+            if redis_token is not None:
+                _release_redis_lock(redis, redis_key, redis_token)
+            proc_lock.release()
+
+    def _verify_locked(
+        self,
+        session_id: str,
+        submitted_amount_one: float,
+        submitted_amount_two: float,
+        actor_id: str,
+    ) -> MicroDepositVerifyResult:
         session = self.db.get_onboarding_session_by_id(session_id)
         if session is None:
             return MicroDepositVerifyResult(success=False, error="session_not_found")

@@ -249,8 +249,8 @@ def fire_pending_timers() -> dict:
         except Exception:
             pass
         if org_ids:
-            count = asyncio.run(_reap_expired_snoozes(org_ids))
-            results["snooze_reaped"] = count
+            unsnoozed = asyncio.run(_reap_expired_snoozes(org_ids))
+            results["snooze_reaped"] = sum(len(v) for v in unsnoozed.values())
     except Exception as exc:
         results["snooze_error"] = str(exc)
 

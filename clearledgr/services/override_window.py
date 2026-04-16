@@ -464,7 +464,14 @@ class OverrideWindowService:
             return False
         if str(window.get("state") or "").lower() != "pending":
             return False
-        self.db.mark_override_window_expired(window_id)
+        # Race guard: between the read above and the conditional UPDATE
+        # below, a user may have clicked Undo. mark_override_window_expired
+        # is `WHERE state='pending'` so it returns False if it lost the
+        # race — in that case do NOT close the AP item or claim success
+        # to the reaper (otherwise we'd overwrite the Reversed Slack card
+        # with Expired and fire OVERRIDE_WINDOW_EXPIRED for a reversed item).
+        if not self.db.mark_override_window_expired(window_id):
+            return False
         self._transition_to_closed_safely(window.get("ap_item_id"))
         logger.info(
             "[OverrideWindow] Expired window %s for ap_item=%s",
