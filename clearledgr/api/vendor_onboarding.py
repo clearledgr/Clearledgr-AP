@@ -100,15 +100,19 @@ def _portal_base_url() -> str:
     """Return the public base URL the magic link should embed.
 
     Read from the ``CLEARLEDGR_PORTAL_BASE_URL`` env var. Defaults to
-    a placeholder for local dev so tests do not have to set it. In
-    production this MUST be the externally-reachable hostname of the
-    FastAPI app — vendors will visit it directly from their browser.
+    the production portal hostname so an unset env var in prod still
+    produces a vendor-friendly link rather than an api.* URL. Local
+    dev should set this to ``http://localhost:8000`` in its .env.
     """
-    return os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
+    return os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "https://onboard.clearledgr.com").rstrip("/")
 
 
 def _build_magic_link(token: str) -> str:
-    return f"{_portal_base_url()}/portal/onboard/{token}"
+    # Use the short `/onboard/<token>` path (which 302s to the full
+    # /portal/onboard/<token>) so the link embedded in invite emails
+    # is visibly shorter — the extra path segment is wasted on the
+    # vendor reading the email.
+    return f"{_portal_base_url()}/onboard/{token}"
 
 
 def _assert_same_org(user: TokenData, requested_org: str) -> None:

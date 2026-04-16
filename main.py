@@ -491,6 +491,9 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/portal/onboard/[^/]+/kyc$",
         r"^/portal/onboard/[^/]+/bank-details$",
         r"^/portal/onboard/[^/]+/microdeposit$",
+        # Short-form redirect so magic links can embed `/onboard/<token>`
+        # directly — the 302 resolves to /portal/onboard/<token> above.
+        r"^/onboard/[^/]+$",
         r"^/api/ap/items/[^/]+/field-review/resolve$",
         r"^/api/ap/items/[^/]+/fields$",
         r"^/api/ap/items/[^/]+/gmail-link$",
@@ -1028,8 +1031,12 @@ app.include_router(vendor_onboarding_ops_router)
 
 # Vendor Portal — Phase 3.1.b. The ONLY unauthenticated surface
 # (magic-link tokens, 14-day TTL). See DESIGN_THESIS.md §9.
-from clearledgr.api.vendor_portal import router as vendor_portal_router
+from clearledgr.api.vendor_portal import (
+    router as vendor_portal_router,
+    shortcut_router as vendor_portal_shortcut_router,
+)
 app.include_router(vendor_portal_router)
+app.include_router(vendor_portal_shortcut_router)
 
 # Gmail integration
 from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router

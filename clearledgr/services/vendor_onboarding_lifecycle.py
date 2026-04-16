@@ -311,8 +311,8 @@ async def _dispatch_chase_email(
         raw_token = token_row.get("raw_token") or token_row.get("token")
         if raw_token:
             import os as _os
-            base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
-            magic_link = f"{base}/portal/onboard/{raw_token}"
+            base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "https://onboard.clearledgr.com").rstrip("/")
+            magic_link = f"{base}/onboard/{raw_token}"
             break
     if not magic_link:
         # No retrievable active token (raw tokens are only returned at
@@ -328,8 +328,8 @@ async def _dispatch_chase_email(
             if issued:
                 raw_token, _token_row = issued
                 import os as _os
-                base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "http://localhost:8000").rstrip("/")
-                magic_link = f"{base}/portal/onboard/{raw_token}"
+                base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "https://onboard.clearledgr.com").rstrip("/")
+                magic_link = f"{base}/onboard/{raw_token}"
         except Exception as token_exc:  # noqa: BLE001
             logger.warning(
                 "[onboarding_lifecycle] could not rehydrate magic link for session %s: %s",

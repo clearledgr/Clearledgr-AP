@@ -232,7 +232,10 @@ class TestInviteEndpoint:
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert "magic_link" in data
-        assert "/portal/onboard/" in data["magic_link"]
+        # Emails embed the short /onboard/<token> form; the handler-side
+        # 302 resolves it to /portal/onboard/<token>. Either shape is
+        # valid for the test — it's asserting the token got into a URL.
+        assert "/onboard/" in data["magic_link"]
         assert data["session"]["state"] == "invited"
         assert data["contact_email"] == "billing@acme.com"
 
@@ -293,6 +296,35 @@ class TestGetOnboardingSession:
 # ===========================================================================
 # Portal route surface (public, unauthenticated)
 # ===========================================================================
+
+
+class TestPortalShortcutRedirect:
+
+    def test_shortcut_redirects_to_portal_path(self, tmp_db, monkeypatch):
+        from fastapi.testclient import TestClient
+        from clearledgr.api.vendor_portal import shortcut_router
+        import fastapi
+
+        app = fastapi.FastAPI()
+        app.include_router(shortcut_router)
+        client = TestClient(app, follow_redirects=False)
+        resp = client.get("/onboard/AbC123xYz")
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/portal/onboard/AbC123xYz"
+
+    def test_shortcut_preserves_urlsafe_token_chars(self, tmp_db, monkeypatch):
+        from fastapi.testclient import TestClient
+        from clearledgr.api.vendor_portal import shortcut_router
+        import fastapi
+
+        app = fastapi.FastAPI()
+        app.include_router(shortcut_router)
+        client = TestClient(app, follow_redirects=False)
+        # Real tokens are urlsafe base64: [A-Za-z0-9_-]. The -_ chars
+        # must round-trip through the redirect unchanged.
+        resp = client.get("/onboard/abc-DEF_123")
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/portal/onboard/abc-DEF_123"
 
 
 class TestPortalGetForm:

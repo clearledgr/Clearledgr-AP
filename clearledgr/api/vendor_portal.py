@@ -102,6 +102,19 @@ router = APIRouter(
 )
 
 
+# Shortcut router: lets invite emails embed `…/onboard/{token}` instead
+# of the full `…/portal/onboard/{token}` path. Makes the magic link
+# visibly shorter and lets us keep the /portal/* prefix internally for
+# route segmentation without leaking it into vendor-visible URLs.
+shortcut_router = APIRouter(include_in_schema=False)
+
+
+@shortcut_router.get("/onboard/{token}")
+def onboard_shortcut(token: str):
+    from urllib.parse import quote
+    return RedirectResponse(url=f"/portal/onboard/{quote(token, safe='')}", status_code=302)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
