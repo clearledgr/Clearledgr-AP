@@ -63,7 +63,7 @@ function AuthModal({ onSignIn, pending, onDismiss }) {
 
 // ==================== STEP 2: ERP PICKER ====================
 
-function ErpPicker({ onSelect, pending }) {
+function ErpPicker({ onSelect, pending, errorMessage }) {
   const [selected, setSelected] = useState('');
 
   const erps = [
@@ -83,6 +83,13 @@ function ErpPicker({ onSelect, pending }) {
             Clearledgr connects to your ERP to read POs, GRNs, and vendor master data.
           </p>
         </div>
+        ${errorMessage ? html`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ''}
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
           ${erps.map((erp) => html`
             <button
@@ -103,7 +110,7 @@ function ErpPicker({ onSelect, pending }) {
           onClick=${() => selected && onSelect(selected)}
           disabled=${!selected || pending}
         >
-          ${pending ? 'Connecting...' : 'Connect'}
+          ${pending ? 'Connecting...' : (errorMessage ? 'Try again' : 'Connect')}
         </button>
       </div>
     </div>
@@ -179,6 +186,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
   const [step, setStep] = useState('auth');  // auth | erp | creating | done
   const [pending, setPending] = useState(false);
   const [erpType, setErpType] = useState('');
+  const [erpError, setErpError] = useState('');
 
   const handleSignIn = useCallback(async () => {
     setPending(true);
@@ -197,9 +205,28 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     }
   }, [signIn]);
 
+  // Verify ERP was actually connected by querying the server-side
+  // integration status. The OAuth popup can close for reasons that
+  // are NOT authorization success: the user clicked the X, hit ESC,
+  // cancelled on Google/Intuit's consent screen, or the callback
+  // failed on the backend. Trusting "popup closed" as success
+  // advanced the user into onboarding completion without an ERP
+  // actually being connected. Source of truth is the DB, not the
+  // popup lifecycle.
+  const verifyErpConnected = useCallback(async () => {
+    try {
+      const data = await api('/api/workspace/integrations?organization_id=default', { silent: true });
+      const erp = (data?.integrations || []).find((i) => i?.name === 'erp');
+      return Boolean(erp?.connected);
+    } catch {
+      return false;
+    }
+  }, [api]);
+
   const handleErpSelect = useCallback(async (erpId) => {
     setPending(true);
     setErpType(erpId);
+    setErpError('');
     try {
       const payload = await api('/api/workspace/integrations/erp/connect/start', {
         method: 'POST',
@@ -215,33 +242,39 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       }
 
       if (payload?.auth_url && oauthBridge) {
-        // Wait for the OAuth popup's real result via the bridge's
-        // per-call completion handler. The bridge resolves on any of:
-        //   - clearledgr_erp_oauth_complete postMessage from the backend
-        //     callback HTML
-        //   - popup closed without a message (COOP blocked postMessage,
-        //     or user manually closed it — treat as optimistic success
-        //     so we don't strand the user on "Connecting...")
-        //   - bridge cleanup (teardown)
+        // Wait for the OAuth popup to resolve. The bridge fires the
+        // callback with a postMessage result on real completion, or
+        // with null/undefined when the popup closes without signalling
+        // (X clicked, ESC, cancelled consent). Do NOT treat a silent
+        // close as success — verify against the backend integration
+        // status instead.
         await new Promise((resolve) => {
           oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`, (result) => {
-            resolve(result || { success: true });
+            resolve(result || null);
           });
         });
       } else if (payload?.auth_url) {
-        // No bridge available (defensive): open in a blank window and
-        // advance. Can't wait on a result we can't hear.
+        // No bridge available (defensive): open in a blank window. We
+        // still verify against the backend below; if the callback
+        // never fired server-side, verification fails.
         window.open(payload.auth_url, '_blank', 'width=600,height=700');
+      }
+
+      // Ground truth check. Only advance if the backend confirms an
+      // ERP connection row exists for this org.
+      const connected = await verifyErpConnected();
+      if (!connected) {
+        setErpError('We didn\'t see the connection complete. If the sign-in window closed before authorization, please try again.');
+        return;  // stay on the erp step
       }
 
       setStep('creating');
     } catch {
-      // ERP failed — user can connect later from Connections page.
-      setStep('creating');
+      setErpError('Something went wrong connecting to your ERP. Please try again.');
     } finally {
       setPending(false);
     }
-  }, [api, oauthBridge]);
+  }, [api, oauthBridge, verifyErpConnected]);
 
   const handleCreationComplete = useCallback(() => {
     setStep('done');
@@ -283,7 +316,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
     ${step === 'auth' ? html`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ''}
-    ${step === 'erp' ? html`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} />` : ''}
+    ${step === 'erp' ? html`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ''}
     ${step === 'creating' ? html`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ''}
   `;
 }

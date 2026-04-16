@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:a01c618f5f11f26f5e3aabda1c8296eb7b90a3e67a7b31305d9c7c2e373ae58a */
+/* clearledgr-source-fingerprint:fe6220b029f6dc00a53d9914a33ab144f26b3e5f1aed395c73ac6b0f3f19cae0 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -62740,7 +62740,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
-  function ErpPicker({ onSelect, pending }) {
+  function ErpPicker({ onSelect, pending, errorMessage }) {
     const [selected, setSelected] = d2("");
     const erps = [
       { id: "quickbooks", name: "QuickBooks", icon: "QB" },
@@ -62758,6 +62758,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             Clearledgr connects to your ERP to read POs, GRNs, and vendor master data.
           </p>
         </div>
+        ${errorMessage ? html4`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ""}
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
           ${erps.map((erp) => html4`
             <button
@@ -62778,7 +62785,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           onClick=${() => selected && onSelect(selected)}
           disabled=${!selected || pending}
         >
-          ${pending ? "Connecting..." : "Connect"}
+          ${pending ? "Connecting..." : errorMessage ? "Try again" : "Connect"}
         </button>
       </div>
     </div>
@@ -62843,6 +62850,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [step, setStep] = d2("auth");
     const [pending, setPending] = d2(false);
     const [erpType, setErpType] = d2("");
+    const [erpError, setErpError] = d2("");
     const handleSignIn = q2(async () => {
       setPending(true);
       try {
@@ -62854,9 +62862,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setPending(false);
       }
     }, [signIn]);
+    const verifyErpConnected = q2(async () => {
+      try {
+        const data = await api("/api/workspace/integrations?organization_id=default", { silent: true });
+        const erp = (data?.integrations || []).find((i3) => i3?.name === "erp");
+        return Boolean(erp?.connected);
+      } catch {
+        return false;
+      }
+    }, [api]);
     const handleErpSelect = q2(async (erpId) => {
       setPending(true);
       setErpType(erpId);
+      setErpError("");
       try {
         const payload = await api("/api/workspace/integrations/erp/connect/start", {
           method: "POST",
@@ -62869,19 +62887,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         if (payload?.auth_url && oauthBridge) {
           await new Promise((resolve) => {
             oauthBridge.startOAuth(payload.auth_url, `erp-${erpId}`, (result) => {
-              resolve(result || { success: true });
+              resolve(result || null);
             });
           });
         } else if (payload?.auth_url) {
           window.open(payload.auth_url, "_blank", "width=600,height=700");
         }
+        const connected = await verifyErpConnected();
+        if (!connected) {
+          setErpError("We didn't see the connection complete. If the sign-in window closed before authorization, please try again.");
+          return;
+        }
         setStep("creating");
       } catch {
-        setStep("creating");
+        setErpError("Something went wrong connecting to your ERP. Please try again.");
       } finally {
         setPending(false);
       }
-    }, [api, oauthBridge]);
+    }, [api, oauthBridge, verifyErpConnected]);
     const handleCreationComplete = q2(() => {
       setStep("done");
       api("/api/workspace/onboarding/step", {
@@ -62922,7 +62945,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
     ${step === "auth" ? html4`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
-    ${step === "erp" ? html4`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} />` : ""}
+    ${step === "erp" ? html4`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
     ${step === "creating" ? html4`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
   `;
   }
