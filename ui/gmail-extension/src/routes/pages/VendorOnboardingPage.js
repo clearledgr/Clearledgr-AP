@@ -10,9 +10,10 @@
  * Kanban board identical in structure to the AP Invoices pipeline.
  */
 import { h } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime } from '../route-helpers.js';
+import InviteVendorModal from '../../components/InviteVendorModal.js';
 
 const html = htm.bind(h);
 
@@ -51,14 +52,16 @@ function StateBadge({ state }) {
 export default function VendorOnboardingPage({ bootstrap, api, navigate, toast }) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const orgId = bootstrap?.organization_id || bootstrap?.orgId || 'default';
 
-  useEffect(() => {
-    if (!api) return;
-    setLoading(true);
-    // Fetch all pending onboarding sessions from the workspace API.
-    // The backend endpoint returns sessions for the org.
-    api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true })
+  const loadSessions = useCallback(({ silent } = {}) => {
+    if (!api) return Promise.resolve();
+    if (!silent) setLoading(true);
+    return api(
+      `/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`,
+      { silent: true },
+    )
       .then((data) => {
         setSessions(Array.isArray(data?.sessions) ? data.sessions : []);
       })
@@ -68,6 +71,8 @@ export default function VendorOnboardingPage({ bootstrap, api, navigate, toast }
       })
       .finally(() => setLoading(false));
   }, [api, orgId]);
+
+  useEffect(() => { void loadSessions(); }, [loadSessions]);
 
   const stageGroups = useMemo(() => {
     const groups = {};
@@ -92,13 +97,25 @@ export default function VendorOnboardingPage({ bootstrap, api, navigate, toast }
   }, [sessions]);
 
   return html`
-    <div class="topbar" style="padding:16px 20px 12px">
+    <div class="topbar" style="padding:16px 20px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
       <div>
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#5C6B7A;margin-bottom:4px">Vendor Onboarding</div>
         <h2 style="margin:0;font-size:20px;color:#0A1628">Onboarding pipeline</h2>
         <p class="muted" style="margin:4px 0 0;font-size:13px">Track vendors from invite to ERP activation.</p>
       </div>
+      <button
+        class="btn"
+        style="background:#00D67E;color:#0A1628;border:1px solid #00D67E;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap"
+        onClick=${() => setInviteOpen(true)}
+      >Invite vendor</button>
     </div>
+    ${inviteOpen ? html`<${InviteVendorModal}
+      api=${api}
+      orgId=${orgId}
+      toast=${toast}
+      onClose=${() => setInviteOpen(false)}
+      onSuccess=${() => { void loadSessions({ silent: true }); }}
+    />` : ''}
 
     ${loading
       ? html`<div class="muted" style="text-align:center;padding:48px 0;font-size:13px">Loading onboarding sessions…</div>`
@@ -175,7 +192,12 @@ export default function VendorOnboardingPage({ bootstrap, api, navigate, toast }
 
         ${sessions.length === 0 ? html`
           <div class="muted" style="text-align:center;padding:48px 20px;font-size:13px">
-            No vendor onboarding sessions yet. Use the invite endpoint or Slack to start onboarding a vendor.
+            <div style="margin-bottom:12px">No vendor onboarding sessions yet.</div>
+            <button
+              class="btn"
+              style="background:#00D67E;color:#0A1628;border:1px solid #00D67E;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer"
+              onClick=${() => setInviteOpen(true)}
+            >Invite your first vendor</button>
           </div>
         ` : ''}
       `}

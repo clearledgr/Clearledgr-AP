@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-15T04:01:19.674Z",
-  "fingerprint": "4612e19aa48d6af6d2a0504b75af89bbbf6a1eb478e927b9f92a7175d6ca7175",
+  "generated_at": "2026-04-16T08:59:26.644Z",
+  "fingerprint": "9e34554fd6547f225afff6b3cbfc21d3de5a7381366f1c7de8a01478826e7783",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -8,6 +8,7 @@
     "queue-manager.js",
     "src/components/ActionDialog.js",
     "src/components/BatchOps.js",
+    "src/components/InviteVendorModal.js",
     "src/components/OnboardingFlow.js",
     "src/components/SidebarApp.js",
     "src/components/ThreadSidebar.js",

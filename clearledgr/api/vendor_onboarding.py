@@ -310,6 +310,44 @@ def get_vendor_onboarding_session(
 
 
 # ---------------------------------------------------------------------------
+# GET /onboarding/status — sidebar prompt driver
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{vendor_name}/onboarding/status")
+def get_vendor_onboarding_status(
+    vendor_name: str,
+    organization_id: str = Query(..., description="Organization identifier"),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Tri-state onboarding snapshot used by the Gmail sidebar.
+
+    Unlike ``/session`` this never 404s — the sidebar needs a definitive
+    "should I prompt?" signal for every vendor, including ones that have
+    never been onboarded. Returns:
+
+      - ``has_profile``          — a vendor_profiles row exists
+      - ``bank_verified``        — the profile holds encrypted bank details
+      - ``active_session``       — the in-flight onboarding session, if any
+      - ``suggest_invite``       — true iff no active session AND not bank-verified
+    """
+    _assert_same_org(user, organization_id)
+    db = get_db()
+    profile = db.get_vendor_profile(organization_id, vendor_name)
+    active_session = db.get_active_onboarding_session(organization_id, vendor_name)
+    has_profile = profile is not None
+    bank_verified = bool((profile or {}).get("bank_details_encrypted"))
+    suggest_invite = active_session is None and not bank_verified
+    return {
+        "vendor_name": vendor_name,
+        "has_profile": has_profile,
+        "bank_verified": bank_verified,
+        "active_session": active_session,
+        "suggest_invite": suggest_invite,
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /onboarding/escalate
 # ---------------------------------------------------------------------------
 

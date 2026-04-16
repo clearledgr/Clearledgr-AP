@@ -2104,6 +2104,8 @@ export default function SidebarApp({ queueManager }) {
             ${html`<${ThreadSidebar}
                 item=${item}
                 auditEvents=${(store.auditState?.events || [])}
+                orgId=${queueManager.runtimeConfig?.organizationId || 'default'}
+                toast=${showToast}
                 fetchBoxLinks=${async (boxId, boxType) => {
                   try {
                     const url = queueManager.runtimeConfig?.backendUrl
@@ -2113,6 +2115,33 @@ export default function SidebarApp({ queueManager }) {
                     const data = resp?.ok !== false ? resp : null;
                     return data?.links || [];
                   } catch { return []; }
+                }}
+                fetchOnboardingStatus=${async (vendorName) => {
+                  try {
+                    const orgId = queueManager.runtimeConfig?.organizationId || 'default';
+                    const url = queueManager.runtimeConfig?.backendUrl
+                      + '/api/vendors/' + encodeURIComponent(vendorName)
+                      + '/onboarding/status?organization_id=' + encodeURIComponent(orgId);
+                    const resp = await queueManager.backendFetch(url);
+                    if (!resp || resp.detail) return null;
+                    return resp;
+                  } catch { return null; }
+                }}
+                inviteVendorApi=${async (url, opts = {}) => {
+                  const fullUrl = (queueManager.runtimeConfig?.backendUrl || '') + url;
+                  const resp = await queueManager.backendFetch(fullUrl, {
+                    ...opts,
+                    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+                  });
+                  // queueManager.backendFetch returns parsed JSON. FastAPI
+                  // error bodies come through as { detail: ... } and carry
+                  // no magic_link, so treat either "detail present" or
+                  // "magic_link missing" as a failure.
+                  if (!resp || resp.detail || !resp.magic_link) {
+                    const detail = resp?.detail || resp?.error || 'invite_failed';
+                    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+                  }
+                  return resp;
                 }}
                 onApprove=${async (approveItem) => {
                   try {

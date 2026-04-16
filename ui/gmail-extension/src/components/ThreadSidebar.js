@@ -24,6 +24,7 @@
  */
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
+import InviteVendorModal from './InviteVendorModal.js';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -301,6 +302,19 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-banner.fraud .cl-ts-banner-icon { background: #DC2626; color: #FEF2F2; }
 .cl-ts-banner.resubmission { background: #EFF6FF; }
 .cl-ts-banner.resubmission .cl-ts-banner-icon { background: #1D4ED8; color: #EFF6FF; }
+.cl-ts-banner.onboarding-progress { background: #EFF6FF; border-color: #BFDBFE; color: #1E3A8A; }
+.cl-ts-banner.onboarding-progress .cl-ts-banner-icon { background: #1E3A8A; color: #EFF6FF; }
+.cl-ts-banner.onboarding-progress .cl-ts-banner-link {
+  color: #1E3A8A; text-decoration: underline; cursor: pointer;
+}
+.cl-ts-banner.onboarding-invite { background: #FEFCE8; border-color: #FDE68A; color: #92400E; }
+.cl-ts-banner.onboarding-invite .cl-ts-banner-icon { background: #CA8A04; color: #FEFCE8; }
+.cl-ts-banner.onboarding-invite .cl-ts-banner-detail-wide { margin-bottom: 6px; }
+.cl-ts-banner-btn-onboard {
+  background: #CA8A04; color: #fff; border: none; padding: 6px 10px;
+  border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.cl-ts-banner-btn-onboard:hover { background: #A16207; }
 .cl-ts-banner-action {
   padding: 6px 12px; border: 1px solid #0A1628; border-radius: 6px;
   background: #fff; color: #0A1628; font: 600 12px/1 'DM Sans', sans-serif;
@@ -643,6 +657,51 @@ function FraudFlagsBanner({ flags }) {
   `;
 }
 
+function VendorOnboardingPromptBanner({
+  status,
+  onInvite,
+  onNavigatePipeline,
+}) {
+  if (!status) return null;
+  const session = status.active_session;
+  if (session) {
+    const stateLabel = String(session.state || '').replace(/_/g, ' ');
+    return html`
+      <div class="cl-ts-banner onboarding-progress">
+        <div class="cl-ts-banner-icon">🏢</div>
+        <div class="cl-ts-banner-body">
+          <div class="cl-ts-banner-title">Onboarding in progress</div>
+          <div class="cl-ts-banner-detail">
+            Stage: ${stateLabel}
+            ${onNavigatePipeline ? html` · <span
+              class="cl-ts-banner-link"
+              role="button"
+              tabIndex=${0}
+              onClick=${() => onNavigatePipeline()}
+            >view pipeline</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (!status.suggest_invite) return null;
+  return html`
+    <div class="cl-ts-banner onboarding-invite">
+      <div class="cl-ts-banner-icon">⚠</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Vendor not onboarded</div>
+        <div class="cl-ts-banner-detail cl-ts-banner-detail-wide">
+          KYC + bank verification is not complete. Invite them before paying.
+        </div>
+        <button
+          class="cl-ts-banner-btn-onboard"
+          onClick=${onInvite}
+        >Invite to onboarding</button>
+      </div>
+    </div>
+  `;
+}
+
 function ResubmissionBanner({ item }) {
   if (!item?.is_resubmission && !item?.has_resubmission) return null;
   if (item.has_resubmission) {
@@ -944,9 +1003,15 @@ export function ThreadSidebar({
   onUndoOverride,
   onSubmitFeedback,
   fetchBoxLinks,
+  fetchOnboardingStatus,
+  inviteVendorApi,
+  orgId,
+  toast,
   loading,
 }) {
   const [boxLinks, setBoxLinks] = useState([]);
+  const [onboardingStatus, setOnboardingStatus] = useState(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
   // Conversational Q&A log. Each row:
   //   { q, a, references: [...], status: 'pending'|'streaming'|'done'|'error' }
@@ -1040,6 +1105,20 @@ export function ThreadSidebar({
     });
     return () => { cancelled = true; };
   }, [item?.id, fetchBoxLinks]);
+
+  // Pull the vendor's onboarding status so we can show the "not
+  // onboarded yet — invite" banner or the "onboarding in progress"
+  // badge. Fails silently — if the endpoint isn't available the
+  // banner just stays hidden.
+  useEffect(() => {
+    const vendor = item?.vendor_name || item?.vendor;
+    if (!vendor || !fetchOnboardingStatus) { setOnboardingStatus(null); return; }
+    let cancelled = false;
+    fetchOnboardingStatus(vendor)
+      .then((status) => { if (!cancelled) setOnboardingStatus(status || null); })
+      .catch(() => { if (!cancelled) setOnboardingStatus(null); });
+    return () => { cancelled = true; };
+  }, [item?.id, item?.vendor_name, item?.vendor, fetchOnboardingStatus]);
 
   // Tick for live countdown when an override window is open
   useEffect(() => {
@@ -1216,6 +1295,28 @@ export function ThreadSidebar({
       <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
       <${WaitingBanner} waiting=${item.waiting_condition} />
       <${FraudFlagsBanner} flags=${item.fraud_flags} />
+      <${VendorOnboardingPromptBanner}
+        status=${onboardingStatus}
+        onInvite=${() => setInviteOpen(true)}
+      />
+      ${inviteOpen && inviteVendorApi ? html`<${InviteVendorModal}
+        api=${inviteVendorApi}
+        orgId=${orgId || 'default'}
+        defaultVendor=${item?.vendor_name || item?.vendor || ''}
+        defaultEmail=${item?.vendor_email || item?.sender_email || ''}
+        toast=${toast}
+        onClose=${() => setInviteOpen(false)}
+        onSuccess=${(res) => {
+          setInviteOpen(false);
+          setOnboardingStatus({
+            vendor_name: item?.vendor_name || item?.vendor,
+            has_profile: true,
+            bank_verified: false,
+            active_session: res?.session || null,
+            suggest_invite: false,
+          });
+        }}
+      />` : ''}
 
       <${InvoiceSection} item=${item} />
       <${MatchSection} item=${item} />
