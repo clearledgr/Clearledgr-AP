@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:c326c1e4d4f904224caf0d346f0446266b78ed26e0502131413d7448b25858c3 */
+/* clearledgr-source-fingerprint:39a06cd36ebb84f043094b8c5efd12df92958151a18e3641e876c57e6e722ce1 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76736,7 +76736,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           currentRouteAccess = nextRouteAccess;
           rebuildMenuNavigation2();
         }
-        if (data?.onboarding && !data.onboarding.completed) {
+        const onboardingStep = Number(data?.onboarding?.step || 0);
+        if (data?.onboarding && !data.onboarding.completed && onboardingStep === 0) {
           const emailForDismiss = String(queueManager?.runtimeConfig?.userEmail || sdk?.User?.getEmailAddress?.() || "").trim().toLowerCase();
           const dismissKey = emailForDismiss ? `clearledgr_onboarding_dismissed_${emailForDismiss}` : null;
           const checkAndMount = () => {

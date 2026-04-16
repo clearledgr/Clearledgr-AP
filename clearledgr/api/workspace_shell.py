@@ -850,10 +850,48 @@ async def get_admin_bootstrap(
         _erp_status_for_org(org_id),
     ]
 
-    # §15: The Four Onboarding Steps — thesis-defined order
+    # §15: The Four Onboarding Steps — thesis-defined order.
+    # We derive completion from observable integration state rather than
+    # trusting the DB flag alone. Without this, the OnboardingFlow modal
+    # pops on every Gmail refresh forever — nothing in the product ever
+    # called complete_onboarding_step(), so the flag stayed False even
+    # after the user connected Gmail + ERP.
+    integrations_by_name = {
+        str(i.get("name") or "").lower(): i
+        for i in integrations
+        if isinstance(i, dict)
+    }
+
+    def _is_connected(name: str) -> bool:
+        info = integrations_by_name.get(name) or {}
+        status = str(info.get("status") or "").lower()
+        return bool(info.get("connected")) or status in {"connected", "active", "ready"}
+
+    gmail_connected = _is_connected("gmail")
+    erp_connected = _is_connected("erp") or any(
+        _is_connected(n) for n in ("quickbooks", "xero", "netsuite", "sap")
+    )
+    slack_or_teams_connected = _is_connected("slack") or _is_connected("teams")
+    has_ap_policy = bool((org_settings or {}).get("ap_policy") or (org_settings or {}).get("workflow_controls"))
+
+    derived_step = 0
+    if gmail_connected:
+        derived_step = 1
+    if derived_step >= 1 and erp_connected:
+        derived_step = 2
+    if derived_step >= 2 and has_ap_policy:
+        derived_step = 3
+    if derived_step >= 3 and slack_or_teams_connected:
+        derived_step = 4
+
+    persisted_step = int(subscription.get("onboarding_step") or 0)
+    persisted_completed = bool(subscription.get("onboarding_completed"))
+    effective_step = max(persisted_step, derived_step)
+    effective_completed = persisted_completed or derived_step >= 4
+
     onboarding = {
-        "completed": bool(subscription.get("onboarding_completed")),
-        "step": int(subscription.get("onboarding_step") or 0),
+        "completed": effective_completed,
+        "step": effective_step,
         "steps": [
             {
                 "id": 1,

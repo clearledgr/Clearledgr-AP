@@ -2387,7 +2387,14 @@ function registerAppMenuAndRoutes() {
       // The flow needs the same oauthBridge instance the rest of the
       // sidebar uses so its postMessage listener and popup-close
       // poller are coordinated.
-      if (data?.onboarding && !data.onboarding.completed) {
+      // Only pop the OnboardingFlow modal on a true cold start
+      // (step === 0). If the user has Gmail + extension installed —
+      // which by definition is true here, since this code is running
+      // inside the extension — the bootstrap derives step >= 1 and
+      // the user can finish remaining steps from the /home page
+      // instead of having a modal slammed in their face every refresh.
+      const onboardingStep = Number(data?.onboarding?.step || 0);
+      if (data?.onboarding && !data.onboarding.completed && onboardingStep === 0) {
         // Respect the user's "Don't use Clearledgr on this account"
         // dismissal — don't re-prompt on every page load.
         const emailForDismiss = String(
