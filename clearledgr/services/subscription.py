@@ -790,9 +790,14 @@ class SubscriptionService:
         usage = sub.usage or UsageStats()
         tier = PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER
         limits = sub.limits or PlanLimits.for_tier(tier)
-        prices = _PLAN_PRICES.get(tier, _PLAN_PRICES[PlanTier.STARTER])
+        prices = PLAN_PRICING.get(tier, PLAN_PRICING[PlanTier.STARTER])
 
-        seat_price = prices.get(sub.billing_cycle, prices["monthly"])
+        # Subscription.billing_cycle stores "monthly" or "yearly"; the
+        # PLAN_PRICING dict uses "monthly"/"annual". Normalize so a
+        # yearly cycle doesn't fall through to the monthly price by
+        # accident (and worse, KeyError on the old `prices[...]` path).
+        cycle_key = "annual" if sub.billing_cycle == "yearly" else "monthly"
+        seat_price = prices.get(cycle_key, prices["monthly"])
         active_seats = usage.users_count
         read_only_seats = usage.read_only_users_count
         read_only_cost = seat_price * self._READ_ONLY_SEAT_RATE * read_only_seats
