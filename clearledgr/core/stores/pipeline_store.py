@@ -139,22 +139,43 @@ class PipelineStore:
             logger.warning("[PipelineStore] Rejected source_table %r — not in whitelist", source_table)
             return []
 
-        stage_sql = self._prepare_sql(
-            "SELECT source_states FROM pipeline_stages WHERE pipeline_id = ? AND slug = ?"
-        )
-        with self.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(stage_sql, (pipeline_id, stage_slug))
-            st_row = cur.fetchone()
+        # source_filter_json was added in migration v37. On older schemas
+        # the column may not exist yet — SELECT *-less so we can default.
+        try:
+            stage_sql = self._prepare_sql(
+                "SELECT source_states, source_filter_json FROM pipeline_stages "
+                "WHERE pipeline_id = ? AND slug = ?"
+            )
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(stage_sql, (pipeline_id, stage_slug))
+                st_row = cur.fetchone()
+        except Exception:
+            # Fallback for pre-v37 schemas (tests / legacy DBs).
+            stage_sql = self._prepare_sql(
+                "SELECT source_states FROM pipeline_stages WHERE pipeline_id = ? AND slug = ?"
+            )
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(stage_sql, (pipeline_id, stage_slug))
+                st_row = cur.fetchone()
         if not st_row:
             return []
 
+        st_dict = dict(st_row)
         try:
-            source_states = json.loads(dict(st_row).get("source_states") or "[]")
+            source_states = json.loads(st_dict.get("source_states") or "[]")
         except (json.JSONDecodeError, TypeError):
             return []
         if not source_states:
             return []
+
+        try:
+            source_filter = json.loads(st_dict.get("source_filter_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            source_filter = {}
+        if not isinstance(source_filter, dict):
+            source_filter = {}
 
         # Query the source table for items in the mapped states
         placeholders = ", ".join("?" for _ in source_states)
@@ -166,6 +187,33 @@ class PipelineStore:
         if entity_id and source_table == "ap_items":
             where_parts.append("entity_id = ?")
             params.append(entity_id)
+
+        # Apply source_filter_json predicates (from v37). Keys must be
+        # real columns on the source table; values can be a scalar
+        # (equality) or a list (IN). Anything that doesn't match the
+        # whitelist is silently dropped so a crafted pipeline config
+        # can never inject SQL — invalid filters degrade to "no extra
+        # filter" rather than a 500.
+        _STAGE_FILTER_WHITELIST: Dict[str, set] = {
+            "ap_items": {"payment_status", "match_status", "exception_code",
+                         "entity_id", "is_resubmission", "has_resubmission"},
+            "vendor_onboarding_sessions": {"chase_count"},
+        }
+        allowed_keys = _STAGE_FILTER_WHITELIST.get(source_table, set())
+        for key, value in source_filter.items():
+            if key not in allowed_keys:
+                continue
+            if isinstance(value, (list, tuple)):
+                if not value:
+                    continue
+                fph = ", ".join("?" for _ in value)
+                where_parts.append(f"{key} IN ({fph})")
+                params.extend(value)
+            elif value is None:
+                where_parts.append(f"{key} IS NULL")
+            else:
+                where_parts.append(f"{key} = ?")
+                params.append(value)
 
         where_clause = " AND ".join(where_parts)
         query_sql = self._prepare_sql(

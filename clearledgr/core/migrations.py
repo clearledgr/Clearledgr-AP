@@ -974,12 +974,20 @@ def _v25_object_model(cur, db):
         (ap_pipeline_id, now),
     )
 
+    # AP Kanban stages. Posted and Paid are deliberately distinct:
+    #   Posted = bill is in the ledger, payment not yet executed
+    #   Paid   = lifecycle complete, money has left the account
+    # Collapsing the two hides the window finance teams care about most.
+    # ``reversed`` lives in Exception (and is terminal — see
+    # clearledgr/core/ap_states.py) so a reversed-then-closed item does
+    # not leak into Paid.
     ap_stages = [
         ("received", "Received", "#94A3B8", ["received"], 0),
         ("matching", "Matching", "#CA8A04", ["validated", "needs_approval", "pending_approval"], 1),
         ("exception", "Exception", "#DC2626", ["needs_info", "failed_post", "reversed", "snoozed"], 2),
         ("approved", "Approved", "#2563EB", ["approved", "ready_to_post"], 3),
-        ("paid", "Paid", "#16A34A", ["posted_to_erp", "closed"], 4),
+        ("posted", "Posted", "#8B5CF6", ["posted_to_erp"], 4),
+        ("paid", "Paid", "#16A34A", ["closed"], 5),
     ]
     for slug, label, color, states, order in ap_stages:
         cur.execute(
@@ -1331,6 +1339,96 @@ def _v24_migration_state(cur, db):
             cur.execute(f"ALTER TABLE organizations ADD COLUMN {col} {col_type}")
         except Exception:
             pass
+
+
+@migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")
+def _v37_split_ap_posted_and_paid(cur, db):
+    """Kanban correctness fix.
+
+    The AP Invoices pipeline used to collapse ``posted_to_erp`` and
+    ``closed`` into a single "Paid" stage, which is wrong: posted-to-ERP
+    means the bill exists in the ledger but money hasn't left the
+    account yet, while closed means the lifecycle is fully complete
+    (typically after payment execution). For an AP Manager these are
+    the two most distinct stages in the pipeline.
+
+    This migration does two things:
+
+    1. Adds a ``source_filter_json`` column to pipeline_stages. The
+       column holds optional predicates (e.g. ``{"payment_status":
+       ["completed", "closed_by_credit"]}``) that the stage-query
+       applies on top of the state-IN filter. Keys are whitelisted
+       at query time against the source table's schema to prevent
+       SQL injection via crafted config.
+
+    2. Splits the existing "paid" stage on every AP Invoices pipeline
+       row into two stages:
+         - "posted" (order 4): source_states = ["posted_to_erp"]
+         - "paid"   (order 5): source_states = ["closed"]
+       Existing reversed-then-closed items previously flipped from
+       Exception to Paid as the state machine hopped through ``closed``.
+       Coupled with the v37 state-machine change that makes REVERSED
+       terminal, Paid now strictly means "successfully completed."
+    """
+    import json as _json
+    import uuid as _uuid
+
+    # 1. Add the source_filter_json column. Safe to re-run: ALTER
+    #    TABLE ADD COLUMN is idempotent via the try/except.
+    try:
+        cur.execute(
+            "ALTER TABLE pipeline_stages ADD COLUMN source_filter_json TEXT DEFAULT '{}'"
+        )
+    except Exception:
+        pass  # Column already exists on re-run
+
+    # 2. Find every AP Invoices pipeline (one per org) and rewrite the
+    #    Paid stage into Posted + Paid. Do NOT touch pipelines that
+    #    have been customized by the operator — we detect the default
+    #    seed shape by checking that "paid" exists with exactly
+    #    ["posted_to_erp", "closed"] as source_states.
+    cur.execute("SELECT id FROM pipelines WHERE slug = 'ap-invoices'")
+    ap_pipeline_ids = [r[0] for r in cur.fetchall()]
+
+    for pl_id in ap_pipeline_ids:
+        cur.execute(
+            "SELECT id, source_states, stage_order FROM pipeline_stages "
+            "WHERE pipeline_id = ? AND slug = 'paid'",
+            (pl_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            continue
+        paid_id, source_states_raw, _ = row
+        try:
+            current_states = _json.loads(source_states_raw or "[]")
+        except (TypeError, ValueError):
+            current_states = []
+        # Only migrate the default shape. Customer-customized pipelines
+        # keep whatever the operator set.
+        if sorted(current_states) != sorted(["posted_to_erp", "closed"]):
+            continue
+
+        # Rewrite the existing "paid" row to be the new, stricter
+        # Paid stage: state=closed only, order 5.
+        cur.execute(
+            "UPDATE pipeline_stages "
+            "SET source_states = ?, stage_order = 5 "
+            "WHERE id = ?",
+            (_json.dumps(["closed"]), paid_id),
+        )
+
+        # Insert the new Posted stage at order 4.
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_stages "
+            "(id, pipeline_id, slug, label, color, source_states, stage_order, source_filter_json) "
+            "VALUES (?, ?, 'posted', 'Posted', '#8B5CF6', ?, 4, '{}')",
+            (
+                f"STG-{_uuid.uuid4().hex[:12]}",
+                pl_id,
+                _json.dumps(["posted_to_erp"]),
+            ),
+        )
 
 
 @migration(36, "Hard-purge marker on organizations (purged_at)")

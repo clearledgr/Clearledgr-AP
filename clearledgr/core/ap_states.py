@@ -16,7 +16,7 @@ Exception paths:
     needs_info -> validated       (resubmit)
 
 Override-window reversal path (DESIGN_THESIS.md §8):
-    posted_to_erp -> reversed -> closed
+    posted_to_erp -> reversed (terminal)
         A human can reverse an autonomous ERP post within the override
         window (default 15 min). The reversal calls the Phase 1.3
         ERP-level reverse_bill API, which creates a cancelling document
@@ -75,10 +75,13 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.SNOOZED, APState.CLOSED}),
     # Snoozed can return to any pre-snooze state (stored in metadata).
     APState.SNOOZED: frozenset({APState.VALIDATED, APState.NEEDS_INFO, APState.NEEDS_APPROVAL, APState.FAILED_POST, APState.CLOSED}),
-    # Reversed is a transient state — the AP item is cleaned up to
-    # closed shortly after the reversal is acknowledged.
-    APState.REVERSED: frozenset({APState.CLOSED}),
-    APState.CLOSED: frozenset(),  # terminal
+    # Reversed is terminal. An item that was posted then reversed is a
+    # distinct outcome from an item that was posted and successfully
+    # paid out — they should not share the ``closed`` bucket. Keeping
+    # ``reversed`` terminal lets the Kanban "Paid" column match strictly
+    # on ``closed`` without a reversed-then-closed item flipping into it.
+    APState.REVERSED: frozenset(),  # terminal
+    APState.CLOSED: frozenset(),    # terminal — successfully completed
 }
 
 # Mapping from legacy status strings to canonical states.
@@ -94,7 +97,7 @@ LEGACY_STATE_MAP: Dict[str, APState] = {
     "closed": APState.CLOSED,
 }
 
-TERMINAL_STATES = frozenset({APState.REJECTED, APState.CLOSED})
+TERMINAL_STATES = frozenset({APState.REJECTED, APState.REVERSED, APState.CLOSED})
 
 # All valid state strings — used for DB-level enforcement triggers.
 VALID_STATE_VALUES: FrozenSet[str] = frozenset(s.value for s in APState)

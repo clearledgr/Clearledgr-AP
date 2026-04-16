@@ -96,12 +96,15 @@ class TestStateMachineReversed:
         from clearledgr.core.ap_states import validate_transition
         assert validate_transition("posted_to_erp", "closed") is True
 
-    def test_reversed_can_transition_to_closed(self):
-        from clearledgr.core.ap_states import validate_transition
-        assert validate_transition("reversed", "closed") is True
-
-    def test_reversed_cannot_transition_back_to_posted(self):
-        from clearledgr.core.ap_states import validate_transition
+    def test_reversed_is_terminal(self):
+        """Reversed is now terminal (no outbound edges). An item that was
+        posted then reversed is a distinct outcome from one that was
+        posted and successfully paid out; keeping them in separate
+        terminal states stops reversed-then-closed items leaking into
+        the Kanban Paid column."""
+        from clearledgr.core.ap_states import validate_transition, TERMINAL_STATES, APState
+        assert APState.REVERSED in TERMINAL_STATES
+        assert validate_transition("reversed", "closed") is False
         assert validate_transition("reversed", "posted_to_erp") is False
 
     def test_closed_remains_terminal(self):

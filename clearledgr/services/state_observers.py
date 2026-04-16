@@ -107,7 +107,7 @@ class AuditTrailObserver(StateObserver):
         "ready_to_post": "Posting to ERP.",
         "posted_to_erp": "Override window open. Payment scheduled per terms.",
         "failed_post": "Retry scheduled or manual resolution required.",
-        "reversed": "ERP post reversed. Item will be closed.",
+        "reversed": "ERP post reversed. Item closed out as reversed (no payment executed).",
         "snoozed": "Snoozed. Will return to queue when timer expires.",
         "rejected": "No further action.",
         "closed": "Lifecycle complete.",

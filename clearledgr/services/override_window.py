@@ -299,7 +299,7 @@ class OverrideWindowService:
           3. Calls ``reverse_bill`` (Phase 1.3) with an idempotency key
              derived from the window id
           4. On success: marks the window reversed, transitions the AP
-             item state posted_to_erp → reversed → closed, records the
+             item state posted_to_erp → reversed (terminal), records the
              reversal on the workflow audit trail
           5. On failure: marks the window failed, leaves the AP item in
              ``posted_to_erp`` for human intervention
@@ -492,7 +492,7 @@ class OverrideWindowService:
         reversal_ref: Optional[str],
         erp: Optional[str],
     ) -> None:
-        """Transition AP item ``posted_to_erp`` → ``reversed`` → ``closed``.
+        """Transition AP item ``posted_to_erp`` → ``reversed`` (terminal).
 
         Uses the canonical workflow transition method so observers fire
         (audit trail, notifications, learning). If the transition fails
@@ -536,7 +536,10 @@ class OverrideWindowService:
             "reversal_erp": erp,
         }
 
-        # Transition posted_to_erp → reversed
+        # Transition posted_to_erp → reversed. `reversed` is now terminal
+        # (no longer a transient hop to `closed`) so a reversed item stays
+        # in the Exception bucket on the Kanban rather than flipping into
+        # the Paid column when it would have then transitioned to closed.
         try:
             workflow._transition_invoice_state(
                 gmail_id,
@@ -558,21 +561,6 @@ class OverrideWindowService:
                 "[OverrideWindow] State transition to reversed failed: %s", exc,
             )
             return
-
-        # Then transition reversed → closed to clean up
-        try:
-            workflow._transition_invoice_state(gmail_id, "closed", actor_id=actor_id)
-        except TypeError:
-            try:
-                workflow._transition_invoice_state(gmail_id, "closed")
-            except Exception as exc:
-                logger.debug(
-                    "[OverrideWindow] State transition to closed failed: %s", exc,
-                )
-        except Exception as exc:
-            logger.debug(
-                "[OverrideWindow] State transition to closed failed: %s", exc,
-            )
 
     def _transition_to_closed_safely(self, ap_item_id: Optional[str]) -> None:
         """Best-effort posted_to_erp → closed transition after window expires.
