@@ -1363,5 +1363,310 @@ and extraction validation.
 > representative ERP schema and anonymised data before live sandbox
 > access is confirmed.*
 
+**12. Codebase Starting State**
+
+The architecture in §3--§5 is accurate --- every primitive the spec
+assumes ("inherited without modification") already exists in the
+repository. This section maps each spec-defined action to its concrete
+starting point in the current codebase so nothing gets built twice and
+nothing gets missed.
+
+**12.1 Reuse and adapt (≈60% of the action space)**
+
+Most actions the spec marks as EXISTING or ADAPTED have a concrete
+pattern already in the execution engine, LLM gateway, ERP router, or
+Slack service. Build them as small extensions of the existing files,
+not as new modules.
+
+  ----------------------------------------------------------------------------------------
+  **Spec action**                            **Starting point in current codebase**
+  ------------------------------------------ ---------------------------------------------
+  **classify_refund_event (LLM)**            Same shape as `classify_email` /
+                                             `classify_vendor_response` in
+                                             `clearledgr/core/execution_engine.py`. New
+                                             prompt only, new confidence threshold.
+
+  **extract_refund_fields (LLM)**            Same shape as `extract_invoice_fields`.
+                                             Same guardrail framework.
+
+  **run_refund_extraction_guardrails**       `run_extraction_guardrails` is the template.
+                                             Five new rules; existing dispatch works.
+
+  **check_clawback_duplicate**               `check_duplicate` already checks 90-day AP
+                                             window; clone the query shape, swap table.
+
+  **pre_post_validate_clawback**             Fork carefully from `pre_post_validate`.
+                                             That helper absorbed TOCTOU fixes in
+                                             commit 5af7496. Do not re-regress the
+                                             state-guard --- pre-post re-reads state,
+                                             checks for existing ERP entry, and holds
+                                             across the post call.
+
+  **post_reversal_entry**                    `post_journal_entry` already exists in
+                                             `clearledgr/integrations/erp_router.py` and
+                                             routes to QB / Xero / NetSuite / SAP with
+                                             rate limits and retry. Extend, do not
+                                             parallel-build. See §13.3.
+
+  **reverse_erp_post**                       `reverse_bill` exists per connector
+                                             (`erp_sap.py`, `erp_quickbooks.py`,
+                                             `erp_xero.py`, `erp_netsuite.py`). Takes a
+                                             free-text reason today. New work: the
+                                             structured `reversal_reason_code` enum
+                                             and per-ERP native mapping. See §13.4.
+
+  **send_slack_clawback_approval**           `build_approval_blocks` in
+                                             `clearledgr/services/slack_api.py` is the
+                                             block builder; the clawback variant is a
+                                             templated wrapper.
+
+  **send_partner_clawback_notification**     `send_vendor_email` handler covers the
+                                             dispatch; new work is the notification
+                                             template and thread-allowlist logic from
+                                             §4.5.
+
+  **watch_thread**                           `_handle_watch_thread` already exists and
+                                             dispatches `vendor_response_received`
+                                             events. Partner-dispute monitoring rides
+                                             this; route to
+                                             `partner_dispute_received` based on
+                                             pipeline.
+
+  **Dispute window timer**                   `clearledgr/services/override_window.py`
+                                             was built with `action_type`
+                                             polymorphism for exactly this. Current
+                                             types: `erp_post`. Add
+                                             `clawback_dispute_window`. The reaper,
+                                             audit, and Rule-1 pre-write carry over.
+
+  **Pipelines table + Kanban stages**        `ap_invoices` and `vendor_onboarding`
+                                             already registered.
+                                             `commission_clawback` is one
+                                             INSERT into the `pipelines` table plus
+                                             `pipeline_stages` rows per stage in §2.1.
+
+  **Audit export**                           `export_audit_trail` endpoint exists in
+                                             `clearledgr/api/ap_items_read_routes.py`.
+                                             Returns JSON today; new work is
+                                             signing-key, PDF rendering, and filter
+                                             support (partner, reason code, amount
+                                             band, disposition).
+
+  **Frontend pipeline page**                 `ui/gmail-extension/src/routes/pages/
+                                             PipelinePage.js` is pipeline-agnostic ---
+                                             it reads `pipeline_stages` rows and
+                                             renders the Kanban. ClawbackPipelinePage
+                                             is the same component with a different
+                                             `pipeline_id`.
+  ----------------------------------------------------------------------------------------
+
+**12.2 Genuinely new work**
+
+These have no direct precedent in the codebase and are real
+engineering line items, not "adapted from existing."
+
+  ------------------------------------------------------------------------------------
+  **Component**                          **Why it's new**
+  -------------------------------------- --------------------------------------------
+  **SAP SD connector** (booking +        The existing SAP connector
+  commission + rate-schedule lookups)    (`clearledgr/integrations/erp_sap.py`) only
+                                         covers FI / AP bill posting and reversal. SD
+                                         (Sales & Distribution) via S/4HANA OData is
+                                         a distinct surface: different endpoints
+                                         (`/Orders`, KONP / KONV for condition
+                                         records), often separate auth context, and
+                                         sometimes a different BTP destination. The
+                                         spec §9 underplays this --- it's closer to
+                                         "new connector module" than "new query
+                                         type."
+
+  **Clawback calculation engine**        `calculate_clawback_amount`,
+                                         `validate_clawback_rules`,
+                                         `apply_fx_adjustment`. Pure deterministic,
+                                         no external dependencies. Testable in
+                                         isolation from day one. 1--2 days.
+
+  **draft_reversal_journal_entry**       Journal-entry structure (debit Commission
+                                         Income, credit Partner Payables) is
+                                         unlike AP bills (which debit expense
+                                         accounts). The ERP-agnostic draft builder
+                                         is new; the per-ERP format translation
+                                         reuses the translation logic already in
+                                         `post_journal_entry`.
+
+  **Refund classification + extraction   LLM calls themselves follow existing
+  prompts, and 200-sample calibration**  patterns --- but the prompts are new and
+                                         the spec-mandated calibration (§7, §11)
+                                         is a customer data dependency. If
+                                         Booking.com cannot deliver anonymised
+                                         samples, the 0.85 threshold ships
+                                         uncalibrated. Flag this as a customer-side
+                                         critical-path item during the pilot kick-off.
+
+  **De minimis + memo account handling** Per-workspace threshold config,
+                                         opt-in memo GL account, monthly
+                                         reconciliation report. New config fields,
+                                         new validator disposition, new report
+                                         surface.
+
+  **Out-of-scope detection rules**       Multi-leg, multiple commission records,
+                                         and partner-netting flags from §1.1.1.
+                                         New planner logic. Small in LOC but
+                                         high-value: this is the "don't silently
+                                         miscalculate" gate. Must be explicit in
+                                         the planning engine, not implicit in the
+                                         lookup connectors.
+
+  **Audit export signing and PDF**       Existing `export_audit_trail` returns
+                                         JSON. New work: per-workspace signing key
+                                         (with workspace-level key-rotation story),
+                                         JSONL format, PDF narrative renderer, and
+                                         the workspace-level audit-of-the-audit log
+                                         (§9.1) so export activity is itself
+                                         traceable.
+
+  **Frontend ClawbackDetailPage**        `InvoiceDetailPage.js` is the pattern.
+                                         Clawback-specific panels: journal entry
+                                         preview (debit / credit lines), calculation
+                                         basis display, dispute resolution buttons.
+                                         ~3 days. Reuses auth, Box timeline, and
+                                         audit components wholesale.
+
+  **Not-found circuit breaker**          The 20% rolling-window pipeline-level
+                                         breaker in §6.4 is new. There is an
+                                         existing circuit breaker service
+                                         (`clearledgr/services/circuit_breaker.py`)
+                                         but the commission-record-not-found signal
+                                         and workspace-scoped threshold are new
+                                         wiring.
+  ------------------------------------------------------------------------------------
+
+**13. Implementation Gotchas**
+
+These are concerns the spec does not flag that will bite during build.
+They are captured here so the planner who picks this up has them in
+one place rather than having to re-derive them from the codebase.
+
+**13.1 Box table shape --- new table, not new column**
+
+§8 says "Box state extends with clawback-specific fields." The implicit
+assumption is that clawback boxes live on the existing `ap_items`
+table. Today, `ap_items` has no `pipeline` column and ~40
+AP-invoice-specific columns that don't apply to clawbacks. Vendor
+onboarding avoided this by using a separate `vendor_onboarding_sessions`
+table.
+
+Follow the vendor-onboarding precedent: create a new `clawback_boxes`
+table keyed by `id`. The timeline and audit primitives key on a generic
+`box_id` / `ap_item_id` string so the same machinery works against any
+box table. The `pipelines` table was designed for exactly this --- it
+has a `source_table` column that lets each pipeline point at its own
+storage.
+
+Do not add a `pipeline TEXT` column to `ap_items` and mix the two box
+types in one table. The column sprawl and the WHERE-clause noise in
+every existing AP query would not be worth the "one-table" convenience.
+
+**13.2 SAP SD sandbox is the real critical path**
+
+§11's week-3 sandbox estimate assumes Booking.com's SAP BTP team
+delivers SD credentials on schedule. That is a customer-side
+dependency with no contractual lever from our side. De-risk it:
+
+-   Build the full classification, calculation, journal-entry-builder,
+    and planning-engine layers against a mocked SAP SD schema in
+    weeks 1--2. Representative fixtures (one booking, one commission
+    record, one rate schedule) are enough for tests.
+
+-   Stand up an end-to-end demo that runs against the mock in week 2
+    so the pilot is demoable before sandbox access is confirmed.
+
+-   Treat sandbox access as the gate on weeks 3--4, not week 1. If
+    sandbox slips by two weeks, week-2 demo still ships.
+
+-   Sandbox auth is the first thing to test once credentials land ---
+    SD via OData often requires a different service user than
+    FI / AP. Do not assume our existing SAP OAuth token works for the
+    SD endpoints.
+
+**13.3 Extend `post_journal_entry`, do not parallel-build**
+
+`clearledgr/integrations/erp_router.py:518` already has
+`post_journal_entry(organization_id, entry)` that routes to the right
+ERP, enforces rate limits, handles retries, and emits audit events.
+The spec's `post_reversal_entry` is the same function with a different
+payload shape.
+
+Build `post_reversal_entry` as a thin wrapper over `post_journal_entry`
+that:
+
+-   accepts a `journal_entry_draft` object built by
+    `draft_reversal_journal_entry`
+-   serializes it into the `entry` payload the existing router expects
+-   sets a `"reversal": true` / `"reversal_reason_code": ...` flag the
+    per-connector handlers can branch on
+
+Do not duplicate the router's rate-limit, retry, and audit logic. Every
+bug we fix in one path has to be re-fixed in the other, and ERP
+posting is the exact surface where we cannot afford divergent code
+paths.
+
+**13.4 Reversal reason code: enum migration is per-connector**
+
+§9 introduces a fixed enum (`force_majeure_dispute`,
+`contractual_waiver`, `calculation_error`, `duplicate_post`,
+`partner_confirmed_error`, `ap_manager_override`, `other`). Today
+`reverse_bill` takes a free-text reason string.
+
+The migration is three parts, one per ERP:
+
+-   **SAP**: map to reversal reason codes in BKPF-STGRD. There is a
+    standard SAP table of reversal reasons; the mapping must be
+    configured per customer SAP instance during onboarding, not
+    hardcoded.
+
+-   **NetSuite**: reversal reason is a custom field on the journal
+    entry --- the customer's NetSuite admin typically defines the
+    picklist. Map the Clearledgr enum to the customer's picklist at
+    connector config time.
+
+-   **Xero** / **QuickBooks**: both store reversal reasons as
+    free-text narration. The Clearledgr enum value is written into the
+    narration prefix (`"[force_majeure_dispute] Partner dispute
+    accepted --- ..."`) so downstream reporting can grep.
+
+Store the Clearledgr enum value on the Box record regardless of ERP
+(in the audit timeline and as a queryable field). That gives the
+"show me all force_majeure reversals YTD" report without free-text
+parsing, even on Xero / QuickBooks.
+
+**13.5 Dispute window piggybacks on OverrideWindowService**
+
+`clearledgr/services/override_window.py` was built with `action_type`
+polymorphism. Current usage: `"erp_post"`. The clawback dispute window
+from §5.2 is a second `action_type`.
+
+What this gives us for free:
+
+-   per-workspace configurable duration
+    (`settings_json["workflow_controls"]["override_window_minutes"]`
+    already supports a dict keyed by action_type)
+-   the reaper (`reap_expired_override_windows` in
+    `agent_background.py`) that wakes up every 60s
+-   Rule-1-compliant audit for every expiry and reversal
+-   Slack card update on expiry
+
+What we must add:
+
+-   new `action_type` string constant
+    (`"clawback_dispute_window"`)
+-   default duration (14 days per §5.4) in the config resolver's
+    fallback chain
+-   a reaper hook that emits `dispute_window_expired` instead of
+    `override_window_expired` for this action_type
+
+Do not build a second reaper. The existing one is correct and was
+stress-tested during the AP override-window rollout.
+
 Commission Clawback Agent Design Specification · Clearledgr Ltd ·
 Engineering team only · Review with CTO before implementation
