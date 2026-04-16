@@ -405,7 +405,7 @@ export default function HomePage({
       .then((data) => {
         const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
         const now = Date.now();
-        const blockedStates = new Set(['invited', 'awaiting_kyc', 'awaiting_bank', 'microdeposit_pending', 'escalated']);
+        const blockedStates = new Set(['invited', 'awaiting_kyc', 'awaiting_bank', 'escalated']);
         const blocked = sessions.filter((s) => {
           if (!blockedStates.has(s.state)) return false;
           const elapsed = s.invited_at ? (now - new Date(s.invited_at).getTime()) / 3600000 : 0;
@@ -416,7 +416,6 @@ export default function HomePage({
           const reasons = [];
           if (s.state === 'awaiting_kyc') reasons.push('Missing KYC documents');
           else if (s.state === 'awaiting_bank') reasons.push('Bank details not submitted');
-          else if (s.state === 'microdeposit_pending') reasons.push('Micro-deposit unconfirmed');
           else if (s.state === 'escalated') reasons.push('Escalated — needs manual resolution');
           else if (s.state === 'invited') reasons.push('Vendor has not responded');
           return { ...s, days, reason: reasons[0] || 'Blocked' };

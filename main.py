@@ -485,12 +485,10 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/onboarding/status$",
         r"^/api/vendors/[^/]+/onboarding/escalate$",
         r"^/api/vendors/[^/]+/onboarding/reject$",
-        r"^/api/vendors/[^/]+/onboarding/microdeposit/initiate$",
         # Phase 3.1.b: vendor portal magic-link surface (public, unauthenticated)
         r"^/portal/onboard/[^/]+$",
         r"^/portal/onboard/[^/]+/kyc$",
         r"^/portal/onboard/[^/]+/bank-details$",
-        r"^/portal/onboard/[^/]+/microdeposit$",
         # Short-form redirect so magic links can embed `/onboard/<token>`
         # directly — the 302 resolves to /portal/onboard/<token> above.
         r"^/onboard/[^/]+$",

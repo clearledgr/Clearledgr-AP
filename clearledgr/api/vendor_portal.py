@@ -3,8 +3,8 @@
 The only Clearledgr endpoint surface that accepts unauthenticated
 traffic. Vendors land here via a one-time magic-link emailed to them by
 their customer's AP team. The router serves a single multi-section HTML
-form (server-rendered Jinja2, zero JS framework) and three POST
-handlers that advance the vendor onboarding state machine.
+form (server-rendered Jinja2, zero JS framework) and two POST handlers
+that advance the vendor onboarding state machine.
 
 Routes
 ======
@@ -27,14 +27,10 @@ Routes
         Form-encoded body: iban, account_holder_name, bank_name (opt).
         Encrypts the bank details via VendorStore.set_vendor_bank_details
         (Fernet column encryption from Phase 2.1.a — never plaintext),
-        transitions awaiting_bank → microdeposit_pending, returns 303.
-
-  POST  /portal/onboard/{token}/microdeposit
-        Form-encoded body: amount_one, amount_two.
-        Phase 3.1.b ships this as a stub that records the submission
-        on the session metadata for the customer-side AP Manager to
-        verify manually. Phase 3.1.d will replace the stub with the
-        actual amount-matching service.
+        transitions awaiting_bank → bank_verified, returns 303. V1 is a
+        direct transition; once the Adyen (EU) and TrueLayer (UK/RoW)
+        verifier adapters land, that edge will be gated on provider-
+        reported verification.
 
 Design rules
 ============
@@ -365,7 +361,15 @@ def submit_bank_details(
     bank_name: str = Form("", max_length=128),
     portal: PortalSession = Depends(require_portal_token),
 ):
-    """Encrypt + save bank details, transition to microdeposit_pending."""
+    """Encrypt + save bank details, transition to bank_verified.
+
+    V1 ships a direct awaiting_bank → bank_verified edge after the IBAN
+    passes structural + mod-97 checksum validation. The old micro-deposit
+    confirmation step was removed; real account-ownership verification
+    will land via pluggable provider adapters (Adyen for EU customers,
+    TrueLayer for UK + RoW) which replace this direct transition with
+    a provider-gated one.
+    """
     from clearledgr.core.stores.bank_details import normalize_iban, validate_iban
 
     db = get_db()
@@ -406,13 +410,13 @@ def submit_bank_details(
     if not ok:
         return _redirect_with_error(token, "Could not save bank details. Please try again.")
 
-    # Transition awaiting_bank → microdeposit_pending. Only valid if
-    # the session is currently in awaiting_bank — otherwise treat as
-    # an idempotent no-op.
+    # Transition awaiting_bank → bank_verified. Only valid if the
+    # session is currently in awaiting_bank — otherwise treat as an
+    # idempotent no-op.
     if portal.onboarding_state == "awaiting_bank":
         _safe_transition(
             portal.session_id,
-            VendorOnboardingState.MICRODEPOSIT_PENDING,
+            VendorOnboardingState.BANK_VERIFIED,
             actor_id=f"vendor_portal:{portal.token_id}",
         )
 
@@ -438,79 +442,7 @@ def submit_bank_details(
 
     return _redirect_with_flash(
         token,
-        "Bank details saved. We'll initiate verification deposits shortly.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# POST — micro-deposit confirmation (Phase 3.1.b stub, Phase 3.1.d wires real verification)
-# ---------------------------------------------------------------------------
-
-
-@router.post("/onboard/{token}/microdeposit")
-def submit_microdeposit_amounts(
-    request: Request,
-    token: str,
-    amount_one: str = Form(...),
-    amount_two: str = Form(...),
-    portal: PortalSession = Depends(require_portal_token),
-):
-    """Verify the vendor's submitted micro-deposit amounts.
-
-    Phase 3.1.d: compares the two submitted amounts against the
-    encrypted expected amounts stored on the session. On success,
-    transitions to ``bank_verified``. On failure, increments the
-    attempt counter. After 3 failed attempts, kicks back to
-    ``awaiting_bank`` so the vendor can re-enter their IBAN.
-    """
-    try:
-        a1 = float(amount_one.strip().replace(",", "."))
-        a2 = float(amount_two.strip().replace(",", "."))
-    except (TypeError, ValueError):
-        return _redirect_with_error(
-            token,
-            "Please enter the deposit amounts as numbers, e.g. 0.17 and 0.42.",
-        )
-    if a1 <= 0 or a2 <= 0 or a1 >= 10 or a2 >= 10:
-        return _redirect_with_error(
-            token,
-            "Deposit amounts should be small positive numbers under 10.",
-        )
-
-    from clearledgr.services.micro_deposit import get_micro_deposit_service
-
-    db = get_db()
-    service = get_micro_deposit_service(db=db)
-    result = service.verify(
-        session_id=portal.session_id,
-        submitted_amount_one=a1,
-        submitted_amount_two=a2,
-        actor_id=f"vendor_portal:{portal.token_id}",
-    )
-
-    if not result.success:
-        return _redirect_with_error(
-            token,
-            result.error or "Verification failed. Please try again.",
-        )
-
-    if result.verified:
-        return _redirect_with_flash(
-            token,
-            "Bank account verified! Your customer will activate you in their finance system shortly.",
-        )
-
-    if result.locked_out:
-        return _redirect_with_error(
-            token,
-            "Too many incorrect attempts. Please re-enter your bank details and your customer will initiate new deposits.",
-        )
-
-    remaining = 3 - result.attempt_number
-    return _redirect_with_error(
-        token,
-        f"The amounts don't match. You have {remaining} attempt(s) remaining. "
-        f"Please check your bank statement and try again.",
+        "Bank details saved. Your customer will activate you in their finance system shortly.",
     )
 
 

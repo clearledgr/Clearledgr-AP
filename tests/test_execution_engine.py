@@ -39,7 +39,7 @@ class TestHandlerRegistry:
             "send_slack_digest", "send_vendor_email", "draft_vendor_response",
             "send_teams_approval", "post_gmail_notification",
             "create_vendor_record", "enrich_vendor", "run_adverse_media_check",
-            "initiate_micro_deposit", "verify_micro_deposit", "activate_vendor_in_erp",
+            "activate_vendor_in_erp",
             "freeze_vendor_payments",
             "check_iban_change", "check_domain_match", "check_velocity",
             "check_duplicate", "flag_internal_instruction", "check_amount_ceiling",

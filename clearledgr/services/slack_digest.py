@@ -109,7 +109,7 @@ async def build_digest(
         sessions = await _list_all_active_sessions(db, org_id)
     except Exception:
         sessions = []
-    blocked_states = {"invited", "awaiting_kyc", "awaiting_bank", "microdeposit_pending", "escalated"}
+    blocked_states = {"invited", "awaiting_kyc", "awaiting_bank", "escalated"}
     onboarding_blockers = [
         s for s in sessions
         if s.get("state") in blocked_states

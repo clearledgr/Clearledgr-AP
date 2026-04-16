@@ -86,10 +86,6 @@ class PortalSession:
     def is_bank_stage(self) -> bool:
         return self.onboarding_state == "awaiting_bank"
 
-    @property
-    def is_microdeposit_stage(self) -> bool:
-        return self.onboarding_state == "microdeposit_pending"
-
 
 def require_portal_token(
     token: str = Path(..., min_length=16, max_length=128, description="One-time onboarding token"),

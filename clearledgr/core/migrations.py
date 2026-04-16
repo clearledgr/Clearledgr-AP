@@ -1015,7 +1015,7 @@ def _v25_object_model(cur, db):
     vo_stages = [
         ("invited", "Invited", "#94A3B8", ["invited"], 0),
         ("kyc", "KYC", "#CA8A04", ["awaiting_kyc"], 1),
-        ("bank_verify", "Bank Verify", "#2563EB", ["awaiting_bank", "microdeposit_pending"], 2),
+        ("bank_verify", "Bank Verify", "#2563EB", ["awaiting_bank"], 2),
         ("active", "Active", "#16A34A", ["bank_verified", "ready_for_erp", "active"], 3),
     ]
     for slug, label, color, states, order in vo_stages:

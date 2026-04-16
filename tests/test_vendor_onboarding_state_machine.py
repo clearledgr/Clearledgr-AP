@@ -66,7 +66,6 @@ class TestStateMachineEnum:
             "invited",
             "awaiting_kyc",
             "awaiting_bank",
-            "microdeposit_pending",
             "bank_verified",
             "ready_for_erp",
             "active",
@@ -75,6 +74,9 @@ class TestStateMachineEnum:
             "abandoned",
         ):
             assert required in members
+        # Sanity: micro-deposit intermediate state was removed — the flow
+        # transitions awaiting_bank → bank_verified directly in V1.
+        assert "microdeposit_pending" not in members
 
     def test_terminal_states_have_no_outbound_edges(self):
         from clearledgr.core.vendor_onboarding_states import (
@@ -90,12 +92,11 @@ class TestStateMachineEnum:
             VendorOnboardingState,
         )
         # Pre-active is the chase-eligible band: invited through
-        # microdeposit_pending. Bank verified, ready_for_erp, escalated
-        # and the terminals are NOT in this set.
+        # awaiting_bank. Bank verified, ready_for_erp, escalated and
+        # the terminals are NOT in this set.
         assert VendorOnboardingState.INVITED in PRE_ACTIVE_STATES
         assert VendorOnboardingState.AWAITING_KYC in PRE_ACTIVE_STATES
         assert VendorOnboardingState.AWAITING_BANK in PRE_ACTIVE_STATES
-        assert VendorOnboardingState.MICRODEPOSIT_PENDING in PRE_ACTIVE_STATES
         assert VendorOnboardingState.BANK_VERIFIED not in PRE_ACTIVE_STATES
         assert VendorOnboardingState.READY_FOR_ERP not in PRE_ACTIVE_STATES
         assert VendorOnboardingState.ESCALATED not in PRE_ACTIVE_STATES
@@ -109,8 +110,7 @@ class TestValidTransitions:
         path = [
             ("invited", "awaiting_kyc"),
             ("awaiting_kyc", "awaiting_bank"),
-            ("awaiting_bank", "microdeposit_pending"),
-            ("microdeposit_pending", "bank_verified"),
+            ("awaiting_bank", "bank_verified"),
             ("bank_verified", "ready_for_erp"),
             ("ready_for_erp", "active"),
         ]
@@ -135,18 +135,12 @@ class TestValidTransitions:
         # abandoned is terminal
         assert not validate_transition("abandoned", "invited")
 
-    def test_microdeposit_failure_recovery_loops_back_to_awaiting_bank(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
-        # 3 failed micro-deposit attempts → vendor corrects IBAN
-        assert validate_transition("microdeposit_pending", "awaiting_bank")
-
     def test_escalated_can_recover_to_any_pre_active(self):
         from clearledgr.core.vendor_onboarding_states import validate_transition
         for target in (
             "invited",
             "awaiting_kyc",
             "awaiting_bank",
-            "microdeposit_pending",
             "bank_verified",
             "ready_for_erp",
         ):
@@ -322,7 +316,11 @@ class TestStateTransitions:
         assert updated["state"] == "awaiting_bank"
         assert updated["kyc_submitted_at"] is not None
 
-    def test_transition_to_microdeposit_pending_stamps_initiator(self, tmp_db):
+    def test_transition_to_bank_verified_stamps_submitted_and_verified(self, tmp_db):
+        """With micro-deposit removed, awaiting_bank → bank_verified stamps
+        both bank_submitted_at (the vendor just submitted) and
+        bank_verified_at (V1 direct edge — provider adapters will gate
+        this in a future phase)."""
         org, vendor = _seed_vendor(tmp_db)
         session = tmp_db.create_vendor_onboarding_session(
             org, vendor, invited_by="cfo@customer.com"
@@ -331,12 +329,11 @@ class TestStateTransitions:
         tmp_db.transition_onboarding_session_state(sid, "awaiting_kyc", actor_id="vendor")
         tmp_db.transition_onboarding_session_state(sid, "awaiting_bank", actor_id="vendor")
         updated = tmp_db.transition_onboarding_session_state(
-            sid, "microdeposit_pending", actor_id="ap_manager@customer.com"
+            sid, "bank_verified", actor_id="vendor"
         )
-        assert updated["state"] == "microdeposit_pending"
-        assert updated["microdeposit_initiated_at"] is not None
-        assert updated["microdeposit_initiated_by"] == "ap_manager@customer.com"
+        assert updated["state"] == "bank_verified"
         assert updated["bank_submitted_at"] is not None
+        assert updated["bank_verified_at"] is not None
 
     def test_transition_to_active_stamps_completion_and_deactivates(self, tmp_db):
         org, vendor = _seed_vendor(tmp_db)
@@ -344,7 +341,7 @@ class TestStateTransitions:
             org, vendor, invited_by="cfo@customer.com"
         )
         sid = session["id"]
-        for nxt in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending",
+        for nxt in ("awaiting_kyc", "awaiting_bank",
                     "bank_verified", "ready_for_erp", "active"):
             tmp_db.transition_onboarding_session_state(
                 sid, nxt, actor_id="agent"
@@ -465,7 +462,7 @@ class TestListPendingSessions:
 
         # Move Beta into bank_verified — should drop out of default filter
         beta = tmp_db.get_active_onboarding_session(org_a, "Beta")
-        for s in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending", "bank_verified"):
+        for s in ("awaiting_kyc", "awaiting_bank", "bank_verified"):
             tmp_db.transition_onboarding_session_state(beta["id"], s, actor_id="agent")
 
         all_pending = tmp_db.list_pending_onboarding_sessions()
@@ -528,7 +525,7 @@ class TestErpAttachment:
         )
         sid = session["id"]
         # Drive to ready_for_erp
-        for nxt in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending",
+        for nxt in ("awaiting_kyc", "awaiting_bank",
                     "bank_verified", "ready_for_erp"):
             tmp_db.transition_onboarding_session_state(sid, nxt, actor_id="agent")
         updated = tmp_db.attach_erp_vendor_id(sid, "QB-VND-12345")

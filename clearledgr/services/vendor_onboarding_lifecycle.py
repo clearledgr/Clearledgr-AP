@@ -97,7 +97,7 @@ async def chase_stale_sessions(
     result = ChaseResult()
 
     # Fetch all active pre-active sessions (invited, awaiting_kyc,
-    # awaiting_bank, microdeposit_pending).
+    # awaiting_bank).
     sessions = db.list_pending_onboarding_sessions()
     result.sessions_scanned = len(sessions)
 
@@ -209,7 +209,6 @@ async def _send_chase(
         "invited": "onboarding form (they haven't opened the link yet)",
         "awaiting_kyc": "business details — registered address, registration number, directors",
         "awaiting_bank": "bank details (IBAN + account holder)",
-        "microdeposit_pending": "micro-deposit amount confirmation",
         "escalated": "onboarding (already escalated once)",
     }
     missing_doc = _state_missing.get(state, "onboarding response")

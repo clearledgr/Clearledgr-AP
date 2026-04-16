@@ -426,67 +426,6 @@ def reject_onboarding(
     return {"session": updated}
 
 
-# ---------------------------------------------------------------------------
-# POST /onboarding/microdeposit/initiate — Phase 3.1.d
-# ---------------------------------------------------------------------------
-
-
-@router.post("/{vendor_name}/onboarding/microdeposit/initiate")
-def initiate_microdeposit(
-    vendor_name: str,
-    organization_id: str = Query(..., description="Organization identifier"),
-    user: TokenData = Depends(require_financial_controller),
-) -> Dict[str, Any]:
-    """Generate two micro-deposit amounts for the vendor's bank account.
-
-    Returns the plaintext amounts so the AP Manager can initiate the
-    real deposits from their bank. These amounts are also encrypted
-    and stored on the session metadata — the vendor must confirm them
-    via the portal form to complete bank verification.
-
-    The amounts are returned ONLY to the authenticated Financial
-    Controller — the vendor never sees them except via their own bank
-    statement. The audit event does NOT log the amounts (§19).
-    """
-    _assert_same_org(user, organization_id)
-    db = get_db()
-    session = db.get_active_onboarding_session(organization_id, vendor_name)
-    if session is None:
-        raise HTTPException(status_code=404, detail="no_active_onboarding_session")
-
-    from clearledgr.services.micro_deposit import get_micro_deposit_service
-
-    service = get_micro_deposit_service(db=db)
-    result = service.initiate(session["id"], actor_id=_actor_label(user))
-    if not result.success:
-        raise HTTPException(
-            status_code=400,
-            detail=result.error or "microdeposit_initiation_failed",
-        )
-
-    # Return the amounts to the AP Manager. They'll initiate the
-    # deposits from their bank manually (V1 — no ACH rail integration).
-    masked_iban = None
-    try:
-        masked = db.get_vendor_bank_details_masked(organization_id, vendor_name)
-        if masked:
-            masked_iban = masked.get("iban")
-    except Exception:
-        pass
-
-    return {
-        "vendor_name": vendor_name,
-        "amounts": [result.amounts[0], result.amounts[1]] if result.amounts else [],
-        "masked_iban": masked_iban,
-        "instruction": (
-            f"Please initiate two deposits of {result.amounts[0]:.2f} and "
-            f"{result.amounts[1]:.2f} to the vendor's bank account. "
-            f"The vendor will confirm the exact amounts on their onboarding form."
-            if result.amounts else ""
-        ),
-    }
-
-
 # ==================== CSV VENDOR IMPORT (§3 Migration from Existing Tools) ====================
 
 

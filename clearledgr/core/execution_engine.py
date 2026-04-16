@@ -151,8 +151,6 @@ class ExecutionEngine:
             "create_vendor_record": self._handle_create_vendor_record,
             "enrich_vendor": self._handle_enrich_vendor,
             "run_adverse_media_check": self._handle_adverse_media,
-            "initiate_micro_deposit": self._handle_initiate_micro_deposit,
-            "verify_micro_deposit": self._handle_verify_micro_deposit,
             "activate_vendor_in_erp": self._handle_activate_vendor,
             "freeze_vendor_payments": self._handle_freeze_payments,
 
@@ -1184,7 +1182,6 @@ class ExecutionEngine:
                             "bank IBAN",
                             "account holder name",
                         ],
-                        "microdeposit_pending": ["micro-deposit amount confirmation"],
                         "escalated": ["responsive contact point"],
                     }.get(session_state, [])
                     break
@@ -1452,48 +1449,16 @@ class ExecutionEngine:
             return {"ok": True}
 
     async def _handle_iban_verify(self, action: Action, plan: Plan) -> dict:
-        """§3: Start micro-deposit IBAN verification for the session.
+        """§3: IBAN verification hook.
 
-        Routes to MicroDepositService.initiate(session_id, actor_id).
-        Previously passed vendor_id to a method that only accepts
-        session_id, so every call raised TypeError and verification
-        never actually started — vendors stayed stuck in
-        ``microdeposit_pending`` with no deposits.
+        The old micro-deposit flow was removed. Until the Adyen (EU) and
+        TrueLayer (UK/RoW) verifier adapters land, this handler is a
+        no-op — the portal transitions awaiting_bank → bank_verified
+        directly on IBAN submission (mod-97 checksum is the only gate).
+        Keep the action in the planner so existing plans don't error;
+        swap the implementation in when the adapters are ready.
         """
-        session_id = str(action.params.get("session_id") or "").strip()
-        vendor_id = str(action.params.get("vendor_id") or "").strip()
-        if not session_id and vendor_id:
-            # Try to find the active onboarding session for this vendor.
-            try:
-                sessions = self.db.list_pending_onboarding_sessions() or []
-                for s in sessions:
-                    if (
-                        str(s.get("vendor_name") or "").lower() == vendor_id.lower()
-                        and str(s.get("state") or "") in ("awaiting_bank", "microdeposit_pending")
-                    ):
-                        session_id = str(s.get("id") or "")
-                        break
-            except Exception:
-                pass
-        if not session_id:
-            return {"ok": True, "initiated": False, "reason": "no_session"}
-        try:
-            from clearledgr.services.micro_deposit import MicroDepositService
-            service = MicroDepositService(db=self.db)
-            result = service.initiate(
-                session_id=session_id,
-                actor_id=f"agent:iban_verify:{self.organization_id}",
-            )
-            ok = bool(getattr(result, "success", False))
-            return {
-                "ok": True,
-                "initiated": ok,
-                "session_id": session_id,
-                "error": getattr(result, "error", None) if not ok else None,
-            }
-        except Exception as exc:
-            logger.warning("[ExecutionEngine] iban_verify failed: %s", exc)
-            return {"ok": True, "initiated": False, "error": str(exc)}
+        return {"ok": True, "initiated": False, "reason": "provider_adapter_pending"}
 
     async def _handle_check_vendor_response(self, action: Action, plan: Plan) -> dict:
         """§4.3: Check if vendor has responded to a chase email."""
@@ -2002,36 +1967,6 @@ class ExecutionEngine:
             logger.warning("[ExecutionEngine] adverse_media check failed: %s", exc)
             # Fail open but log — don't block onboarding on check failure
             return {"ok": True, "clear": True, "flags": [], "error": str(exc)}
-
-    async def _handle_initiate_micro_deposit(self, action: Action, plan: Plan) -> dict:
-        """§3: Send micro-deposit to verify bank account ownership."""
-        vendor_id = action.params.get("vendor_id", "")
-        if not vendor_id:
-            return {"ok": True}
-        try:
-            from clearledgr.services.micro_deposit import MicroDepositService
-            service = MicroDepositService(db=self.db)
-            result = service.initiate(vendor_id=vendor_id)
-            return {"ok": True, "initiated": True}
-        except Exception as exc:
-            logger.debug("[ExecutionEngine] initiate_micro_deposit: %s", exc)
-            return {"ok": True}
-
-    async def _handle_verify_micro_deposit(self, action: Action, plan: Plan) -> dict:
-        """§3: Compare claimed amount against stored deposit amount."""
-        vendor_id = action.params.get("vendor_id", "")
-        amount_claimed = action.params.get("amount_claimed", 0)
-        if not vendor_id:
-            return {"ok": True}
-        try:
-            from clearledgr.services.micro_deposit import MicroDepositService
-            service = MicroDepositService(db=self.db)
-            result = service.verify(vendor_id=vendor_id, amount_claimed=float(amount_claimed))
-            verified = result.verified if hasattr(result, "verified") else (result.get("verified") if isinstance(result, dict) else False)
-            return {"ok": True, "verified": verified}
-        except Exception as exc:
-            logger.debug("[ExecutionEngine] verify_micro_deposit: %s", exc)
-            return {"ok": True, "verified": False}
 
     async def _handle_activate_vendor(self, action: Action, plan: Plan) -> dict:
         """§3: Create or activate the vendor in the ERP vendor master."""

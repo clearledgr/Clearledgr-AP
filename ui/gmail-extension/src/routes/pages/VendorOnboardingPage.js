@@ -20,7 +20,7 @@ const html = htm.bind(h);
 const ONBOARDING_STAGES = [
   { key: 'invited',             label: 'Invited',     states: ['invited'], color: '#9CA3AF' },
   { key: 'kyc',                 label: 'KYC',         states: ['awaiting_kyc'], color: '#D97706' },
-  { key: 'bank_verify',         label: 'Bank Verify', states: ['awaiting_bank', 'microdeposit_pending'], color: '#2563EB' },
+  { key: 'bank_verify',         label: 'Bank Verify', states: ['awaiting_bank'], color: '#2563EB' },
   { key: 'active',              label: 'Active',      states: ['bank_verified', 'ready_for_erp', 'active'], color: '#10B981' },
 ];
 

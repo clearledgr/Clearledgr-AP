@@ -1755,11 +1755,13 @@ class VendorStore:
         # handles the bookkeeping.
         if target == VendorOnboardingState.AWAITING_BANK.value:
             updates["kyc_submitted_at"] = now
-        elif target == VendorOnboardingState.MICRODEPOSIT_PENDING.value:
-            updates["bank_submitted_at"] = updates.get("bank_submitted_at") or now
-            updates["microdeposit_initiated_at"] = now
-            updates["microdeposit_initiated_by"] = actor_id
         elif target == VendorOnboardingState.BANK_VERIFIED.value:
+            # The old micro-deposit path wrote microdeposit_initiated_at/by
+            # here before landing in BANK_VERIFIED. With that intermediate
+            # state removed, stamp bank_submitted_at on this edge (the
+            # vendor's submission IS the bank-submitted moment) and
+            # bank_verified_at for the verification timestamp.
+            updates["bank_submitted_at"] = updates.get("bank_submitted_at") or now
             updates["bank_verified_at"] = now
         elif target == VendorOnboardingState.ACTIVE.value:
             updates["erp_activated_at"] = now

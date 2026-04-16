@@ -73,7 +73,7 @@ def _seed_to_bank_verified(db, org="org_t", vendor="Acme Ltd"):
     db.create_organization(org, name="Customer Inc")
     db.upsert_vendor_profile(org, vendor)
     session = db.create_vendor_onboarding_session(org, vendor, invited_by="cfo@x.com")
-    for s in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending", "bank_verified"):
+    for s in ("awaiting_kyc", "awaiting_bank", "bank_verified"):
         db.transition_onboarding_session_state(session["id"], s, actor_id="agent")
     # Add contact metadata.
     import json

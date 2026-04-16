@@ -5,8 +5,9 @@ Covers:
   - PortalSession / require_portal_token auth dependency: happy path,
     expired token, revoked token, non-existent token, terminal session
   - Vendor portal routes: GET renders HTML, POST /kyc transitions state +
-    saves KYC, POST /bank-details encrypts + transitions, POST /microdeposit
-    (Phase 3.1.b stub — records amounts)
+    saves KYC, POST /bank-details encrypts + transitions directly to
+    bank_verified (micro-deposit flow removed; provider adapters for
+    Adyen/TrueLayer will gate this edge in a future phase)
   - Customer-side invite endpoint: creates session + vendor profile + token,
     blocks duplicate active sessions, cross-tenant denied, role gating
   - Migration v18 creates the vendor_onboarding_tokens table
@@ -451,60 +452,10 @@ class TestPortalBankDetailsPost:
         profile_str = str(profile)
         assert "GB82BARC20000055555555" not in profile_str
 
-        # Session should be in microdeposit_pending.
+        # Session should now be bank_verified (V1 direct edge; the old
+        # micro-deposit intermediate state was removed).
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "microdeposit_pending"
-
-
-class TestPortalMicrodepositPost:
-
-    def test_microdeposit_stub_accepts_valid_amounts(self, tmp_db, monkeypatch):
-        from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
-        import fastapi
-
-        org, vendor, session = _seed(tmp_db)
-        for nxt in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending"):
-            tmp_db.transition_onboarding_session_state(
-                session["id"], nxt, actor_id="agent"
-            )
-        raw_token, _ = tmp_db.generate_onboarding_token(session["id"], issued_by="cfo@x.com")
-
-        app = fastapi.FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
-
-        resp = client.post(
-            f"/portal/onboard/{raw_token}/microdeposit",
-            data={"amount_one": "0.17", "amount_two": "0.42"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-
-    def test_microdeposit_rejects_invalid_amounts(self, tmp_db, monkeypatch):
-        from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
-        import fastapi
-
-        org, vendor, session = _seed(tmp_db)
-        for nxt in ("awaiting_kyc", "awaiting_bank", "microdeposit_pending"):
-            tmp_db.transition_onboarding_session_state(
-                session["id"], nxt, actor_id="agent"
-            )
-        raw_token, _ = tmp_db.generate_onboarding_token(session["id"], issued_by="cfo@x.com")
-
-        app = fastapi.FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
-
-        resp = client.post(
-            f"/portal/onboard/{raw_token}/microdeposit",
-            data={"amount_one": "abc", "amount_two": "0.42"},
-            follow_redirects=False,
-        )
-        # Should redirect with error flash.
-        assert resp.status_code == 303
-        assert "error=" in resp.headers.get("location", "")
+        assert updated["state"] == "bank_verified"
 
 
 # ===========================================================================

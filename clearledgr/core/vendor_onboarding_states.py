@@ -21,14 +21,14 @@ implementation needs to model partial-completion and recovery paths):
         KYC submission complete and validated. Waiting for the vendor to
         provide bank details (IBAN + account holder name).
 
-    microdeposit_pending
-        Bank details captured. Customer's AP Manager has been asked to
-        initiate two micro-deposits to the vendor's IBAN. Awaiting vendor
-        confirmation of the exact amounts received.
-
     bank_verified
-        Vendor confirmed micro-deposit amounts; IBAN is verified. Vendor
-        now has all the data needed for ERP activation.
+        Vendor's bank account has been verified. In V1 this is set
+        directly when the vendor submits their IBAN; future versions
+        will route submitted bank details through a provider (Adyen for
+        EU customers, TrueLayer for UK + rest-of-world) and transition
+        to ``bank_verified`` only on successful provider verification.
+        The old micro-deposit flow that sat between these two states
+        was removed — we don't run rails, we orchestrate them.
 
     ready_for_erp
         Internal staging state — all data collected, queued for
@@ -92,7 +92,6 @@ class VendorOnboardingState(str, Enum):
     INVITED = "invited"
     AWAITING_KYC = "awaiting_kyc"
     AWAITING_BANK = "awaiting_bank"
-    MICRODEPOSIT_PENDING = "microdeposit_pending"
     BANK_VERIFIED = "bank_verified"
     READY_FOR_ERP = "ready_for_erp"
     ACTIVE = "active"
@@ -117,16 +116,11 @@ VALID_TRANSITIONS: Dict[VendorOnboardingState, FrozenSet[VendorOnboardingState]]
         VendorOnboardingState.ABANDONED,
     }),
     VendorOnboardingState.AWAITING_BANK: frozenset({
-        VendorOnboardingState.MICRODEPOSIT_PENDING,
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
-        VendorOnboardingState.ABANDONED,
-    }),
-    VendorOnboardingState.MICRODEPOSIT_PENDING: frozenset({
+        # V1 direct edge: vendor submits bank details in the portal,
+        # we mark verified. When Adyen/TrueLayer adapters land this
+        # same edge will be gated on provider-reported verification;
+        # failure paths will stay in AWAITING_BANK or escalate.
         VendorOnboardingState.BANK_VERIFIED,
-        # Three failed attempts kicks the vendor back to bank-details
-        # entry so they can correct a typo in the IBAN.
-        VendorOnboardingState.AWAITING_BANK,
         VendorOnboardingState.ESCALATED,
         VendorOnboardingState.REJECTED,
         VendorOnboardingState.ABANDONED,
@@ -150,7 +144,6 @@ VALID_TRANSITIONS: Dict[VendorOnboardingState, FrozenSet[VendorOnboardingState]]
         VendorOnboardingState.INVITED,
         VendorOnboardingState.AWAITING_KYC,
         VendorOnboardingState.AWAITING_BANK,
-        VendorOnboardingState.MICRODEPOSIT_PENDING,
         VendorOnboardingState.BANK_VERIFIED,
         VendorOnboardingState.READY_FOR_ERP,
         VendorOnboardingState.REJECTED,
@@ -179,7 +172,6 @@ PRE_ACTIVE_STATES: FrozenSet[VendorOnboardingState] = frozenset({
     VendorOnboardingState.INVITED,
     VendorOnboardingState.AWAITING_KYC,
     VendorOnboardingState.AWAITING_BANK,
-    VendorOnboardingState.MICRODEPOSIT_PENDING,
 })
 
 

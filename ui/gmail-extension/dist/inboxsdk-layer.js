@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:39a06cd36ebb84f043094b8c5efd12df92958151a18e3641e876c57e6e722ce1 */
+/* clearledgr-source-fingerprint:a01c618f5f11f26f5e3aabda1c8296eb7b90a3e67a7b31305d9c7c2e373ae58a */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -65817,7 +65817,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true }).then((data) => {
         const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
         const now = Date.now();
-        const blockedStates = new Set(["invited", "awaiting_kyc", "awaiting_bank", "microdeposit_pending", "escalated"]);
+        const blockedStates = new Set(["invited", "awaiting_kyc", "awaiting_bank", "escalated"]);
         const blocked = sessions.filter((s3) => {
           if (!blockedStates.has(s3.state))
             return false;
@@ -65831,8 +65831,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             reasons.push("Missing KYC documents");
           else if (s3.state === "awaiting_bank")
             reasons.push("Bank details not submitted");
-          else if (s3.state === "microdeposit_pending")
-            reasons.push("Micro-deposit unconfirmed");
           else if (s3.state === "escalated")
             reasons.push("Escalated — needs manual resolution");
           else if (s3.state === "invited")
@@ -74295,7 +74293,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var ONBOARDING_STAGES = [
     { key: "invited", label: "Invited", states: ["invited"], color: "#9CA3AF" },
     { key: "kyc", label: "KYC", states: ["awaiting_kyc"], color: "#D97706" },
-    { key: "bank_verify", label: "Bank Verify", states: ["awaiting_bank", "microdeposit_pending"], color: "#2563EB" },
+    { key: "bank_verify", label: "Bank Verify", states: ["awaiting_bank"], color: "#2563EB" },
     { key: "active", label: "Active", states: ["bank_verified", "ready_for_erp", "active"], color: "#10B981" }
   ];
   var SECONDARY_STATES = {
