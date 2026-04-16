@@ -482,6 +482,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         # Phase 3.1.b: vendor onboarding control endpoints (customer-side)
         r"^/api/vendors/[^/]+/onboarding/invite$",
         r"^/api/vendors/[^/]+/onboarding/session$",
+        r"^/api/vendors/[^/]+/onboarding/status$",
         r"^/api/vendors/[^/]+/onboarding/escalate$",
         r"^/api/vendors/[^/]+/onboarding/reject$",
         r"^/api/vendors/[^/]+/onboarding/microdeposit/initiate$",
