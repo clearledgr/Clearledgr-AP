@@ -469,6 +469,34 @@ class TeamsAPIClient:
                         blocker_lines.append(f"• {reason} ({count})")
         blocker_text = "\n".join(blocker_lines) if blocker_lines else "No blocker telemetry yet."
 
+        # §11 #4 vendor-activation SLA facts. Rendered as a dedicated
+        # FactSet block so the AP channel's CFO-level reader sees the
+        # onboarding-speed number on the same card as touchless/cycle
+        # time, not in a separate digest.
+        vendor_sla = kpis.get("vendor_activation_sla") or {}
+        if not isinstance(vendor_sla, dict):
+            vendor_sla = {}
+        activation_count = int(vendor_sla.get("activation_count") or 0)
+        onboarding_window_days = int(vendor_sla.get("window_days") or 30)
+        onboarding_heading_text = (
+            f"Vendor onboarding ({onboarding_window_days}d window)"
+        )
+        if activation_count:
+            avg_bd = float(vendor_sla.get("avg_business_days_to_active") or 0.0)
+            within_pct = float(vendor_sla.get("within_sla_pct") or 0.0)
+            sla_bd = int(vendor_sla.get("sla_business_days") or 5)
+            onboarding_facts = [
+                {"title": "Activated", "value": str(activation_count)},
+                {"title": "Avg business days", "value": f"{avg_bd:.1f}"},
+                {"title": f"Within {sla_bd}-bd SLA", "value": f"{within_pct:.0f}%"},
+            ]
+        else:
+            onboarding_facts = [
+                {"title": "Activated", "value": "0"},
+                {"title": "Avg business days", "value": "—"},
+                {"title": "Within SLA", "value": "—"},
+            ]
+
         return {
             "type": "message",
             "attachments": [
@@ -502,6 +530,12 @@ class TeamsAPIClient:
                                     {"title": "Awaiting approval", "value": f"{awaiting_hours:.1f}h"},
                                 ],
                             },
+                            {
+                                "type": "TextBlock",
+                                "weight": "Bolder",
+                                "text": onboarding_heading_text,
+                            },
+                            {"type": "FactSet", "facts": onboarding_facts},
                             {"type": "TextBlock", "wrap": True, "text": f"Top blockers:\n{blocker_text}"},
                         ],
                     },

@@ -1724,6 +1724,64 @@ class VendorStore:
 
         return [self._decode_onboarding_session_row(r) for r in rows]
 
+    def list_completed_onboarding_sessions(
+        self,
+        organization_id: str,
+        *,
+        since_iso: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """List vendor-onboarding sessions that reached ``active``.
+
+        DESIGN_THESIS §11 success-metric support. The sibling
+        ``list_pending_onboarding_sessions`` only returns sessions
+        still in flight (is_active=1) — measuring activation
+        latency needs the completed ones, where the terminal
+        transition to ``active`` flips is_active to 0 and writes
+        ``erp_activated_at``.
+
+        ``since_iso`` restricts the window to sessions whose
+        ``erp_activated_at`` is at or after the cutoff (ISO-8601
+        UTC). Defaults to None — returns all completed sessions
+        for the org, caller-capped by ``limit``.
+        """
+        from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
+
+        clauses = [
+            "organization_id = ?",
+            "state = ?",
+            "erp_activated_at IS NOT NULL",
+        ]
+        params: List[Any] = [organization_id, VendorOnboardingState.ACTIVE.value]
+        if since_iso:
+            clauses.append("erp_activated_at >= ?")
+            params.append(since_iso)
+        params.append(limit)
+
+        sql = self._prepare_sql(
+            "SELECT * FROM vendor_onboarding_sessions WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY erp_activated_at DESC LIMIT ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning(
+                "[VendorStore] list_completed_onboarding_sessions failed: %s", exc
+            )
+            return []
+
+        return [self._decode_onboarding_session_row(r) for r in rows]
+
     def transition_onboarding_session_state(
         self,
         session_id: str,

@@ -1799,6 +1799,17 @@ class MetricsStore:
         }
 
         total_items = len(items)
+
+        # DESIGN_THESIS §11 success metric #4 — vendor activation SLA.
+        # "A new vendor went from invited to active in under five
+        # business days." Compute over the trailing 30 days so the
+        # metric reflects current operations, not the full history.
+        vendor_activation_sla = self._compute_vendor_activation_sla(
+            organization_id=organization_id,
+            now=now,
+            window_days=30,
+        )
+
         return {
             "organization_id": organization_id,
             "generated_at": now.isoformat(),
@@ -1812,6 +1823,7 @@ class MetricsStore:
                 "touchless_count": touchless_count,
                 "rate": round((touchless_count / touchless_eligible) if touchless_eligible else 0.0, 4),
             },
+            "vendor_activation_sla": vendor_activation_sla,
             "cycle_time_hours": {
                 "count": len(cycle_times_hours),
                 "avg": round(sum(cycle_times_hours) / len(cycle_times_hours), 2) if cycle_times_hours else 0.0,
@@ -1897,6 +1909,67 @@ class MetricsStore:
             "operator_metrics": operator_metrics,
             "pilot_scorecard": pilot_scorecard,
             "proof_scorecard": proof_scorecard,
+        }
+
+    # ------------------------------------------------------------------
+    # DESIGN_THESIS §11 — vendor-activation SLA metric
+    # ------------------------------------------------------------------
+
+    def _compute_vendor_activation_sla(
+        self,
+        *,
+        organization_id: str,
+        now: datetime,
+        window_days: int = 30,
+        sla_business_days: int = 5,
+    ) -> Dict[str, Any]:
+        """Measure the trailing-window vendor-activation time against
+        the §11 ≤5-business-day SLA.
+
+        Returns a stable-shape dict even when there are no activations
+        in the window, so digest builders don't need to branch on the
+        empty case — they can render "0 activations in the last 30
+        days" directly from this payload.
+        """
+        from clearledgr.core.business_days import business_days_from_iso
+
+        since_dt = now - timedelta(days=window_days)
+        since_iso = since_dt.isoformat()
+
+        completed: List[Dict[str, Any]] = []
+        try:
+            if hasattr(self, "list_completed_onboarding_sessions"):
+                completed = self.list_completed_onboarding_sessions(
+                    organization_id, since_iso=since_iso, limit=500,
+                ) or []
+        except Exception as exc:
+            logger.debug("[metrics] list_completed_onboarding_sessions failed: %s", exc)
+
+        bd_values: List[int] = []
+        within_sla = 0
+        for sess in completed:
+            invited = str(sess.get("invited_at") or "")
+            activated = str(sess.get("erp_activated_at") or "")
+            if not invited or not activated:
+                continue
+            bd = business_days_from_iso(invited, activated)
+            bd_values.append(bd)
+            if bd <= sla_business_days:
+                within_sla += 1
+
+        activation_count = len(bd_values)
+        avg_bd = round(sum(bd_values) / activation_count, 2) if activation_count else 0.0
+        within_sla_rate = round(
+            within_sla / activation_count, 4
+        ) if activation_count else 0.0
+
+        return {
+            "window_days": int(window_days),
+            "sla_business_days": int(sla_business_days),
+            "activation_count": activation_count,
+            "avg_business_days_to_active": avg_bd,
+            "within_sla_count": within_sla,
+            "within_sla_pct": round(within_sla_rate * 100.0, 2),
         }
 
     # ------------------------------------------------------------------

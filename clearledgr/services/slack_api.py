@@ -475,11 +475,27 @@ class SlackAPIClient:
         accepted_rate = SlackAPIClient._kpi_percent(agentic.get("agent_suggestion_acceptance"))
         manual_override_rate = SlackAPIClient._kpi_percent(agentic.get("agent_actions_requiring_manual_override"))
         awaiting_hours = SlackAPIClient._kpi_hours(agentic.get("awaiting_approval_time_hours"))
+
+        # §11 #4 vendor-activation SLA. Only added to the compact text
+        # when there's something to say (activation_count > 0) —
+        # zero-activation windows keep the line short.
+        vendor_sla = payload.get("vendor_activation_sla") or {}
+        activation_count = int((vendor_sla or {}).get("activation_count") or 0)
+        onboarding_segment = ""
+        if activation_count:
+            avg_bd = float(vendor_sla.get("avg_business_days_to_active") or 0.0)
+            within_pct = float(vendor_sla.get("within_sla_pct") or 0.0)
+            onboarding_segment = (
+                f" · onboarding {activation_count} activated "
+                f"(avg {avg_bd:.1f}bd, {within_pct:.0f}% on SLA)"
+            )
+
         return (
             f"AP KPI digest ({organization_id}) · "
             f"touchless {touchless:.1f}% · exceptions {exception_rate:.1f}% · "
             f"agent accepted {accepted_rate:.1f}% · "
             f"manual override {manual_override_rate:.1f}% · awaiting approval {awaiting_hours:.1f}h"
+            f"{onboarding_segment}"
         )
 
     @staticmethod
@@ -513,6 +529,32 @@ class SlackAPIClient:
                         blocker_reasons.append(f"{reason} ({count})")
         blockers_text = " · ".join(blocker_reasons) if blocker_reasons else "No blocker telemetry yet"
 
+        # DESIGN_THESIS §11 #4 — vendor-activation SLA line. Stable
+        # shape means the section renders even when there were zero
+        # activations in the window ("0 activated in the last 30
+        # days") rather than disappearing and leaving the CFO to
+        # wonder whether it was hidden or broken.
+        vendor_sla = payload.get("vendor_activation_sla") or {}
+        if not isinstance(vendor_sla, dict):
+            vendor_sla = {}
+        activation_count = int(vendor_sla.get("activation_count") or 0)
+        avg_bd = float(vendor_sla.get("avg_business_days_to_active") or 0.0)
+        within_pct = float(vendor_sla.get("within_sla_pct") or 0.0)
+        window_days = int(vendor_sla.get("window_days") or 30)
+        sla_bd = int(vendor_sla.get("sla_business_days") or 5)
+        if activation_count:
+            onboarding_text = (
+                f"*Vendor onboarding ({window_days}d window)*\n"
+                f"{activation_count} activated · "
+                f"avg {avg_bd:.1f} business days · "
+                f"{within_pct:.0f}% within {sla_bd}-business-day SLA"
+            )
+        else:
+            onboarding_text = (
+                f"*Vendor onboarding ({window_days}d window)*\n"
+                f"No vendors activated in the window."
+            )
+
         return [
             {
                 "type": "header",
@@ -540,6 +582,10 @@ class SlackAPIClient:
                         f"Manual override required: {manual_override:.1f}% · Awaiting approval: {awaiting_hours:.1f}h"
                     ),
                 },
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": onboarding_text},
             },
             {
                 "type": "context",

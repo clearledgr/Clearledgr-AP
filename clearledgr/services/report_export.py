@@ -334,36 +334,92 @@ def _generate_match_accuracy(organization_id: str, period_days: int = 30) -> Tup
     return rows, _MATCH_ACCURACY_COLUMNS
 
 
-_ONBOARDING_DURATION_COLUMNS = ["vendor", "state", "invited_at", "days_elapsed", "chase_count", "stage"]
+_ONBOARDING_DURATION_COLUMNS = [
+    "vendor", "state", "invited_at", "activated_at",
+    "days_elapsed", "business_days_to_active", "within_5bd_sla",
+    "chase_count", "stage",
+]
 
 def _generate_onboarding_duration(organization_id: str) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Vendor onboarding duration — how long each vendor takes to onboard."""
+    """Vendor onboarding duration report — DESIGN_THESIS §11 success metric #4.
+
+    Includes both in-flight (pending) and completed activations so a
+    CFO or Controller scanning the report can answer both "who's
+    stuck" and "how fast are successful onboardings actually landing".
+    Completed rows carry ``business_days_to_active`` (Mon–Fri only,
+    weekend-aware) so the ≤5-business-day SLA the thesis names is
+    directly readable from the column.
+    """
+    from clearledgr.core.business_days import business_days_from_iso
+
     db = get_db()
-    sessions = []
+    pending: List[Dict[str, Any]] = []
+    completed: List[Dict[str, Any]] = []
     try:
         if hasattr(db, "list_pending_onboarding_sessions"):
-            sessions = db.list_pending_onboarding_sessions(organization_id)
+            pending = db.list_pending_onboarding_sessions(organization_id) or []
+    except Exception:
+        pass
+    try:
+        if hasattr(db, "list_completed_onboarding_sessions"):
+            completed = db.list_completed_onboarding_sessions(organization_id) or []
     except Exception:
         pass
 
     now = datetime.now(timezone.utc)
-    rows = []
-    for s in sessions:
+    rows: List[Dict[str, Any]] = []
+
+    # Completed activations first — they carry the SLA-relevant
+    # business_days_to_active field. Ordered newest-first already by
+    # the store; preserve that so the top of the report shows the
+    # most recent activations.
+    for s in completed:
         invited = s.get("invited_at") or ""
-        days = 0
+        activated = s.get("erp_activated_at") or ""
+        calendar_days = 0
+        bd_to_active = 0
+        if invited and activated:
+            try:
+                start = datetime.fromisoformat(invited.replace("Z", "+00:00"))
+                end = datetime.fromisoformat(activated.replace("Z", "+00:00"))
+                calendar_days = max(0, (end - start).days)
+            except (ValueError, TypeError):
+                pass
+            bd_to_active = business_days_from_iso(invited, activated)
+        rows.append({
+            "vendor": s.get("vendor_name") or "",
+            "state": "active",
+            "invited_at": invited[:10] if invited else "",
+            "activated_at": activated[:10] if activated else "",
+            "days_elapsed": calendar_days,
+            "business_days_to_active": bd_to_active,
+            "within_5bd_sla": "yes" if (bd_to_active and bd_to_active <= 5) else "no",
+            "chase_count": s.get("chase_count") or 0,
+            "stage": "Active",
+        })
+
+    # In-flight sessions below. business_days_to_active isn't
+    # meaningful yet (no activation date) — leave blank so the column
+    # aggregator doesn't mistake an empty cell for a zero-day SLA hit.
+    for s in pending:
+        invited = s.get("invited_at") or ""
+        calendar_days = 0
         if invited:
             try:
                 dt = datetime.fromisoformat(invited.replace("Z", "+00:00"))
-                days = (now - dt).days
+                calendar_days = max(0, (now - dt).days)
             except (ValueError, TypeError):
                 pass
         rows.append({
             "vendor": s.get("vendor_name") or "",
             "state": s.get("state") or "",
             "invited_at": invited[:10] if invited else "",
-            "days_elapsed": days,
+            "activated_at": "",
+            "days_elapsed": calendar_days,
+            "business_days_to_active": "",
+            "within_5bd_sla": "",
             "chase_count": s.get("chase_count") or 0,
-            "stage": s.get("state", "").replace("_", " "),
+            "stage": (s.get("state") or "").replace("_", " "),
         })
     return rows, _ONBOARDING_DURATION_COLUMNS
 
