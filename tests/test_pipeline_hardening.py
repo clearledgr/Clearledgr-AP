@@ -84,10 +84,17 @@ class TestSlackCallbackRetry:
 
 
 class TestTeamsCallbackRetry:
-    """Teams card update retry on failure."""
+    """Teams card update retry on failure.
 
-    def test_teams_failure_enqueues(self, db):
+    §12 / §6.8 — Teams is disabled in V1. These tests exercise the
+    post-V1 retry behaviour where the flag is on; each method opts in
+    via monkeypatch. The disabled-flag-returns-True short-circuit is
+    covered separately in test_v1_boundary_flags.py.
+    """
+
+    def test_teams_failure_enqueues(self, db, monkeypatch):
         """Failed Teams card update should enqueue for retry."""
+        monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
         from clearledgr.services.slack_notifications import _retry_teams_card_update
         payload = {
             "service_url": "https://smba.trafficmanager.net/x",
@@ -105,8 +112,9 @@ class TestTeamsCallbackRetry:
             result = asyncio.run(_retry_teams_card_update(payload))
         assert result is False
 
-    def test_teams_retry_success(self):
+    def test_teams_retry_success(self, monkeypatch):
         """Successful Teams card update retry returns True."""
+        monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
         from clearledgr.services.slack_notifications import _retry_teams_card_update
         payload = {
             "service_url": "https://smba.trafficmanager.net/x",
@@ -125,8 +133,9 @@ class TestTeamsCallbackRetry:
         assert result is True
         mock_client.update_activity.assert_called_once()
 
-    def test_teams_retry_missing_fields(self):
+    def test_teams_retry_missing_fields(self, monkeypatch):
         """Retry with missing required fields returns False."""
+        monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
         from clearledgr.services.slack_notifications import _retry_teams_card_update
         result = asyncio.run(_retry_teams_card_update({"service_url": "", "conversation_id": "", "activity_id": ""}))
         assert result is False

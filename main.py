@@ -539,8 +539,48 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
 )
 
 
+# §12 #6 / §6.8 — paths that only make sense when the corresponding
+# V1 boundary flag is on. Kept in the allowlist sets so the strict-
+# profile snapshot tests still pass without a second exception list,
+# but stripped out at request time when the flag is off. Belt-and-
+# braces: the route handlers themselves also return 404 via the
+# feature_flags dependencies, so a flag misconfiguration at either
+# layer still produces the same answer.
+_OUTLOOK_GATED_PATHS = frozenset({
+    "/outlook/connect/start",
+    "/outlook/callback",
+    "/outlook/disconnect",
+    "/outlook/status",
+    "/outlook/webhook",
+})
+
+_TEAMS_GATED_PATHS = frozenset({
+    "/api/workspace/integrations/teams/test",
+    "/api/workspace/integrations/teams/webhook",
+    "/teams/invoices/interactive",
+})
+
+_TEAMS_GATED_PREFIXES = ("/teams/invoices",)
+
+
 def _is_strict_profile_allowed_path(path: str) -> bool:
+    from clearledgr.core.feature_flags import is_outlook_enabled, is_teams_enabled
+
     normalized = path if path.startswith("/") else f"/{path}"
+
+    # Gate Outlook paths off the allowlist when the V1 flag is off.
+    # The middleware then 404s the request before it reaches the
+    # router-level dependency — symmetric with workspace shell's env
+    # gating and keeps the surface invisible to procurement scanning.
+    if normalized in _OUTLOOK_GATED_PATHS and not is_outlook_enabled():
+        return False
+    if normalized in _TEAMS_GATED_PATHS and not is_teams_enabled():
+        return False
+    if not is_teams_enabled():
+        for prefix in _TEAMS_GATED_PREFIXES:
+            if normalized == prefix or normalized.startswith(f"{prefix}/"):
+                return False
+
     if normalized in STRICT_PROFILE_ALLOWED_EXACT_PATHS:
         return True
     if normalized in STRICT_PROFILE_ALLOWED_OPS_PATHS:
@@ -570,6 +610,23 @@ def _is_strict_profile_allowed_path(path: str) -> bool:
     return False
 
 
+def _is_flag_gated_path(path: str) -> bool:
+    """Paths whose allowlist membership toggles at runtime via
+    feature flags (Outlook, Teams). We keep them registered on the
+    router unconditionally and let the LegacySurfaceGuardMiddleware
+    do the gating per-request — otherwise flipping the flag would
+    require restarting the process for routes to come back.
+    """
+    if path in _OUTLOOK_GATED_PATHS:
+        return True
+    if path in _TEAMS_GATED_PATHS:
+        return True
+    for prefix in _TEAMS_GATED_PREFIXES:
+        if path == prefix or path.startswith(f"{prefix}/"):
+            return True
+    return False
+
+
 def _apply_runtime_surface_profile() -> None:
     """Apply strict AP-v1 route profile by mutating mounted routes."""
     full_routes = getattr(app.state, "_full_route_table", None)
@@ -580,8 +637,15 @@ def _apply_runtime_surface_profile() -> None:
     selected_routes = []
     for route in full_routes:
         route_path = getattr(route, "path", None)
-        if isinstance(route_path, str) and not _is_strict_profile_allowed_path(route_path):
-            continue
+        if isinstance(route_path, str):
+            # Flag-gated paths stay mounted — the middleware evaluates
+            # them per-request so FEATURE_OUTLOOK_ENABLED / FEATURE_
+            # TEAMS_ENABLED can be flipped without a process restart.
+            if _is_flag_gated_path(route_path):
+                selected_routes.append(route)
+                continue
+            if not _is_strict_profile_allowed_path(route_path):
+                continue
         selected_routes.append(route)
 
     contract = _runtime_surface_contract()

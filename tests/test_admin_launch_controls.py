@@ -264,6 +264,8 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
 
 
 def test_admin_teams_webhook_config_and_test(client, db, monkeypatch):
+    # §12 / §6.8 — Teams admin config exercises the post-V1 behaviour.
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     save = client.post(
         "/api/workspace/integrations/teams/webhook",
         json={

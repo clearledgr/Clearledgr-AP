@@ -1,4 +1,12 @@
-"""Teams interactive handlers for AP invoice approvals."""
+"""Teams interactive handlers for AP invoice approvals.
+
+§12 / §6.8 — Teams is not shipped in V1. All routes in this module
+are gated behind ``FEATURE_TEAMS_ENABLED``; without it, every endpoint
+returns 404 with a reason code pointing at the V1 boundary. Slack is
+the V1 approval surface; Teams lights up post-launch. The handlers
+stay intact because the adaptive-card contracts are worth preserving
+— this is a deployment boundary, not a rewrite.
+"""
 from __future__ import annotations
 
 import json
@@ -6,16 +14,31 @@ import hashlib
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
     resolve_ap_correlation_id,
 )
 from clearledgr.core.database import get_db
+from clearledgr.core.feature_flags import is_teams_enabled, teams_disabled_payload
 
 
-router = APIRouter(prefix="/teams/invoices", tags=["teams-invoices"])
+def _require_teams_enabled() -> None:
+    """Dependency applied to every Teams route — 404s the whole
+    surface when the V1 flag is off. Runs before any handler body so
+    no Teams interactive callback can be processed in a V1
+    deployment.
+    """
+    if not is_teams_enabled():
+        raise HTTPException(status_code=404, detail=teams_disabled_payload())
+
+
+router = APIRouter(
+    prefix="/teams/invoices",
+    tags=["teams-invoices"],
+    dependencies=[Depends(_require_teams_enabled)],
+)
 logger = logging.getLogger(__name__)
 
 

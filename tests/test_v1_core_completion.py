@@ -119,6 +119,11 @@ def test_vendor_followup_endpoint_requires_auth(client):
 
 
 def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, client, db):
+    # §12 / §6.8 — Teams is disabled in V1 by default. This test
+    # exercises the Teams-interactive derivation path (post-V1
+    # behaviour), so opt into the flag explicitly.
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
+
     from datetime import datetime, timezone
 
     from clearledgr.core.auth import TokenData, get_current_user

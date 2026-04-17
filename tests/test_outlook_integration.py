@@ -268,7 +268,12 @@ class TestOutlookAutopilot:
 
 class TestOutlookRoutes:
     @pytest.fixture()
-    def client(self, db, outlook_env):
+    def client(self, db, outlook_env, monkeypatch):
+        # §12 #6 — Outlook is disabled in V1 by default. These route
+        # tests exercise the post-V1 behaviour where the flag is on,
+        # so enable it explicitly for the duration of this class.
+        monkeypatch.setenv("FEATURE_OUTLOOK_ENABLED", "true")
+
         from main import app
         from clearledgr.core.auth import TokenData, get_current_user
 

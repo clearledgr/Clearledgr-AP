@@ -1894,7 +1894,18 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         budget_summary: Dict[str, Any],
         extra_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Best-effort Teams delivery for approval/budget decisions."""
+        """Best-effort Teams delivery for approval/budget decisions.
+
+        §12 / §6.8 — skipped when Teams is disabled in V1. Returning a
+        structured "skipped" status (not raising) means the Slack
+        approval path runs uninterrupted and the invoice workflow's
+        error handling doesn't treat the absence of a Teams card as a
+        failure.
+        """
+        from clearledgr.core.feature_flags import is_teams_enabled
+        if not is_teams_enabled():
+            return {"status": "skipped", "reason": "teams_disabled_in_v1"}
+
         client = self.teams_client
         if client is None:
             return {"status": "skipped", "reason": "teams_client_unavailable"}

@@ -1241,6 +1241,7 @@ def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, clie
 
 
 def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client, db):
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     captured = []
     original_append = db.append_ap_audit_event
 
@@ -1268,6 +1269,7 @@ def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client
 
 
 def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     captured = []
     original_append = db.append_ap_audit_event
 
@@ -1301,6 +1303,7 @@ def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
 
 
 def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_stale(monkeypatch, client, db):
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     item = _create_ap_item(db, gmail_id="thread-teams-1")
     runtime = _RuntimeStub()
     monkeypatch.setattr(
@@ -1368,6 +1371,7 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
 
 
 def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch, client, db):
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     item = _create_ap_item(db, gmail_id="thread-teams-superseded")
     db.update_ap_item(item["id"], state="approved")
 
@@ -1447,6 +1451,10 @@ def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(mo
 
 
 def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(monkeypatch, client, db):
+    # §12 / §6.8 — feature-flag enables the interactive route so the
+    # rollout-control path can be exercised (the rollout control is a
+    # per-org toggle separate from the V1 surface gate).
+    monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     item = _create_ap_item(db, gmail_id="thread-teams-blocked")
     db.ensure_organization("default", organization_name="default")
     db.update_organization(

@@ -23,10 +23,21 @@ async def run_deferred_startup(app: Any) -> None:
         logger.warning("Gmail autopilot not started: %s", exc)
 
     try:
-        from clearledgr.services.outlook_autopilot import start_outlook_autopilot
+        # §12 #6 — Outlook is not shipped in V1. The autopilot loop
+        # stays in the tree as post-launch scaffolding; flag gates
+        # whether it actually starts. Without this gate any deployment
+        # that sets MICROSOFT_CLIENT_ID would silently bring Outlook
+        # live, which breaks the V1 positioning the thesis is explicit
+        # about.
+        from clearledgr.core.feature_flags import is_outlook_enabled
 
-        await asyncio.wait_for(start_outlook_autopilot(app), timeout=10.0)
-        logger.info("Outlook autopilot started")
+        if not is_outlook_enabled():
+            logger.info("Outlook autopilot skipped — §12 #6 V1 boundary (FEATURE_OUTLOOK_ENABLED not set)")
+        else:
+            from clearledgr.services.outlook_autopilot import start_outlook_autopilot
+
+            await asyncio.wait_for(start_outlook_autopilot(app), timeout=10.0)
+            logger.info("Outlook autopilot started")
     except asyncio.TimeoutError:
         logger.warning("Outlook autopilot startup timed out (10s) — skipping")
     except Exception as exc:  # noqa: BLE001

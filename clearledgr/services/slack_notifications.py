@@ -442,6 +442,13 @@ async def _retry_slack_response_url(payload: dict) -> bool:
 
 async def _retry_teams_card_update(payload: dict) -> bool:
     """Retry a failed Teams card update."""
+    # §12 / §6.8 — Teams disabled in V1. Any enqueued retry rows from
+    # pre-flag deployments simply succeed-as-skipped so the retry
+    # worker drains the queue cleanly.
+    from clearledgr.core.feature_flags import is_teams_enabled
+    if not is_teams_enabled():
+        return True
+
     service_url = payload.get("service_url", "")
     conversation_id = payload.get("conversation_id", "")
     activity_id = payload.get("activity_id", "")

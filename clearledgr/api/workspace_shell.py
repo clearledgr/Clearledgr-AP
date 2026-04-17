@@ -550,6 +550,24 @@ def _resolve_erp_deep_link_id(conn_row: Dict[str, Any]) -> Optional[str]:
 
 
 def _teams_status_for_org(organization_id: str) -> Dict[str, Any]:
+    # §12 / §6.8 — when Teams is disabled in V1, the bootstrap
+    # response reports a terminal "disabled_in_v1" status so the
+    # extension's integrations UI shows a clear "post-launch" label
+    # instead of a "Connect Teams" CTA that would 404 when clicked.
+    from clearledgr.core.feature_flags import is_teams_enabled
+    if not is_teams_enabled():
+        return {
+            "name": "teams",
+            "connected": False,
+            "status": "disabled_in_v1",
+            "mode": "per_org",
+            "webhook_configured": False,
+            "webhook_url": "",
+            "managed_by": "none",
+            "last_sync_at": None,
+            "reason": "DESIGN_THESIS §12 — Teams ships post-launch; Slack is the V1 approval surface.",
+        }
+
     db = get_db()
     integration = db.get_organization_integration(organization_id, "teams") or {}
     metadata = integration.get("metadata") if isinstance(integration.get("metadata"), dict) else {}
@@ -602,7 +620,11 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
         })
     if not integrations["slack"]["connected"]:
         required_actions.append({"code": "connect_slack", "message": "Connect Slack workspace"})
-    if not integrations["teams"]["connected"]:
+    # §12 / §6.8 — don't nag admins to connect Teams when it's scoped
+    # out of V1. Slack is the V1 approval surface and suffices on its
+    # own; Teams onboarding reappears when the post-launch flag flips.
+    from clearledgr.core.feature_flags import is_teams_enabled
+    if is_teams_enabled() and not integrations["teams"]["connected"]:
         required_actions.append({"code": "connect_teams", "message": "Connect Microsoft Teams webhook"})
     if not integrations["erp"]["connected"]:
         required_actions.append({"code": "connect_erp", "message": "Connect ERP system"})
@@ -1285,6 +1307,13 @@ def set_teams_webhook(
     request: TeamsWebhookRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    # §12 / §6.8 — Teams is scoped post-V1. Admins cannot wire a Teams
+    # webhook in a V1 deployment regardless of role, so the admin UI
+    # can't accidentally connect a surface we don't ship yet.
+    from clearledgr.core.feature_flags import is_teams_enabled, teams_disabled_payload
+    if not is_teams_enabled():
+        raise HTTPException(status_code=404, detail=teams_disabled_payload())
+
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
     webhook_url = str(request.webhook_url or "").strip()
@@ -1307,6 +1336,10 @@ def test_teams_webhook(
     request: TeamsTestRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    from clearledgr.core.feature_flags import is_teams_enabled, teams_disabled_payload
+    if not is_teams_enabled():
+        raise HTTPException(status_code=404, detail=teams_disabled_payload())
+
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
     client = _teams_api_client_class().from_env(org_id)

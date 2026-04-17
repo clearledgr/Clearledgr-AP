@@ -1,4 +1,11 @@
-"""Outlook / Microsoft 365 OAuth and webhook routes."""
+"""Outlook / Microsoft 365 OAuth and webhook routes.
+
+§12 #6 — Outlook is not shipped in V1. All routes in this module are
+gated behind the ``FEATURE_OUTLOOK_ENABLED`` flag; without it, every
+endpoint returns 404 with a reason code pointing at the V1 boundary.
+The code stays intact for the post-V1 moment when Outlook support
+becomes an intentional product decision.
+"""
 from __future__ import annotations
 
 import logging
@@ -6,15 +13,31 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.core.feature_flags import is_outlook_enabled, outlook_disabled_payload
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/outlook", tags=["outlook"])
+
+def _require_outlook_enabled() -> None:
+    """Dependency applied to every Outlook route — 404s the whole
+    surface when the V1 flag is off. Runs before any handler body so
+    no OAuth, token exchange, or webhook subscription can fire from a
+    V1 deployment.
+    """
+    if not is_outlook_enabled():
+        raise HTTPException(status_code=404, detail=outlook_disabled_payload())
+
+
+router = APIRouter(
+    prefix="/outlook",
+    tags=["outlook"],
+    dependencies=[Depends(_require_outlook_enabled)],
+)
 
 
 # ---------------------------------------------------------------------------
