@@ -209,6 +209,8 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             "/api/saved-views",
             "/api/box-links",
             "/settings",
+            # DESIGN_THESIS.md §4.07 — frontend perf telemetry
+            "/api/ui",
         }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.

@@ -540,11 +540,13 @@ async function ensureGmailAuthWithBackend(interactive = true) {
     // without re-running the full OAuth → register dance every minute.
     try {
       const cacheTtlMs = Math.max(60, Number(backendExpiresIn) || 0) * 1000;
+      const cachedBackendUrl = await getBackendUrl();
       await chrome.storage.local.set({
         cl_backend_token: backendAccessToken,
         cl_backend_token_expiry: Date.now() + cacheTtlMs,
         cl_organization_id: organizationId,
         cl_user_email: profile?.email || null,
+        cl_backend_url: cachedBackendUrl || null,
       });
     } catch (_) {}
 

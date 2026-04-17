@@ -5,6 +5,12 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { perfMarkStart, perfMarkDone } from '../../utils/perf-budget.js';
+
+// §4.07 Kanban first-paint budget. Module-scoped so the clock starts on
+// the first render of the route, not on every internal re-render. Reset
+// on unmount.
+let _kanbanPerfStarted = false;
 import { fmtDate, fmtDateTime, useAction } from '../route-helpers.js';
 import ActionDialog, { useActionDialog } from '../../components/ActionDialog.js';
 import { BatchOps, BATCH_OPS_CSS } from '../../components/BatchOps.js';
@@ -238,6 +244,11 @@ function buildResetFilters() {
 }
 
 export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
+  if (!_kanbanPerfStarted) {
+    _kanbanPerfStarted = true;
+    perfMarkStart('kanban');
+  }
+
   const pipelineScope = useMemo(() => getPipelineScope(orgId, userEmail), [orgId, userEmail]);
   const actorRole = bootstrap?.current_user?.role || 'operator';
   const [items, setItems] = useState([]);
@@ -258,6 +269,14 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewsOpen, setViewsOpen] = useState(false);
   const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+
+  // §4.07: close the Kanban first-paint budget once the first render
+  // commits (items may still be loading — "first paint" is the Kanban
+  // skeleton being visible, not data settling, per the thesis wording).
+  useEffect(() => {
+    perfMarkDone('kanban', { context: { org_id: orgId || 'default' } });
+    return () => { _kanbanPerfStarted = false; };
+  }, []);
 
   // §5.1: Fetch pipeline stage config from the object model API
   useEffect(() => {

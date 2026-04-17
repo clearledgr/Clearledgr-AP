@@ -17,6 +17,7 @@ import htm from 'htm';
 import { ClearledgrQueueManager } from '../queue-manager.js';
 import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
+import { perfMarkStart } from './utils/perf-budget.js';
 import OnboardingFlow from './components/OnboardingFlow.js';
 import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl, formatAmount } from './utils/formatters.js';
 import { resolveRecordRouteId } from './utils/record-route.js';
@@ -755,6 +756,10 @@ function registerThreadHandler() {
       return null;
     };
 
+    // §4.07 sidebar-load budget — clock starts the moment a thread opens,
+    // ends when SidebarApp paints a ThreadSidebar with a resolved Box.
+    perfMarkStart('sidebar');
+
     getId()
       .then(async (threadId) => {
         void setSidebarPanelOpen(true);
@@ -900,6 +905,14 @@ function injectInvoiceBanner(threadView, item) {
 function registerThreadRowLabels() {
   if (!sdk?.Lists || typeof sdk.Lists.registerThreadRowViewHandler !== 'function') return;
 
+  // §4.07 inbox-labels budget: measure from the moment the inbox list
+  // hands us a row to the moment we commit a label on it. The budget
+  // applies to the happy case (user opens inbox, labels appear before
+  // they finish reading subjects) so we only measure the very first
+  // decorated row per session — per-row marks would flood telemetry
+  // and dilute the signal.
+  let firstRowPerfFired = false;
+
   sdk.Lists.registerThreadRowViewHandler((threadRowView) => {
     const getId = async () => {
       if (typeof threadRowView.getThreadIDAsync === 'function') {
@@ -907,6 +920,8 @@ function registerThreadRowLabels() {
       }
       return null;
     };
+
+    if (!firstRowPerfFired) perfMarkStart('inbox_labels');
 
     getId()
       .then((threadId) => {
@@ -924,6 +939,10 @@ function registerThreadRowLabels() {
             foregroundColor: '#ffffff',
             backgroundColor: color,
           });
+          if (!firstRowPerfFired) {
+            firstRowPerfFired = true;
+            perfMarkDone('inbox_labels', { context: { thread_id: threadId } });
+          }
         } catch (_) { /* ignore */ }
 
         // Vendor + amount label (secondary info)

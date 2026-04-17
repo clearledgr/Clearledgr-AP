@@ -281,6 +281,10 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     # state, autonomy rules. All routes are scoped to /settings/{org_id}/*
     # and enforce org access in each handler.
     "/settings",
+    # DESIGN_THESIS.md §4.07 — frontend performance telemetry. Beacons
+    # are unauthenticated by design (navigator.sendBeacon cannot set
+    # headers) and contain only surface name + latency, no PII.
+    "/api/ui",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -1095,6 +1099,10 @@ app.include_router(ap_items_router)
 # AP audit feeds for admin/activity surfaces
 from clearledgr.api.ap_audit import router as ap_audit_router
 app.include_router(ap_audit_router)
+
+# Frontend performance telemetry (DESIGN_THESIS.md §4.07)
+from clearledgr.api.ui_perf import router as ui_perf_router
+app.include_router(ui_perf_router)
 
 # AP business policy management (versioned + auditable)
 from clearledgr.api.ap_policies import router as ap_policies_router

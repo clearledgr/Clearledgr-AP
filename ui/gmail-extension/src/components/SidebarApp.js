@@ -3,6 +3,7 @@ import { h, Component } from 'preact';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import htm from 'htm';
 import store from '../utils/store.js';
+import { perfMarkStart, perfMarkDone } from '../utils/perf-budget.js';
 import { SIDEBAR_CSS, STATE_PILL_CSS } from '../styles.js';
 import ActionDialog, { useActionDialog } from './ActionDialog.js';
 import { ThreadSidebar } from './ThreadSidebar.js';
@@ -1856,6 +1857,19 @@ export default function SidebarApp({ queueManager }) {
   const currentIndex = s.getPrimaryItemIndex();
   const authRequired = s.scanStatus?.state === 'auth_required';
   const hasQueueNavigation = Boolean(item && queueCount > 1 && currentIndex >= 0);
+
+  // §4.07 sidebar-load budget closes when the Box data for the opened
+  // thread resolves (transition from no-item to item-present). The start
+  // mark is set in inboxsdk-layer.js at thread-open.
+  const sidebarPerfFiredFor = useRef(null);
+  useEffect(() => {
+    const itemId = item?.id ? String(item.id) : '';
+    if (itemId && sidebarPerfFiredFor.current !== itemId) {
+      sidebarPerfFiredFor.current = itemId;
+      perfMarkDone('sidebar', { context: { ap_item_id: itemId } });
+    }
+    if (!itemId) sidebarPerfFiredFor.current = null;
+  }, [item?.id]);
   const pipelineScope = {
     orgId: queueManager?.runtimeConfig?.organizationId || 'default',
     userEmail: queueManager?.runtimeConfig?.userEmail || '',

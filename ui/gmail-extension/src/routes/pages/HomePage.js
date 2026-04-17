@@ -6,6 +6,13 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { perfMarkStart, perfMarkDone } from '../../utils/perf-budget.js';
+
+// §4.07: module-scoped flag so the "home interactive" clock starts the
+// first time the route renders HomePage, not on every re-render inside
+// a single mount. Reset when the component unmounts so the next
+// navigation from Home → somewhere → Home is measured fresh.
+let _homePerfStarted = false;
 import {
   integrationByName,
   fmtDateTime,
@@ -282,6 +289,11 @@ export default function HomePage({
   oauthBridge,
   navigate,
 }) {
+  if (!_homePerfStarted) {
+    _homePerfStarted = true;
+    perfMarkStart('home');
+  }
+
   const gmail = integrationByName(bootstrap, 'gmail');
   const slack = integrationByName(bootstrap, 'slack');
   const teams = integrationByName(bootstrap, 'teams');
@@ -348,6 +360,13 @@ export default function HomePage({
     }
     navigate('clearledgr/connections');
   });
+
+  // §4.07: fire the home-interactive boundary on first commit — this
+  // runs AFTER Preact paints the tree, so it captures mount+paint time.
+  useEffect(() => {
+    perfMarkDone('home', { context: { org_id: orgId || 'default' } });
+    return () => { _homePerfStarted = false; };
+  }, []);
 
   useEffect(() => {
     setPipelinePrefs(readPipelinePreferences(pipelineScope));

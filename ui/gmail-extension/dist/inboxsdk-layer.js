@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:e0db38491ef1617fdfaf50e885e0394c72aadf2ec47bba1106bb37a469a0a386 */
+/* clearledgr-source-fingerprint:d6cd1404280bb808aa986d9392e6ffd2f8defbc8de8ffbf5f99ede1977f58a8e */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -55370,6 +55370,80 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     return typeof t5 == "function" ? t5(n3) : t5;
   }
 
+  // src/utils/perf-budget.js
+  var PERF_BUDGETS_MS = {
+    sidebar: 2000,
+    kanban: 1000,
+    home: 1000,
+    inbox_labels: 500
+  };
+  var _activeMarks = new Map;
+  function perfMarkStart(key) {
+    if (!key)
+      return;
+    try {
+      _activeMarks.set(key, performance && performance.now ? performance.now() : Date.now());
+    } catch (_2) {
+      _activeMarks.set(key, Date.now());
+    }
+  }
+  function perfMarkDone2(key, { context } = {}) {
+    if (!key)
+      return null;
+    const started = _activeMarks.get(key);
+    if (started == null)
+      return null;
+    _activeMarks.delete(key);
+    let now;
+    try {
+      now = performance && performance.now ? performance.now() : Date.now();
+    } catch (_2) {
+      now = Date.now();
+    }
+    const latencyMs = Math.max(0, Math.round(now - started));
+    const budget = PERF_BUDGETS_MS[key];
+    const breached = budget != null && latencyMs > budget;
+    const line = `[cl.perf] ${key}=${latencyMs}ms${budget != null ? ` (budget ${budget}ms)` : ""}${breached ? " — BREACH" : ""}`;
+    try {
+      if (breached)
+        console.warn(line, context || undefined);
+      else if (console.debug)
+        console.debug(line);
+    } catch (_2) {}
+    _reportPerf({ surface: key, latency_ms: latencyMs, budget_ms: budget || 0, breached, context: context || null });
+    return latencyMs;
+  }
+  async function _reportPerf(payload) {
+    try {
+      const backendUrl = await _resolveBackendUrl();
+      if (!backendUrl)
+        return;
+      const body = JSON.stringify(payload);
+      const url = `${backendUrl}/api/ui/perf`;
+      if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+        const blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon(url, blob);
+        return;
+      }
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true
+      }).catch(() => {});
+    } catch (_2) {}
+  }
+  async function _resolveBackendUrl() {
+    try {
+      if (typeof chrome === "undefined" || !chrome?.storage?.local)
+        return null;
+      const { cl_backend_url } = await chrome.storage.local.get(["cl_backend_url"]);
+      return cl_backend_url || null;
+    } catch (_2) {
+      return null;
+    }
+  }
+
   // src/styles.js
   var SIDEBAR_CSS = `
       /* Fonts loaded via <link> tags in injectFonts() — no @import needed */
@@ -62360,6 +62434,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const currentIndex = s3.getPrimaryItemIndex();
     const authRequired = s3.scanStatus?.state === "auth_required";
     const hasQueueNavigation = Boolean(item && queueCount > 1 && currentIndex >= 0);
+    const sidebarPerfFiredFor = A2(null);
+    y2(() => {
+      const itemId = item?.id ? String(item.id) : "";
+      if (itemId && sidebarPerfFiredFor.current !== itemId) {
+        sidebarPerfFiredFor.current = itemId;
+        perfMarkDone2("sidebar", { context: { ap_item_id: itemId } });
+      }
+      if (!itemId)
+        sidebarPerfFiredFor.current = null;
+    }, [item?.id]);
     const pipelineScope = {
       orgId: queueManager?.runtimeConfig?.organizationId || "default",
       userEmail: queueManager?.runtimeConfig?.userEmail || ""
@@ -65707,6 +65791,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/HomePage.js
+  var _homePerfStarted = false;
   var html6 = htm_module_default.bind(_);
   var HOME_PIPELINE_SHORTCUTS = [
     "waiting_on_approval",
@@ -65820,6 +65905,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     oauthBridge,
     navigate
   }) {
+    if (!_homePerfStarted) {
+      _homePerfStarted = true;
+      perfMarkStart("home");
+    }
     const gmail = integrationByName(bootstrap, "gmail");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
@@ -65873,6 +65962,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       navigate("clearledgr/connections");
     });
+    y2(() => {
+      perfMarkDone2("home", { context: { org_id: orgId || "default" } });
+      return () => {
+        _homePerfStarted = false;
+      };
+    }, []);
     y2(() => {
       setPipelinePrefs(readPipelinePreferences(pipelineScope));
     }, [pipelineScope]);
@@ -70251,6 +70346,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/PipelinePage.js
+  var _kanbanPerfStarted = false;
   var html16 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY = "clearledgr_active_ap_item_id";
   var STATE_STYLES = {
@@ -70371,6 +70467,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
   }
   function PipelinePage({ api, bootstrap, toast, orgId, userEmail, navigate }) {
+    if (!_kanbanPerfStarted) {
+      _kanbanPerfStarted = true;
+      perfMarkStart("kanban");
+    }
     const pipelineScope = T2(() => getPipelineScope2(orgId, userEmail), [orgId, userEmail]);
     const actorRole = bootstrap?.current_user?.role || "operator";
     const [items, setItems] = d2([]);
@@ -70388,6 +70488,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [filtersOpen, setFiltersOpen] = d2(false);
     const [viewsOpen, setViewsOpen] = d2(false);
     const bootstrapPipelinePrefs = getBootstrappedPipelinePreferences(bootstrap);
+    y2(() => {
+      perfMarkDone2("kanban", { context: { org_id: orgId || "default" } });
+      return () => {
+        _kanbanPerfStarted = false;
+      };
+    }, []);
     y2(() => {
       api(`/api/pipelines/ap-invoices?organization_id=${encodeURIComponent(orgId)}`, { silent: true }).then((data) => {
         if (Array.isArray(data?.stages) && data.stages.length > 0) {
@@ -75447,6 +75553,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         return null;
       };
+      perfMarkStart("sidebar");
       getId().then(async (threadId) => {
         setSidebarPanelOpen(true);
         store_default.update({ currentThreadId: threadId });
@@ -75564,6 +75671,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function registerThreadRowLabels() {
     if (!sdk?.Lists || typeof sdk.Lists.registerThreadRowViewHandler !== "function")
       return;
+    let firstRowPerfFired = false;
     sdk.Lists.registerThreadRowViewHandler((threadRowView) => {
       const getId = async () => {
         if (typeof threadRowView.getThreadIDAsync === "function") {
@@ -75571,6 +75679,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }
         return null;
       };
+      if (!firstRowPerfFired)
+        perfMarkStart("inbox_labels");
       getId().then((threadId) => {
         if (!threadId || store_default.rowDecorated.has(threadId))
           return;
@@ -75586,6 +75696,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             foregroundColor: "#ffffff",
             backgroundColor: color
           });
+          if (!firstRowPerfFired) {
+            firstRowPerfFired = true;
+            perfMarkDone("inbox_labels", { context: { thread_id: threadId } });
+          }
         } catch (_2) {}
         const vendor = item.vendor_name || item.vendor || "";
         const amount = Number(item.amount);

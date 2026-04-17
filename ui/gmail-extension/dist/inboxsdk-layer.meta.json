@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-17T00:49:55.774Z",
-  "fingerprint": "e0db38491ef1617fdfaf50e885e0394c72aadf2ec47bba1106bb37a469a0a386",
+  "generated_at": "2026-04-17T01:00:07.075Z",
+  "fingerprint": "d6cd1404280bb808aa986d9392e6ffd2f8defbc8de8ffbf5f99ede1977f58a8e",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -46,6 +46,7 @@
     "src/utils/document-types.js",
     "src/utils/formatters.js",
     "src/utils/inbox-route.js",
+    "src/utils/perf-budget.js",
     "src/utils/record-route.js",
     "src/utils/roles.js",
     "src/utils/store.js",
