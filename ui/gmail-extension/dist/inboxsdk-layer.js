@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:fe6220b029f6dc00a53d9914a33ab144f26b3e5f1aed395c73ac6b0f3f19cae0 */
+/* clearledgr-source-fingerprint:1fe610b35557704956fe04656add8a079c8ec66d44f4cf025d448058cb4a1d49 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -62740,6 +62740,56 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
+  function CreateWorkspace({ onContinue, pending, errorMessage, defaultName }) {
+    const [name, setName] = d2(defaultName || "");
+    const trimmed = name.trim();
+    return html4`
+    <div class="cl-onboard-overlay">
+      <div class="cl-onboard-modal" style="max-width:440px;">
+        <div style="text-align:center;margin-bottom:20px;">
+          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Name your workspace</h2>
+          <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
+            One workspace per finance team. Use your company name — you can change it later.
+          </p>
+        </div>
+        ${errorMessage ? html4`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ""}
+        <label style="display:block;font:500 12px/1.4 'DM Sans',sans-serif;color:#475569;margin-bottom:6px;">
+          Workspace name
+        </label>
+        <input
+          type="text"
+          value=${name}
+          onInput=${(e3) => setName(e3.target.value)}
+          placeholder="Acme Finance"
+          autofocus
+          onKeyDown=${(e3) => {
+      if (e3.key === "Enter" && trimmed && !pending) {
+        onContinue(trimmed);
+      }
+    }}
+          style="
+            display:block;width:100%;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;
+            font:400 14px/1.4 'DM Sans',sans-serif;color:#0A1628;box-sizing:border-box;margin-bottom:20px;
+          "
+        />
+        <button
+          class="cl-onboard-primary-btn"
+          onClick=${() => trimmed && onContinue(trimmed)}
+          disabled=${!trimmed || pending}
+        >
+          ${pending ? "Creating..." : "Continue"}
+        </button>
+      </div>
+    </div>
+  `;
+  }
   function ErpPicker({ onSelect, pending, errorMessage }) {
     const [selected, setSelected] = d2("");
     const erps = [
@@ -62851,17 +62901,45 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [pending, setPending] = d2(false);
     const [erpType, setErpType] = d2("");
     const [erpError, setErpError] = d2("");
+    const [workspaceError, setWorkspaceError] = d2("");
+    const [workspaceDefaultName, setWorkspaceDefaultName] = d2("");
     const handleSignIn = q2(async () => {
       setPending(true);
       try {
         if (!signIn)
           throw new Error("signIn handler missing");
         await signIn();
-        setStep("erp");
+        try {
+          const boot = await api("/api/workspace/bootstrap?organization_id=default", { silent: true });
+          const orgName = boot?.organization?.name;
+          const email = boot?.user?.email || "";
+          const domainGuess = email.split("@")[1]?.split(".")[0] || "";
+          const seed = orgName && orgName !== "default" ? orgName : domainGuess ? domainGuess.charAt(0).toUpperCase() + domainGuess.slice(1) : "";
+          setWorkspaceDefaultName(seed);
+        } catch {}
+        setStep("workspace");
       } catch (_err) {} finally {
         setPending(false);
       }
-    }, [signIn]);
+    }, [signIn, api]);
+    const handleWorkspaceContinue = q2(async (workspaceName) => {
+      setPending(true);
+      setWorkspaceError("");
+      try {
+        await api("/api/workspace/org/settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            organization_id: "default",
+            patch: { organization_name: workspaceName }
+          })
+        });
+        setStep("erp");
+      } catch {
+        setWorkspaceError("Could not save workspace name. Please try again.");
+      } finally {
+        setPending(false);
+      }
+    }, [api]);
     const verifyErpConnected = q2(async () => {
       try {
         const data = await api("/api/workspace/integrations?organization_id=default", { silent: true });
@@ -62945,6 +63023,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
     ${step === "auth" ? html4`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
+    ${step === "workspace" ? html4`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ""}
     ${step === "erp" ? html4`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
     ${step === "creating" ? html4`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
   `;
@@ -65840,7 +65919,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       api(`/api/ops/vendor-onboarding/sessions?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent: true }).then((data) => {
         const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
         const now = Date.now();
-        const blockedStates = new Set(["invited", "awaiting_kyc", "awaiting_bank", "escalated"]);
+        const blockedStates = new Set(["invited", "kyc", "bank_verify", "blocked"]);
         const blocked = sessions.filter((s3) => {
           if (!blockedStates.has(s3.state))
             return false;
@@ -65850,12 +65929,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const hours = s3.invited_at ? Math.floor((now - new Date(s3.invited_at).getTime()) / 3600000) : 0;
           const days = Math.floor(hours / 24);
           const reasons = [];
-          if (s3.state === "awaiting_kyc")
+          if (s3.state === "kyc")
             reasons.push("Missing KYC documents");
-          else if (s3.state === "awaiting_bank")
+          else if (s3.state === "bank_verify")
             reasons.push("Bank details not submitted");
-          else if (s3.state === "escalated")
-            reasons.push("Escalated — needs manual resolution");
+          else if (s3.state === "blocked")
+            reasons.push("Blocked — needs manual resolution");
           else if (s3.state === "invited")
             reasons.push("Vendor has not responded");
           return { ...s3, days, reason: reasons[0] || "Blocked" };
@@ -74315,14 +74394,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var html22 = htm_module_default.bind(_);
   var ONBOARDING_STAGES = [
     { key: "invited", label: "Invited", states: ["invited"], color: "#9CA3AF" },
-    { key: "kyc", label: "KYC", states: ["awaiting_kyc"], color: "#D97706" },
-    { key: "bank_verify", label: "Bank Verify", states: ["awaiting_bank"], color: "#2563EB" },
-    { key: "active", label: "Active", states: ["bank_verified", "ready_for_erp", "active"], color: "#10B981" }
+    { key: "kyc", label: "KYC", states: ["kyc"], color: "#D97706" },
+    { key: "bank_verify", label: "Bank Verify", states: ["bank_verify", "bank_verified", "ready_for_erp"], color: "#2563EB" },
+    { key: "active", label: "Active", states: ["active"], color: "#10B981" }
   ];
   var SECONDARY_STATES = {
-    escalated: { label: "Escalated", color: "#DC2626" },
-    rejected: { label: "Rejected", color: "#991B1B" },
-    abandoned: { label: "Abandoned", color: "#6B7280" }
+    blocked: { label: "Blocked", color: "#DC2626" },
+    closed_unsuccessful: { label: "Closed unsuccessful", color: "#6B7280" }
   };
   function daysElapsed(isoDate) {
     if (!isoDate)
