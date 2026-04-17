@@ -837,6 +837,59 @@ class AuthStore:
             conn.commit()
         return row_id
 
+    def reap_expired_seats(self) -> int:
+        """§13: auto-expire Read-Only auditor seats past their window.
+
+        Read-Only seats (``seat_type='read_only'``) carry an explicit
+        ``seat_expires_at`` column set when the seat is provisioned.
+        The thesis promises they "expire automatically after a
+        configurable period." This reaper walks all active users,
+        finds those whose expiry is in the past, and soft-archives
+        them via the same path :meth:`delete_user` uses — preserving
+        audit attribution while revoking access.
+
+        Returns the number of seats reaped. Called by the Celery
+        daily reaper task.
+        """
+        from datetime import datetime, timezone
+
+        self.initialize()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = self._prepare_sql(
+            "SELECT id, organization_id FROM users "
+            "WHERE is_active = 1 "
+            "  AND seat_type = 'read_only' "
+            "  AND seat_expires_at IS NOT NULL "
+            "  AND seat_expires_at <= ?"
+        )
+        try:
+            with self.connect() as conn:
+                if self.use_postgres:
+                    cur = conn.cursor()
+                    cur.execute(sql, (now_iso,))
+                    rows = cur.fetchall()
+                else:
+                    conn.row_factory = __import__("sqlite3").Row
+                    cur = conn.cursor()
+                    cur.execute(sql, (now_iso,))
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.debug("[auth_store] reap_expired_seats query failed: %s", exc)
+            return 0
+
+        reaped = 0
+        for row in rows or []:
+            user_id = row["id"] if hasattr(row, "__getitem__") else row[0]
+            try:
+                self.delete_user(str(user_id), archived_by="system:seat_expiry")
+                reaped += 1
+            except Exception as exc:
+                logger.debug(
+                    "[auth_store] reap_expired_seats archive failed for %s: %s",
+                    user_id, exc,
+                )
+        return reaped
+
     def delete_user(self, user_id: str, archived_by: Optional[str] = None) -> bool:
         """§5.4 Archived Users: soft-delete + record archival metadata.
 

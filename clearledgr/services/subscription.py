@@ -28,7 +28,12 @@ class PlanTier(str, Enum):
 
 @dataclass
 class PlanLimits:
-    """Usage limits per plan tier."""
+    """Usage limits per plan tier.
+
+    Sentinel: ``-1`` means unlimited. Downstream gate code MUST treat
+    -1 as "no cap" rather than "zero" — the subscription helpers
+    centralise this to prevent accidental misreads.
+    """
     invoices_per_month: int
     vendors: int
     users: int
@@ -36,10 +41,24 @@ class PlanLimits:
     api_calls_per_day: int
     storage_gb: float
     ai_credits_per_month: int
+    # §13 tier comparison — "Saved Views — Show in Inbox: Starter 3
+    # per pipeline, Pro+ Unlimited". Enforced at saved-view creation
+    # in clearledgr/api/pipelines.py.
+    saved_views_per_pipeline: int = -1
+    # §13 tier comparison — "Agent Activity feed retention:
+    # Starter 30 days, Pro+ Statutory minimum — default 7 years".
+    # Enforced at audit-event reaper time so old rows drop off on
+    # Starter but are preserved on Pro+.
+    agent_activity_retention_days: int = 30
 
     @classmethod
     def for_tier(cls, tier: PlanTier) -> "PlanLimits":
         """Get limits for a specific plan tier."""
+        # 7 years of calendar days (365 × 7 + 2 leap days) ≈ 2557.
+        # Rounded to 2555 for a clean constant that still clears the
+        # statutory-minimum 7-year floor.
+        _SEVEN_YEARS_DAYS = 2555
+
         limits = {
             PlanTier.FREE: cls(
                 invoices_per_month=10,
@@ -49,6 +68,8 @@ class PlanLimits:
                 api_calls_per_day=50,
                 storage_gb=0.25,
                 ai_credits_per_month=5,
+                saved_views_per_pipeline=0,
+                agent_activity_retention_days=7,
             ),
             PlanTier.STARTER: cls(
                 invoices_per_month=500,  # thesis §13: "up to 500 invoices per month"
@@ -58,6 +79,8 @@ class PlanLimits:
                 api_calls_per_day=1000,
                 storage_gb=5.0,
                 ai_credits_per_month=500,
+                saved_views_per_pipeline=3,       # §13 explicit cap
+                agent_activity_retention_days=30,  # §13 explicit
             ),
             PlanTier.PROFESSIONAL: cls(
                 invoices_per_month=-1,
@@ -67,6 +90,8 @@ class PlanLimits:
                 api_calls_per_day=10000,
                 storage_gb=25.0,
                 ai_credits_per_month=3000,
+                saved_views_per_pipeline=-1,            # §13 "Unlimited"
+                agent_activity_retention_days=_SEVEN_YEARS_DAYS,
             ),
             PlanTier.ENTERPRISE: cls(
                 invoices_per_month=-1,
@@ -76,6 +101,8 @@ class PlanLimits:
                 api_calls_per_day=-1,
                 storage_gb=100.0,
                 ai_credits_per_month=-1,
+                saved_views_per_pipeline=-1,
+                agent_activity_retention_days=_SEVEN_YEARS_DAYS,
             ),
         }
         return limits.get(tier, limits[PlanTier.FREE])

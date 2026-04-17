@@ -1776,6 +1776,59 @@ class APStore:
             rows = cur.fetchall()
         return [self._deserialize_audit_event(dict(row)) for row in rows]
 
+    def list_recent_ap_audit_events_with_retention(
+        self,
+        organization_id: str,
+        limit: int = 30,
+        retention_days: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """§13 tier-gated Agent Activity feed retention.
+
+        Returns recent audit events for the org, filtered to within
+        the tier's retention window. ``audit_events`` itself is
+        append-only (§7.6 — the audit trail is the evidence of trust
+        and cannot be mutated), so retention is a query-time filter
+        rather than a delete.
+
+        ``retention_days`` of None or <= 0 returns the full feed —
+        used by internal ops / audit-export paths that need the
+        complete record regardless of the customer-facing tier cap.
+        Customer-facing callers must pass the tier's retention_days
+        so Starter workspaces see a 30-day window while Pro/Enterprise
+        see the full 7-year statutory window.
+        """
+        self.initialize()
+        safe_limit = max(1, min(int(limit or 30), 500))
+
+        days = int(retention_days or 0)
+        if days <= 0:
+            return self.list_recent_ap_audit_events(organization_id, limit=safe_limit)
+
+        from datetime import datetime, timedelta, timezone
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        sql = self._prepare_sql(
+            """
+            SELECT ae.*,
+                   ai.vendor_name AS vendor_name,
+                   ai.amount AS amount,
+                   ai.currency AS currency,
+                   ai.invoice_number AS invoice_number
+            FROM audit_events ae
+            LEFT JOIN ap_items ai ON ae.ap_item_id = ai.id
+            WHERE (ae.organization_id = ?
+                   OR (ae.organization_id IS NULL AND ai.organization_id = ?))
+              AND ae.ts >= ?
+            ORDER BY ae.ts DESC
+            LIMIT ?
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id, organization_id, cutoff_iso, safe_limit))
+            rows = cur.fetchall()
+        return [self._deserialize_audit_event(dict(row)) for row in rows]
+
     # ------------------------------------------------------------------
     # Durable agent retry jobs
     # ------------------------------------------------------------------

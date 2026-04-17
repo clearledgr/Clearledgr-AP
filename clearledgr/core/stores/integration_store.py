@@ -653,7 +653,23 @@ class IntegrationStore:
         row_id = (existing or {}).get("id") or f"SUB-{uuid.uuid4().hex}"
 
         merged = dict(existing or {})
-        merged.update(payload or {})
+        # Payload keys (limits / features / usage) are the canonical
+        # names the service layer writes; DB column names add the
+        # _json suffix. When the payload carries a fresh `limits`
+        # value, it MUST override the existing `limits_json` read
+        # from the DB — otherwise a tier upgrade never persists
+        # because the read-merge-write cycle keeps picking the old
+        # limits_json dict out of the merge. Same for features and
+        # usage. Drop the stale _json keys before merging so the
+        # payload always wins.
+        payload_patch = dict(payload or {})
+        if "limits" in payload_patch:
+            merged.pop("limits_json", None)
+        if "features" in payload_patch:
+            merged.pop("features_json", None)
+        if "usage" in payload_patch:
+            merged.pop("usage_json", None)
+        merged.update(payload_patch)
         merged.setdefault("plan", "free")
         merged.setdefault("status", "active")
         merged.setdefault("billing_cycle", "monthly")

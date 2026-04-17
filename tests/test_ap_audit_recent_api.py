@@ -64,6 +64,20 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(db):
+    # §13 Agent Activity retention — FREE tier defaults to 7 days,
+    # which would trim the backdated March 1 events in this suite.
+    # These tests exercise cross-org scoping + normalization, not
+    # retention behaviour, so upgrade the fixture orgs to
+    # Professional (7-year window) to avoid coupling the suite to
+    # the retention filter. Retention itself is covered in
+    # test_subscription_quota_enforcement.
+    import clearledgr.services.subscription as sub_mod
+    sub_mod._subscription_service = None
+    from clearledgr.services.subscription import get_subscription_service, PlanTier
+    sub_svc = get_subscription_service()
+    for org_id in ("org-alpha", "org-beta"):
+        sub_svc.upgrade_plan(org_id, tier=PlanTier.PROFESSIONAL)
+
     return TestClient(app)
 
 

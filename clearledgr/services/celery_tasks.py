@@ -431,3 +431,28 @@ def reap_completed_retry_jobs() -> dict:
     except Exception as exc:
         logger.error("[CeleryBeat] reap_completed_retry_jobs failed: %s", exc)
         return {"status": "error", "error": str(exc)}
+
+
+@app.task
+def reap_expired_seats_task() -> dict:
+    """§13 Read-Only seat auto-expiry.
+
+    Walks all users with seat_type='read_only' and seat_expires_at in
+    the past; soft-archives them via the same path as manual removal
+    so audit attribution is preserved and billing seat count is
+    adjusted. Safe to run daily — idempotent via is_active guard.
+    """
+    from clearledgr.core.database import get_db
+
+    try:
+        reaped = get_db().reap_expired_seats()
+        return {"status": "ok", "reaped": int(reaped)}
+    except Exception as exc:
+        logger.error("[CeleryBeat] reap_expired_seats failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+## §13 Agent Activity retention is enforced as a query-time filter in
+## clearledgr/api/ap_audit.py, not a reaper — audit_events is
+## architecturally append-only (§7.6 audit trail as evidence of trust).
+## See list_recent_ap_audit_events_with_retention on the AP store.
