@@ -499,11 +499,54 @@ def _erp_status_for_org(organization_id: str) -> Dict[str, Any]:
                 "base_url": item.get("base_url"),
                 "last_sync_at": item.get("last_sync_at"),
                 "is_active": bool(item.get("is_active", 1)),
+                # Non-secret identifier the Gmail-extension ERP button
+                # needs to build deep-links (thesis §6.5). Kept as a
+                # single `deep_link_id` key so the extension doesn't
+                # have to know each ERP's convention.
+                "deep_link_id": _resolve_erp_deep_link_id(item),
             }
             for item in conns
         ],
         "last_sync_at": latest.get("last_sync_at"),
     }
+
+
+def _resolve_erp_deep_link_id(conn_row: Dict[str, Any]) -> Optional[str]:
+    """Return the non-secret ERP-side identifier needed to build a deep
+    link into the vendor's ERP UI. Returns ``None`` when the connection
+    doesn't carry enough information to build a link (we fall back to
+    showing the ERP reference as plain text in that case).
+
+    Mapping (DESIGN_THESIS.md §6.5 "NetSuite ↗"):
+      QuickBooks → realm_id (company id, visible in app.qbo.intuit.com URL)
+      Xero       → tenant_id (organisation short code)
+      NetSuite   → account_id from credentials blob (subdomain of app.netsuite.com)
+      SAP        → base_url (the host is the deep-link target; customer-specific)
+    """
+    erp_type = str(conn_row.get("erp_type") or "").strip().lower()
+    if erp_type == "quickbooks":
+        return str(conn_row.get("realm_id") or "").strip() or None
+    if erp_type == "xero":
+        return str(conn_row.get("tenant_id") or "").strip() or None
+    if erp_type == "netsuite":
+        creds = conn_row.get("credentials") or {}
+        if isinstance(creds, str):
+            try:
+                import json as _json
+                creds = _json.loads(creds)
+            except Exception:
+                creds = {}
+        if isinstance(creds, dict):
+            acct = str(creds.get("account_id") or "").strip()
+            return acct or None
+        return None
+    if erp_type == "sap":
+        # SAP deep-links require the customer's own server URL, which
+        # we already store as base_url. Strip trailing slashes so the
+        # extension can concatenate a path cleanly.
+        base = str(conn_row.get("base_url") or "").strip().rstrip("/")
+        return base or None
+    return None
 
 
 def _teams_status_for_org(organization_id: str) -> Dict[str, Any]:

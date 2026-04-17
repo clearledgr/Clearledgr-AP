@@ -1102,6 +1102,39 @@ function registerToolbarIcon() {
 
 // ==================== THREAD TOOLBAR BUTTONS (Phase 3.3 — §6.5) ====================
 
+async function _hydrateErpRuntimeConfig(qm) {
+  // Reads the workspace bootstrap once and stamps erpType +
+  // erpDeepLinkId onto queueManager.runtimeConfig so the thread
+  // toolbar ERP button can build deep links without per-invoice
+  // refetches. Failure is non-fatal — the button simply falls back
+  // to showing the raw ERP reference as a toast.
+  const rc = qm?.runtimeConfig;
+  if (!rc || !rc.backendUrl) return;
+  try {
+    const orgId = rc.organizationId || 'default';
+    const url = `${String(rc.backendUrl).replace(/\/+$/, '')}/api/workspace/bootstrap?organization_id=${encodeURIComponent(orgId)}`;
+    const payload = await qm.backendFetch(url);
+    if (!payload || typeof payload !== 'object') return;
+
+    // bootstrap.integrations may be an array (admin console shape) or
+    // a keyed object depending on endpoint version. Handle both.
+    const integrations = payload.integrations;
+    let erpEntry = null;
+    if (Array.isArray(integrations)) {
+      erpEntry = integrations.find((i) => i?.name === 'erp') || null;
+    } else if (integrations && typeof integrations === 'object') {
+      erpEntry = integrations.erp || null;
+    }
+    if (!erpEntry || !erpEntry.connected) return;
+    const connections = Array.isArray(erpEntry.connections) ? erpEntry.connections : [];
+    const active = connections.find((c) => c?.is_active) || connections[0] || null;
+    if (!active) return;
+    rc.erpType = String(active.erp_type || '').toLowerCase() || rc.erpType || '';
+    rc.erpDeepLinkId = String(active.deep_link_id || '').trim() || null;
+  } catch (_) { /* non-fatal */ }
+}
+
+
 function registerThreadToolbarButtons() {
   if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== 'function') {
     console.warn('[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar');
@@ -1226,17 +1259,49 @@ function registerThreadToolbarButtons() {
         return;
       }
 
-      // Build ERP-specific deep link. Falls back to showing the reference.
+      // The deep-link id (QB realm_id / Xero tenant_id / NetSuite
+      // account_id / SAP base_url) comes from the bootstrap
+      // integrations payload. Fall back to per-item erp_realm_id
+      // when present for older item records.
+      const deepLinkId = String(
+        queueManager?.runtimeConfig?.erpDeepLinkId
+        || item.erp_realm_id
+        || item.erp_account_id
+        || ''
+      ).trim();
+
+      // Build ERP-specific deep link.
       let erpUrl = null;
-      if (erpType === 'quickbooks' && item.erp_realm_id) {
-        erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${erpRef}`;
+      if (erpType === 'quickbooks') {
+        // Intuit's bill-detail URL doesn't require the realm_id in the
+        // path (the signed-in QB session resolves tenancy), but
+        // requiring deep_link_id means we only link when we're confident
+        // the user is on the expected company.
+        if (deepLinkId) {
+          erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${encodeURIComponent(erpRef)}`;
+        }
       } else if (erpType === 'xero') {
-        erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${erpRef}`;
+        erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${encodeURIComponent(erpRef)}`;
+      } else if (erpType === 'netsuite' && deepLinkId) {
+        // NetSuite account_id becomes the subdomain. Underscores in
+        // sandbox ids (e.g. 1234567_SB1) must become hyphens in the
+        // URL host ("1234567-sb1.app.netsuite.com").
+        const host = deepLinkId.toLowerCase().replace(/_/g, '-');
+        erpUrl = `https://${host}.app.netsuite.com/app/accounting/transactions/vendbill.nl?id=${encodeURIComponent(erpRef)}`;
+      } else if (erpType === 'sap' && deepLinkId) {
+        // SAP S/4HANA Cloud public API uses SupplierInvoice as the
+        // entity path; on-prem deployments expose the same Fiori app
+        // tile. deepLinkId is the customer-configured base URL.
+        const base = deepLinkId.replace(/\/+$/, '');
+        erpUrl = `${base}/ui#SupplierInvoice-displayFactSheet?SupplierInvoice=${encodeURIComponent(erpRef)}`;
       }
 
       if (erpUrl) {
         window.open(erpUrl, '_blank', 'noopener');
       } else {
+        // Deep link unavailable (no deep_link_id, or ERP shape we
+        // don't support yet) — surface the reference so the user can
+        // copy it into their ERP manually.
         showToast(`ERP reference: ${erpRef}`, 'success');
       }
     },
@@ -1431,6 +1496,15 @@ async function bootstrap() {
   // Initialize queue manager
   queueManager = new ClearledgrQueueManager();
   await queueManager.init();
+
+  // §6.5 — fetch ERP connection info once so the thread-toolbar ERP
+  // button has the deep-link identifier needed to build a working URL
+  // (QuickBooks realm_id / Xero tenant_id / NetSuite account_id / SAP
+  // base_url). Fire-and-forget is acceptable here because the button's
+  // onClick re-reads runtimeConfig at click time — if the fetch hasn't
+  // landed by first click, the click falls back to the toast path and
+  // the next click works.
+  _hydrateErpRuntimeConfig(queueManager).catch(() => {});
 
   // Subscribe to queue updates → update reactive store → Preact re-renders
   queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files) => {

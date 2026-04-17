@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:d6cd1404280bb808aa986d9392e6ffd2f8defbc8de8ffbf5f99ede1977f58a8e */
+/* clearledgr-source-fingerprint:418a48d4472ae84021eca871abe467310b6b8f3beecc47e9774f4c3c31ebb73b */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -75846,6 +75846,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       console.warn("[Clearledgr] Toolbar icon registration failed:", err);
     }
   }
+  async function _hydrateErpRuntimeConfig(qm) {
+    const rc = qm?.runtimeConfig;
+    if (!rc || !rc.backendUrl)
+      return;
+    try {
+      const orgId = rc.organizationId || "default";
+      const url = `${String(rc.backendUrl).replace(/\/+$/, "")}/api/workspace/bootstrap?organization_id=${encodeURIComponent(orgId)}`;
+      const payload = await qm.backendFetch(url);
+      if (!payload || typeof payload !== "object")
+        return;
+      const integrations = payload.integrations;
+      let erpEntry = null;
+      if (Array.isArray(integrations)) {
+        erpEntry = integrations.find((i3) => i3?.name === "erp") || null;
+      } else if (integrations && typeof integrations === "object") {
+        erpEntry = integrations.erp || null;
+      }
+      if (!erpEntry || !erpEntry.connected)
+        return;
+      const connections = Array.isArray(erpEntry.connections) ? erpEntry.connections : [];
+      const active = connections.find((c3) => c3?.is_active) || connections[0] || null;
+      if (!active)
+        return;
+      rc.erpType = String(active.erp_type || "").toLowerCase() || rc.erpType || "";
+      rc.erpDeepLinkId = String(active.deep_link_id || "").trim() || null;
+    } catch (_2) {}
+  }
   function registerThreadToolbarButtons() {
     if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== "function") {
       console.warn("[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar");
@@ -75954,11 +75981,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           showToast("No ERP reference — invoice has not been posted yet", "error");
           return;
         }
+        const deepLinkId = String(queueManager?.runtimeConfig?.erpDeepLinkId || item.erp_realm_id || item.erp_account_id || "").trim();
         let erpUrl = null;
-        if (erpType === "quickbooks" && item.erp_realm_id) {
-          erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${erpRef}`;
+        if (erpType === "quickbooks") {
+          if (deepLinkId) {
+            erpUrl = `https://app.qbo.intuit.com/app/bill?txnId=${encodeURIComponent(erpRef)}`;
+          }
         } else if (erpType === "xero") {
-          erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${erpRef}`;
+          erpUrl = `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${encodeURIComponent(erpRef)}`;
+        } else if (erpType === "netsuite" && deepLinkId) {
+          const host = deepLinkId.toLowerCase().replace(/_/g, "-");
+          erpUrl = `https://${host}.app.netsuite.com/app/accounting/transactions/vendbill.nl?id=${encodeURIComponent(erpRef)}`;
+        } else if (erpType === "sap" && deepLinkId) {
+          const base = deepLinkId.replace(/\/+$/, "");
+          erpUrl = `${base}/ui#SupplierInvoice-displayFactSheet?SupplierInvoice=${encodeURIComponent(erpRef)}`;
         }
         if (erpUrl) {
           window.open(erpUrl, "_blank", "noopener");
@@ -76131,6 +76167,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     queueManager = new ClearledgrQueueManager;
     await queueManager.init();
+    _hydrateErpRuntimeConfig(queueManager).catch(() => {});
     queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files) => {
       const queueState = Array.isArray(queue) ? queue : [];
       let selectedItemId = store_default.selectedItemId;
