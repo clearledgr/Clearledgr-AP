@@ -34,6 +34,126 @@ from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
 
 logger = logging.getLogger(__name__)
 
+
+# §15 Onboarding Design Rule: "If the ERP connection fails, the
+# error message names the specific permission that is missing and
+# links directly to where to grant it in the ERP. Generic
+# 'connection failed' errors are not acceptable."
+#
+# _classify_erp_connect_error maps the exception the ERP SDK raised
+# into a structured payload the extension can render with a named
+# permission and a direct remediation link into the ERP's own admin
+# console. Shared across QB / Xero / NetSuite / SAP handlers so the
+# contract is consistent — the extension only has to handle the
+# canonical error codes, not per-ERP exception shapes.
+
+_ERP_REMEDIATION_LINKS = {
+    "quickbooks": "https://app.qbo.intuit.com/app/apps/myapps",
+    "xero": "https://go.xero.com/Settings/ConnectedApps",
+    "netsuite": "https://system.netsuite.com/app/login/secure/enterpriseselectrole.nl",
+    "sap": "https://help.sap.com/docs/SAP_S4HANA_CLOUD/authorization",
+}
+
+
+def _classify_erp_connect_error(erp_type: str, exc: Exception) -> Dict[str, Any]:
+    """Map an ERP connection exception into a structured error
+    payload per §15.
+
+    Returns a dict with:
+      code:              canonical error code the extension uses to
+                         select copy + remediation link
+      missing_permission: human name of the missing permission, or
+                         None if the failure is not a permission issue
+      remediation_link:  deep link into the ERP's admin console, or
+                         None when the category doesn't map to a
+                         single fix location
+      message:           human-readable one-liner for the extension
+      detail:            the raw exception text (for the audit log)
+    """
+    text = str(exc or "").lower()
+    erp = (erp_type or "").lower().strip()
+    remediation_link = _ERP_REMEDIATION_LINKS.get(erp)
+
+    # Permission-specific classifiers, checked in order of
+    # specificity.
+    if any(tok in text for tok in ("unauthorized", "unauthoris", "401")):
+        return {
+            "code": "erp_unauthorized",
+            "missing_permission": "AP read + write",
+            "remediation_link": remediation_link,
+            "message": (
+                f"{erp_type} rejected the credentials. The signed-in user "
+                "needs AP read + write access. Ask your admin to grant "
+                "that role in the ERP and reconnect."
+            ),
+            "detail": str(exc),
+        }
+    if any(tok in text for tok in ("forbidden", "permission denied", "insufficient", "403")):
+        return {
+            "code": "erp_missing_permission",
+            "missing_permission": "Vendor master + bill posting",
+            "remediation_link": remediation_link,
+            "message": (
+                f"The connected {erp_type} user is missing write access "
+                "to the vendor master and the bill-posting endpoint. "
+                "Grant those permissions in the ERP admin console and "
+                "reconnect."
+            ),
+            "detail": str(exc),
+        }
+    if any(tok in text for tok in ("scope", "oauth scope", "invalid_scope")):
+        return {
+            "code": "erp_missing_scope",
+            "missing_permission": "OAuth scope (com.intuit.quickbooks.accounting / accounting.transactions / bills.read bills.write)",
+            "remediation_link": remediation_link,
+            "message": (
+                f"The {erp_type} OAuth consent did not grant all the "
+                "scopes Clearledgr needs (read POs + GRNs + vendor "
+                "master, write bills). Retry the connect flow and "
+                "accept all requested scopes."
+            ),
+            "detail": str(exc),
+        }
+    if any(tok in text for tok in ("not found", "404", "account_id", "realm")):
+        return {
+            "code": "erp_account_not_found",
+            "missing_permission": None,
+            "remediation_link": remediation_link,
+            "message": (
+                f"The {erp_type} account identifier we received does not "
+                "resolve to an active company. Verify the account ID and "
+                "retry."
+            ),
+            "detail": str(exc),
+        }
+    if any(tok in text for tok in ("timeout", "timed out", "connection reset", "502", "503", "504")):
+        return {
+            "code": "erp_transient",
+            "missing_permission": None,
+            "remediation_link": None,
+            "message": (
+                f"{erp_type} did not respond in time. This is usually "
+                "transient — retry in a minute. If it persists, check "
+                "your ERP's status page."
+            ),
+            "detail": str(exc),
+        }
+
+    # Fallback — still structured, but names the unknown category so
+    # the extension can surface "something we didn't anticipate"
+    # rather than bare exception text.
+    return {
+        "code": "erp_connection_failed",
+        "missing_permission": None,
+        "remediation_link": remediation_link,
+        "message": (
+            f"Could not connect to {erp_type}. Your admin can check the "
+            "permissions and OAuth app registration; the specific error "
+            "detail is in the logs."
+        ),
+        "detail": str(exc),
+    }
+
 router = APIRouter(prefix="/erp", tags=["erp-connections"])
 _ADMIN_ROLES = {"admin", "owner"}
 
@@ -696,7 +816,11 @@ async def netsuite_connect(
         
     except Exception as e:
         logger.error(f"NetSuite connection failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to connect: {str(e)}")
+        # §15 onboarding design rule — return structured error with
+        # named permission + remediation link instead of
+        # "Failed to connect: {e}".
+        classified = _classify_erp_connect_error("netsuite", e)
+        raise HTTPException(status_code=400, detail=classified)
 
 
 @router.post("/netsuite/disconnect")

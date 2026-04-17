@@ -485,6 +485,51 @@ def _slack_status_for_org(organization_id: str) -> Dict[str, Any]:
     }
 
 
+def _is_ap_policy_configured(organization_id: str) -> bool:
+    """§15 Step 3 — has the admin set the three thesis-required AP
+    policy values (auto-approve threshold, match tolerance,
+    approval routing)?
+
+    Returns True when the stored policy row carries a config_json
+    with all three keys populated. Fail-closed: any read error
+    treats the policy as unconfigured so the checklist nags the
+    admin to finish setup rather than silently marking onboarding
+    done on a database blip.
+    """
+    try:
+        db = get_db()
+        policy = db.get_ap_policy(organization_id, _ap_policy_name())
+        if not policy:
+            return False
+        config = policy.get("config_json") or policy.get("config") or {}
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except (ValueError, TypeError):
+                config = {}
+        if not isinstance(config, dict):
+            return False
+        # Three §15-required values. Missing or empty-string entries
+        # count as unconfigured; zero is a valid threshold and
+        # shouldn't fail the check.
+        required_keys = ("auto_approve_threshold", "match_tolerance", "approval_routing")
+        for key in required_keys:
+            value = config.get(key)
+            if value is None:
+                return False
+            if isinstance(value, str) and not value.strip():
+                return False
+            if isinstance(value, (list, dict)) and not value:
+                return False
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "[workspace_shell] _is_ap_policy_configured check failed for %s: %s",
+            organization_id, exc,
+        )
+        return False
+
+
 def _erp_status_for_org(organization_id: str) -> Dict[str, Any]:
     db = get_db()
     conns = db.get_erp_connections(organization_id)
@@ -632,6 +677,21 @@ def _build_health(organization_id: str, user: TokenData) -> Dict[str, Any]:
     slack_channels = settings.get("slack_channels") if isinstance(settings.get("slack_channels"), dict) else {}
     if integrations["slack"]["connected"] and not (slack_channels or {}).get("invoices"):
         required_actions.append({"code": "set_slack_channel", "message": "Set Slack approval channel"})
+
+    # §15 Step 3 — Configure AP Policy. The three values the thesis
+    # names (auto-approve threshold, match tolerance, approval
+    # routing) must all be set before onboarding counts as complete.
+    # Without this check an admin who connects every integration but
+    # never opens Settings > Policy would see a "done" state while
+    # the agent was running with no autonomy thresholds configured.
+    if not _is_ap_policy_configured(organization_id):
+        required_actions.append({
+            "code": "configure_ap_policy",
+            "message": (
+                "Set your AP policy — auto-approve threshold, match "
+                "tolerance, and approval routing. Settings > Policy."
+            ),
+        })
     if integrations["slack"].get("requires_reauthorization"):
         missing = ", ".join(integrations["slack"].get("missing_scopes") or [])
         required_actions.append(
@@ -1524,11 +1584,19 @@ async def connect_sap(
             },
         )
         if response.status_code >= 400:
-            raise HTTPException(status_code=400, detail=f"sap_connection_test_failed:{response.status_code}")
+            from clearledgr.api.erp_connections import _classify_erp_connect_error
+            classified = _classify_erp_connect_error(
+                "sap", Exception(f"HTTP {response.status_code}: {response.text[:200]}"),
+            )
+            raise HTTPException(status_code=400, detail=classified)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"sap_connection_test_failed:{exc}") from exc
+        # §15 structured ERP error — name the permission + link to
+        # remediation instead of leaking the raw exception.
+        from clearledgr.api.erp_connections import _classify_erp_connect_error
+        classified = _classify_erp_connect_error("sap", exc)
+        raise HTTPException(status_code=400, detail=classified) from exc
 
     from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
 
