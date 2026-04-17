@@ -35,6 +35,163 @@ from clearledgr.services.invoice_models import InvoiceData
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# §7.6 Extraction Guardrails — module-level helpers
+#
+# Used by _evaluate_deterministic_validation to enforce the three thesis
+# guardrails (reference format, amount range, PO existence) that the
+# workflow didn't previously check at gate time. Kept at module level so
+# they can be unit-tested in isolation against a mock DB without
+# instantiating a full workflow service.
+# ---------------------------------------------------------------------------
+
+# Amount-range threshold. The thesis example is £12,000 max → £1,200,000
+# invoice (100x) being the obvious case. Catching that cleanly while
+# tolerating normal vendor-relationship growth means picking a ceiling
+# that's high enough to accept a 5x-scale renewal but low enough to
+# catch an order-of-magnitude extraction error. 10x splits the
+# difference and matches operator intuition — an invoice an order of
+# magnitude larger than anything this vendor has ever sent is worth
+# stopping to confirm.
+_AMOUNT_RANGE_MULTIPLIER_CEILING = 10.0
+
+# Minimum history required before amount-range checks fire. Without
+# enough history we have no meaningful baseline, and flagging every
+# second invoice from a new vendor as "outside range" would train
+# operators to ignore the signal.
+_AMOUNT_RANGE_MIN_HISTORY = 3
+
+
+def _invoice_reference_shape(reference: str) -> str:
+    """Reduce an invoice reference to its structural pattern.
+
+    "INV-2841"  → "AAA-####"
+    "INV2841"   → "AAA####"
+    "2024-001"  → "####-###"
+    "PO-2041"   → "AA-####"
+
+    The shape strips specific values but preserves letter/digit grouping
+    and separators so "INV-2841" and "PO-2041" read as different shapes
+    (the thesis's canonical example of an extraction error).
+    """
+    if not reference:
+        return ""
+    out: list[str] = []
+    for ch in str(reference).strip().upper():
+        if ch.isalpha():
+            out.append("A")
+        elif ch.isdigit():
+            out.append("#")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _check_reference_format(
+    db: Any, organization_id: str, vendor_name: str, invoice_number: str,
+) -> Optional[tuple]:
+    """Return (expected_pattern, observed_pattern) when the invoice
+    number's shape doesn't match the vendor's historical dominant
+    shape. Returns ``None`` when either: the vendor has no usable
+    history, or the shape matches.
+
+    Dominant-shape threshold: ≥ 3 historical invoices AND ≥ 70% of
+    them share the same shape. Vendors who use multiple formats
+    legitimately (internal vs. reseller references, pre- and
+    post-billing-platform-migration) won't trip the check.
+    """
+    if not hasattr(db, "get_vendor_invoice_history"):
+        return None
+
+    try:
+        history = db.get_vendor_invoice_history(organization_id, vendor_name, limit=50)
+    except Exception:
+        return None
+    if not history:
+        return None
+
+    shapes: Dict[str, int] = {}
+    for row in history:
+        ref = str((row or {}).get("invoice_number") or "").strip()
+        if not ref:
+            continue
+        shape = _invoice_reference_shape(ref)
+        shapes[shape] = shapes.get(shape, 0) + 1
+
+    total = sum(shapes.values())
+    if total < 3:
+        return None  # Not enough history to establish a pattern.
+
+    # Dominant shape = most common, must cover ≥ 70% of history.
+    dominant_shape, dominant_count = max(shapes.items(), key=lambda kv: kv[1])
+    if dominant_count / total < 0.7:
+        return None  # Vendor uses multiple formats — no single norm.
+
+    observed = _invoice_reference_shape(invoice_number)
+    if observed == dominant_shape:
+        return None
+
+    return (dominant_shape, observed)
+
+
+def _check_amount_range(
+    db: Any, organization_id: str, vendor_name: str, amount: float,
+) -> Optional[tuple]:
+    """Return (historical_max, multiplier) when the amount is more than
+    ``_AMOUNT_RANGE_MULTIPLIER_CEILING`` times the vendor's largest
+    historical non-rejected invoice. Returns ``None`` when within
+    range or when history is too thin to establish a baseline.
+    """
+    if amount is None or amount <= 0:
+        return None
+    if not hasattr(db, "get_vendor_invoice_history"):
+        return None
+
+    try:
+        history = db.get_vendor_invoice_history(organization_id, vendor_name, limit=200)
+    except Exception:
+        return None
+
+    # Filter to invoices that actually got approved/paid — rejected or
+    # still-in-exception rows are not a reliable baseline.
+    usable = [
+        row for row in (history or [])
+        if isinstance(row, dict)
+        and (row.get("was_approved") or row.get("final_state") in {"posted_to_erp", "closed"})
+    ]
+    usable_amounts = [float(r.get("amount") or 0) for r in usable if (r.get("amount") or 0) > 0]
+    if len(usable_amounts) < _AMOUNT_RANGE_MIN_HISTORY:
+        return None
+
+    historical_max = max(usable_amounts)
+    if historical_max <= 0:
+        return None
+    multiplier = amount / historical_max
+    if multiplier <= _AMOUNT_RANGE_MULTIPLIER_CEILING:
+        return None
+
+    return (historical_max, multiplier)
+
+
+def _check_po_exists_in_erp(organization_id: str, po_number: str) -> Optional[bool]:
+    """Return True if PO exists in the ERP, False if it does not,
+    ``None`` if the check cannot be performed (service unavailable,
+    ERP offline, etc.) so the caller can decide the default.
+
+    Reads through the canonical PurchaseOrderService, which already
+    abstracts over the four connected ERPs + the local PO cache.
+    """
+    if not po_number:
+        return None
+    try:
+        from clearledgr.services.purchase_orders import get_purchase_order_service
+        po_service = get_purchase_order_service(organization_id)
+        po = po_service.get_po_by_number(po_number)
+        return po is not None
+    except Exception:
+        return None
+
+
 class InvoiceValidationMixin:
     """Mixin providing validation, gate, and helper methods for InvoiceWorkflowService."""
 
@@ -1385,6 +1542,109 @@ class InvoiceValidationMixin:
                         )
             except Exception:
                 pass
+
+        # 0d) §7.6 Extraction Guardrail: Reference format validation.
+        # "Invoice references are validated against the format pattern
+        # established from this vendor's historical invoices. A vendor who
+        # always uses INV-XXXX format triggering an extraction of PO-2041
+        # is flagged as a possible extraction error."
+        if invoice.invoice_number and invoice.vendor_name:
+            try:
+                mismatch = _check_reference_format(
+                    self.db, self.organization_id,
+                    invoice.vendor_name, invoice.invoice_number,
+                )
+                if mismatch is not None:
+                    expected_pattern, observed_pattern = mismatch
+                    add_reason(
+                        "reference_format_mismatch",
+                        (
+                            f"Extracted invoice reference {invoice.invoice_number!r} "
+                            f"does not match this vendor's historical format "
+                            f"({expected_pattern}). Observed pattern: {observed_pattern}. "
+                            f"Likely extraction error — requires human review."
+                        ),
+                        severity="warning",
+                        details={
+                            "invoice_number": invoice.invoice_number,
+                            "expected_pattern": expected_pattern,
+                            "observed_pattern": observed_pattern,
+                            "vendor_name": invoice.vendor_name,
+                        },
+                    )
+            except Exception as exc:
+                logger.debug("[guardrail] reference_format check failed: %s", exc)
+
+        # 0e) §7.6 Extraction Guardrail: Amount range check.
+        # "An invoice for £1,200,000 from a vendor whose largest previous
+        # invoice was £12,000 triggers a mandatory human review regardless
+        # of match result. It may be correct — but the agent cannot act
+        # on it without explicit confirmation."
+        if invoice.amount and invoice.vendor_name:
+            try:
+                range_breach = _check_amount_range(
+                    self.db, self.organization_id,
+                    invoice.vendor_name, float(invoice.amount),
+                )
+                if range_breach is not None:
+                    historical_max, multiplier = range_breach
+                    add_reason(
+                        "amount_outside_vendor_range",
+                        (
+                            f"Invoice amount {invoice.currency or ''} "
+                            f"{invoice.amount:,.2f} is {multiplier:.0f}x the "
+                            f"vendor's largest previous invoice "
+                            f"({historical_max:,.2f}). Mandatory human review "
+                            f"before posting — may be correct but cannot be "
+                            f"acted on autonomously."
+                        ),
+                        severity="warning",
+                        details={
+                            "invoice_amount": float(invoice.amount),
+                            "historical_max": historical_max,
+                            "multiplier": multiplier,
+                            "vendor_name": invoice.vendor_name,
+                        },
+                    )
+            except Exception as exc:
+                logger.debug("[guardrail] amount_range check failed: %s", exc)
+
+        # 0f) §7.6 Extraction Guardrail: PO reference existence.
+        # "The extracted PO reference is validated against the ERP before
+        # any matching begins. If the PO does not exist, the agent stops
+        # immediately. It does not attempt to find a close match or guess
+        # an alternative — it reports the exact PO number from the
+        # invoice and the fact that it does not exist in the ERP."
+        #
+        # Deliberately scoped as a pre-matching stop. The post-match
+        # po_not_found_in_erp signal fires later inside the match
+        # pipeline; this guardrail surfaces the same fact earlier, with
+        # the stronger "likely extraction error" framing the thesis
+        # describes. Both exist because they answer different
+        # operational questions: is this a real PO? vs. did the agent
+        # read the PO reference correctly?
+        if invoice.po_number and invoice.vendor_name:
+            try:
+                po_exists = _check_po_exists_in_erp(
+                    self.organization_id, str(invoice.po_number).strip(),
+                )
+                if po_exists is False:
+                    add_reason(
+                        "po_reference_not_in_erp",
+                        (
+                            f"PO reference {invoice.po_number} extracted from the "
+                            f"invoice does not exist in the ERP. The agent is "
+                            f"stopping before 3-way match — this is most likely "
+                            f"an extraction error, not a missing PO."
+                        ),
+                        severity="error",
+                        details={
+                            "po_number": invoice.po_number,
+                            "vendor_name": invoice.vendor_name,
+                        },
+                    )
+            except Exception as exc:
+                logger.debug("[guardrail] po_reference_exists check failed: %s", exc)
 
         # 1) Policy checks (PO-required and any explicit blocking actions).
         policy_result = invoice.policy_compliance
