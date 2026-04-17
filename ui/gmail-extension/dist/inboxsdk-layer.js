@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:25d05568ae5f07d9efcb43a393c61adb8903e20a0b1db1ca1da4f70946ba27fe */
+/* clearledgr-source-fingerprint:0451fc0b360224fb2a99fcc626f4cb387ea3d187d36d5e4e9a91548ed92524c4 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76984,6 +76984,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       };
       const exceptionCount = _cachedExceptionCount ?? 0;
       renderSection(null, primaryRoutes.map((route) => {
+        if (route.isOnboardingChecklist) {
+          return {
+            name: route.title,
+            description: route.description || "Finish installing Clearledgr.",
+            iconText: "⚙",
+            active: false,
+            onClick: () => {
+              if (bootstrapCache)
+                _showOnboardingFlow(bootstrapCache, oauthBridge);
+            }
+          };
+        }
         const row = {
           name: route.title,
           iconUrl: getRouteIconUrl(route),
@@ -77029,6 +77041,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const routePreferences = readRoutePreferences(routeOptions);
       const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
       const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
+      const ONBOARDING_REQUIRED_ACTION_CODES = new Set([
+        "connect_gmail",
+        "reconnect_gmail",
+        "connect_erp",
+        "configure_ap_policy",
+        "connect_slack",
+        "set_slack_channel"
+      ]);
+      const bootstrapRequiredActions = Array.isArray(bootstrapCache?.required_actions) ? bootstrapCache.required_actions : [];
+      const outstandingOnboardingActions = bootstrapRequiredActions.filter((a3) => ONBOARDING_REQUIRED_ACTION_CODES.has(String(a3?.code || "")));
+      const onboardingCompleted = Boolean(bootstrapCache?.onboarding?.completed);
+      if (!onboardingCompleted && outstandingOnboardingActions.length > 0) {
+        primaryRoutes.unshift({
+          id: "clearledgr/setup",
+          title: `Finish setup (${outstandingOnboardingActions.length})`,
+          description: outstandingOnboardingActions.map((a3) => a3.message).filter(Boolean).join(" · "),
+          isOnboardingChecklist: true
+        });
+      }
       const thesisSavedViewsFallback = [
         {
           name: "Exceptions",
@@ -77087,6 +77118,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return;
       }
       if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === "function") {
+        if (!onboardingCompleted && outstandingOnboardingActions.length > 0) {
+          try {
+            const setupNav = sdk.NavMenu.addNavItem({
+              name: `Finish setup (${outstandingOnboardingActions.length})`,
+              type: "NAVIGATION"
+            });
+            if (setupNav && typeof setupNav.on === "function") {
+              setupNav.on("click", (event) => {
+                if (event && typeof event.preventDefault === "function")
+                  event.preventDefault();
+                if (bootstrapCache)
+                  _showOnboardingFlow(bootstrapCache, oauthBridge);
+              });
+            }
+            fallbackNavItemViews.push(setupNav);
+          } catch (_2) {}
+        }
         menuRoutes.forEach((route) => {
           const navHandle = sdk.NavMenu.addNavItem({
             name: route.title,
@@ -77178,7 +77226,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         };
         const hadResolvedRouteAccess = routeAccessResolved;
         routeAccessResolved = true;
-        if (!hadResolvedRouteAccess || appMenuNavItemViews.length === 0 || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities)) {
+        const ONBOARDING_REQUIRED_ACTION_CODES = new Set([
+          "connect_gmail",
+          "reconnect_gmail",
+          "connect_erp",
+          "configure_ap_policy",
+          "connect_slack",
+          "set_slack_channel"
+        ]);
+        const outstandingOnboarding = (Array.isArray(data?.required_actions) ? data.required_actions : []).filter((a3) => ONBOARDING_REQUIRED_ACTION_CODES.has(String(a3?.code || ""))).length;
+        const onboardingSignature = `${Boolean(data?.onboarding?.completed)}:${outstandingOnboarding}`;
+        const prevOnboardingSignature = store_default.__onboardingNavSig || null;
+        store_default.__onboardingNavSig = onboardingSignature;
+        if (!hadResolvedRouteAccess || appMenuNavItemViews.length === 0 || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities) || onboardingSignature !== prevOnboardingSignature) {
           currentRouteAccess = nextRouteAccess;
           rebuildMenuNavigation2();
         }

@@ -2228,8 +2228,23 @@ function registerAppMenuAndRoutes() {
     };
 
     // §6.2 — primary nav: Home, AP Invoices (with badge), Vendor Onboarding, Agent Activity
+    // §15 — leading "Finish setup (N)" checklist entry when
+    // onboarding is incomplete. The sentinel id 'clearledgr/setup'
+    // routes the click to _showOnboardingFlow instead of a real
+    // route so the modal walks the admin through remaining steps.
     const exceptionCount = _cachedExceptionCount ?? 0;
     renderSection(null, primaryRoutes.map((route) => {
+      if (route.isOnboardingChecklist) {
+        return {
+          name: route.title,
+          description: route.description || 'Finish installing Clearledgr.',
+          iconText: '⚙',
+          active: false,
+          onClick: () => {
+            if (bootstrapCache) _showOnboardingFlow(bootstrapCache, oauthBridge);
+          },
+        };
+      }
       const row = {
         name: route.title,
         iconUrl: getRouteIconUrl(route),
@@ -2279,6 +2294,43 @@ function registerAppMenuAndRoutes() {
     const routePreferences = readRoutePreferences(routeOptions);
     const menuRoutes = getMenuNavRoutes(routePreferences, routeOptions);
     const primaryRoutes = menuRoutes.filter((route) => APPMENU_PRIMARY_ROUTE_IDS.has(route.id));
+
+    // §15 Onboarding Design Rule: "The onboarding checklist lives
+    // in the Clearledgr nav section until all four steps are
+    // complete." When bootstrap reports incomplete steps, prepend a
+    // "Finish setup (N)" entry to primaryRoutes — the number is the
+    // count of outstanding step-relevant required_actions. Clicking
+    // it opens the OnboardingFlow modal so the admin can pick up
+    // where they left off. Disappears automatically once every step
+    // is done (count drops to zero).
+    const ONBOARDING_REQUIRED_ACTION_CODES = new Set([
+      'connect_gmail',
+      'reconnect_gmail',
+      'connect_erp',
+      'configure_ap_policy',
+      'connect_slack',
+      'set_slack_channel',
+    ]);
+    const bootstrapRequiredActions = Array.isArray(bootstrapCache?.required_actions)
+      ? bootstrapCache.required_actions
+      : [];
+    const outstandingOnboardingActions = bootstrapRequiredActions
+      .filter((a) => ONBOARDING_REQUIRED_ACTION_CODES.has(String(a?.code || '')));
+    const onboardingCompleted = Boolean(bootstrapCache?.onboarding?.completed);
+    if (!onboardingCompleted && outstandingOnboardingActions.length > 0) {
+      primaryRoutes.unshift({
+        id: 'clearledgr/setup',
+        title: `Finish setup (${outstandingOnboardingActions.length})`,
+        description: outstandingOnboardingActions
+          .map((a) => a.message)
+          .filter(Boolean)
+          .join(' · '),
+        // Not a real route — onClick opens the OnboardingFlow modal.
+        // Handled in renderAppMenuPanelChrome + the fallback nav
+        // below, both of which check for this sentinel id.
+        isOnboardingChecklist: true,
+      });
+    }
 
     // §6.2 — three thesis-required saved views (hardcoded fallback)
     const thesisSavedViewsFallback = [
@@ -2353,6 +2405,24 @@ function registerAppMenuAndRoutes() {
 
     // Fallback only if AppMenu panel genuinely failed (not just slow)
     if (sdk.NavMenu && typeof sdk.NavMenu.addNavItem === 'function') {
+      // §15 — prepend the setup-checklist entry if there are
+      // outstanding onboarding actions. Same sentinel as the panel
+      // path; click opens the OnboardingFlow modal.
+      if (!onboardingCompleted && outstandingOnboardingActions.length > 0) {
+        try {
+          const setupNav = sdk.NavMenu.addNavItem({
+            name: `Finish setup (${outstandingOnboardingActions.length})`,
+            type: 'NAVIGATION',
+          });
+          if (setupNav && typeof setupNav.on === 'function') {
+            setupNav.on('click', (event) => {
+              if (event && typeof event.preventDefault === 'function') event.preventDefault();
+              if (bootstrapCache) _showOnboardingFlow(bootstrapCache, oauthBridge);
+            });
+          }
+          fallbackNavItemViews.push(setupNav);
+        } catch (_) { /* fall through — NavMenu version doesn't support on-click */ }
+      }
       menuRoutes.forEach((route) => {
         const navHandle = sdk.NavMenu.addNavItem({
           name: route.title,
@@ -2468,10 +2538,26 @@ function registerAppMenuAndRoutes() {
       };
       const hadResolvedRouteAccess = routeAccessResolved;
       routeAccessResolved = true;
+      // §15 — also rebuild when the onboarding-checklist signature
+      // changes. Without this the "Finish setup (N)" badge would
+      // stick to its pre-refresh count after the admin finishes a
+      // step, giving the impression nothing happened.
+      const ONBOARDING_REQUIRED_ACTION_CODES = new Set([
+        'connect_gmail', 'reconnect_gmail', 'connect_erp',
+        'configure_ap_policy', 'connect_slack', 'set_slack_channel',
+      ]);
+      const outstandingOnboarding = (Array.isArray(data?.required_actions) ? data.required_actions : [])
+        .filter((a) => ONBOARDING_REQUIRED_ACTION_CODES.has(String(a?.code || '')))
+        .length;
+      const onboardingSignature = `${Boolean(data?.onboarding?.completed)}:${outstandingOnboarding}`;
+      const prevOnboardingSignature = store.__onboardingNavSig || null;
+      store.__onboardingNavSig = onboardingSignature;
+
       if (
         !hadResolvedRouteAccess
         || appMenuNavItemViews.length === 0
         || JSON.stringify(nextRouteAccess.capabilities) !== JSON.stringify(currentRouteAccess.capabilities)
+        || onboardingSignature !== prevOnboardingSignature
       ) {
         currentRouteAccess = nextRouteAccess;
         rebuildMenuNavigation();
