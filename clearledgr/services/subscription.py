@@ -667,60 +667,70 @@ class SubscriptionService:
     def consume_ai_credits(
         self, organization_id: str, action: str, amount: int = None
     ) -> Dict[str, Any]:
-        """
-        Check and consume AI credits for an action.
+        """Delegate to the §13 pre-purchased pool ledger.
 
-        Args:
-            organization_id: The org consuming credits.
-            action: Key from AI_CREDIT_COSTS (e.g. "invoice_extraction").
-            amount: Override credit cost (defaults to AI_CREDIT_COSTS lookup).
+        The historical monthly-counter path is retired in favour of
+        the pool model the thesis describes: credits are pooled,
+        purchased in advance, consumed per action, refunded on
+        failure. This wrapper keeps the old signature so callers
+        that already use ``consume_ai_credits`` don't need to change,
+        while the underlying behaviour picks up the new invariants
+        (monthly auto-grant lazily recorded, insufficient-balance
+        short-circuit, idempotent).
 
-        Returns:
-            {"allowed": bool, "credits_used": int, "credits_remaining": int, ...}
+        Callers that need the full pool surface — refund on failure,
+        consume preview with confirmation prompt, admin top-up —
+        should import ``clearledgr.services.agent_credit_pool``
+        directly rather than calling this shim.
         """
         if amount is None:
             amount = AI_CREDIT_COSTS.get(action, 1)
 
-        sub = self.get_subscription(organization_id)
-        if sub.usage is None:
-            sub.usage = UsageStats()
+        from clearledgr.services.agent_credit_pool import (
+            consume_credit, get_balance,
+        )
 
-        current_credits = sub.usage.ai_credits_this_month
-        limit = sub.limits.ai_credits_per_month if sub.limits else 0
+        result = consume_credit(
+            organization_id,
+            credits=int(amount),
+            action_type=action,
+            db=self.db,
+        )
 
-        # Unlimited
-        if limit == -1:
-            sub.usage.ai_credits_this_month = current_credits + amount
-            self._save_subscription(sub)
+        if result.get("unlimited"):
             return {
                 "allowed": True,
-                "credits_used": amount,
+                "credits_used": int(amount),
                 "credits_remaining": -1,
                 "unlimited": True,
                 "action": action,
             }
 
-        # Check budget
-        if current_credits + amount > limit:
+        if result.get("ok"):
+            # Also update the legacy usage counter so the billing-
+            # summary payload's "ai_credits_used" field stays in sync
+            # with what the pool actually consumed this period. The
+            # counter is no longer authoritative for gating — the
+            # pool ledger is — but the UI still reads it for display.
+            sub = self.get_subscription(organization_id)
+            if sub.usage is None:
+                sub.usage = UsageStats()
+            sub.usage.ai_credits_this_month = (sub.usage.ai_credits_this_month or 0) + int(amount)
+            self._save_subscription(sub)
             return {
-                "allowed": False,
-                "credits_used": 0,
-                "credits_remaining": max(0, limit - current_credits),
-                "limit": limit,
+                "allowed": True,
+                "credits_used": int(amount),
+                "credits_remaining": int(result.get("balance_after") or 0),
+                "entry_id": result.get("entry_id"),
                 "action": action,
-                "reason": "ai_credit_limit_reached",
             }
 
-        sub.usage.ai_credits_this_month = current_credits + amount
-        self._save_subscription(sub)
-        remaining = max(0, limit - (current_credits + amount))
-
         return {
-            "allowed": True,
-            "credits_used": amount,
-            "credits_remaining": remaining,
-            "limit": limit,
+            "allowed": False,
+            "credits_used": 0,
+            "credits_remaining": int(result.get("balance", 0) or 0),
             "action": action,
+            "reason": result.get("reason", "ai_credit_limit_reached"),
         }
 
     def _update_trial_status(self, sub: Subscription) -> None:

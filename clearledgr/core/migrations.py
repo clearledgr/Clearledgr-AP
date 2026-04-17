@@ -1523,6 +1523,63 @@ def _v39_backfill_grn_reference_column(cur, db):
         logger.debug("[Migration v39] grn_reference insert skipped: %s", exc)
 
 
+@migration(40, "Agent-action credit ledger (DESIGN_THESIS.md §13 pre-purchased pool)")
+def _v40_agent_credit_ledger(cur, db):
+    """§13 billing model: agent action credits as a pre-purchased pool.
+
+    Previous shape stored a monthly running counter
+    (``ai_credits_this_month``) with a per-tier allowance
+    (``ai_credits_per_month``). The thesis specifies a different
+    model: "A pooled credit system for compute-intensive agent
+    actions... purchased in advance, and consumed per action. Failed
+    actions do not consume credits. A confirmation prompt appears
+    before any action that would consume a significant number of
+    credits."
+
+    The ledger is the source of truth for the pool balance:
+
+      balance = sum(credits where entry_type in {grant, refund})
+              - sum(credits where entry_type = consume)
+
+    Grants come from two places: the monthly tier allowance (recorded
+    as an "auto_grant" entry on first activity each billing period)
+    and admin top-ups (recorded as "purchase"). Consume entries are
+    recorded when an action succeeds. Refund entries reverse a
+    consume when the action fails, per thesis "failed actions do not
+    consume credits".
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_credit_ledger (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            entry_type TEXT NOT NULL,
+            credits INTEGER NOT NULL,
+            action_type TEXT,
+            ap_item_id TEXT,
+            related_entry_id TEXT,
+            metadata TEXT,
+            created_at TEXT NOT NULL,
+            created_by TEXT
+        )
+        """
+    )
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_org "
+            "ON agent_credit_ledger(organization_id, created_at DESC)"
+        )
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_ap_item "
+            "ON agent_credit_ledger(ap_item_id)"
+        )
+    except Exception:
+        pass
+
+
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")
 def _v37_split_ap_posted_and_paid(cur, db):
     """Kanban correctness fix.
