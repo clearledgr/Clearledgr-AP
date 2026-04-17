@@ -1588,7 +1588,32 @@ class VendorStore:
             )
             return None
 
-        return self.get_onboarding_session_by_id(session_id)
+        created = self.get_onboarding_session_by_id(session_id)
+        # DESIGN_THESIS.md §3 Developer Platform — fire `vendor.invited`
+        # on session creation. Fire-and-forget on the running loop so
+        # the INSERT commit is never blocked on webhook delivery.
+        if created is not None:
+            try:
+                import asyncio
+                from clearledgr.services.webhook_delivery import emit_vendor_invited_webhook
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        emit_vendor_invited_webhook(
+                            organization_id=organization_id,
+                            session_id=session_id,
+                            vendor_name=vendor_name,
+                            session_data=created,
+                        )
+                    )
+                except RuntimeError:
+                    # No running loop (sync caller / tests) — skip cleanly.
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[VendorStore] vendor.invited webhook scheduling failed (non-fatal): %s", exc
+                )
+        return created
 
     def get_onboarding_session_by_id(
         self, session_id: str
@@ -1840,6 +1865,33 @@ class VendorStore:
                     "[VendorStore] onboarding state transition audit failed (non-fatal): %s",
                     audit_exc,
                 )
+
+        # DESIGN_THESIS.md §3 Developer Platform — fire the public
+        # vendor.* webhook for transitions the external surface cares
+        # about (kyc_complete / bank_verified / activated / suspended).
+        # Fire-and-forget on the running loop; internal transitions
+        # with no mapped event no-op inside the helper.
+        try:
+            import asyncio
+            from clearledgr.services.webhook_delivery import emit_vendor_state_change_webhook
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    emit_vendor_state_change_webhook(
+                        organization_id=session.get("organization_id") or "",
+                        session_id=session_id,
+                        vendor_name=session.get("vendor_name") or "",
+                        new_state=target,
+                        prev_state=str(current),
+                        session_data=updated,
+                    )
+                )
+            except RuntimeError:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "[VendorStore] vendor.* webhook scheduling failed (non-fatal): %s", exc
+            )
 
         return updated
 

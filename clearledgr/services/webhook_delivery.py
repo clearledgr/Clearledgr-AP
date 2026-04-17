@@ -1,11 +1,23 @@
-"""Outgoing webhook delivery — notifies external systems of AP events.
+"""Outgoing webhook delivery — notifies external systems of Clearledgr events.
 
-Event types:
-- invoice.received, invoice.validated, invoice.approved, invoice.rejected
-- invoice.posted_to_erp, invoice.closed, invoice.needs_info
-- payment.completed, payment.failed, payment.reversed
+Event types (DESIGN_THESIS.md §3 — The Developer Platform):
 
-Delivery is async with HMAC-SHA256 signing.  Failed deliveries are
+Invoice lifecycle:
+  invoice.received, invoice.validated, invoice.approved, invoice.rejected
+  invoice.posted_to_erp, invoice.closed, invoice.needs_info
+
+Vendor lifecycle:
+  vendor.invited — onboarding session opened for a new vendor
+  vendor.kyc_complete — KYC checks passed, moving to bank verification
+  vendor.bank_verified — open-banking name match passed
+  vendor.activated — vendor written to ERP, ready to receive invoices
+  vendor.suspended — existing vendor blocked from payments (fraud, IBAN
+      change not yet re-verified, AP Manager override, etc.)
+
+Payments:
+  payment.completed, payment.failed, payment.reversed
+
+Delivery is async with HMAC-SHA256 signing. Failed deliveries are
 enqueued in the existing notification retry queue.
 """
 from __future__ import annotations
@@ -35,6 +47,19 @@ _STATE_TO_EVENT = {
     "closed": "invoice.closed",
     "needs_info": "invoice.needs_info",
     "failed_post": "invoice.failed_post",
+}
+
+# Map vendor onboarding state transitions to webhook event types.
+# The key is the state being ENTERED. Entering `bank_verify` means KYC
+# just passed, so the canonical event for that edge is
+# `vendor.kyc_complete`. `vendor.invited` is emitted at session
+# creation rather than transition (creation IS the entry into
+# `invited`).
+_VENDOR_STATE_TO_EVENT = {
+    "bank_verify": "vendor.kyc_complete",
+    "bank_verified": "vendor.bank_verified",
+    "active": "vendor.activated",
+    "blocked": "vendor.suspended",
 }
 
 WEBHOOK_TIMEOUT = 10  # seconds
@@ -182,6 +207,72 @@ async def emit_state_change_webhook(
         })
 
     return await emit_webhook_event(organization_id, event_type, payload)
+
+
+async def emit_vendor_state_change_webhook(
+    organization_id: str,
+    session_id: str,
+    vendor_name: str,
+    new_state: str,
+    prev_state: str = "",
+    session_data: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Emit a webhook for a vendor-onboarding state transition.
+
+    Returns 0 for state edges that don't have a mapped event — the
+    state machine has more states than the public event surface, and
+    most transitions are internal (e.g. portal_accessed, kyc —
+    which are signalled by events other than webhooks).
+    """
+    event_type = _VENDOR_STATE_TO_EVENT.get(new_state)
+    if not event_type:
+        return 0
+
+    payload = {
+        "session_id": session_id,
+        "vendor_name": vendor_name,
+        "new_state": new_state,
+        "prev_state": prev_state,
+        "organization_id": organization_id,
+    }
+    if session_data:
+        for key in (
+            "vendor_email", "legal_entity_name", "country", "kyc_tier",
+            "bank_verified_at", "erp_activated_at", "escalated_reason",
+        ):
+            val = session_data.get(key)
+            if val is not None:
+                payload[key] = val
+
+    return await emit_webhook_event(organization_id, event_type, payload)
+
+
+async def emit_vendor_invited_webhook(
+    organization_id: str,
+    session_id: str,
+    vendor_name: str,
+    session_data: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Emit `vendor.invited` at onboarding-session creation.
+
+    Fires from :meth:`VendorStore.create_vendor_onboarding_session`
+    after the INSERT commits. Separate entry-point from the transition
+    helper because session creation is the entry into INVITED — there
+    is no prior state to compute an edge from.
+    """
+    payload = {
+        "session_id": session_id,
+        "vendor_name": vendor_name,
+        "new_state": "invited",
+        "organization_id": organization_id,
+    }
+    if session_data:
+        for key in ("vendor_email", "invited_by", "invited_at"):
+            val = session_data.get(key)
+            if val is not None:
+                payload[key] = val
+
+    return await emit_webhook_event(organization_id, "vendor.invited", payload)
 
 
 async def retry_webhook_delivery(notification: Dict[str, Any]) -> bool:
