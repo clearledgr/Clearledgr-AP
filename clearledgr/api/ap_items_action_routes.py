@@ -72,10 +72,25 @@ shared = _SharedProxy()
 def _dispatch_mention_notifications(
     *, body: str, ap_item_id: str, item: Dict[str, Any], actor_id: str
 ) -> None:
-    """§5.3 @Mentions — parse @email from note/comment body and notify via Slack DM.
+    """§5.3 @Mentions — parse @email from note/comment body and bridge to
+    the workspace's configured approval surface.
 
     "When a Box timeline @mention happens in Gmail, Clearledgr also sends a
-    Slack DM to the mentioned person with the comment and a direct link."
+    Slack or Teams DM to the mentioned person with the comment and a direct
+    link to the thread."
+
+    Slack is preferred when configured because it supports
+    ``users.lookupByEmail`` + DM delivery with structured metadata that
+    ``slack_invoices.py`` uses to sync replies back to the Box timeline
+    (the bidirectional loop the thesis describes).
+
+    Teams is the fallback when Slack isn't wired. Teams' incoming
+    webhooks can only target the channel the webhook belongs to — they
+    cannot DM an individual user without the full Bot Framework bot
+    installation. We inline the mentioned email in the channel message
+    so the intended recipient is visible; reply-sync from Teams back to
+    the timeline is a separate bot integration that is scoped for a
+    later pass (not shipped today).
     """
     import re
 
@@ -85,20 +100,49 @@ def _dispatch_mention_notifications(
 
     vendor = item.get("vendor_name") or item.get("vendor") or "Unknown"
     org_id = item.get("organization_id") or "default"
+    invoice_number = item.get("invoice_number", "N/A")
+
+    # Preferred path: Slack DM (with reply-sync via message metadata).
+    slack_handled = _dispatch_mention_slack_dm(
+        mentions=mentions, vendor=vendor, invoice_number=invoice_number,
+        body=body, ap_item_id=ap_item_id, org_id=org_id, actor_id=actor_id,
+    )
+
+    # Fallback: if Slack wasn't configured for any mention, try Teams.
+    # Slack returning "user not found" still counts as Slack-handled —
+    # the workspace has a Slack integration, the user just isn't a
+    # member. We don't double-post to Teams in that case.
+    if not slack_handled:
+        _dispatch_mention_teams_channel(
+            mentions=mentions, vendor=vendor, invoice_number=invoice_number,
+            body=body, ap_item_id=ap_item_id, org_id=org_id, actor_id=actor_id,
+        )
+
+
+def _dispatch_mention_slack_dm(
+    *, mentions: List[str], vendor: str, invoice_number: str, body: str,
+    ap_item_id: str, org_id: str, actor_id: str,
+) -> bool:
+    """Send a Slack DM per mentioned email. Returns True iff Slack is
+    configured for this workspace (regardless of per-user lookup
+    success), so the caller knows not to fall through to Teams.
+    """
+    try:
+        from clearledgr.services.slack_api import resolve_slack_runtime
+
+        runtime = resolve_slack_runtime(org_id)
+        if not runtime or not runtime.get("token"):
+            return False
+    except Exception as exc:
+        logger.debug("[mentions] slack runtime lookup failed: %s", exc)
+        return False
+
+    import httpx
+
+    headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
 
     for email in mentions:
         try:
-            from clearledgr.services.slack_api import resolve_slack_runtime
-
-            runtime = resolve_slack_runtime(org_id)
-            if not runtime or not runtime.get("token"):
-                continue
-
-            import httpx
-
-            headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
-
-            # Look up Slack user by email
             lookup_resp = httpx.post(
                 "https://slack.com/api/users.lookupByEmail",
                 json={"email": email},
@@ -110,9 +154,8 @@ def _dispatch_mention_notifications(
                 continue
             slack_user_id = lookup_data["user"]["id"]
 
-            # Send DM with ap_item_id in metadata for reply sync (§5.3)
             dm_text = (
-                f"*{actor_id}* mentioned you on {vendor} (invoice {item.get('invoice_number', 'N/A')}):\n"
+                f"*{actor_id}* mentioned you on {vendor} (invoice {invoice_number}):\n"
                 f">{body[:500]}\n"
                 f"_Reply here — your response will be added to the invoice timeline._"
             )
@@ -134,7 +177,64 @@ def _dispatch_mention_notifications(
                 timeout=10,
             )
         except Exception as exc:
-            logger.warning("[mentions] notification to %s failed: %s", email, exc)
+            logger.warning("[mentions] slack notification to %s failed: %s", email, exc)
+
+    return True  # Slack is wired; caller shouldn't fall through.
+
+
+def _dispatch_mention_teams_channel(
+    *, mentions: List[str], vendor: str, invoice_number: str, body: str,
+    ap_item_id: str, org_id: str, actor_id: str,
+) -> None:
+    """Post a single Teams channel message for all @mentions on this
+    comment. One message with all mentioned emails inline — not per-user
+    DMs — because Teams incoming webhooks can't target individuals
+    without a full bot installation.
+    """
+    try:
+        from clearledgr.services.teams_api import TeamsAPIClient
+
+        client = TeamsAPIClient.from_env(org_id)
+        if not client.webhook_url:
+            return
+    except Exception as exc:
+        logger.debug("[mentions] teams client resolve failed: %s", exc)
+        return
+
+    mention_list = ", ".join(f"**@{email}**" for email in mentions)
+    snippet = body[:500].replace("\n", " ")
+    text = (
+        f"{mention_list} — *{actor_id}* mentioned you on {vendor} "
+        f"(invoice {invoice_number}):\n"
+        f"> {snippet}\n"
+        f"_Open the thread in Gmail to respond — Teams reply-to-timeline "
+        f"sync is not yet available._"
+    )
+
+    card = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {"type": "TextBlock", "size": "Medium", "weight": "Bolder",
+                         "text": "Clearledgr — you were mentioned"},
+                        {"type": "TextBlock", "wrap": True, "text": text},
+                        {"type": "TextBlock", "isSubtle": True, "spacing": "Small",
+                         "text": f"AP item: {ap_item_id} · Org: {org_id}"},
+                    ],
+                },
+            }
+        ],
+    }
+    try:
+        client._post_json(card)
+    except Exception as exc:
+        logger.warning("[mentions] teams channel post failed: %s", exc)
 
 
 def _resolve_task_owner_item(db: Any, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:

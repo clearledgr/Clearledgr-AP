@@ -996,14 +996,19 @@ def _v25_object_model(cur, db):
             (f"STG-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
 
+    # DESIGN_THESIS.md §5.5 Agent Columns — the thesis enumerates eight
+    # auto-populated columns. GRN Reference sits between PO Reference
+    # and Match Status because 3-way match ordering is PO → GRN →
+    # invoice, and the match status reads from both references.
     ap_columns = [
         ("invoice_amount", "Invoice Amount", "amount", None, 0),
         ("po_reference", "PO Reference", "po_number", None, 1),
-        ("match_status", "Match Status", None, "match_status", 2),
-        ("exception_reason", "Exception Reason", "exception_code", None, 3),
-        ("days_to_due", "Days to Due Date", None, "days_to_due", 4),
-        ("iban_verified", "IBAN Verified", None, "iban_verified", 5),
-        ("erp_posted", "ERP Posted", "erp_posted_at", None, 6),
+        ("grn_reference", "GRN Reference", "grn_number", None, 2),
+        ("match_status", "Match Status", None, "match_status", 3),
+        ("exception_reason", "Exception Reason", "exception_code", None, 4),
+        ("days_to_due", "Days to Due Date", None, "days_to_due", 5),
+        ("iban_verified", "IBAN Verified", None, "iban_verified", 6),
+        ("erp_posted", "ERP Posted", "erp_posted_at", None, 7),
     ]
     for slug, label, source_field, computed_fn, order in ap_columns:
         cur.execute(
@@ -1452,6 +1457,70 @@ def _v38_rename_vendor_onboarding_states(cur, db):
             )
         except Exception as exc:
             logger.debug("[Migration v38] pipeline_stages rewrite skipped: %s", exc)
+
+
+@migration(39, "Backfill GRN Reference agent column on AP pipeline (DESIGN_THESIS.md §5.5)")
+def _v39_backfill_grn_reference_column(cur, db):
+    """Add the missing ``grn_reference`` column to the AP Invoices
+    pipeline_columns seed on existing databases.
+
+    Background: DESIGN_THESIS.md §5.5 lists eight auto-populated Agent
+    Columns for AP — one of them, GRN Reference, was absent from the
+    initial pipeline_columns seed. Fresh DBs now get it via the updated
+    seed in the initial migration; this migration patches DBs that were
+    initialised before that change landed so the thesis column set is
+    complete across the fleet.
+
+    Idempotent: INSERT OR IGNORE + slug lookup, and the display_order
+    is shifted on neighboring rows only if grn_reference was missing.
+    """
+    import uuid as _uuid
+
+    try:
+        cur.execute("SELECT id FROM pipelines WHERE slug = 'ap-invoices'")
+        row = cur.fetchone()
+    except Exception:
+        row = None
+    if not row:
+        return
+    ap_pipeline_id = row[0]
+
+    try:
+        cur.execute(
+            "SELECT slug FROM pipeline_columns WHERE pipeline_id = ?",
+            (ap_pipeline_id,),
+        )
+        existing_slugs = {r[0] for r in cur.fetchall()}
+    except Exception:
+        existing_slugs = set()
+
+    if "grn_reference" in existing_slugs:
+        return  # Already patched.
+
+    # Shift display_order on columns that should sit AFTER grn_reference
+    # so the kanban column ordering stays meaningful.
+    columns_after_grn = ("match_status", "exception_reason", "days_to_due",
+                         "iban_verified", "erp_posted")
+    try:
+        for slug in columns_after_grn:
+            cur.execute(
+                "UPDATE pipeline_columns SET display_order = display_order + 1 "
+                "WHERE pipeline_id = ? AND slug = ?",
+                (ap_pipeline_id, slug),
+            )
+    except Exception as exc:
+        logger.debug("[Migration v39] display_order shift skipped: %s", exc)
+
+    try:
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_columns "
+            "(id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id,
+             "grn_reference", "GRN Reference", "grn_number", None, 2),
+        )
+    except Exception as exc:
+        logger.debug("[Migration v39] grn_reference insert skipped: %s", exc)
 
 
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")
