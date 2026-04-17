@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:44994b5dd69ad4bc4bc48802c790da73a851fc9d347aec63cdd2e1ab12235828 */
+/* clearledgr-source-fingerprint:b8549c48d7dc88b58206a3e57a41486275a970db8c3c5e73f56c109a693302bb */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58085,10 +58085,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     needs_info: "#D97706",
     needs_approval: "#D97706",
     pending_approval: "#D97706",
-    approved: "#00B87A",
+    approved: "#00D67E",
     ready_to_post: "#1A73E8",
-    posted_to_erp: "#00B87A",
-    closed: "#00B87A",
+    posted_to_erp: "#00D67E",
+    closed: "#00D67E",
     rejected: "#DC2626",
     failed_post: "#DC2626",
     reversed: "#DC2626",
@@ -69656,7 +69656,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <div style="font:600 16px/1.2 'Geist Mono',monospace;color:#0A1628;margin:4px 0;">${tier.price}</div>
                   <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
-                  ${(sub.plan || "").toLowerCase() === tier.id ? html12`<span style="font-size:11px;color:#00B87A;font-weight:600;">Current plan</span>` : html12`<button class="btn-secondary btn-sm" onClick=${() => {
+                  ${(sub.plan || "").toLowerCase() === tier.id ? html12`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>` : html12`<button class="btn-secondary btn-sm" onClick=${() => {
       api("/api/workspace/subscription/plan", {
         method: "POST",
         body: JSON.stringify({ organization_id: orgId, plan: tier.id })

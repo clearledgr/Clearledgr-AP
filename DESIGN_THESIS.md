@@ -1,8 +1,8 @@
-# Product Design Thesis
+# Clearledgr Thesis
 
-**Version 1.0 · Accounts Payable**
+**Version 2.0 · The Coordination Layer for Finance Operations**
 
-*This document defines what Clearledgr is, how it is built, how it behaves, and how it must feel to the people who use it. It is the authoritative reference for product, design, and engineering. It should be read before any surface is designed and consulted whenever a product decision is contested.*
+*This document defines what Clearledgr is, why it exists, how it is built, how it behaves, and how it must feel to the people who use it. It is the authoritative reference for product, design, and engineering, and the foundation on which every external-facing document — investor memo, pitch deck, company overview, vision and mission — is derived. It should be read before any surface is designed and consulted whenever a product decision is contested.*
 
 *Confidential · Clearledgr Ltd · 2026*
 
@@ -10,15 +10,23 @@
 
 ## 1. The Reference Point
 
-Before defining what Clearledgr is, it is worth being precise about what we are drawing from. Streak is a CRM built entirely inside Gmail. Not integrated with Gmail — inside it. Users install a browser extension, and Streak modifies Gmail's interface directly: adding pipelines to the left nav, injecting context panels into email threads, placing stage labels on inbox rows, and registering custom page views within Gmail's own chrome. There is no separate URL. There is no new tab. The product lives where the user already lives.
+Before defining what Clearledgr is, it is worth being precise about what we are drawing from. The obvious reference is Streak — the CRM built entirely inside Gmail. But the lesson most people take from Streak is the wrong one, and the distinction matters enormously for Clearledgr.
 
-Streak built their product on InboxSDK — a JavaScript library they created and subsequently open-sourced. InboxSDK abstracts Gmail's DOM entirely, providing a high-level API for injecting UI into Gmail without directly manipulating the page structure. Streak uses InboxSDK to build Streak. Other developers use it to build extensions on top of Gmail. Clearledgr will be built on InboxSDK.
+Most observers look at Streak and conclude: *the insight is Gmail as a surface. The product succeeded because it met sales teams where they already worked.* That reading is partially correct but it misses the deeper structural claim. Streak is not fundamentally a Gmail product. Streak is fundamentally a **pipelines product** that happens to be rendered in Gmail. The pipelines are the abstraction that makes Streak work: a deal is an object with state, that state moves through defined stages, all the communication and artefacts attached to that deal are held together by the pipeline. Gmail is where the user interacts with the pipeline — but the pipeline itself is the product. A Streak pipeline persists regardless of whether any particular email is read. A Streak pipeline holds state that no email thread holds on its own.
 
-The structural insight Streak proved is this: the highest-adoption business tool is the one that requires the least behaviour change. Sales teams adopted Streak because it met them in their inbox. They did not have to log into a new system, migrate their data, or learn a new interface. The CRM appeared inside the tool they were already using eight hours a day.
+The structural insight Streak actually proved is this: **work that currently lives as scattered communication needs a stateful container, and that container should be rendered where the work already happens.** The Gmail surface is a consequence of the abstraction, not the source of it. Sales teams adopted Streak because pipelines gave their deals a persistent home that Gmail alone could not provide — and because Gmail was where they already were, the pipelines appeared without context-switching. Both halves mattered. The abstraction was the product; the surface was how it reached them.
 
-There is a harder truth underneath this that Aleem Mawani has spent thirteen years navigating: Gmail changes its DOM. Constantly. Browser extensions that manipulate Gmail's HTML directly break every time Google updates the interface — and Google does not announce those changes in advance. Streak's response to this problem is InboxSDK itself. The SDK's implementation is remotely loaded: InboxSDK hosts the full implementation separately from the extension bundle. When Gmail updates its DOM, InboxSDK updates the implementation. Extensions built on InboxSDK keep working without a new Chrome Web Store submission, without a user reinstalling anything, without a support ticket. The user refreshes Gmail and the fix is live.
+Clearledgr inherits both halves of this insight. The Box is Clearledgr's equivalent of a Streak pipeline: the stateful container for a finance workflow instance. The Gmail surface is where the finance team interacts with the Box. But the Box is the product. A Box persists regardless of whether any particular email is read. A Box holds state — approvals, exceptions, agent actions, timeline — that no email thread, no spreadsheet, and no ERP record holds on its own. When a finance team adopts Clearledgr, they are not primarily adopting a Gmail extension. They are adopting a stateful workflow layer, and Gmail is how they interact with it.
 
-Clearledgr inherits this architecture by building on InboxSDK. The dependency is real but well-understood. InboxSDK is MIT-licensed and open-source — the code can be forked. The more important dependency is not the codebase but the maintenance work: 13 years of Streak's engineering team tracking Gmail's DOM changes as Google ships them. If Streak reallocates that team, the library does not disappear, but the fix cadence for the next Gmail redesign slows. Clearledgr would inherit the DOM maintenance burden.
+### The Surface Architecture
+
+The surface is genuinely important — but as a consequence of the thesis, not the foundation of it. Finance teams already spend their day in Gmail, Slack, and the ERP. Asking them to adopt a new interface for workflow state would fail for the same reason adopting any new tool fails: context-switching cost exceeds value until value is enormous. Clearledgr's surface strategy is therefore to render the Box inside the tools the finance team is already in. Gmail is the primary surface for AP because AP work is email-heavy. Slack is the primary surface for approvals because approvals are social. The ERP is the primary surface for the posted record because that is where financial truth lives. Account-layer interactions — billing, user management, audit export — happen inside Gmail too, following the Streak architectural precedent. No single surface is the product. The Box is the product. The surfaces are how the Box is reached.
+
+### Building on InboxSDK
+
+Clearledgr's Gmail surface is built on InboxSDK — the JavaScript library Streak created and open-sourced to inject UI into Gmail without directly manipulating the DOM. InboxSDK abstracts Gmail's structure, provides a high-level API for sidebars, toolbar buttons, custom routes, and inbox row decoration, and — critically — hosts its implementation remotely. When Gmail updates its DOM, InboxSDK updates its implementation; extensions built on it keep working without a new Chrome Web Store submission and without users reinstalling anything. This is the mechanism that has kept Streak alive across thirteen years of Gmail redesigns.
+
+Clearledgr inherits this architecture by building on InboxSDK. The dependency is real but well-understood. InboxSDK is MIT-licensed and open-source — the code can be forked. The more important dependency is not the codebase but the maintenance work: thirteen years of Streak's engineering team tracking Gmail's DOM changes as Google ships them. If Streak reallocates that team, the library does not disappear, but the fix cadence for the next Gmail redesign slows. Clearledgr would inherit the DOM maintenance burden.
 
 The mitigation is operational, not architectural. Three responsibilities sit with the Clearledgr engineering team from day one: track InboxSDK commit velocity and Streak's public signals about the library's roadmap; keep at least one engineer with sufficient Gmail DOM internals knowledge to own a fork if needed; contribute upstream where practical — it builds the relationship and the institutional knowledge simultaneously. Forking is a credible backstop, not a plan A. The goal is to make it unnecessary.
 
@@ -26,39 +34,87 @@ Chrome's Manifest V3 migration is a current constraint, not a future one. InboxS
 
 **On Outlook:** Clearledgr V1 is Google Workspace only. InboxSDK does not extend to Outlook; Gmail's NavMenu, sidebar injection, toolbar buttons, and custom routes are all Google infrastructure. Microsoft's extension model is different enough that building for both simultaneously would compromise the depth achievable in Gmail. The V1 boundary is firm. The trigger for the Outlook investment is a defined enterprise demand signal — either a significant revenue threshold crossed in Google Workspace customers, a cluster of qualified Outlook-native enterprise prospects blocked at procurement, or a Series A commitment with Outlook expansion scoped. Until one of those conditions is met, Outlook is explicitly out of scope and stated as such in every enterprise sales conversation before procurement asks.
 
-> *Clearledgr applies the same thesis to finance operations. AP teams already live in email. Vendor invoices arrive by email. Approval requests are sent by email. Vendor queries are resolved by email. The work is already there. Clearledgr makes the work execute itself.*
+> *Streak proved that pipelines-as-workflow-state is the abstraction, and that rendering pipelines inside the tool where the work already happens is what makes them adopted. Clearledgr applies both halves to finance operations. The Box is the pipeline. Gmail, Slack, and the ERP are the surfaces. The coordination intelligence lives in Clearledgr.*
 
 ---
 
 ## 2. The Thesis
 
-There is one thing that separates Clearledgr from every other tool built on the Gmail-native thesis, including Streak: Streak surfaces data for humans to act on. Clearledgr acts autonomously and surfaces only what humans need to decide. This is not a vertical application of Streak's model. It is a fundamentally different product philosophy built on the same infrastructure.
+**Finance operations is defined by coordination.** Every workflow in the finance function — invoice processing, vendor onboarding, receivables and collections, reconciliation, expense management, month-end close, treasury, reporting, audit — is a long-running, multi-participant, exception-prone process. Each one has state: what's in flight, what's blocked, what's next, who owns the move, what's exceptional and why. That state currently has no persistent home.
 
-Streak is an instrument. It gives sales teams visibility into their pipeline so they can make decisions. The human is always the actor. The CRM is always the record. Clearledgr is an agent. It makes decisions, executes actions, writes to the ERP, schedules payments, chases vendors, and flags exceptions — all without human instruction on each step. The human is the approver of last resort, not the operator of first resort. That distinction changes everything: the interface, the trust model, the expansion path, and the commercial conversation.
+The ERP holds results, not workflows. It knows an invoice was posted; it does not know the invoice was waiting three days on a GRN from the warehouse, then escalated to the Controller because the CFO was on leave, then approved with a specific override reason. Email holds communication fragments. Slack holds ephemeral conversation. Supplier portals hold what the vendor submitted and nothing else. The workflow itself — its living memory — is reconstructed every morning from flagged emails, tracker spreadsheets, mental lists, and hallway conversations. The AP team holds it in their heads. The Controller holds it in her close spreadsheet. The CFO holds it in the three things he's waiting on.
 
-> *Streak removes friction from human work. Clearledgr replaces human work entirely — except at the margin, where judgment is genuinely required.*
+**This isn't a tooling gap. It is the defining structural problem of the finance function.**
 
-Finance work already happens in email. Every invoice arrives as an attachment. Every approval is a reply chain. Every exception generates a thread. Every vendor query lands in someone's inbox and waits for a human to remember it. The existing tools — ERPs, AP portals, workflow software — all ask finance teams to leave that email, open another system, manually re-enter data that was already in the attachment, and remember to go back and update status. The friction is not a bug. It is the product.
+### What the cost looks like
 
-Clearledgr removes all of it. The agent lives inside Gmail. It reads every incoming invoice, extracts the data, runs the 3-way match against the ERP, routes the approval to the right person, and logs every action with its reasoning — without being asked. The finance team sees what genuinely needs them. Everything else is already done.
+Because workflow state lives in humans, everything downstream is distorted. Finance teams over-hire to hold state that should be held by systems — "AP Coordinator" is not a job about processing invoices, it is a job about remembering which invoices are where. Close cycles stretch across days because no one system can say what's done and what's pending; every close day begins with reconstructing where the close actually is. Audits are expensive because evidence has to be assembled under duress rather than retrieved from a persistent record. Errors — duplicate payments, missed discounts, unapproved spend, fraudulent invoices — persist because exception detection depends on a human noticing. Strategic influence erodes because the CFO's team cannot answer questions about the current state of the business in real time.
 
-The Streak reference point is correct for one dimension: the surface. Gmail is the right place to build because that is where the work already happens. But Streak built a CRM. Clearledgr builds an agent. The surface is shared. The philosophy is not.
+The cost is diffuse and mostly invisible on any line item, which is why the problem has been underinvested in. But the aggregate cost is enormous, and every finance leader recognises it the moment it is named.
 
-> *The product is not software that finance teams use. It is the intelligence layer through which finance work gets done — running silently inside the tool they already open first thing every morning.*
+### Why the problem persists
+
+The coordination problem has been visible for decades. It has not been solved for two reasons.
+
+**First, every existing system in the finance stack is optimised for a different job.** ERPs are systems of record — optimised for posting transactions, not for tracking the workflow that produced them. Email is a communication protocol — optimised for message delivery, not for persistent state. Supplier portals are data-collection interfaces — optimised for the vendor, not for the workflow around the vendor. None of these systems were designed to hold workflow state, and retrofitting them has never worked. The result is that finance teams have always been the state layer themselves.
+
+**Second, the specialist tools that do solve slices of the problem don't generalise.** BlackLine holds close state. Stampli holds AP approval state. HighRadius holds AR state. Each exists because one workflow became painful enough to support a standalone product. But the state models don't talk to each other, the coordination doesn't compound across workflows, and the finance team is still the integration layer — now across specialist tools on top of the ERP. The specialists proved the problem is real and solvable in one workflow at a time. They have not solved it as a function.
+
+### What Clearledgr is
+
+**Clearledgr is the stateful coordination layer for finance operations.**
+
+Every workflow instance gets a Box — a persistent, attributable, queryable home for its state, its timeline, its exceptions, and its outcome. An agent advances each workflow autonomously where it can: extracting invoices, running three-way matches, routing approvals, chasing vendors, posting to the ERP, calculating commission clawbacks, onboarding new vendors. Humans decide on the exceptions the agent surfaces. The agent's behaviour is constrained by deterministic rules at every write path — the phrase that governs the product internally is *rules decide, Claude describes*. The LLM classifies and summarises. The deterministic layer calculates, validates, and posts. No financial write is at the mercy of model judgment.
+
+The finance team interacts with the workflow through the tools they already use. Gmail is the primary surface for AP because AP work is email-heavy. Slack is the primary surface for approvals because approvals are social and time-sensitive. The ERP remains the system of record for posted transactions — Clearledgr reads from it and writes to it but does not replace it. Account-layer interactions — billing, user management, audit export — happen inside Gmail, following the Streak architectural precedent of everything living inside the host surface.
+
+**But the coordination itself lives in Clearledgr.** The Box is the product. It is what makes the platform possible.
+
+### AP is the wedge. Finance operations is the platform.
+
+Accounts Payable is the first workflow because it is the highest-volume, most repetitive, and most painful coordination problem in the finance function. It is where a stateful coordination layer proves its value fastest and most tangibly. Every AP invoice is a workflow instance with exceptions, approvals, and a hard outcome (paid or not paid, on time or late). The state problem is acute. The automation opportunity is clear. The trust earned in AP — measurable, within 30–90 days of go-live — is what earns the right to expand.
+
+Every finance workflow that follows is the same shape: a long-running, multi-participant process whose state currently lives in humans and whose advancement is mostly mechanical with a small set of genuinely judgment-requiring exceptions. Vendor onboarding. Commission clawback. Accounts receivable and collections. Reconciliation. Expense management. Month-end close. Treasury forecasting. Audit preparation. Each of these is a Box-shaped workflow waiting for a coordination layer that does not yet exist.
+
+**The platform is not a future product. It is the thesis made literal, one workflow at a time.** AP earns the right to Vendor Onboarding. AP and Vendor Onboarding together earn the right to Clawback. Those three earn the right to AR. The data compounds, the trust compounds, the customer's dependence on the coordination layer compounds. By the time the platform is mature, Clearledgr is not an AP tool that expanded — it is the coordination infrastructure of the finance function, and pulling it out would mean re-hiring the people who used to hold the state.
+
+### Why now
+
+The coordination layer problem is not new. What has changed is that the agent piece — the mechanism for advancing workflow state autonomously rather than just tracking it — is now technically tractable. BlackLine and its specialist peers proved a decade ago that persistent workflow state is a product finance teams will pay for. What they could not do, because the technology did not exist, was advance that state without a human moving each step. The product category they created was "better spreadsheet for tracking the work humans still do." Clearledgr is what that category becomes when the work itself can be done by an agent constrained by deterministic rules.
+
+This is the bet. Not that finance teams need a coordination layer — that is established. Not that agents can summarise and draft — that is established. The bet is that **agents constrained by the right architecture can be trusted to advance finance workflows autonomously**, and that the product that delivers this trust first becomes the coordination infrastructure for the function.
+
+> *Streak proved that pipelines need a stateful home rendered where the work already happens. BlackLine proved that finance teams will pay for persistent workflow state. Modern agent architectures make it possible to not just hold that state but advance it. Clearledgr is what you build at that intersection — the stateful, agentic coordination layer for finance operations, with AP as the wedge and every finance workflow as the platform.*
 
 ---
 
 ## 3. What We Are Building
 
-Clearledgr is the agentic execution layer for finance operations. V1 is Accounts Payable. The agent handles invoice ingestion, data extraction, 3-way matching, exception flagging, approval routing, ERP posting, and payment scheduling — autonomously, from inside Gmail, without requiring any behaviour change from the finance team.
+Clearledgr is the stateful coordination layer for finance operations. V1 is Accounts Payable. The agent handles invoice ingestion, data extraction, three-way matching, exception flagging, approval routing, ERP posting, and payment scheduling — advancing the workflow autonomously, escalating exceptions to humans, and holding the full state of every invoice in a persistent Box. V1 also includes Vendor Onboarding as a structural dependency: you cannot pay a vendor who is not in your system, and vendor onboarding is itself a coordination problem that deserves Box-shaped treatment. The agent runs the entire onboarding journey: invitation, KYC document collection at the depth the workspace configures, bank verification via open banking, and ERP vendor master activation.
 
-V1 also includes Vendor Onboarding as a direct dependency of AP. You cannot pay a vendor who is not in your system. The agent handles the entire onboarding journey: invite, KYC document collection, bank account verification, and ERP activation.
+A third pipeline — Commission Clawback — is scoped for V1.2 and addresses a specific coordination pain for Clearledgr's design partner, Booking.com: the reversal of commissions when bookings are refunded or cancelled. The workflow is a textbook coordination problem — detect, calculate, approve, post, notify, handle dispute — and exists today as a manual spreadsheet-and-email exercise. It is also the cleanest demonstration of the platform thesis: the same Box architecture, the same deterministic-guardrail agent pattern, the same Gmail-and-Slack surface, applied to a workflow that has nothing to do with AP invoicing.
+
+### The Box is Channel-Agnostic
+
+An important clarification on ingestion, because it is the first question a technically literate enterprise buyer asks: **the Box is the product; the ingestion channel is how data reaches the Box.** The two are separable by design.
+
+In V1, email is the primary ingestion channel for AP. This is a deliberate wedge choice, not a thesis constraint. The majority of AP volume at SME, mid-market, and the long tail of enterprise still arrives by email as PDF attachments. The agent watches the AP mailbox via Gmail Pub/Sub, classifies incoming emails, extracts invoice data from attachments, and opens a Box. This is the fastest path to the first working product and the clearest demonstration of the coordination layer at work.
+
+But not all invoices arrive by email. At enterprise scale, a material share of AP volume arrives via supplier portals (Ariba, Coupa, Tradeshift, Basware), via EDI feeds, or directly uploaded into the ERP by a procurement team. These invoices never hit the AP mailbox. Under a Gmail-only ingestion model they would be invisible to Clearledgr — which would undermine the coordination-layer thesis precisely where enterprise buyers need it to hold.
+
+The architectural answer is **ERP-side invoice watching**, scoped as a V1.5 addition to the AP pipeline. Clearledgr's ERP connectors already exist for writes (post_bill, schedule_payment) and for reads (lookup_po, lookup_grn). Extending them to watch for newly-arrived AP documents regardless of their ingestion channel is an architecturally small change that delivers a large surface-coverage benefit. Portal-ingested invoices appear in SAP or NetSuite the same way email-ingested invoices do after Clearledgr posts them — from the ERP's perspective, source is irrelevant. Once the agent sees the document in the ERP, a Box opens around it, and the full coordination layer activates: the workflow around the invoice (chasing, disputes, exceptions, approval routing, close-time reconciliation, audit trail) is held by Clearledgr regardless of how the invoice arrived.
+
+This design collapses the portal question into an ingestion-layer decision, rather than a thesis-level one. Clearledgr does not compete with Ariba on invoice submission — Ariba is a submission portal and wins on that job at enterprise scale. Clearledgr competes on the workflow around every invoice regardless of submission channel. For portal-committed customers, Clearledgr is additive: it holds the coordination state that the portal does not. For greenfield customers, Clearledgr is a direct alternative: keep vendors on email, get portal-grade outcomes, and gain the coordination layer the portal would never have provided.
+
+The same principle generalises beyond AP. Future workflows — reconciliation, close, treasury forecasting — will have ingestion channels beyond email: Google Drive, OneDrive, SharePoint for bank statements and spreadsheets; direct ERP export feeds; open banking APIs. The coordination layer's value is independent of how data reaches it. The Box is the product. The ingestion channel is plumbing.
+
+> *The Gmail-native architecture is how Clearledgr reaches the human. It is not how Clearledgr reaches the data. Email is V1's primary ingestion channel because it is the fastest path to coordination value for our wedge customers. ERP-side watching, cloud-drive ingestion, and portal integrations follow as the platform expands. The Box is channel-agnostic by design.*
 
 ### The Platform Opportunity
 
-The constraint on Clearledgr's scope is not opportunity — it is sequencing. Nearly every finance workflow currently happens over email. That is the surface Clearledgr owns. The question is not which workflows are addressable. It is which ones to enter first, in which order, and how to use each one to earn the right to the next.
+The constraint on Clearledgr's scope is not opportunity — it is sequencing. Every finance workflow is a coordination problem: long-running, multi-participant, exception-prone, with state that today lives in human memory and scattered artefacts. Every one of them is Box-shaped. The question is not which workflows are addressable. It is which ones to enter first, in which order, and how to use each one to earn the right to the next.
 
-The full opportunity spans six domains of finance operations. Every workflow listed below currently runs over email, involves repetitive human steps that can be automated, and generates data that makes the agent smarter for every adjacent workflow.
+The full opportunity spans six domains of finance operations. Each workflow below shares the structural signature: state with no persistent home, a sequence of actions that are mostly mechanical with a small set of genuinely judgment-requiring exceptions, and a human cost that is distributed enough to be invisible on any line item but enormous in aggregate.
 
 ### Core Finance Operations
 
@@ -67,13 +123,14 @@ This is the primary expansion path — the sequence every Clearledgr customer wi
 | Stage | Workflow | What the agent handles |
 |-------|----------|------------------------|
 | 01 | Accounts Payable | The wedge. Invoice ingestion, data extraction, 3-way match, exception flagging, approval routing, ERP posting, payment scheduling. |
-| 02 | Vendor Onboarding | AP dependency. Invite dispatch, KYC document collection, bank account verification via micro-deposit, ERP activation. |
-| 03 | Accounts Receivable | Mirror of AP — same infrastructure, reversed direction. Invoice generation, collections, aging management, dispute tracking, dunning escalation. |
-| 04 | Reconciliation | Transaction matching across AP and AR. Agent holds both sides of the ledger. Bank reconciliation, intercompany matching, variance surfacing. |
-| 05 | Month-End Close | Checklist automation, blocker identification, close compression. Controller-level value. Target: compress a 10-day close to 3 days. |
-| 06 | Flux Analysis | Variance explanation from accumulated transaction data. Agent explains why numbers moved — not just reports that they did. CFO-level value. |
-| 07 | FP&A and Budgeting | Forward-looking models built on historical transaction data the agent has been accumulating since day one. Scenario modelling, budget vs actual, reforecast. |
-| 08 | Audit and Compliance | The audit trail built from day one of AP becomes the compliance product. Every action logged, every approval recorded, every exception rationale preserved. |
+| 02 | Vendor Onboarding | AP dependency. Invite dispatch, KYC document collection, bank account verification via open banking, ERP activation. |
+| 03 | Commission Clawback | Detect refund/cancellation events, calculate reversal amount, draft reversal journal entry, post to ERP, notify partner, handle disputes. V1.2 — introduced for Booking.com design partnership. |
+| 04 | Accounts Receivable | Mirror of AP — same infrastructure, reversed direction. Invoice generation, collections, aging management, dispute tracking, dunning escalation. |
+| 05 | Reconciliation | Transaction matching across AP and AR. Agent holds both sides of the ledger. Bank reconciliation, intercompany matching, variance surfacing. |
+| 06 | Month-End Close | Checklist automation, blocker identification, close compression. Controller-level value. Target: compress a 10-day close to 3 days. |
+| 07 | Flux Analysis | Variance explanation from accumulated transaction data. Agent explains why numbers moved — not just reports that they did. CFO-level value. |
+| 08 | FP&A and Budgeting | Forward-looking models built on historical transaction data the agent has been accumulating since day one. Scenario modelling, budget vs actual, reforecast. |
+| 09 | Audit and Compliance | The audit trail built from day one of AP becomes the compliance product. Every action logged, every approval recorded, every exception rationale preserved. |
 
 ### Treasury and Cash Management
 
@@ -81,14 +138,14 @@ Once Clearledgr owns AP and AR, it holds the data required to run treasury workf
 
 | Workflow | Agent scope | What it unlocks |
 |----------|-------------|-----------------|
-| Cash flow forecasting | Agent projects inflows and outflows from live AP and AR data. No spreadsheet, no manual input. | Finance teams see 30/60/90-day cash position in Gmail without a separate treasury tool. |
+| Cash flow forecasting | Agent projects inflows and outflows from live AP and AR data. No spreadsheet, no manual input. | Finance teams see 30/60/90-day cash position without a separate treasury tool. |
 | Payment run optimisation | Agent identifies early payment discount opportunities, batches payments by bank, flags FX exposure on cross-border invoices. | Measurable cost reduction from captured discounts. Direct ROI visible in AP data. |
 | Dynamic discounting | Agent surfaces invoices where early payment earns a discount and routes the decision to the CFO with a calculated return figure. | AP becomes a yield-generating activity, not just a cost centre. |
 | Bank reconciliation | Agent matches ERP transactions to bank statement entries. Surfaces unmatched items with context from the Box timeline. | Eliminates the monthly bank rec spreadsheet entirely. |
 
 ### Procurement and Spend
 
-Procurement workflows are almost entirely email-native. PO approvals, vendor quotes, contract negotiations, and spend reviews all run through inboxes. Clearledgr's agent is already reading vendor emails — extending into procurement is a natural surface expansion.
+Procurement workflows are coordination-heavy — PO approvals, vendor quotes, contract negotiations, and spend reviews all involve multiple stakeholders and stateful follow-through. Clearledgr's agent already reads vendor correspondence for AP; extending into procurement uses the same Box architecture applied to adjacent workflows.
 
 | Workflow | Agent scope | What it unlocks |
 |----------|-------------|-----------------|
@@ -99,29 +156,30 @@ Procurement workflows are almost entirely email-native. PO approvals, vendor quo
 
 ### Payroll and Workforce Costs
 
-Payroll approval, expense processing, and contractor invoice management are high-frequency, policy-governed workflows — exactly the conditions where an agent adds most value.
+Payroll approval, expense processing, and contractor invoice management are high-frequency, policy-governed workflows — exactly the conditions where a stateful coordination layer with an advancing agent adds most value.
 
 | Workflow | Agent scope | What it unlocks |
 |----------|-------------|-----------------|
 | Payroll approval | Agent validates payroll runs against headcount records, flags anomalies, routes for CFO approval, posts to ERP. | Payroll approval cycle reduced from 2 days to 2 hours. Audit trail for every run. |
 | Expense claim processing | Agent reads expense submissions, validates against policy, flags violations, routes compliant claims for payment. | Finance teams stop manually reviewing low-value receipts. Policy violations caught automatically. |
-| Contractor invoicing | Agent processes contractor invoices against SOWs, validates hours and rates, routes for approval, schedules payment. | Contractor payment accuracy improves. Disputes resolved with agent-held evidence from the email thread. |
+| Contractor invoicing | Agent processes contractor invoices against SOWs, validates hours and rates, routes for approval, schedules payment. | Contractor payment accuracy improves. Disputes resolved with agent-held evidence from the Box timeline. |
 
 ### Reporting and Control
 
-Once Clearledgr accumulates transaction data across AP, AR, and procurement, it holds more complete financial data than most finance teams can access in real time through their ERP alone.
+Once Clearledgr accumulates transaction data across AP, AR, and procurement, it holds more complete workflow data than most finance teams can access in real time through their ERP alone. The ERP knows what was posted. Clearledgr knows what was posted, why, by whom, after which exceptions, with which approvals, and in what context.
 
 | Workflow | Agent scope | What it unlocks |
 |----------|-------------|-----------------|
-| Management accounts | Agent assembles P&L, balance sheet movements, and cash flow from live transaction data. Posts draft to Gmail for Controller review. | Management accounts prepared in hours, not days. Controller focuses on review, not assembly. |
+| Management accounts | Agent assembles P&L, balance sheet movements, and cash flow from live transaction and workflow data. Posts draft for Controller review. | Management accounts prepared in hours, not days. Controller focuses on review, not assembly. |
 | Board pack preparation | Agent pulls actuals, variance tables, and commentary from accumulated data. Drafts standard sections for finance team review. | Board pack cycle compressed. Finance team focuses on narrative, not data gathering. |
-| Internal audit trail | Every Clearledgr action is timestamped, attributed, and stored. Agent generates audit-ready reports on demand. | External audit preparation cost drops significantly. Evidence is already organised. |
+| Internal audit trail | Every Clearledgr action is timestamped, attributed, and stored. Agent generates audit-ready reports on demand. | External audit preparation cost drops significantly. Evidence is already organised because it was captured as the workflow ran. |
 
 ### The Sequencing Principle
 
-These workflows are not a roadmap to be executed in parallel. They are a trust ladder to be climbed in sequence. Each layer earns the data, the ERP access, and the organisational trust required to make the next layer work. A finance team that has run AP through Clearledgr for six months — with zero duplicate payments, measurable close compression, and a clean audit trail — will grant the agent permissions that a new customer never would.
+These workflows are not a roadmap to be executed in parallel. They are a **trust ladder** to be climbed in sequence. Each layer earns the data, the ERP access, and the organisational trust required to make the next layer work. A finance team that has run AP through Clearledgr for six months — with zero duplicate payments, measurable close compression, and a clean audit trail — will grant the agent permissions that a new customer never would. The trust accumulates per-customer, but it also accumulates at the category level: every Clearledgr customer who extends from AP to AR makes the AR expansion more credible for the next customer.
 
-> *The commercial implication is significant. Clearledgr enters at AP with a narrow, provable ROI. It expands across the finance function as trust accumulates. By the time it reaches treasury, payroll, and reporting, it is not competing with point solutions — it is the finance operating system. That transition happens without a new sale. It happens through demonstrated performance.*
+> *The commercial implication is significant. Clearledgr enters at AP with a narrow, provable ROI. It expands across the finance function as trust accumulates. By the time it reaches treasury, payroll, and reporting, it is not competing with point solutions — it is the coordination infrastructure of the finance function. That transition happens without a new sale. It happens through demonstrated performance within a customer, compounded across the customer base.*
+
 
 ### Payment Execution
 
@@ -137,12 +195,12 @@ Streak ships a suite of Gmail power tools alongside its CRM: Snooze, Send Later,
 
 | Feature | Streak equivalent | Clearledgr implementation |
 |---------|-------------------|---------------------------|
-| File management in Boxes | Auto-extracts email attachments into the Box, accessible alongside emails, notes, and timeline. | Invoice PDFs, KYC documents, certificates of incorporation, bank statements, and GRN confirmations are attached to the relevant Box automatically. Accessible from the thread sidebar. Preserved as part of the audit trail for the statutory retention period. Auditors can access document sets from the Backoffice export, not by clicking through emails. |
+| File management in Boxes | Auto-extracts email attachments into the Box, accessible alongside emails, notes, and timeline. | Invoice PDFs, KYC documents, certificates of incorporation, bank statements, and GRN confirmations are attached to the relevant Box automatically. Accessible from the thread sidebar. Preserved as part of the audit trail for the statutory retention period. Auditors can access document sets via the Gmail-native audit export interface, not by clicking through emails. |
 | Snooze | Temporarily archives an email thread and returns it to the top of the inbox at a set time. | AP Managers can snooze a vendor email pending a procurement decision, a disputed invoice awaiting a credit note, or any thread that cannot be actioned today but must not be forgotten. Snoozed threads return with the Box context still active — the sidebar loads automatically on re-entry. The agent does not act on snoozed threads until they return. |
 | Send Later | Schedule emails to send at a future date and time from within Gmail. | AP Managers composing direct vendor communications can schedule them to arrive at the start of the vendor's business day, after a weekend, or at a strategically chosen moment. The agent handles most vendor outreach — Send Later is for the personal communications that should not come from an automated system. |
 | Thread Splitter | Breaks a Gmail thread where conversations have diverged into separate threads. | When a vendor email thread contains both an invoice and an unrelated query — common with long vendor relationships — the AP Manager can split the thread, creating a clean invoice thread for the agent to process and a separate thread for the query. Without splitting, the agent may process an ambiguous thread incorrectly. |
 | Call and meeting logging | Log calls and meeting notes directly against a Box, with AI-generated meeting agendas from Box history. | When the AP Manager has a call with a vendor about a disputed invoice, an onboarding delay, or a payment query, they log it against the Box. The log includes date, duration, participants, and notes. The agent surfaces the log in the thread sidebar under the Box timeline so subsequent team members have full context. Call logs count toward the audit trail. |
-| Pipeline notifications | Real-time Gmail desktop notifications when Boxes are updated, moved to new stages, or assigned. | Gmail-native notifications fire when the agent moves an invoice Box to a new stage, posts an exception, or activates a vendor. Finance team members in Gmail see these notifications immediately without checking Slack. The notification includes the Box name, the action, and a one-click link to the thread. Notification preferences are configurable per role in Settings. |
+| Pipeline notifications | Real-time Gmail desktop notifications when Boxes are updated, moved to new stages, or assigned. | Gmail notifications fire when the agent moves an invoice Box to a new stage, posts an exception, or activates a vendor. Finance team members in Gmail see these notifications immediately without checking Slack. The notification includes the Box name, the action, and a one-click link to the thread. Notification preferences are configurable per role in Settings. |
 | Vendor enrichment | Auto-enriches Contacts with publicly available data from LinkedIn and social media. | When a new vendor is invited to onboard, the agent pre-populates their record from public registers: Companies House (UK legal name, registration number, registered address, director names), the HMRC VAT register (VAT number and registration status), and open corporate registries for non-UK vendors. This reduces the onboarding form burden on the vendor and accelerates KYC. Adverse media checks run automatically against the director names. Enrichment results are displayed in the Vendor record with the source and date of each data point. |
 | Streak Share | Generate a shareable link to any Gmail thread and share it anywhere. | The AP Manager can generate a link to any invoice thread or vendor Box and share it in Slack, in an email, or in a document. The link opens the thread in Gmail with the Clearledgr sidebar already loaded — the recipient sees full context immediately. Access is permission-controlled: only team members with Clearledgr access can view the linked thread. |
 
@@ -156,7 +214,7 @@ The API matters for three audiences. First, ERP partners and implementation firm
 |----------------|-----------------|
 | Invoice events | Webhooks fire on `invoice.received`, `invoice.matched`, `invoice.exception`, `invoice.approved`, `invoice.posted`, `invoice.paid`. External systems can react to these events in real time — updating dashboards, triggering downstream workflows, or feeding data lakes. |
 | Vendor events | Webhooks fire on `vendor.invited`, `vendor.kyc_complete`, `vendor.bank_verified`, `vendor.activated`, `vendor.suspended`. Procurement systems, ERP master data tools, and compliance platforms can stay in sync with Clearledgr's vendor state without polling. |
-| Pipeline queries | Read the current state of any pipeline — all Boxes, their stages, their Agent Column values, their timeline entries. Enables custom reporting, external dashboards, and audit exports without needing the Backoffice. |
+| Pipeline queries | Read the current state of any pipeline — all Boxes, their stages, their Agent Column values, their timeline entries. Enables custom reporting, external dashboards, and audit exports via API, without requiring a separate web surface. |
 | Agent action log | Query the full timeline of any Box or export all actions within a date range. The compliance backbone for customers who build their own audit tooling. |
 | Settings API | Programmatically configure AP policy rules, approval routing, and autonomy thresholds. Enables large customers to manage Clearledgr configuration at scale without clicking through the Settings UI for each workspace. |
 
@@ -186,10 +244,10 @@ Clearledgr's migration approach is parallel running, not cutover. The customer c
 
 | Migration source | What Clearledgr imports and how |
 |------------------|----------------------------------|
-| Bill.com | Vendor master export via Bill.com API, where available. Note: Bill.com API access for data export requires a partner relationship with Bill.com — it is not available to any developer on request. This is a business development dependency, not purely an engineering task. Until the partnership is established, Bill.com migrations use CSV export from the Bill.com interface. CSV export covers vendor name, email, and payment terms but may not include full IBAN data, which Bill.com does not expose in standard exports. In either case: bank details are verified again via micro-deposit after import. Clearledgr does not inherit Bill.com's verification as sufficient. |
+| Bill.com | Vendor master export via Bill.com API, where available. Note: Bill.com API access for data export requires a partner relationship with Bill.com — it is not available to any developer on request. This is a business development dependency, not purely an engineering task. Until the partnership is established, Bill.com migrations use CSV export from the Bill.com interface. CSV export covers vendor name, email, and payment terms but may not include full IBAN data, which Bill.com does not expose in standard exports. In either case: bank details are verified again via open banking after import. Clearledgr does not inherit Bill.com's verification as sufficient. |
 | NetSuite AP | Vendor master is read directly from NetSuite during the ERP connection. No separate import required. Invoice history is backfilled from NetSuite's bill records for the duplicate detection window. The ERP connection is the migration. |
 | Xero / QuickBooks | Same as NetSuite — vendor master and invoice history are read from the ERP connection. The self-serve onboarding flow handles this automatically for Starter customers. |
-| Spreadsheet / manual process | Vendor master import via CSV upload. Template provided. The AP Manager uploads their vendor list, Clearledgr maps the columns, and the vendors are created in the system. Each vendor then goes through the standard bank verification flow — micro-deposit — before their first invoice is processed. Migration from manual takes longer but is structurally identical to standard onboarding. |
+| Spreadsheet / manual process | Vendor master import via CSV upload. Template provided. The AP Manager uploads their vendor list, Clearledgr maps the columns, and the vendors are created in the system. Each vendor then goes through the standard bank verification flow — open banking — before their first invoice is processed. Migration from manual takes longer but is structurally identical to standard onboarding. |
 | Stampli / Tipalti | Vendor master export from the source system, imported via CSV. Invoice history is typically available via export — imported for duplicate detection backfill. Payment history is not directly transferable in most cases and is noted in the Vendor record as 'history prior to [date] available on request from previous system.' |
 
 The migration guarantee: no live invoice is processed by Clearledgr without the AP Manager's explicit confirmation that the parallel running period is complete and they are satisfied with the results. Clearledgr does not cut the customer over automatically. The AP Manager clicks a button in Settings that reads 'Go live — Clearledgr will now process invoices as the primary AP workflow.' That action is logged, timestamped, and attributed. The cutover is a human decision, not an automated milestone.
@@ -215,9 +273,13 @@ Everything beyond Q4 — flux analysis, FP&A, treasury, procurement, payroll —
 
 Every product decision — surface, interaction pattern, agent behaviour, information hierarchy — is governed by these principles. They are not aspirational. They are constraints. When a design decision conflicts with a principle, the principle wins.
 
-### 01 — Everything lives inside Gmail
+### 01 — Human interaction happens in the tool the human is already in
 
-Clearledgr is a Gmail extension built on InboxSDK — the same SDK Streak uses to build their own product. There is no separate web application in V1. There is no new tab. There is no dashboard the AP team checks. The product injects into Gmail's left navigation, Gmail's inbox rows, Gmail's email thread view, and Gmail's compose window. Finance teams open their email in the morning and Clearledgr is already there.
+Clearledgr is the stateful coordination layer. The Box — the persistent home for every workflow instance — lives in Clearledgr. But every human interaction with that Box happens in the tool the finance team is already using for that kind of work. Gmail is the primary surface for AP: the sidebar, the inbox labels, the thread injections, the custom routes in the Gmail left nav. Slack is the primary surface for approvals: structured messages with one-click decisions. The ERP is the system of record for posted transactions. Billing, user management, and audit export live inside Gmail as a Settings route — following Streak, which handles account management inside Gmail rather than in a separate web application. The only step that happens outside Gmail is initial signup at clearledgr.com before the Chrome extension is installed.
+
+The discipline is that no single surface is the product. The Box is the product. The surfaces render the Box wherever it needs to be rendered. A finance team should never be asked to open a new tab to find out what the agent did or what's waiting on them — that information appears in Gmail's sidebar, in a Slack message, on an inbox label, or on a Kanban card inside a Gmail custom route. The human-facing complexity of the product is surface-level. The stateful complexity lives inside Clearledgr where the finance team does not have to see it unless they choose to.
+
+Clearledgr's Gmail surface is built on InboxSDK — the library Streak uses to build its own product. This is how the product survives Gmail's DOM changes without requiring user reinstallation or support tickets. The engineering constraints that follow from this dependency are addressed in §4.08.
 
 ### 02 — The agent acts. The human decides on exceptions.
 
@@ -255,17 +317,19 @@ Streak's simplicity is visual — a spreadsheet, labels, a sidebar. Clearledgr's
 
 ## 5. The Object Model
 
-Clearledgr uses Streak's object model directly. Understanding this model is the prerequisite for understanding how every surface in the product works.
+The Box is the central abstraction of Clearledgr. Understanding it is understanding the product. Every finance workflow instance — an invoice being processed, a vendor being onboarded, a commission clawback being resolved, eventually an AR collection or a close task — exists as a Box. The Box holds the workflow's state, its timeline, its exceptions, its linked objects, and its outcome. It persists. It is attributable. It is queryable. It is what the coordination layer thesis makes literal.
+
+The object model draws on Streak's pipelines-and-boxes architecture directly — the same abstraction that let Streak render sales pipelines inside Gmail is what lets Clearledgr render finance workflow state across Gmail, Slack, and the ERP. But Clearledgr extends the model in two ways Streak does not: the Box is *advanced by an agent* rather than only by humans, and the Box lives *across multiple surfaces* rather than only inside one. The object definitions below are the shared vocabulary across every surface, every pipeline, and every agent action.
 
 ### 5.1 Core Objects
 
 | Object | What it is in Clearledgr |
 |--------|--------------------------|
-| Box | One invoice record or one vendor onboarding record. Each Box stores the email thread that created it, all agent actions on its timeline, all extracted field values, and any linked Boxes (e.g. an invoice Box linked to its vendor Box). |
-| Pipeline | A collection of Boxes moving through a defined workflow. Clearledgr has two pipelines in V1: AP Invoices and Vendor Onboarding. Each is accessible from Gmail's left nav and has its own Kanban view. |
-| Stage | The current step of a Box in its workflow. For AP: Received, Matching, Exception, Approved, Paid. For Vendor Onboarding: Invited, KYC, Bank Verify, Active. The agent moves Boxes between stages autonomously based on its actions. |
-| Column | A data field on every Box in a pipeline. Clearledgr's agent columns are auto-populated — no manual entry required. Examples: Invoice Amount, PO Reference, Match Status, Exception Reason, Days to Due Date, IBAN Verified. |
-| Timeline | The chronological record of everything that happened to a Box: all emails in the thread, every agent action with its reasoning, all comments, all field updates. The timeline is the audit trail. |
+| Box | One workflow instance — one invoice record, one vendor onboarding, one commission clawback. Each Box stores the email thread (or other trigger) that created it, all agent actions on its timeline, all extracted field values, all approvals, and any linked Boxes (e.g. an invoice Box linked to its vendor Box). |
+| Pipeline | A collection of Boxes moving through a defined workflow. V1 ships with AP Invoices and Vendor Onboarding. V1.2 adds Commission Clawback. Each pipeline is accessible from Gmail's left nav and has its own Kanban view. Future pipelines (AR, Reconciliation, Close) share the same model. |
+| Stage | The current step of a Box in its workflow. For AP: Received, Matching, Exception, Approved, Posted, Paid. Posted and Paid are deliberately separate — Posted means the bill has been written to the ERP ledger; Paid means payment has settled out of the bank account. Collapsing the two would hide the window AP Managers care about most, and the agent's override window (§7.8) operates specifically against Posted Boxes. For Vendor Onboarding: Invited, KYC, Bank Verify, Active, Blocked, Closed Unsuccessful. For Commission Clawback: Detected, Lookup, Calculated, Awaiting Approval, Posted, Disputed, Closed. The agent moves Boxes between stages autonomously based on its actions. |
+| Column | A data field on every Box in a pipeline. Clearledgr's agent columns are auto-populated — no manual entry required. Examples: Invoice Amount, PO Reference, GRN Reference, Match Status, Exception Reason, Days to Due Date, Bank Verified. |
+| Timeline | The chronological record of everything that happened to a Box: all emails in the thread, every agent action with its reasoning, all comments, all field updates, all approvals and overrides. The timeline is the audit trail. It is the persistent memory the coordination layer thesis describes. |
 | Saved View | A filtered slice of a pipeline surfaced directly in the Gmail inbox. Example: a Saved View called 'Exceptions' shows all invoices with a failed match as a labelled section at the top of the AP team's inbox every morning. |
 
 ### 5.2 The Shared Inbox Model
@@ -304,16 +368,18 @@ In Streak, Magic Columns are fields auto-populated by system activity — last e
 | Match Status | Set by the agent after 3-way match: Passed, Exception, or Failed, with tolerance delta. |
 | Exception Reason | Written by the agent in plain language: 'Invoice €8,922 vs GRN receipt €8,500 — delta €422 exceeds 2% tolerance.' |
 | Days to Due Date | Calculated from the invoice due date. Drives payment scheduling and urgency sorting. |
-| IBAN Verified | Set to Verified or Unverified after micro-deposit confirmation during vendor onboarding. |
+| Bank Verified | Set to Verified or Unverified after open banking confirmation during vendor onboarding. Account holder name-match with the KYC legal entity is part of the verification. |
 | ERP Posted | Timestamp of when the agent posted the invoice to the ERP after approval. |
 
 ---
 
 ## 6. The Surfaces
 
-Clearledgr V1 has three surfaces: Gmail, Slack or Microsoft Teams, and the Google Workspace Add-on for mobile. These surfaces have distinct and non-overlapping roles. Gmail is the work surface — where invoices are processed, where the agent acts, where the pipeline lives, where the audit trail accumulates. Slack and Teams are the decision surface — where approvals are granted, where escalations are resolved, where trust signals are delivered. The Google Workspace Add-on is the mobile decision surface — lightweight approval access from the native Gmail app when the approver is away from their desk.
+Clearledgr V1 has three surfaces: Gmail, Slack or Microsoft Teams, and the Google Workspace Add-on for mobile. These surfaces have distinct and non-overlapping roles. Gmail is the primary surface for AP work — where invoices are processed, where the agent renders its actions on the relevant thread, where the pipeline Kanban opens as a custom route, where the finance team reviews exceptions, and where all account-layer administration happens (billing, seats, audit export — rendered as dedicated Gmail custom routes). Slack and Teams are the decision surface — where approvals are granted, where escalations are resolved, where trust signals are delivered. The Google Workspace Add-on is the mobile decision surface — lightweight approval access from the native Gmail app when the approver is away from their desk. Clearledgr has no standalone customer-facing web product surface. This follows the Streak precedent exactly (§14).
 
-This split is deliberate, not a compromise of the Gmail-first thesis. The thesis is that finance work happens in email and the product should live there. Approval decisions are not work — they are judgments. Routing judgments to Slack is correct because that is where senior stakeholders already make decisions during their day. Routing the work itself to Slack would be the mistake. Every invoice thread, every vendor record, every Box timeline, every agent action — these live in Gmail. The approval of an outcome lives in Slack. The distinction holds.
+This split reflects a deliberate structural choice about where each kind of human interaction belongs. AP work — reading invoices, resolving exceptions, reviewing agent actions, tracking Box state through the pipeline — is email-heavy and should be rendered where email already lives. That is Gmail. Approval decisions are not work — they are judgments, often delivered by senior stakeholders who are not processing invoices themselves. Senior approvers live in Slack during the working day, not in Gmail. Routing judgments to Slack is correct because it meets approvers where their attention already is. Routing the work itself to Slack would be the mistake.
+
+The Box — the stateful coordination object — is the same Box whether you see it in Gmail, in Slack, or on mobile. Each surface renders the parts of the Box relevant to the action being taken there. Gmail shows the full context: the invoice thread, the agent timeline, the exception history, the pipeline position. Slack shows the decision: one invoice, one approval question, one button. Mobile shows the same decision in an even more compressed form. The coordination lives in Clearledgr. The surfaces are how the coordination is rendered for each kind of human interaction.
 
 Within Gmail, Clearledgr injects into seven specific locations using InboxSDK. Each injection maps to a distinct InboxSDK API and serves a distinct purpose. Understanding these seven injection points is the complete understanding of what the product is inside Gmail.
 
@@ -329,7 +395,7 @@ Clearledgr Home is the first entry in the Clearledgr left nav section. It opens 
 | Awaiting Your Approval | Invoices the agent has matched and routed to this user for sign-off. Ordered by due date. Approve or reject in one click from this view — no need to open the email thread. |
 | Due For Payment This Week | Matched and approved invoices scheduled for payment in the next 7 days. Gives the AP Manager a cash flow view without a treasury tool. |
 | Agent Actions Today | A condensed feed of what the agent has done since midnight. Not the full Agent Activity view — just the last 10 actions, each in one line. Gives the team situational awareness at a glance. |
-| Vendor Onboarding Blockers | Any vendor onboarding engagement that is currently blocked — a missing document, an unconfirmed micro-deposit, a vendor who has not responded in 48 hours. Directly actionable from this view. |
+| Vendor Onboarding Blockers | Any vendor onboarding engagement that is currently blocked — a missing document, a failed open banking verification, a vendor who has not responded in 48 hours. Directly actionable from this view. |
 | Quick Access | One-click buttons to AP Invoices pipeline, Vendor Onboarding pipeline, and Agent Activity. Also shows the Clearledgr notification badge count across all categories. |
 
 Clearledgr Home is designed for the first 90 seconds of the AP Manager's day. It answers: what broke overnight, what do I need to approve, what is due soon, and what is the agent working on right now. If those four questions are answered in under two minutes, the AP Manager can trust the product enough to let it run without constant checking.
@@ -429,16 +495,19 @@ These toolbar buttons are the primary action surface for AP Managers. An AP Mana
 
 InboxSDK provides `sdk.Conversations.registerThreadSidebarContentPanelHandler()` to inject a panel into the right sidebar whenever an email thread is opened. This is the primary context surface. It activates automatically when any email belonging to a Box is opened — no click required.
 
-The sidebar is divided into four sections, always in this order:
+The sidebar is divided into five sections, always in this order:
 
 | Sidebar section | Contents |
 |-----------------|----------|
 | Invoice | Amount due (large, monospace), invoice reference, PO reference, due date, payment terms. Agent columns displayed as read-only fields. The factual record of the invoice. |
 | 3-Way Match | Three rows: Purchase Order, Goods Receipt, Invoice. Each shows matched reference, status icon (✓ / ⚠ / ✗), and the specific value if there is a discrepancy. This is the core AP decision interface. |
 | Vendor | Vendor name, category, YTD spend, invoice count, exception count, payment terms, IBAN on file with verification status. Historical payment record beneath. |
+| Linked Records | Cross-pipeline lineage for the current Box — the vendor onboarding Box that activated this vendor, sibling invoices from the same vendor, any resubmission or override history. Keeps the AP Manager inside Gmail when they need the wider context. |
 | Agent Actions | The Box timeline filtered to this invoice. Each entry shows: what the agent did, why it did it, and what happens next. This is the explainability record for this specific invoice. |
 
-Below the four sections: an Approve button (shown when match passed), and a natural language query field. The query field lets the finance team ask the agent questions about the vendor or invoice without navigating away. 'What's our outstanding with Stripe?' or 'Why was this flagged?' — answered in thread.
+Conditional banners (Resubmission lineage, Override Window countdown, Waiting reason, active Fraud Flags) render above the five fixed sections when the Box state requires them — they are not permanent chrome and disappear when the condition resolves.
+
+Below the five sections: an Approve button (shown when match passed), and a natural language query field. The query field lets the finance team ask the agent questions about the vendor or invoice without navigating away. 'What's our outstanding with Stripe?' or 'Why was this flagged?' — answered in thread.
 
 The sidebar loads within two seconds of opening a thread. If it loads slowly, finance teams close it and revert to manual. Load time is a design specification, not an engineering afterthought.
 
@@ -454,7 +523,7 @@ Each Kanban column represents a stage. Cards are Boxes — one per invoice or ve
 
 ### 6.8 Slack and Microsoft Teams — The Communication Layer
 
-Streak does not have a Slack integration designed for finance operations. Clearledgr does — and the design of this surface is where Clearledgr departs from the Streak reference most significantly. Slack and Teams are not bolt-ons. They are a fully designed communication layer that extends the Gmail-native product to wherever the finance team is: in a meeting, on a call, away from their desk.
+Streak does not have a Slack integration designed for finance operations. Clearledgr does — and the design of this surface is where Clearledgr departs from the Streak reference most significantly. Slack and Teams are not bolt-ons. They are a fully designed decision surface that extends the coordination layer to wherever senior stakeholders already are: in a meeting, on a call, away from their desk. AP work renders in Gmail because AP is email-heavy; approval decisions render in Slack because approvers live there during the working day. The Box is the same Box in both places.
 
 The finance team chooses their platform — Slack or Microsoft Teams. Clearledgr connects to both. The experience is identical. Everything described below applies to both platforms. The word Slack is used for brevity.
 
@@ -580,7 +649,7 @@ The agent operates across three tiers of autonomy, governed by configurable thre
 
 | Tier | Agent acts on | Human role |
 |------|---------------|------------|
-| Autonomous | Invoice parsing, 3-way match execution, ERP data retrieval, vendor master lookup, vendor onboarding email dispatch, KYC document requests, micro-deposit initiation, duplicate detection. | Notified after the fact via timeline entry. Can override within a configurable window. |
+| Autonomous | Invoice parsing, 3-way match execution, ERP data retrieval, vendor master lookup, vendor onboarding email dispatch, KYC document requests, open banking verification dispatch, duplicate detection. | Notified after the fact via timeline entry. Can override within a configurable window. |
 | Supervised | Approval routing, payment scheduling, vendor activation in ERP, stage transitions on exception resolution, first payment to a new vendor below threshold. | Receives Slack notification. Approves or rejects. Agent executes on confirmation. |
 | Human-led | Threshold overrides, CFO-level sign-offs, new vendor payments above limit, policy exceptions, invoices with no matching PO and no procurement context. | Initiates and decides. Agent prepares all context, surfaces the decision, and executes the instruction once given. |
 
@@ -680,9 +749,9 @@ Every agent action writes three things to the Box timeline: the raw extracted da
 The agent will be wrong. The question is not whether — it is how often, in what direction, and how quickly it is caught and corrected.
 
 - **When the agent extracts incorrectly:** the guardrails catch it before it reaches matching. The AP Manager sees a flagged extraction with both the raw value and the extracted value. They correct it. The correction is logged. The agent's confidence threshold for this document type is lowered temporarily.
-- **When the agent matches incorrectly:** the AP Manager's override is logged with their reasoning. The override pattern is reviewed in the Backoffice agent performance dashboard. If overrides cluster around a specific exception type, vendor, or document format, it flags a model or policy issue for the engineering team.
-- **When the agent posts incorrectly:** the override window is the last line of defence. If the window closes before the error is caught, the correction requires a manual ERP adjustment — not something the agent can do. This is the scenario the guardrails are designed to make impossible. A posted amount that differs from the approved amount by more than tolerance is a P0 incident on the Backoffice engineering dashboard, not just a customer support ticket.
-- **Mass failure scenario:** if the agent processes a batch of invoices with a systematic extraction error — a model update that misreads a specific PDF format — the override window exists for each post, but the batch nature means some may close before the error is noticed. The Backoffice flags automated: 'Exception override rate has increased 300% in the last 4 hours' and pages the engineering on-call. No model deployment happens in a batch window where the agent is actively processing invoices.
+- **When the agent matches incorrectly:** the AP Manager's override is logged with their reasoning. The override pattern is reviewed in the Operations Console agent performance dashboard. If overrides cluster around a specific exception type, vendor, or document format, it flags a model or policy issue for the engineering team.
+- **When the agent posts incorrectly:** the override window is the last line of defence. If the window closes before the error is caught, the correction requires a manual ERP adjustment — not something the agent can do. This is the scenario the guardrails are designed to make impossible. A posted amount that differs from the approved amount by more than tolerance is a P0 incident on the Operations Console engineering dashboard, not just a customer support ticket.
+- **Mass failure scenario:** if the agent processes a batch of invoices with a systematic extraction error — a model update that misreads a specific PDF format — the override window exists for each post, but the batch nature means some may close before the error is noticed. The Operations Console flags automated: 'Exception override rate has increased 300% in the last 4 hours' and pages the engineering on-call. No model deployment happens in a batch window where the agent is actively processing invoices.
 
 ### 7.7 Testing and QA Strategy
 
@@ -696,7 +765,7 @@ An agent that writes to production ERPs cannot be tested only in staging. The ER
 | Historical replay testing | Every invoice processed in production generates a stored replay record — not the original PDF (which remains in Gmail and is never stored by Clearledgr), but the extracted JSON fields, the anonymised raw OCR text, and the confirmed outcome (what the AP Manager accepted or corrected). New model versions are run against this replay dataset. Their output is compared to what the production model produced and what the AP Manager confirmed. Disagreements between the new model and confirmed-correct historical outcomes are reviewed manually before deployment. Storing extracted JSON and anonymised text rather than PDFs satisfies both the replay testing requirement and §19's data minimisation principle — the attachment itself never leaves Gmail. |
 | Shadow mode deployment | New model versions run in shadow mode on live production traffic for a minimum of 48 hours before any customer-facing change. In shadow mode, the new model processes every incoming invoice and produces an output, but that output is never shown to the customer and never used to make any decision. The shadow output is compared to the production model output. Disagreements above a threshold block promotion out of shadow mode. |
 | Canary deployment | After shadow mode, the new model is promoted to a canary cohort — a small set of Starter customers on lower invoice volumes, with explicit informed consent at onboarding that they participate in canary rollouts. Canary customers see the new model's output through the normal product interface. Exception rates, override rates, and AP Manager feedback are monitored for 72 hours. If any metric degrades, the canary is rolled back before wider deployment. |
-| Full deployment with monitoring | After canary, the model is deployed to all customers with a 24-hour elevated monitoring window. The Backoffice exception rate and override rate dashboards are live-watched by the on-call engineer. Any statistically significant increase in either metric triggers an immediate rollback. |
+| Full deployment with monitoring | After canary, the model is deployed to all customers with a 24-hour elevated monitoring window. The Operations Console exception rate and override rate dashboards are live-watched by the on-call engineer. Any statistically significant increase in either metric triggers an immediate rollback. |
 
 #### The Deployment Freeze Window
 
@@ -714,11 +783,11 @@ The question is not whether the agent will make a systematic error at some point
 
 A model update misreads a specific PDF format — perhaps a vendor has changed their invoice template and the new layout confuses the extraction layer. The agent processes 15 invoices from vendors using that format, extracts wrong amounts on all of them, and posts all 15 to the ERP before the error is detected.
 
-**Detection:** the Backoffice exception override rate monitor fires within 4 hours. AP Managers reviewing the invoices override the match results at an elevated rate. The engineering on-call is paged.
+**Detection:** the Operations Console exception override rate monitor fires within 4 hours. AP Managers reviewing the invoices override the match results at an elevated rate. The engineering on-call is paged.
 
 **Immediate response:** all unprocessed invoices from the affected document format are held immediately — no new posts while the investigation runs. The on-call engineer identifies the 15 affected invoices from the deployment log and the timeline of when the model was promoted.
 
-**Rollback:** the previous model version is restored within 15 minutes via feature flag. No redeployment required. The 15 affected invoices are flagged in the Backoffice as requiring manual review. Their ERP posts are reversed using the ERP connector's reversal API, which every connector is required to support before deployment.
+**Rollback:** the previous model version is restored within 15 minutes via feature flag. No redeployment required. The 15 affected invoices are flagged in the Operations Console as requiring manual review. Their ERP posts are reversed using the ERP connector's reversal API, which every connector is required to support before deployment.
 
 **Recovery:** a Clearledgr CS Manager contacts the affected customers within the hour. The specific invoices are identified, the correct amounts confirmed with the AP Manager, and the invoices are reprocessed through the restored model. A post-incident report is published to the customer within 24 hours explaining what happened, what was affected, and what was done to prevent recurrence.
 
@@ -744,7 +813,7 @@ The agent gets better over time — but only if the improvement loop is designed
 
 #### Signal Collection
 
-Every AP Manager action that diverges from the agent's output is a learning signal. The agent proposed a match result — the AP Manager overrode it. The agent extracted an amount — the AP Manager corrected it. The agent classified an email as an invoice — the AP Manager reclassified it as a credit note. These divergences are logged automatically to the Backoffice agent quality dashboard with three fields: what the agent produced, what the human confirmed, and the document type and vendor category. No additional data entry is required from the finance team.
+Every AP Manager action that diverges from the agent's output is a learning signal. The agent proposed a match result — the AP Manager overrode it. The agent extracted an amount — the AP Manager corrected it. The agent classified an email as an invoice — the AP Manager reclassified it as a credit note. These divergences are logged automatically to the Operations Console agent quality dashboard with three fields: what the agent produced, what the human confirmed, and the document type and vendor category. No additional data entry is required from the finance team.
 
 #### The Improvement Flywheel
 
@@ -752,12 +821,12 @@ Signal collection alone does not improve the model — it creates a dataset. The
 
 | Step | What happens |
 |------|--------------|
-| Signal accumulation | Override and correction signals accumulate in the Backoffice quality dataset, tagged by document type, vendor category, ERP connector, and error category. Minimum 50 signals per category before a pattern is considered actionable. |
+| Signal accumulation | Override and correction signals accumulate in the Operations Console quality dataset, tagged by document type, vendor category, ERP connector, and error category. Minimum 50 signals per category before a pattern is considered actionable. |
 | Pattern identification | The engineering team reviews the quality dashboard weekly. Clusters of overrides on a specific document format, vendor, or error type are candidates for targeted improvement. A vendor who generates overrides 30% of the time is a different problem from a document format that generates overrides 80% of the time. |
 | Prompt and rule refinement | Most extraction improvements do not require model retraining. They require better prompts, more specific extraction rules, or additional guardrail conditions. These are tested against the historical replay dataset before deployment. |
 | Model-level improvement | For persistent extraction patterns that prompt engineering and few-shot examples cannot resolve — typically specific document layouts, unusual currency formats, or non-standard invoice structures — the correction signals are used to build a targeted example library. These examples are incorporated into the system prompt as few-shot demonstrations for future similar documents. If Clearledgr's inference stack moves to a model where fine-tuning is available (open-weights models such as Mistral or Llama variants), correction signals can become fine-tuning examples. With Claude as the inference model, the improvement path is prompt engineering, few-shot libraries, and customer-specific extraction rules — not weight updates. The document uses these terms precisely: the model weights do not change; the instructions and examples the model receives do. |
 | Customer-specific learning | Some vendors have idiosyncratic invoice formats that are specific to one customer relationship. Customer-specific extraction rules are stored per-vendor in the Vendor record and applied before the general model. An AP Manager who corrects the same extraction error on the same vendor three times triggers a customer-specific rule being written automatically. |
-| Closed-loop validation | After each model improvement, the Backoffice tracks whether the override rate for the targeted category decreases in the four weeks following deployment. If it does not, the improvement is rolled back and the pattern is re-examined. The flywheel only turns if each iteration demonstrably improves the outcome. |
+| Closed-loop validation | After each model improvement, the Operations Console tracks whether the override rate for the targeted category decreases in the four weeks following deployment. If it does not, the improvement is rolled back and the pattern is re-examined. The flywheel only turns if each iteration demonstrably improves the outcome. |
 
 The improvement loop has one important constraint: the finance team's corrections are signals, not labels. The AP Manager who overrides a match result may be wrong — they may be approving a duplicate or overriding a correct exception for convenience. The engineering team reviews override patterns for anomalies before treating any signal as ground truth. Override rate is a metric of model performance and a metric of finance team behaviour simultaneously.
 
@@ -773,7 +842,7 @@ Finance is the highest-value attack surface in any organisation. Business Email 
 
 | Attack type | How it works and how Clearledgr defends |
 |-------------|------------------------------------------|
-| IBAN swap fraud | The most common AP fraud. Attacker compromises a vendor email account or sends a spoofed email instructing the AP team to update the vendor's bank account. If the team processes the update manually, the next payment goes to the attacker. Clearledgr's defence: IBAN changes trigger an immediate payment hold for the affected vendor — no payment is scheduled to any new IBAN until the change is verified. Verification requires: the change instruction to come from the vendor's verified email domain, a phone confirmation to the vendor's registered contact number (not any number provided in the email), and AP Manager sign-off. Three factors, not one. |
+| Bank account swap fraud | The most common AP fraud. Attacker compromises a vendor email account or sends a spoofed email instructing the AP team to update the vendor's bank account. If the team processes the update manually, the next payment goes to the attacker. Clearledgr's defence: bank account changes trigger an immediate payment hold for the affected vendor — no payment is scheduled to any new account until the change is verified. Verification requires: the change instruction to come from the vendor's verified email domain, re-verification of the new account via open banking (matching account holder name against the KYC legal entity), and AP Manager sign-off. Three factors, not one. |
 | Business Email Compromise (BEC) | Attacker impersonates a trusted person — CEO, CFO, a vendor's finance contact — and instructs the AP team to process an urgent payment. Classic BEC targets humans. Against Clearledgr: the agent does not act on verbal or email instructions from internal senders. All payment instructions flow through the standard AP pipeline. An email from 'CEO@company.com' saying 'please pay this supplier immediately' is classified as a Finance/Query, not actioned autonomously, and the AP Manager is alerted with a fraud risk flag. |
 | Fake invoice injection | Attacker creates a convincing invoice from a real or near-real vendor name and sends it to the AP inbox. Against Clearledgr: the vendor must be Active in the vendor master before any invoice from them is processed. An invoice from a sender not in the master is classified as Clearledgr/Review Required and flagged for the AP Manager. The agent never processes an invoice from an unknown sender. Domain similarity detection flags 'str1pe.com' emails when 'stripe.com' is in the vendor master. |
 | Internal fraud — rogue employee | An AP team member creates a fictitious vendor, adds them to the vendor master, and submits invoices. Against Clearledgr: vendor activation in the ERP requires AP Manager sign-off as a minimum, CFO sign-off above the first payment limit. New vendor first payments require explicit human approval regardless of invoice value. The full vendor activation audit trail is preserved in the Box timeline and exportable for audit. |
@@ -787,7 +856,7 @@ These controls run before the agent takes any action. They are not configurable 
 |-----------|--------------|
 | Vendor domain lock | Once a vendor is Active, their invoices are only processed from the email domain registered during KYC. An invoice from `billing@stripe-payments.com` when `stripe.com` is the registered domain is flagged as a domain mismatch and not processed, regardless of how legitimate the invoice looks. |
 | First payment hold | Every new vendor's first payment requires explicit human approval regardless of invoice value and match result. The agent never autonomously executes a first payment to a vendor it has never paid before. |
-| IBAN change freeze | Any change to a vendor's registered IBAN freezes all outgoing payments to that vendor until the change is verified through the three-factor process. The agent cannot schedule any payment to a new IBAN. |
+| Bank account change freeze | Any change to a vendor's registered bank account freezes all outgoing payments to that vendor until the change is re-verified via open banking and approved by the AP Manager. The agent cannot schedule any payment to a new account. |
 | Payment amount ceiling | No single autonomous payment may exceed the configured ceiling without CFO approval. The ceiling is set per vendor and globally in Settings. It cannot be overridden by the agent — only by a human with CFO-level permissions in that session. |
 | Duplicate payment prevention | Vendor-level duplicate detection across a 90-day window. Same vendor, similar amount, same reference — automatic hold and human review. The agent never posts a potential duplicate to the ERP. |
 | Velocity monitoring | If the same vendor submits more than a configured number of invoices within a rolling 7-day window, all invoices beyond the threshold are flagged for human review. Sudden invoice velocity spikes from a vendor are a fraud indicator. |
@@ -807,14 +876,14 @@ Vendor onboarding is where AP breaks down before it begins. Most companies manag
 |-------|--------------|
 | Invited | Agent dispatches a personalised onboarding portal link to the vendor contact. Monitors for portal access. Auto-chases at 24h and 48h with no response. Escalates to the AP Manager if 72h pass with no response. |
 | KYC | Vendor submits business details, director ID, and certificate of incorporation via the portal. Agent validates document completeness and runs basic checks. Requests specific missing items by name, not by category. |
-| Bank Verify | Agent initiates two micro-deposits to the vendor's provided IBAN. Vendor confirms the exact amounts via portal. Account is validated. IBAN on file is marked Verified. Agent will not schedule any payment to an unverified IBAN. |
+| Bank Verify | Agent dispatches an open banking verification link to the vendor via the onboarding portal. Vendor completes the open banking flow with their bank. Provider returns the account holder name and a signed confirmation. Agent matches the account holder name against the KYC legal entity; on pass, the bank account is marked Verified. Agent will not schedule any payment to an unverified account. |
 | Active | Agent writes the vendor to the ERP vendor master with AP-enabled status. The vendor is now capable of submitting invoices that will be processed. Agent posts a confirmation to the finance team's Slack channel. |
 
 ### Design Rules for Vendor Onboarding
 
 - Every blocker must be named specifically. 'Certificate of incorporation not yet uploaded' not 'KYC pending'.
 - The IBAN displayed in the sidebar and in Slack must always be the vendor-provided one — never auto-filled from any other source. The agent confirms it, the human has visibility.
-- Every action timestamp is preserved as the audit trail. Invite sent at 09:12. Document received at 14:30. Micro-deposit dispatched at 15:05. Vendor activated at 09:05 the following day.
+- Every action timestamp is preserved as the audit trail. Invite sent at 09:12. Document received at 14:30. Open banking verification completed at 15:05. Vendor activated at 09:05 the following day.
 - The agent chases vendors. The finance team does not. If a vendor is slow, that is surfaced as a blocker in the Kanban card — not as a task assigned to a human.
 
 ---
@@ -823,27 +892,36 @@ Vendor onboarding is where AP breaks down before it begins. Most companies manag
 
 The visual language of Clearledgr injections must feel native to Gmail while being distinctly identifiable as Clearledgr. It should feel like Gmail promoted to professional-grade. Not a consumer tool overlaid on enterprise software, and not an enterprise tool that breaks Gmail's visual coherence.
 
+**The authoritative reference for colours, typography, spacing, and specific design tokens is `DESIGN.md`.** This section states the principles that govern visual decisions; `DESIGN.md` carries the current palette, type scale, and component tokens. If this section and `DESIGN.md` ever disagree, `DESIGN.md` wins and this section is updated to match.
+
 ### Colour Semantics
 
 Colour in Clearledgr carries meaning. It is never decorative. Every team member — AP clerk, AP Manager, Controller, CFO — must be able to read colour as status without a legend.
 
-| Colour | Meaning — used for nothing else |
-|--------|----------------------------------|
-| Green (`#00B87A`) | Passed, verified, active, approved. 3-way match passed. Vendor IBAN verified. Invoice approved. |
-| Amber (`#D97706`) | Requires attention. Exception flagged. Vendor onboarding blocked. Approval overdue. |
-| Red (`#DC2626`) | Failed or blocked. Match failed. Vendor rejected. Payment blocked. No PO found. |
-| Blue (`#1A73E8`) | In progress, scheduled. Invoice scheduled for payment. Approval in transit. |
-| Grey | Neutral or not yet processed. Received but not yet matched. Invited but not yet responded. |
+| Colour | Token | Meaning — used for nothing else |
+|--------|-------|----------------------------------|
+| Mint green | `#00D67E` (`--brand`) | Passed, verified, active, approved. 3-way match passed. Vendor IBAN verified. Invoice approved. Also the brand's primary CTA colour. |
+| Amber | `#D97706` | Requires attention. Exception flagged. Vendor onboarding blocked. Approval overdue. |
+| Red | `#DC2626` | Failed or blocked. Match failed. Vendor rejected. Payment blocked. No PO found. |
+| Blue | `#1A73E8` | In progress, scheduled. Invoice scheduled for payment. Approval in transit. |
+| Grey | `#94A3B8` | Neutral or not yet processed. Received but not yet matched. Invited but not yet responded. |
+| Navy | `#0A1628` (`--navy`) | Dense text, dark controls, logo base. The brand's structural colour. |
+
+State semantics and brand identity share the same green deliberately. Two shades of green in one product would be noise without meaning. When the agent marks a match as "passed", the colour the operator sees is the same colour as the brand — the product is saying *"this is the shape of correct work here"*, not *"this is a state indicator in a slightly different green than the logo you've been looking at all morning"*.
 
 ### Typography
 
-- **Display and body text:** Georgia — legible, authoritative, at home in a professional document context.
-- **Data fields:** IBM Plex Mono — all numbers, invoice references, IBANs, PO numbers, amounts, dates. Monospace makes scanning fast and errors immediately visible.
-- **Labels and navigation:** Google Sans — the same typeface Gmail uses. Nav items and toolbar elements use Gmail's own font to feel native.
+- **Display and headings:** Instrument Sans (600/700). Authoritative, distinct, works at both display size and in dense pipeline-card contexts.
+- **Body, labels, and navigation:** DM Sans (400/500). Reads cleanly in inbox-row injections and settings pages alike.
+- **Data fields:** Geist Mono (400/500/600) with tabular-nums. All numbers, invoice references, IBANs, PO numbers, amounts, dates. Monospace makes scanning fast and errors — a transposed digit, a truncated IBAN — immediately visible.
+
+The typography choices are deliberately not Gmail-native. An earlier version of this thesis specified Google Sans to "feel like Gmail promoted to professional-grade"; the product moved away from that because finance operators needed a distinct surface that reads as Clearledgr, not as an indistinguishable overlay on Gmail chrome. DM Sans and Instrument Sans give the product its own identity while still sitting comfortably inside Gmail's layout rhythm.
 
 ### The Agent Signature
 
-The lightning bolt (⚡) marks agent-initiated actions throughout the product. It appears in the timeline next to every autonomous action. It appears in the Slack message header for agent notifications. It appears in the sidebar section title for agent actions. Finance teams learn to read it as a visual signal: 'the agent did this, not a human' — a distinction that matters for audit and trust.
+The Clearledgr icon (the two-bar ledger mark on the navy rounded square) marks agent-initiated actions throughout the product. It appears in the sidebar's **Agent Actions** section title. It appears inline next to every agent-attributed entry in the Box timeline. It appears as the sender avatar on agent Slack notifications (Slack reads the installed app's icon automatically, so this is a workspace-admin concern rather than a per-message payload concern).
+
+Finance teams learn to read the icon as a visual signal: *'the agent did this, not a human'* — a distinction that matters for audit and trust. A previous draft of this thesis used a lightning bolt for this purpose; we've settled on the Clearledgr icon because the mark itself carries the same "this is the system acting" signal without reaching for metaphor, and because consistency between the app icon and the agent-signature icon reinforces brand recognition without a second symbol for operators to decode.
 
 ---
 
@@ -868,34 +946,38 @@ Clarity about what Clearledgr is requires equal clarity about what it is not —
 
 ### The Competitive Landscape
 
-The tools Clearledgr competes with are not Streak. They are Bill.com, Ramp's AP module, Stampli, Tipalti, and Airbase. These are the tools a mid-market CFO already uses or is evaluating when Clearledgr enters the room. The Gmail-native agent story needs a direct answer to each of them.
+The tools Clearledgr competes with are not Streak. They are Bill.com, Ramp's AP module, Stampli, Tipalti, Airbase, and at enterprise scale, SAP Ariba and Coupa. These are the tools a mid-market or enterprise finance leader already uses or is evaluating when Clearledgr enters the room. The coordination-layer thesis needs a direct answer to each of them.
 
-| Competitor | Why a mid-market CFO picks Clearledgr |
-|------------|----------------------------------------|
-| Bill.com | Bill.com is a portal. The finance team leaves their inbox, logs into Bill.com, manually processes invoices, and comes back. Clearledgr brings the processing to the inbox and automates it. The CFO's pitch: 'Your AP team currently switches context 40 times a day between Gmail and Bill.com. With Clearledgr, they do not switch at all.' The commercial question is whether Gmail-native automation delivers better adoption and lower processing cost than a purpose-built AP portal. We believe it does — the evidence is in Streak's adoption rate vs Salesforce's in the SMB market. |
-| Ramp AP Module | Ramp's strength is spend management — cards, expenses, vendor payments as a single suite. Their AP module is secondary to the card product. Clearledgr is AP-first and agent-first. The CFO's pitch: 'Ramp gives you a dashboard to check. Clearledgr gives you an agent that handles it.' The weakness to address: Ramp customers are already in a spend management ecosystem. Clearledgr needs to show that the agent generates enough value on AP alone to justify running alongside Ramp rather than replacing it. |
-| Stampli | Stampli's differentiator is collaborative invoice management — a comment layer on top of AP. Clearledgr's differentiator is the agent eliminating the collaboration requirement. The CFO's pitch: 'Stampli makes it easier to discuss invoices. Clearledgr makes the discussion unnecessary for 90% of them.' Stampli is the most direct process overlap — both target AP teams, both live adjacent to the inbox. The key question is whether collaborative visibility (Stampli) or autonomous execution (Clearledgr) wins with the mid-market CFO. |
-| Tipalti | Tipalti owns global mass payments — contractor payouts, affiliate networks, multi-currency at scale. The overlap with Clearledgr is narrow: standard vendor AP. The CFO's pitch: 'Tipalti is built for paying thousands of contractors. Clearledgr is built for the 50-500 vendor relationships that run through your AP inbox every month.' These products can coexist — Tipalti handles high-volume, low-touch payments; Clearledgr handles standard AP with full agent processing and audit trail. |
-| Existing ERP workflows | NetSuite, SAP, and Xero all have AP modules. The CFO who says 'we already do AP in NetSuite' is the most common objection. The answer: Clearledgr does not replace NetSuite AP — it automates the work that happens before NetSuite is involved. The invoice arrives in email. The 3-way match happens in email. The approval happens in Slack. NetSuite receives the post-match, post-approval result. Clearledgr is the execution layer on top of the ERP, not a replacement for it. |
+The structural differentiator runs through every comparison below: every competitor is a **point solution for one workflow or one layer of the stack**. Clearledgr is the **stateful coordination layer across workflows**. The point solutions hold state for their slice — AP processing, collaboration, vendor payments, invoice submission — and stop there. None of them holds the workflow itself; the finance team does. Clearledgr holds the workflow. That is the defensible position.
 
-The consistent competitive frame: every competitor asks the finance team to go somewhere else. Bill.com is a portal. Ramp is a dashboard. Stampli is a collaboration layer. Tipalti is a payments platform. NetSuite is an ERP module. Clearledgr is the only one that stays where the work already is. That is the answer to every competitive question in the room.
+| Competitor | Why a finance leader picks Clearledgr |
+|------------|---------------------------------------|
+| Bill.com | Bill.com is a portal. The AP team leaves their inbox, logs into Bill.com, manually processes invoices, returns to email for everything else. The workflow state is split across two tools. Clearledgr holds the full Box — invoice, thread context, approvals, exceptions, ERP write — as a single coordinated object. The team stays in Gmail for the work and Slack for the decisions. |
+| Ramp AP Module | Ramp's strength is spend management — cards, expenses, vendor payments as a single suite. Their AP module is secondary to the card product and is a dashboard, not a coordination layer. Clearledgr is AP-first and coordination-first. The pitch: 'Ramp gives you a dashboard to check. Clearledgr gives you an agent that advances every invoice and holds the state so no one on your team has to.' Ramp and Clearledgr can coexist during the transition; over time Clearledgr's coordination scope extends beyond AP while Ramp remains a card and spend tool. |
+| Stampli | Stampli's differentiator is collaborative invoice management — a comment layer on top of AP. The underlying assumption is that humans still do the processing and just need better collaboration. Clearledgr's assumption is that humans should only touch exceptions and the coordination should be held by the system, not reconstructed in threaded comments. The pitch: 'Stampli makes it easier for your AP team to discuss invoices. Clearledgr makes the discussion unnecessary for the 90% that are routine.' |
+| Tipalti | Tipalti owns global mass payments — contractor payouts, affiliate networks, multi-currency at scale. The overlap with Clearledgr is narrow: standard vendor AP. The pitch: 'Tipalti is built for paying thousands of contractors. Clearledgr is built for coordinating the workflows around your 50–500 vendor relationships and their invoices.' These products coexist — Tipalti handles high-volume, low-touch payments; Clearledgr handles the coordination around them. |
+| SAP Ariba / Coupa | Ariba and Coupa are supplier portals. They solve a different problem: making vendors submit invoices in a structured format that the customer's ERP can ingest cleanly. They do not hold the workflow around the invoice — the chasing, the disputes, the exceptions, the approval context, the close coordination — all of that still lives in human memory and spreadsheets at every Ariba customer. Clearledgr is complementary to Ariba for strategic-supplier portal invoices and replaces Ariba for the long tail that portal enrolment is not worth standing up for. The pitch is different depending on the customer's portal commitment: for greenfield, 'you do not need a portal, keep vendors on email and get portal-grade outcomes'; for portal-committed, 'we handle the workflows your portal does not — the long tail, the exceptions, the close-time coordination'. |
+| Existing ERP workflows | NetSuite, SAP, Xero, and QuickBooks all have AP modules. The CFO who says 'we already do AP in our ERP' is the most common objection. The ERP is a posting system, not a workflow system. It knows the invoice was posted. It does not know why, after what exceptions, with which approvals, or what happened in the two weeks before the post. Clearledgr is the coordination layer on top of the ERP — the ERP remains the system of record for posted transactions; Clearledgr is the record of what it took to get there. |
+| BlackLine and the close specialists | BlackLine, FloQast, Trintech, and Numeric are coordination layers for one workflow: month-end close. Their existence validates the thesis — finance teams will pay for persistent workflow state. Their limitation is that their state model ends at close and does not extend to the workflows that feed the close. Clearledgr is the coordination layer across workflows. At the point Clearledgr reaches close (Q4 of the committed sequence), it is not competing with BlackLine on close feature depth — it is competing on the integrated story: close as a natural output of AP, AR, recon, and procurement already living in Boxes. |
+
+The consistent competitive frame: every competitor holds state for one workflow or one layer. Clearledgr holds state across workflows. The point-solution answer wins on feature depth in one slice. The coordination-layer answer wins on compounding — the data and trust accumulate across workflows in a way a single-workflow tool structurally cannot.
 
 ### What We Are Deliberately Not Building
 
 These are deliberate choices that protect the thesis — not limitations to be overcome in later versions.
 
-- **Not a web application (in V1).** There is no Clearledgr.com dashboard. There is no separate URL the finance team visits to do their AP work. If a finance workflow requires leaving Gmail, we have failed to design the Gmail surface correctly.
-- **Not a system of record.** We read from and write to the ERP. Financial data lives in NetSuite or SAP. We do not store it. We do not migrate it. We do not ask finance teams to trust a new database with their numbers.
+- **Not a standalone web application at all.** Daily AP work renders in Gmail. Daily approval work renders in Slack. Account-layer actions — billing, seat management, audit export — also render in Gmail as dedicated Settings routes, following the Streak precedent precisely. Clearledgr has no customer-facing web product surface. The only web address customers interact with is clearledgr.com, the marketing and install site used once at first touch before the Chrome extension is installed. If a finance team member has to open a separate web application to do anything related to Clearledgr, we have designed the Gmail surface wrong.
+- **Not a system of record for financial data.** We read from and write to the ERP. Financial data lives in NetSuite or SAP. We hold the workflow around the data, not the data itself. We do not ask finance teams to trust a new database with their numbers.
 - **Not a chatbot.** The agent does not wait to be queried. It acts. The natural language query field in the sidebar is for ad hoc questions, not for daily workflow. The agent's job is to have already done the thing before the user thinks to ask about it.
 - **Not built for SMBs first.** The product is designed for mid-market and enterprise finance teams — teams with invoice volume, approval hierarchies, ERP systems, and audit requirements. Consumer-grade simplicity is not the target. Professional-grade precision is.
 - **Not a tool the CFO buys because it looks impressive.** The buying decision is made because it measurably reduces time-to-payment, eliminates duplicate payments, compresses the close cycle, and reduces the AP headcount required per invoice volume. The design serves those outcomes. It does not substitute for them.
-- **Not an Outlook product.** Clearledgr V1 requires Google Workspace. The Chrome extension, InboxSDK, Gmail's left nav injection, the thread sidebar, the toolbar buttons — all of this is Google infrastructure. Enterprise procurement will ask whether Clearledgr supports Outlook. The answer in V1 is no. This is not an oversight. Outlook's extension model, permissions framework, and DOM access patterns are different enough that building for both simultaneously would compromise the depth achievable in Gmail. Clearledgr does Gmail exceptionally. It does not do Outlook at all. This boundary must be stated explicitly in every sales conversation to avoid a mismatch that kills a deal at the procurement stage.
+- **Not an Outlook product in V1.** Clearledgr V1 requires Google Workspace. The Chrome extension, InboxSDK, Gmail's left nav injection, the thread sidebar, the toolbar buttons — all of this is Google infrastructure. Enterprise procurement will ask whether Clearledgr supports Outlook. The answer in V1 is no. This is not an oversight. Outlook's extension model, permissions framework, and DOM access patterns are different enough that building for both simultaneously would compromise the depth achievable in Gmail. Clearledgr does Gmail exceptionally. It does not do Outlook at all in V1. This boundary must be stated explicitly in every sales conversation to avoid a mismatch that kills a deal at the procurement stage.
 
 ---
 
 ## 13. Subscription Model
 
-Streak's pricing page says exactly this: 'If you're ready to sign up for a paid plan, install Streak, click the Streak button on the top right of Gmail and select Upgrade.' No separate website to log into. No account portal to navigate. Billing, team management, and subscription changes all happen from within Gmail. Clearledgr is built on the same principle. Every customer interaction with Clearledgr — including upgrading, managing seats, and adjusting billing — happens inside Gmail.
+Streak's pricing page says exactly this: 'If you're ready to sign up for a paid plan, install Streak, click the Streak button on the top right of Gmail and select Upgrade.' No separate website to log into. No account portal to navigate. Clearledgr applies the same principle end-to-end: pipelines, approvals, exceptions, agent actions, *and* account-layer interactions like billing, seat management, subscription changes, and audit export all happen inside Gmail. There is no separate web application to manage. The only customer-facing web address is clearledgr.com — the marketing and install site — used once at first touch before the Chrome extension is installed. From the moment the extension is live, Gmail is the entire customer surface. This follows Streak architecturally, not just rhetorically.
 
 The cost structure underlying this pricing model has primary components that must be understood before prices are set, not after reaching Series A. LLM inference is the largest variable cost — every invoice involves at minimum one extraction call and one exception reasoning call if the match fails. Shadow mode testing during model deployments doubles inference cost for 48+ hours per cycle. Historical replay testing runs the new model over the full anonymised corpus, a cost that grows with corpus size. ERP API calls carry connector-specific costs depending on the ERP's API tier. Storage costs for Box timelines and replay records scale with invoice volume and retention period. Agent action credits are the mechanism by which high-inference actions are priced separately from standard processing — they make the variable cost structure visible in the pricing model before it becomes a margin problem. The specific unit economics — cost per invoice at Starter volume versus Enterprise volume, gross margin per tier, break-even invoice count per seat — are maintained in the financial model, not this document.
 
@@ -903,7 +985,7 @@ The cost structure underlying this pricing model has primary components that mus
 
 | Tier | Who it is for | What defines it |
 |------|---------------|-----------------|
-| Starter | Mid-market finance teams processing up to 500 invoices per month. Single AP pipeline, one ERP connection, Slack integration, core AP and Vendor Onboarding workflows. | Per seat plus invoice volume band. Designed to go live in under 30 minutes with no IT involvement. All settings, billing, and team management accessible within Gmail. Auto-approve threshold up to a configurable limit. Standard match tolerance controls. |
+| Starter | Mid-market finance teams processing up to 500 invoices per month. Single AP pipeline, one ERP connection, Slack integration, core AP and Vendor Onboarding workflows. | Per seat plus invoice volume band. Designed to go live in under 30 minutes with no IT involvement. Daily workflow runs inside Gmail and Slack; billing and account settings also run inside Gmail. Auto-approve threshold up to a configurable limit. Standard match tolerance controls. |
 | Professional | Finance teams scaling across AP, AR, Reconciliation, and Month-End Close. Multiple pipelines, advanced approval routing, multi-entity ERP support, analytics dashboards within Gmail, API and webhook access. | Per seat plus invoice volume plus agent action credits. Autonomy tier expansion available after 30-day performance review. Webhooks for custom ERP integrations. Advanced reporting as a Gmail custom route. Priority support. |
 | Enterprise | Large finance functions with complex hierarchies, multi-entity structures, compliance requirements, and internal IT security processes. All Professional features plus custom roles, data validation rules, DPA as standard, SOC 2 reporting, dedicated implementation, and a direct line to Clearledgr leadership. | Negotiated annual contract. Custom invoice volume and seat structure. Dedicated account manager. SLA guarantees. Implementation service included. Clearledgr team configures the initial pipeline before go-live. |
 
@@ -920,16 +1002,17 @@ Clearledgr prices on two components. The seat charge covers access, roles, the a
 
 ### Managing Subscription Inside Gmail
 
-The entire subscription lifecycle happens within Gmail via the Clearledgr section in the left nav. There is no clearledgr.com customer portal. There is no separate login. Consistent with the Streak thesis: if it requires leaving Gmail, it should not exist.
+The subscription lifecycle lives entirely inside Gmail, following the Streak architectural precedent exactly. Every action — daily workflow (approving invoices, reviewing exceptions, onboarding vendors) and account-layer management (billing, seat provisioning, audit export) — happens inside Gmail as a custom route. The role structure determines who sees what: an AP Clerk sees the AP pipeline and Vendor Onboarding pipeline in their Gmail nav; a CFO or finance admin sees those plus the Settings routes for billing, team management, and audit export. Permissions, not surfaces, separate concerns.
 
-| Subscription action | How it works inside Gmail |
-|---------------------|---------------------------|
-| Upgrade from Starter to Professional | Click the Clearledgr menu in Gmail top bar. Select Upgrade. Choose tier and billing cycle. Enter payment details. Upgrade takes effect immediately. The new features appear in the left nav without restarting Gmail. |
-| Add seats | Settings > Team > Add member. Enter email address. Assign role. An invitation is sent. The new seat is billed on the next cycle at a pro-rated amount for the remainder of the current period. |
-| Remove a seat | Settings > Team > Remove member. Access is revoked immediately. Their Box timeline entries are preserved — audit history is never deleted when a user is removed. The seat is credited on the next billing cycle. |
-| View billing and usage | Settings > Billing. Shows current tier, next renewal date, seat count, invoice volume used this period, agent action credits remaining, and payment history. All within Gmail. |
-| Purchase additional agent action credits | Settings > Billing > Buy credits. Select credit bundle. Charged immediately as a one-time add-on. Available to the team pool within minutes. |
-| Upgrade to Enterprise | Settings > Billing > Contact us. Opens a Slack message or email to the Clearledgr team directly. Enterprise is not self-serve — it requires a conversation to configure correctly. |
+| Subscription action | Where it happens |
+|---------------------|------------------|
+| Upgrade from Starter to Professional | Gmail > Settings > Billing. Choose tier and billing cycle. Payment details entered and stored securely. Upgrade takes effect immediately; new features appear in Gmail without restarting. |
+| Add seats | Gmail > Settings > Team > Add member. Enter email address, assign role. An invitation is sent. The new seat is billed pro-rated for the remainder of the current period. |
+| Remove a seat | Gmail > Settings > Team > Remove member. Access is revoked immediately. Box timeline entries are preserved — audit history is never deleted when a user is removed. The seat is credited on the next billing cycle. |
+| View billing and usage | Gmail > Settings > Billing. Shows current tier, next renewal date, seat count, invoice volume used this period, agent action credits remaining, and payment history. |
+| Purchase additional agent action credits | Gmail > Settings > Billing > Buy credits. Charged immediately as a one-time add-on. Available to the team pool within minutes. |
+| Upgrade to Enterprise | Gmail > Settings > Billing > Contact us, or direct conversation with the Clearledgr team. Enterprise is not self-serve — it requires a conversation to configure correctly. |
+| Export audit trail | Gmail > Settings > Audit Export. Time-scoped, filter-scoped, signed. Accessible to the admin role. |
 
 ### Tier Feature Comparison
 
@@ -944,7 +1027,7 @@ The entire subscription lifecycle happens within Gmail via the Clearledgr sectio
 | Autonomy tier expansion | Fixed — Supervised default | Configurable after 30-day performance review |
 | Saved Views — Show in Inbox | 3 per pipeline | Unlimited |
 | Agent Activity feed retention | 30 days | Statutory minimum — default 7 years |
-| Analytics dashboards within Gmail | Not included | Included |
+| Analytics dashboards | Not included | Included — as Gmail custom route |
 | API access and webhooks | Not included | Included |
 | Custom roles | Not included | Enterprise only |
 | Data validation rules | Not included | Enterprise only |
@@ -966,17 +1049,19 @@ Streak offers Advanced Implementation as a paid service for Pro and Pro+ custome
 
 ---
 
-## 14. The Clearledgr Backoffice
+## 14. The Operations Console
 
-`backoffice.clearledgr.com` is Clearledgr's internal operations platform. Customers never log into it and have no reason to know it exists. It is how the Clearledgr team manages every dimension of running the business — customer health, agent quality, implementation delivery, revenue operations, compliance, product rollouts, and system reliability.
+Clearledgr has no customer-facing web product surface. The entire customer experience — daily workflow, account management, billing, audit export — happens inside Gmail, following the Streak precedent exactly. `clearledgr.com` exists as a marketing and install site; clicking "Install for Gmail" redirects to the Chrome Web Store. Once the extension is installed, every subsequent interaction — workspace creation, team setup, ERP connection, billing upgrades, audit exports — happens inside Gmail. There is no customer web portal to log into.
 
-A customer who has never heard of `backoffice.clearledgr.com` is having the correct experience. The Backoffice exists to make that experience consistently true.
+The only web surface Clearledgr runs as an operating product is internal-only. Customers never log into it and have no reason to know it exists.
 
-### Access
+### The Operations Console — `ops.clearledgr.com`
 
-Restricted to Clearledgr employees only via Google Workspace SSO. Role-based access within the Backoffice is separate from customer-facing roles. Every action is logged with the identity of the person who took it, the timestamp, and the customer workspace affected. The log is immutable.
+The Operations Console is Clearledgr's internal platform for running the business. It is how the Clearledgr team manages every dimension of operating the product — customer health, agent quality, implementation delivery, revenue operations, compliance, product rollouts, and system reliability.
 
-### Core Operating Sections
+A customer who has never heard of the Operations Console is having the correct experience. The Console exists to make that experience consistently true.
+
+**Access.** Restricted to Clearledgr employees only via Google Workspace SSO. Role-based access within the Console is separate from customer-facing roles. Every action is logged with the identity of the person who took it, the timestamp, and the customer workspace affected. The log is immutable.
 
 | Section | Primary function |
 |---------|------------------|
@@ -985,10 +1070,10 @@ Restricted to Clearledgr employees only via Google Workspace SSO. Role-based acc
 | Implementation and onboarding | Kanban of all active implementations, step completion per engagement, benchmark comparison against historical averages, self-serve onboarding health for Starter customers. |
 | Support operations | Ticket queue tiered by SLA, full history per workspace, escalation management linked to engineering, known issues board for proactive CS outreach, CEO line for Enterprise escalations. |
 | Revenue and billing | MRR/ARR, churn and expansion, renewal pipeline, volume overage alerts, credit consumption, payment failure management. |
-| Compliance and audit | Audit log export requests, DPA management, GDPR data subject requests, SOC 2 evidence collection, security questionnaire management, data residency configuration. |
+| Compliance and audit | Audit log export requests on behalf of customers, DPA management, GDPR data subject requests, SOC 2 evidence collection, security questionnaire management, data residency configuration. |
 | Product and engineering | Feature flags per workspace, ERP connector health, InboxSDK version monitoring, system health dashboard, deployment log, agent model version tracking. |
 
-> *`backoffice.clearledgr.com` is how the Clearledgr team operates. It is not a product. The measure of its quality is not how impressive it looks — it is how rarely the customer-facing product breaks. Full operational detail is maintained in a separate internal operations document.*
+> *The Operations Console is an internal platform, feature-rich by necessity, serving the Clearledgr team. The measure of Clearledgr's quality is how rarely the Operations Console has to intervene in customer workflows that should be self-healing — and that the customer never sees any surface other than Gmail.*
 
 ---
 
@@ -1002,20 +1087,21 @@ Clearledgr's onboarding has two modes, and honesty about which applies to which 
 
 **Enterprise — managed implementation required.** NetSuite and SAP OAuth flows require administrator consent — a privilege the AP Manager does not typically hold. Write access to post bills requires elevated ERP permissions that finance teams do not self-assign. Enterprise customers on these ERPs require IT involvement for the ERP connection step, and the Implementation Service is mandatory, not optional. Stating this as 'no IT involvement' in a sales conversation to an enterprise customer on NetSuite creates a mismatch that kills the deal at procurement. The honest description: 'Starter customers on QuickBooks and Xero are live in 30 minutes. Enterprise customers on NetSuite and SAP go live through our Implementation Service, typically in one week.' Both are strong outcomes.
 
-### The Four Onboarding Steps
+### The Onboarding Steps
 
 | Step | What happens |
 |------|--------------|
-| 1 — Install Extension | Finance team member installs the Clearledgr Chrome extension. InboxSDK initialises. Clearledgr section appears immediately in Gmail's left nav. Time: under 60 seconds. |
-| 2 — Connect ERP | OAuth connection to NetSuite, SAP, Xero, or QuickBooks via a guided flow inside Gmail. Clearledgr requests read access to POs, GRNs, and vendor master. Write access to post approved invoices. No API keys, no IT ticket. Time: under 5 minutes. |
+| 0 — Install Extension | Finance team member visits `clearledgr.com`, clicks "Install for Gmail", and is redirected to the Chrome Web Store to add the extension. InboxSDK initialises. The Clearledgr section appears in Gmail's left nav immediately. For Google Workspace enterprise customers, IT approves the extension for the domain via the Google Workspace Marketplace; individual user install is not required at enterprise scale. Time: under 60 seconds for individual install. |
+| 1 — Create Workspace | First user opens Clearledgr inside Gmail and creates the workspace: company name, primary AP inbox address, time zone. For Starter customers this is a 2-minute self-serve flow. For Enterprise this is the first touchpoint of the Implementation Service. Time: under 2 minutes. |
+| 2 — Connect ERP | OAuth connection to NetSuite, SAP, Xero, or QuickBooks via a guided flow inside Gmail. Clearledgr requests read access to POs, GRNs, and vendor master. Write access to post approved invoices. No API keys, no IT ticket for Starter customers. Time: under 5 minutes. |
 | 3 — Configure AP Policy | AP Manager sets three values inside Gmail: auto-approve threshold (e.g. invoices under £1,000 that pass 3-way match are approved automatically), match tolerance (e.g. 2% delta acceptable before exception is raised), and approval routing (who receives Slack notifications for which invoice bands). Time: under 10 minutes. |
 | 4 — Connect Slack | OAuth connection to the team's Slack workspace. AP Manager selects which channel receives agent notifications. Agent posts a test message confirming connection. Time: under 2 minutes. |
 
-At step four completion, the product is live. The next invoice email that arrives in the AP inbox will be processed automatically. Onboarding is not a project. It is not a workshop. It is not a professional services engagement. It is four steps completed in one sitting.
+At step four completion, the product is live. The next invoice email that arrives in the AP inbox will be processed automatically. Onboarding is not a project. It is not a workshop. It is not a professional services engagement (for Starter). It is five steps, all happening inside Gmail, completed in one sitting.
 
 ### Onboarding Design Rules
 
-- Every step must be completable inside Gmail. No external URLs, no separate onboarding portal, no email threads with the Clearledgr team.
+- Every step of onboarding must be completable inside Gmail after the extension is installed. The only step that necessarily happens before the extension is the install click itself — and that is a redirect to the Chrome Web Store, not a standalone web surface to log into. Workspace creation, ERP connection, AP policy configuration, and Slack integration all happen inside Gmail.
 - Progress is always visible. The onboarding checklist lives in the Clearledgr nav section until all four steps are complete. Incomplete steps show exactly what is missing and why.
 - The agent begins processing immediately at step four — even before the AP Manager has reviewed the first result. Showing early value is more persuasive than any onboarding tutorial.
 - If the ERP connection fails, the error message names the specific permission that is missing and links directly to where to grant it in the ERP. Generic 'connection failed' errors are not acceptable.
@@ -1062,7 +1148,7 @@ Settings is accessible from the Clearledgr section in Gmail's left nav. It opens
 | Setting | What it controls |
 |---------|------------------|
 | KYC requirements | Which documents are required for vendor activation: certificate of incorporation, director ID, proof of address, VAT registration. Configurable by vendor country. |
-| Bank verification method | Micro-deposit (default) or manual IBAN validation by the AP Manager. Micro-deposit is required for any first payment above the configurable threshold. |
+| Bank verification method | Open banking verification via the workspace-configured provider (TrueLayer, Tink, Plaid). Account holder name is matched against the KYC legal entity at a configurable fuzzy-match threshold. Countries not covered by the configured provider route to external verification by the AP Manager. |
 | Auto-chase cadence | How many hours after a missed onboarding deadline before the agent sends a chase email. Default: 24h first chase, 48h second chase, 72h escalation to AP Manager. |
 | First payment limit | Maximum value of the first payment to any newly activated vendor. Payments above this limit require CFO approval regardless of invoice value. |
 
@@ -1149,7 +1235,7 @@ The principle governing all error states: the agent must tell the finance team e
 | Error | Agent behaviour |
 |-------|-----------------|
 | Vendor not in master | Agent cannot process the invoice. Posts to sidebar: 'Stripe Inc. is not in your vendor master. Initiate vendor onboarding to activate this vendor before processing their invoices.' Provides one-click link to start the onboarding flow. |
-| IBAN validation failure | Micro-deposit fails due to invalid IBAN format or rejected by receiving bank. Agent posts to vendor onboarding Box: 'Micro-deposit to GB82 WEST 1234 5698 7654 32 was rejected by Barclays. The IBAN may be incorrect. Agent has sent the vendor a request to resubmit their bank details.' |
+| Bank verification failure | Open banking verification fails due to name mismatch between the KYC legal entity and the bank account holder, or due to a provider error. Agent posts to vendor onboarding Box: 'Open banking verification for Stripe Inc. returned a name mismatch: KYC entity Stripe Inc. does not match account holder J Doe. The account may be personal rather than business. Agent has sent the vendor a request to verify with a business account.' |
 | KYC document rejected | Agent identifies a document that does not meet requirements (expired ID, wrong document type). Posts to vendor onboarding Box with the specific issue: 'Director ID submitted by Stripe Inc. expired on 12 Jan 2024. A valid ID is required. Agent has notified the vendor contact.' |
 | Vendor unresponsive | After three chase attempts over 72 hours, agent escalates to AP Manager via Slack: 'Brex Inc. has not responded to onboarding after 3 contacts over 72h. Manual outreach may be required. The vendor contact on file is ops@brex.com.' |
 
@@ -1203,8 +1289,8 @@ Clearledgr's security posture is governed by one principle: the product processe
 | Financial record retention | Agent action logs are retained for a minimum of 7 years by default, consistent with UK Companies Act requirements. Customers may extend this period but not shorten it below the statutory minimum. |
 | Audit access | The Read Only role provides external auditors with time-limited, scoped access to Box timelines and pipeline views. No data export to unsecured formats. All auditor access is logged. |
 
-> *The correct framing for enterprise procurement conversations: Clearledgr does not hold your financial data. Your data lives in your ERP and your Gmail, both of which you already trust. Clearledgr is the intelligence layer that connects them — processing data in transit, not at rest.*
+> *The correct framing for enterprise procurement conversations: Clearledgr does not hold your financial data. Your financial data lives in your ERP and your Gmail, both of which you already trust. Clearledgr is the coordination layer that sits on top of them — holding workflow state, advancing it through the agent, and surfacing what needs human judgment. We process financial data in transit and store workflow state — not your ledger.*
 
 ---
 
-*This document is a living reference. The design principles (§4), the agent communication model and trust arc (§7), the fraud controls (§8), and the LLM guardrail architecture (§7.6) are foundational — they should not be revised without explicit product-level discussion and a written record of the reasoning. The competitive landscape (§12), subscription model (§13), and expansion platform (§3) are aspirational and should be updated as the market and product evolve. The onboarding section (§15) should be updated as ERP connector coverage expands. The Backoffice section (§14) is a summary — the full operational detail lives in the internal operations document.*
+*This document is a living reference. The thesis (§2), the coordination layer framing (§1–§3), the design principles (§4), the agent communication model and trust arc (§7), the fraud controls (§8), and the LLM guardrail architecture (§7.6) are foundational — they should not be revised without explicit product-level discussion and a written record of the reasoning. The competitive landscape (§12) and platform opportunity (§3) should be updated as the market and product evolve, but the underlying thesis — Clearledgr is the stateful coordination layer for finance operations — is the fixed point every revision must preserve. The subscription model (§13), onboarding section (§15), and Operations Console summary (§14) should be updated as the product and customer base mature.*

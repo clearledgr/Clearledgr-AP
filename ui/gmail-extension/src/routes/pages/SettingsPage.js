@@ -517,7 +517,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                   <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
                   ${(sub.plan || '').toLowerCase() === tier.id
-                    ? html`<span style="font-size:11px;color:#00B87A;font-weight:600;">Current plan</span>`
+                    ? html`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>`
                     : html`<button class="btn-secondary btn-sm" onClick=${() => {
                         api('/api/workspace/subscription/plan', {
                           method: 'POST',

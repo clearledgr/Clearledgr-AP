@@ -6,22 +6,28 @@ export const STATE_LABELS = {
   posted_to_erp: 'Posted to ERP', closed: 'Closed', rejected: 'Rejected', failed_post: 'Failed post',
 };
 
-// §10 Visual Language — thesis color semantics (authoritative):
-// Green (#00B87A) = passed, verified, active, approved
-// Amber (#D97706) = requires attention, exception, pending human action
-// Red (#DC2626) = failed, blocked, rejected
-// Blue (#1A73E8) = in progress, scheduled, approval in transit
-// Grey = neutral, not yet processed
+// §10 Visual Language — authoritative palette lives in DESIGN.md:
+// Green  (#00D67E) — brand mint; passed, verified, active, approved
+// Amber  (#D97706) — requires attention, exception, pending human action
+// Red    (#DC2626) — failed, blocked, rejected
+// Blue   (#1A73E8) — in progress, scheduled, approval in transit
+// Grey   (#94A3B8) — neutral, not yet processed
+//
+// Previously used #00B87A for state pills — that came from a stale
+// DESIGN_THESIS §10 palette that diverged from DESIGN.md. Having two
+// greens in one product was noise without meaning; collapsed to the
+// single brand mint so state semantics and brand identity stay on the
+// same colour.
 export const STATE_COLORS = {
   received: '#94A3B8',          // grey — not yet processed
   validated: '#1A73E8',         // blue — in progress
   needs_info: '#D97706',        // amber — requires attention
   needs_approval: '#D97706',    // amber — pending human action
   pending_approval: '#D97706',  // amber — pending human action
-  approved: '#00B87A',          // green — approved
+  approved: '#00D67E',          // green — approved
   ready_to_post: '#1A73E8',     // blue — scheduled
-  posted_to_erp: '#00B87A',     // green — active/passed
-  closed: '#00B87A',            // green — passed
+  posted_to_erp: '#00D67E',     // green — active/passed
+  closed: '#00D67E',            // green — passed
   rejected: '#DC2626',          // red — blocked
   failed_post: '#DC2626',       // red — failed
   reversed: '#DC2626',          // red — blocked
