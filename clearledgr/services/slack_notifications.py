@@ -213,9 +213,27 @@ def _check_ooo_and_get_backup(
     except Exception:
         pass
 
-    # Future: Google Calendar API check
-    # calendar_ooo = await _check_google_calendar_ooo(approver_email)
-    # if calendar_ooo: return org_settings.get(f"backup_for_{role}")
+    # Google Calendar freeBusy check — works for approvers who are
+    # Clearledgr users (their Google OAuth token is on file). External
+    # approvers without tokens fall through fail-open. See
+    # clearledgr/services/calendar_ooo.py for the fail-open rationale.
+    try:
+        from clearledgr.services.calendar_ooo import is_approver_ooo_sync
+        if is_approver_ooo_sync(approver_email):
+            # Approver IS OOO per their calendar. Resolve the backup
+            # from org_settings. Backup lookup order:
+            #   1. ooo_backups[approver_email] — explicit per-person override
+            #   2. ooo_backups["default"] — org-wide fallback
+            # If neither is configured, return None so the caller
+            # continues to the next routing rule rather than silently
+            # dropping the approval.
+            backups = org_settings.get("ooo_backups") or {}
+            if isinstance(backups, dict):
+                backup = backups.get(approver_email) or backups.get("default")
+                if isinstance(backup, str) and backup.strip():
+                    return backup.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[ooo] calendar freeBusy check failed: %s", exc)
 
     return None
 
