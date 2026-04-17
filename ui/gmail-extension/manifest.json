@@ -11,7 +11,8 @@
     "storage",
     "identity",
     "identity.email",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "oauth2": {
     "client_id": "333271407440-j42m0b6sh4j42bvlkr0vko7l058uf3ja.apps.googleusercontent.com",

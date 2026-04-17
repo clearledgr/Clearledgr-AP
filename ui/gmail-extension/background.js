@@ -535,6 +535,19 @@ async function ensureGmailAuthWithBackend(interactive = true) {
       || profile?.id
       || ''
     ).trim() || null;
+    // Cache backend auth in service-worker-accessible storage so the
+    // alarm-driven pipeline-notification poller can hit the backend
+    // without re-running the full OAuth → register dance every minute.
+    try {
+      const cacheTtlMs = Math.max(60, Number(backendExpiresIn) || 0) * 1000;
+      await chrome.storage.local.set({
+        cl_backend_token: backendAccessToken,
+        cl_backend_token_expiry: Date.now() + cacheTtlMs,
+        cl_organization_id: organizationId,
+        cl_user_email: profile?.email || null,
+      });
+    } catch (_) {}
+
     return {
       success: true,
       backendAccessToken,
@@ -1164,4 +1177,160 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: true });
     return false;
   }
+});
+
+// ===========================================================================
+// Pipeline desktop notifications — DESIGN_THESIS.md §3 Gmail Power Features
+//
+// Streak-equivalent: "Gmail desktop notifications when Boxes are updated,
+// moved to new stages, or assigned." We poll the backend audit feed on a
+// 1-minute alarm (MV3 service workers cannot use setInterval — the worker
+// unloads after ~30s of inactivity). The poller reads the operator-facing
+// audit normalisation which already carries `operator_importance` and
+// human-readable title/message — only `high` importance events trigger
+// desktop notifications to preserve the signal-to-noise ratio that §4.04
+// of the thesis mandates ("exceptions are the only interruptions").
+//
+// State lives in chrome.storage.local:
+//   cl_backend_token / cl_backend_token_expiry / cl_organization_id
+//     — cached at signin, read by the poller on each tick
+//   cl_notif_cursor_ts
+//     — ISO timestamp of the most recent event already notified on; the
+//       poller only fires notifications for events strictly newer than
+//       this, preventing duplicate notifications on worker restart
+// ===========================================================================
+
+const PIPELINE_NOTIFICATION_ALARM = 'cl-pipeline-notifications';
+const PIPELINE_NOTIFICATION_PERIOD_MINUTES = 1;
+
+async function _getCachedBackendAuth() {
+  try {
+    const { cl_backend_token, cl_backend_token_expiry, cl_organization_id } =
+      await chrome.storage.local.get([
+        'cl_backend_token', 'cl_backend_token_expiry', 'cl_organization_id',
+      ]);
+    if (!cl_backend_token) return null;
+    if (cl_backend_token_expiry && Date.now() > Number(cl_backend_token_expiry)) {
+      return null;  // expired — skip until next register
+    }
+    return {
+      token: cl_backend_token,
+      organizationId: cl_organization_id || 'default',
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function _titleForImportance(importance) {
+  if (importance === 'high') return 'Clearledgr — attention needed';
+  return 'Clearledgr';
+}
+
+async function _pollPipelineNotifications() {
+  const auth = await _getCachedBackendAuth();
+  if (!auth) return;  // not signed in / token expired — silent skip
+
+  const backendUrl = await getBackendUrl();
+  if (!backendUrl) return;
+
+  let events = [];
+  try {
+    const resp = await fetch(
+      `${backendUrl}/api/ap/audit/recent?organization_id=${encodeURIComponent(auth.organizationId)}&limit=30`,
+      { headers: { Authorization: `Bearer ${auth.token}` } },
+    );
+    if (!resp.ok) return;
+    const data = await resp.json();
+    events = Array.isArray(data?.events) ? data.events : [];
+  } catch (_) {
+    return;  // network blip — try again next tick
+  }
+
+  if (!events.length) return;
+
+  const { cl_notif_cursor_ts } = await chrome.storage.local.get(['cl_notif_cursor_ts']);
+  const cursorTs = cl_notif_cursor_ts || '';
+
+  // events arrive newest-first. Walk oldest-to-newest so chronological
+  // order is preserved in the notification tray.
+  const ordered = [...events].reverse();
+  let newestTs = cursorTs;
+  let fired = 0;
+
+  for (const event of ordered) {
+    const ts = String(event?.ts || '');
+    if (!ts || (cursorTs && ts <= cursorTs)) continue;
+
+    const importance = String(event?.operator_importance || '').toLowerCase();
+    if (importance !== 'high') {
+      if (!newestTs || ts > newestTs) newestTs = ts;
+      continue;
+    }
+
+    const apItemId = String(event?.ap_item_id || '');
+    const title = String(event?.operator_title || _titleForImportance(importance));
+    const message = String(event?.operator_message || 'A Box moved to a new stage.');
+    const notifId = `cl-pipe-${apItemId || 'evt'}-${ts}`;
+
+    try {
+      chrome.notifications.create(notifId, {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title,
+        message,
+        priority: 2,
+      });
+      fired += 1;
+    } catch (_) {}
+
+    if (!newestTs || ts > newestTs) newestTs = ts;
+
+    // Cap per-tick so a backlog doesn't spam 30 notifications at once.
+    if (fired >= 5) break;
+  }
+
+  if (newestTs && newestTs !== cursorTs) {
+    try {
+      await chrome.storage.local.set({ cl_notif_cursor_ts: newestTs });
+    } catch (_) {}
+  }
+}
+
+function _ensurePipelineNotificationAlarm() {
+  try {
+    chrome.alarms.get(PIPELINE_NOTIFICATION_ALARM, (existing) => {
+      if (!existing) {
+        chrome.alarms.create(PIPELINE_NOTIFICATION_ALARM, {
+          periodInMinutes: PIPELINE_NOTIFICATION_PERIOD_MINUTES,
+        });
+      }
+    });
+  } catch (_) {}
+}
+
+chrome.runtime.onInstalled.addListener(_ensurePipelineNotificationAlarm);
+chrome.runtime.onStartup.addListener(_ensurePipelineNotificationAlarm);
+_ensurePipelineNotificationAlarm();
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name === PIPELINE_NOTIFICATION_ALARM) {
+    _pollPipelineNotifications().catch(() => {});
+  }
+});
+
+// Click a notification → focus Gmail so the AP Manager can act on the Box.
+chrome.notifications.onClicked.addListener((notifId) => {
+  if (!String(notifId || '').startsWith('cl-pipe-')) return;
+  try {
+    chrome.tabs.query({ url: 'https://mail.google.com/*' }, (tabs) => {
+      if (tabs && tabs.length) {
+        chrome.tabs.update(tabs[0].id, { active: true });
+        chrome.windows.update(tabs[0].windowId, { focused: true });
+      } else {
+        chrome.tabs.create({ url: 'https://mail.google.com/' });
+      }
+      chrome.notifications.clear(notifId);
+    });
+  } catch (_) {}
 });
