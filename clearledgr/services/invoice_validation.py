@@ -2106,6 +2106,57 @@ class InvoiceValidationMixin:
                             "trusted_domains": domain_result.known_domains,
                         },
                     )
+
+                # 4e.1) §8 Domain similarity detection. The thesis calls
+                # this out by name: "Domain similarity detection flags
+                # 'str1pe.com' emails when 'stripe.com' is in the vendor
+                # master." Runs whenever the sender isn't an allowlisted
+                # domain — that catches both the mismatched-vendor case
+                # (invoice from str1pe.com claiming to be from Stripe) and
+                # the unknown-vendor case (invoice from str1pe.com with no
+                # vendor resolution yet). Fires AS WELL AS the mismatch
+                # reason above so the AP Manager sees both facts:
+                # "not on allowlist" + "looks like a known vendor".
+                try:
+                    from clearledgr.services.vendor_domain_lookalike import (
+                        collect_org_trusted_domains,
+                        detect_lookalike,
+                    )
+                    sender_domain = domain_result.sender_domain
+                    is_not_allowlisted = domain_result.status in {
+                        "mismatch", "no_known_domains",
+                    }
+                    if sender_domain and is_not_allowlisted:
+                        trusted = collect_org_trusted_domains(
+                            self.db, self.organization_id
+                        )
+                        lookalike = detect_lookalike(sender_domain, trusted)
+                        if lookalike is not None:
+                            add_reason(
+                                "vendor_lookalike_domain",
+                                (
+                                    f"Sender domain "
+                                    f"'{lookalike.sender_domain}' resembles "
+                                    f"trusted vendor domain "
+                                    f"'{lookalike.suspected_impersonation}' "
+                                    f"({lookalike.category} match). "
+                                    f"Likely impersonation attempt — do not "
+                                    f"process without verifying out of band."
+                                ),
+                                severity="error",
+                                details={
+                                    "sender_domain": lookalike.sender_domain,
+                                    "suspected_impersonation":
+                                        lookalike.suspected_impersonation,
+                                    "category": lookalike.category,
+                                    "score": lookalike.score,
+                                },
+                            )
+                except Exception as lookalike_exc:
+                    logger.debug(
+                        "[lookalike] detection failed (non-fatal): %s",
+                        lookalike_exc,
+                    )
         except Exception as domain_check_exc:
             logger.warning(
                 "Vendor domain lock check failed (non-fatal): %s",
