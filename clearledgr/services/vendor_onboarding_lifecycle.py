@@ -485,6 +485,33 @@ async def activate_vendor_in_erp(
     except Exception:
         pass
 
+    # Step 7: Slack activation confirmation — DESIGN_THESIS.md §9.
+    # "Agent posts a confirmation to the finance team's Slack channel."
+    # Fire-and-forget; Slack outages don't roll back an already-
+    # successful ERP activation.
+    try:
+        from clearledgr.services.slack_notifications import (
+            send_vendor_activated_notification,
+        )
+        erp_system = ""
+        try:
+            conns = db.get_erp_connections(org_id) if hasattr(db, "get_erp_connections") else []
+            if conns:
+                erp_system = str(conns[0].get("erp_type") or "").strip()
+        except Exception:
+            pass
+        await send_vendor_activated_notification(
+            vendor_name=vendor_name,
+            erp_system=erp_system or "ERP",
+            erp_vendor_id=erp_vendor_id,
+            organization_id=org_id,
+        )
+    except Exception as slack_exc:
+        logger.warning(
+            "[onboarding_lifecycle] activation slack post failed (non-fatal): %s",
+            slack_exc,
+        )
+
     return ActivationResult(success=True, erp_vendor_id=erp_vendor_id)
 
 

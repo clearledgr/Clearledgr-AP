@@ -1034,6 +1034,54 @@ async def send_invoice_posted_notification(
     )
 
 
+async def send_vendor_activated_notification(
+    *,
+    vendor_name: str,
+    erp_system: str,
+    erp_vendor_id: Optional[str],
+    organization_id: Optional[str] = None,
+) -> bool:
+    """DESIGN_THESIS §9: confirm vendor activation in the AP channel.
+
+    "Agent writes the vendor to the ERP vendor master with AP-enabled
+    status. The vendor is now capable of submitting invoices that will
+    be processed. Agent posts a confirmation to the finance team's
+    Slack channel."
+
+    Called from vendor_onboarding_lifecycle.activate_vendor_in_erp at
+    step 7 of the activation sequence, after the ERP write has
+    confirmed and the audit event has been written. Fires-and-forgets
+    into _post_slack_blocks so any Slack outage is non-fatal — the
+    vendor is already live in the ERP at this point.
+    """
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+
+    erp_label = (erp_system or "ERP").strip() or "ERP"
+    erp_id_line = f"\nERP ID: `{erp_vendor_id}`" if erp_vendor_id else ""
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"✓ *Vendor activated*\n\n"
+                    f"*{vendor_name}* is live in {erp_label}.{erp_id_line}\n"
+                    f"The vendor can now submit invoices — the agent will "
+                    f"process them through the standard AP pipeline."
+                ),
+            },
+        }
+    ]
+
+    return await _post_slack_blocks(
+        blocks=blocks,
+        text=f"Vendor {vendor_name} activated in {erp_label}",
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+
+
 async def send_task_created_notification(*args, **kwargs):
     """Placeholder for task created notification."""
     pass
