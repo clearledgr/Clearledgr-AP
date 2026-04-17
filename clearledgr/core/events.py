@@ -32,6 +32,31 @@ class AgentEventType(str, Enum):
     KYC_DOCUMENT_RECEIVED = "kyc_document_received"
     IBAN_CHANGE_SUBMITTED = "iban_change_submitted"
 
+    # Vendor onboarding v1.1 — spec §3 event types. New names sit
+    # alongside the originals so existing planner handlers for
+    # KYC_DOCUMENT_RECEIVED etc. keep working during the migration;
+    # the new handlers use the new names for clarity and spec
+    # alignment.
+    ONBOARDING_INITIATED = "onboarding_initiated"
+    VENDOR_PORTAL_ACCESSED = "vendor_portal_accessed"
+    VENDOR_SUBMISSION_RECEIVED = "vendor_submission_received"
+    KYC_CHECK_COMPLETED = "kyc_check_completed"
+    OPEN_BANKING_VERIFICATION_COMPLETED = "open_banking_verification_completed"
+    VENDOR_CHASE_DUE = "vendor_chase_due"
+    AP_MANAGER_DECISION_RECEIVED = "ap_manager_decision_received"
+    VENDOR_ACTIVATED = "vendor_activated"
+
+    # Commission clawback — V1.2 (Booking.com design partnership).
+    # Spec: commission-clawback-spec.md §3. Planner handlers land when
+    # the clawback pipeline ships; these enum values are reserved now
+    # so code paths that refer to them do not need retroactive edits.
+    REFUND_DETECTED = "refund_detected"
+    CLAWBACK_APPROVAL_RECEIVED = "clawback_approval_received"
+    PARTNER_DISPUTE_RECEIVED = "partner_dispute_received"
+    CLAWBACK_POSTED = "clawback_posted"
+    DISPUTE_WINDOW_EXPIRED = "dispute_window_expired"
+    ERP_COMMISSION_RECORD_FOUND = "erp_commission_record_found"
+
     # Timer-based resumption
     TIMER_FIRED = "timer_fired"
 

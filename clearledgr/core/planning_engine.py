@@ -59,6 +59,15 @@ class DeterministicPlanningEngine:
             AgentEventType.ERP_GRN_CONFIRMED: self._plan_grn_confirmed,
             AgentEventType.MANUAL_CLASSIFICATION: self._plan_manual_classification,
             AgentEventType.LABEL_CHANGED: self._plan_label_changed,
+            # Vendor onboarding v1.1 — spec §5.
+            AgentEventType.ONBOARDING_INITIATED: self._plan_onboarding_initiated,
+            AgentEventType.VENDOR_PORTAL_ACCESSED: self._plan_vendor_portal_accessed,
+            AgentEventType.VENDOR_SUBMISSION_RECEIVED: self._plan_vendor_submission_received,
+            AgentEventType.KYC_CHECK_COMPLETED: self._plan_kyc_check_completed,
+            AgentEventType.OPEN_BANKING_VERIFICATION_COMPLETED: self._plan_open_banking_verification_completed,
+            AgentEventType.VENDOR_CHASE_DUE: self._plan_vendor_chase_due,
+            AgentEventType.AP_MANAGER_DECISION_RECEIVED: self._plan_ap_manager_decision_received,
+            AgentEventType.VENDOR_ACTIVATED: self._plan_vendor_activated,
         }
         handler = dispatcher.get(event.type)
         if not handler:
@@ -586,6 +595,216 @@ class DeterministicPlanningEngine:
                            f"Apply {classification} label"),
                 ],
             )
+
+
+    # ------------------------------------------------------------------
+    # §5 Vendor onboarding v1.1 — new event handlers
+    #
+    # These plans emit the action names the onboarding spec §5 defines.
+    # The action handlers that call real provider adapters
+    # (check_vendor_duplicate, dispatch_onboarding_invitation,
+    # run_company_registry_lookup, etc.) are thin stubs until the
+    # provider contracts are signed and the real adapters register
+    # themselves via bank_verifier / kyc_provider factories. The
+    # execution engine already warn-logs on unknown action names, so
+    # these plans run end-to-end against stub handlers without
+    # crashing the pipeline.
+    # ------------------------------------------------------------------
+
+    def _plan_onboarding_initiated(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.1: AP Manager forwards a new-vendor intro email → onboarding begins."""
+        initiator_email = event.payload.get("initiator_email", "")
+        vendor_email = event.payload.get("vendor_email", "")
+        vendor_hint = event.payload.get("vendor_name_hint", "")
+        return Plan(
+            event_type="onboarding_initiated",
+            actions=[
+                Action("create_box", "DET",
+                       {"pipeline": "vendor_onboarding",
+                        "stage": "invited",
+                        "initiator_email": initiator_email,
+                        "vendor_email": vendor_email,
+                        "vendor_name_hint": vendor_hint},
+                       "Create vendor onboarding Box"),
+                Action("check_vendor_duplicate", "DET",
+                       {"vendor_email": vendor_email, "vendor_name_hint": vendor_hint},
+                       "Early duplicate check using trigger-email hints"),
+                Action("dispatch_onboarding_invitation", "DET",
+                       {"vendor_email": vendor_email, "initiator_email": initiator_email},
+                       "Send portal invitation email to vendor"),
+                Action("generate_portal_link", "DET",
+                       {"ttl_days": 14},
+                       "Generate signed portal link (14-day TTL)"),
+                Action("move_box_stage", "DET",
+                       {"target": "invited"},
+                       "Move Box to invited"),
+                Action("set_waiting_condition", "DET",
+                       {"type": "vendor_portal_accessed", "timeout": "24h"},
+                       "Wait for vendor portal access + first chase timer"),
+            ],
+        )
+
+    def _plan_vendor_portal_accessed(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.2: Vendor clicks the portal link → cancel chase timers, move to kyc."""
+        accessed_at = event.payload.get("accessed_at", "")
+        return Plan(
+            event_type="vendor_portal_accessed",
+            actions=[
+                Action("clear_waiting_condition", "DET", {},
+                       "Cancel outstanding chase timers — vendor has engaged"),
+                Action("move_box_stage", "DET",
+                       {"target": "kyc"},
+                       "Advance Box to kyc stage"),
+                Action("post_timeline_entry", "DET",
+                       {"summary": f"Vendor accessed portal at {accessed_at}"},
+                       "Record portal access timestamp"),
+                Action("set_waiting_condition", "DET",
+                       {"type": "vendor_submission_received", "timeout": "48h"},
+                       "Wait for first submission (48h stall timer)"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_vendor_submission_received(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.3: Vendor submits portal field or document → classify, extract, check KYC."""
+        submission_type = event.payload.get("submission_type", "document")
+        return Plan(
+            event_type="vendor_submission_received",
+            actions=[
+                Action("classify_submitted_document", "LLM",
+                       {"submission_type": submission_type},
+                       "Classify submitted document type"),
+                Action("extract_vendor_fields", "LLM",
+                       {"submission_type": submission_type},
+                       "Extract vendor fields from submission (portal + OCR)"),
+                Action("validate_document_completeness", "DET", {},
+                       "Check completeness against workspace KYC policy"),
+                Action("initiate_kyc_checks", "DET", {},
+                       "Dispatch KYC checks allowed by workspace tier"),
+                Action("set_waiting_condition", "DET",
+                       {"type": "kyc_check_completed", "timeout": "24h"},
+                       "Wait for all dispatched KYC checks to return"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_kyc_check_completed(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.4: Individual KYC check returned → evaluate disposition once all complete."""
+        return Plan(
+            event_type="kyc_check_completed",
+            actions=[
+                Action("record_kyc_check_result", "DET",
+                       {"check_type": event.payload.get("check_type", ""),
+                        "status": event.payload.get("status", ""),
+                        "provider": event.payload.get("provider", "")},
+                       "Store check result on Box"),
+                Action("evaluate_kyc_disposition", "DET", {},
+                       "Aggregate check results → proceed / hard_block / ap_manager_review / manual_resolution"),
+                Action("post_timeline_entry", "DET",
+                       {"summary": "KYC check completed — disposition evaluated"},
+                       "Record disposition to timeline"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_open_banking_verification_completed(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.5: Open banking verification returned → name match + write vendor to ERP."""
+        return Plan(
+            event_type="open_banking_verification_completed",
+            actions=[
+                Action("evaluate_name_match", "DET",
+                       {"account_holder_name": event.payload.get("account_holder_name", ""),
+                        "provider_reference": event.payload.get("provider_reference", "")},
+                       "Fuzzy-match account holder name against KYC legal entity"),
+                Action("evaluate_bank_verification_disposition", "DET", {},
+                       "Classify as proceed / ap_manager_review / hard_block / retry"),
+                Action("pre_write_validate_vendor", "DET", {},
+                       "Validate assembled vendor record before ERP write"),
+                Action("draft_vendor_master_record", "DET", {},
+                       "Assemble canonical vendor master record"),
+                Action("validate_vendor_master_record", "DET", {},
+                       "Second-pass validation with lint rules"),
+                Action("write_vendor_to_erp", "DET", {},
+                       "Write vendor to configured ERP (QuickBooks / Xero / SAP)"),
+                Action("move_box_stage", "DET",
+                       {"target": "active"},
+                       "Advance Box to active (vendor ready for invoicing)"),
+                Action("send_slack_vendor_activated", "DET", {},
+                       "Notify AP channel that vendor is live"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_vendor_chase_due(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.7: Chase timer fired → send appropriate chase template."""
+        chase_type = event.payload.get("chase_type", "first_chase")
+        return Plan(
+            event_type="vendor_chase_due",
+            actions=[
+                Action("send_vendor_chase", "DET",
+                       {"chase_type": chase_type,
+                        "vendor_email": event.payload.get("vendor_email", "")},
+                       f"Send {chase_type} email to vendor"),
+                Action("post_timeline_entry", "DET",
+                       {"summary": f"Chase sent: {chase_type}"},
+                       "Record chase dispatch to timeline"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_ap_manager_decision_received(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.6: AP Manager approves / overrides / rejects a blocked onboarding."""
+        decision = str(event.payload.get("decision", "")).lower()
+        reason = event.payload.get("override_reason") or event.payload.get("reason") or ""
+        if decision in ("approve", "approved", "override"):
+            return Plan(
+                event_type="ap_manager_decision_received",
+                actions=[
+                    Action("clear_waiting_condition", "DET", {},
+                           "Clear ap_manager_decision_received waiting condition"),
+                    Action("post_timeline_entry", "DET",
+                           {"summary": f"AP Manager override: {reason}" if reason
+                            else "AP Manager approved",
+                            "override_reason": reason},
+                           "Record override reason to timeline"),
+                    Action("resume_onboarding_from_override", "DET",
+                           {"decision": decision},
+                           "Resume pipeline from the stage that was blocked"),
+                ],
+                box_id=event.payload.get("box_id", ""),
+            )
+        return Plan(
+            event_type="ap_manager_decision_received",
+            actions=[
+                Action("clear_waiting_condition", "DET", {},
+                       "Clear waiting condition"),
+                Action("move_box_stage", "DET",
+                       {"target": "closed_unsuccessful"},
+                       "Close onboarding unsuccessfully"),
+                Action("post_timeline_entry", "DET",
+                       {"summary": f"AP Manager rejected: {reason}" if reason else
+                        "AP Manager rejected onboarding"},
+                       "Record rejection reason"),
+                Action("send_vendor_email", "DET",
+                       {"template": "onboarding_rejection"},
+                       "Notify vendor of unsuccessful onboarding"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
+
+    def _plan_vendor_activated(self, event: AgentEvent, box_state: dict) -> Plan:
+        """§5.5 tail: Vendor write to ERP completed → final activation confirmation."""
+        return Plan(
+            event_type="vendor_activated",
+            actions=[
+                Action("post_timeline_entry", "DET",
+                       {"summary": "Vendor activated — ready to receive invoices"},
+                       "Record activation (terminal event)"),
+                Action("send_slack_vendor_activated", "DET", {},
+                       "Confirm activation to AP channel"),
+            ],
+            box_id=event.payload.get("box_id", ""),
+        )
 
 
 # ---------------------------------------------------------------------------

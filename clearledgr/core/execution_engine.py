@@ -180,6 +180,41 @@ class ExecutionEngine:
             # §12.2: ERP connectivity recheck + resume
             "check_erp_connectivity": self._handle_check_erp_connectivity,
             "evaluate_erp_recheck": self._handle_evaluate_erp_recheck,
+
+            # Vendor onboarding v1.1 — spec §5. These actions call out to
+            # KYC / open-banking / ERP write paths. Until the real
+            # provider adapters register via kyc_provider /
+            # bank_verifier factories, each maps to
+            # `_handle_onboarding_adapter_pending` which records a
+            # neutral "adapter pending" timeline entry and returns
+            # success so the plan runs end-to-end against stubs.
+            "check_vendor_duplicate": self._handle_onboarding_adapter_pending,
+            "dispatch_onboarding_invitation": self._handle_onboarding_adapter_pending,
+            "generate_portal_link": self._handle_onboarding_adapter_pending,
+            "classify_submitted_document": self._handle_onboarding_adapter_pending,
+            "extract_vendor_fields": self._handle_onboarding_adapter_pending,
+            "validate_document_completeness": self._handle_onboarding_adapter_pending,
+            "initiate_kyc_checks": self._handle_onboarding_adapter_pending,
+            "record_kyc_check_result": self._handle_onboarding_adapter_pending,
+            "evaluate_kyc_disposition": self._handle_onboarding_adapter_pending,
+            "run_company_registry_lookup": self._handle_onboarding_adapter_pending,
+            "run_sanctions_screen": self._handle_onboarding_adapter_pending,
+            "run_pep_check": self._handle_onboarding_adapter_pending,
+            "run_adverse_media_screen": self._handle_onboarding_adapter_pending,
+            "resolve_ubo": self._handle_onboarding_adapter_pending,
+            "check_open_banking_coverage": self._handle_onboarding_adapter_pending,
+            "dispatch_open_banking_link": self._handle_onboarding_adapter_pending,
+            "evaluate_name_match": self._handle_onboarding_adapter_pending,
+            "evaluate_bank_verification_disposition": self._handle_onboarding_adapter_pending,
+            "pre_write_validate_vendor": self._handle_onboarding_adapter_pending,
+            "draft_vendor_master_record": self._handle_onboarding_adapter_pending,
+            "validate_vendor_master_record": self._handle_onboarding_adapter_pending,
+            "write_vendor_to_erp": self._handle_onboarding_adapter_pending,
+            "send_slack_vendor_activated": self._handle_onboarding_adapter_pending,
+            "send_slack_onboarding_exception": self._handle_onboarding_adapter_pending,
+            "send_vendor_chase": self._handle_onboarding_adapter_pending,
+            "generate_vendor_summary": self._handle_onboarding_adapter_pending,
+            "resume_onboarding_from_override": self._handle_onboarding_adapter_pending,
         }
 
     async def execute(self, plan: Plan) -> ExecutionResult:
@@ -1343,6 +1378,32 @@ class ExecutionEngine:
         except Exception as exc:
             logger.debug("[ExecutionEngine] kyc_validate non-fatal: %s", exc)
             return {"ok": True}
+
+    async def _handle_onboarding_adapter_pending(self, action: Action, plan: Plan) -> dict:
+        """Stub handler for vendor-onboarding v1.1 actions that depend on
+        KYC / open-banking / ERP-write provider adapters.
+
+        The spec (vendor-onboarding-spec §5) names these actions and
+        wires them into the planner. Real implementations land when
+        the customer-side provider contracts are signed and the
+        adapters register themselves via
+        :func:`register_kyc_provider` and
+        :func:`register_bank_verifier`. Until then, this stub records
+        a neutral "adapter pending" timeline entry so the pipeline
+        runs end-to-end against mock providers, and the AP Manager can
+        see in the Box timeline exactly which step needs a real
+        adapter before it goes live.
+        """
+        logger.info(
+            "[ExecutionEngine] %s — provider adapter pending (org=%s, box=%s)",
+            action.name, self.organization_id, plan.box_id or "—",
+        )
+        return {
+            "ok": True,
+            "adapter_pending": True,
+            "action": action.name,
+            "reason": "provider_adapter_pending",
+        }
 
     async def _handle_onboarding_progress(self, action: Action, plan: Plan) -> dict:
         """§10: Update onboarding stage if all documents received."""
