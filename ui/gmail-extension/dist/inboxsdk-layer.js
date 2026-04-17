@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:b8549c48d7dc88b58206a3e57a41486275a970db8c3c5e73f56c109a693302bb */
+/* clearledgr-source-fingerprint:25d05568ae5f07d9efcb43a393c61adb8903e20a0b1db1ca1da4f70946ba27fe */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -62925,6 +62925,143 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   `;
   }
+  function PolicyForm({ onContinue, pending, errorMessage }) {
+    const [threshold, setThreshold] = d2("1000");
+    const [tolerance, setTolerance] = d2("2");
+    const [approverEmail, setApproverEmail] = d2("");
+    const canContinue = Boolean(threshold && !Number.isNaN(Number(threshold)) && tolerance && !Number.isNaN(Number(tolerance)) && approverEmail.trim());
+    return html4`
+    <div class="cl-onboard-overlay">
+      <div class="cl-onboard-modal" style="max-width:480px;">
+        <div style="text-align:center;margin-bottom:20px;">
+          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Set your AP policy</h2>
+          <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
+            Three defaults you can fine-tune later from Settings > Policy.
+          </p>
+        </div>
+        ${errorMessage ? html4`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ""}
+
+        <label style="display:block;font:500 12px/1.4 'DM Sans',sans-serif;color:#475569;margin-bottom:6px;">
+          Auto-approve threshold (matched invoices under this go through without a human)
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <span style="font:600 14px/1 'Geist Mono',monospace;color:#0A1628;">£</span>
+          <input
+            type="number"
+            value=${threshold}
+            onInput=${(e3) => setThreshold(e3.target.value)}
+            min="0"
+            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#0A1628;box-sizing:border-box;"
+          />
+        </div>
+
+        <label style="display:block;font:500 12px/1.4 'DM Sans',sans-serif;color:#475569;margin-bottom:6px;">
+          Match tolerance (% delta between invoice and GRN before flagging)
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <input
+            type="number"
+            value=${tolerance}
+            onInput=${(e3) => setTolerance(e3.target.value)}
+            min="0"
+            step="0.1"
+            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#0A1628;box-sizing:border-box;"
+          />
+          <span style="font:600 14px/1 'Geist Mono',monospace;color:#0A1628;">%</span>
+        </div>
+
+        <label style="display:block;font:500 12px/1.4 'DM Sans',sans-serif;color:#475569;margin-bottom:6px;">
+          Default approver (receives Slack notification for everything above the threshold)
+        </label>
+        <input
+          type="email"
+          value=${approverEmail}
+          onInput=${(e3) => setApproverEmail(e3.target.value)}
+          placeholder="sarah@acme.com"
+          style="
+            display:block;width:100%;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;
+            font:400 14px/1.4 'DM Sans',sans-serif;color:#0A1628;box-sizing:border-box;margin-bottom:20px;
+          "
+        />
+
+        <button
+          class="cl-onboard-primary-btn"
+          onClick=${() => canContinue && onContinue({
+      auto_approve_threshold: Number(threshold),
+      match_tolerance: Number(tolerance) / 100,
+      approval_routing: { default: approverEmail.trim() }
+    })}
+          disabled=${!canContinue || pending}
+        >
+          ${pending ? "Saving..." : "Continue"}
+        </button>
+      </div>
+    </div>
+  `;
+  }
+  function SlackConnect({ onConnect, onSkip, pending, errorMessage, connected }) {
+    return html4`
+    <div class="cl-onboard-overlay">
+      <div class="cl-onboard-modal" style="max-width:440px;">
+        <div style="text-align:center;margin-bottom:20px;">
+          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Connect Slack</h2>
+          <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
+            Approvals and escalations happen in Slack. The AP pipeline stays in Gmail.
+          </p>
+        </div>
+        ${errorMessage ? html4`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ""}
+        ${connected ? html4`
+          <div style="
+            background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:500 13px/1.4 'DM Sans',sans-serif;color:#065F46;
+          ">✓ Slack connected. You can change the channel anytime from Settings > Connections.</div>
+        ` : ""}
+        ${!connected ? html4`
+          <button
+            class="cl-onboard-primary-btn"
+            onClick=${onConnect}
+            disabled=${pending}
+            style="margin-bottom:12px;"
+          >
+            ${pending ? "Opening Slack..." : "Connect Slack workspace"}
+          </button>
+          <button
+            type="button"
+            onClick=${onSkip}
+            style="display:block;width:100%;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;background:#fff;color:#475569;font:500 13px/1 'DM Sans',sans-serif;cursor:pointer;"
+          >
+            Skip for now
+          </button>
+          <p style="font:400 11px/1.4 'DM Sans',sans-serif;color:#94A3B8;text-align:center;margin:12px 0 0;">
+            If you skip, approvals route to email until Slack is connected. You can set it up anytime from Settings.
+          </p>
+        ` : html4`
+          <button
+            class="cl-onboard-primary-btn"
+            onClick=${onSkip}
+          >
+            Continue
+          </button>
+        `}
+      </div>
+    </div>
+  `;
+  }
   function PipelineCreation({ erpType, onComplete }) {
     const [steps, setSteps] = d2([
       { id: "connect", label: "Connecting to " + (erpType || "ERP"), detail: "Establishing OAuth connection", done: false },
@@ -62987,6 +63124,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [erpError, setErpError] = d2("");
     const [workspaceError, setWorkspaceError] = d2("");
     const [workspaceDefaultName, setWorkspaceDefaultName] = d2("");
+    const [policyError, setPolicyError] = d2("");
+    const [slackError, setSlackError] = d2("");
+    const [slackConnected, setSlackConnected] = d2(false);
     const handleSignIn = q2(async () => {
       setPending(true);
       try {
@@ -63043,7 +63183,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           body: JSON.stringify({ organization_id: "default", erp_type: erpId })
         });
         if (payload?.method === "form" || payload?.method === "not_configured") {
-          setStep("creating");
+          setStep("policy");
           return;
         }
         if (payload?.auth_url && oauthBridge) {
@@ -63060,13 +63200,67 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           setErpError("We didn't see the connection complete. If the sign-in window closed before authorization, please try again.");
           return;
         }
-        setStep("creating");
-      } catch {
-        setErpError("Something went wrong connecting to your ERP. Please try again.");
+        setStep("policy");
+      } catch (err) {
+        const detail = err?.body?.detail;
+        if (detail && typeof detail === "object" && detail.message) {
+          setErpError(detail.remediation_link ? `${detail.message} → ${detail.remediation_link}` : detail.message);
+        } else {
+          setErpError("Something went wrong connecting to your ERP. Please try again.");
+        }
       } finally {
         setPending(false);
       }
     }, [api, oauthBridge, verifyErpConnected]);
+    const handlePolicyContinue = q2(async (policyConfig) => {
+      setPending(true);
+      setPolicyError("");
+      try {
+        await api("/api/workspace/policies/ap", {
+          method: "PUT",
+          body: JSON.stringify({
+            organization_id: "default",
+            config: policyConfig
+          })
+        });
+        setStep("slack");
+      } catch {
+        setPolicyError("Could not save your policy. Please try again.");
+      } finally {
+        setPending(false);
+      }
+    }, [api]);
+    const handleSlackConnect = q2(async () => {
+      setPending(true);
+      setSlackError("");
+      try {
+        const payload = await api("/api/workspace/integrations/slack/install/start", {
+          method: "POST",
+          body: JSON.stringify({ organization_id: "default" })
+        });
+        if (payload?.auth_url && oauthBridge) {
+          await new Promise((resolve) => {
+            oauthBridge.startOAuth(payload.auth_url, "slack", (result) => resolve(result || null));
+          });
+        } else if (payload?.auth_url) {
+          window.open(payload.auth_url, "_blank", "width=600,height=700");
+        }
+        const data = await api("/api/workspace/integrations?organization_id=default", { silent: true });
+        const slackIntegration = (data?.integrations || []).find((i3) => i3?.name === "slack");
+        if (slackIntegration?.connected) {
+          setSlackConnected(true);
+        } else {
+          setSlackError("We didn't see the Slack connection complete. You can try again or skip and connect later from Settings.");
+        }
+      } catch {
+        setSlackError("Could not start the Slack connect flow. You can skip and connect later from Settings.");
+      } finally {
+        setPending(false);
+      }
+    }, [api, oauthBridge]);
+    const handleSlackFinish = q2(() => {
+      setStep("creating");
+    }, []);
     const handleCreationComplete = q2(() => {
       setStep("done");
       api("/api/workspace/onboarding/step", {
@@ -63109,6 +63303,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     ${step === "auth" ? html4`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
     ${step === "workspace" ? html4`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ""}
     ${step === "erp" ? html4`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
+    ${step === "policy" ? html4`<${PolicyForm} onContinue=${handlePolicyContinue} pending=${pending} errorMessage=${policyError} />` : ""}
+    ${step === "slack" ? html4`<${SlackConnect} onConnect=${handleSlackConnect} onSkip=${handleSlackFinish} pending=${pending} errorMessage=${slackError} connected=${slackConnected} />` : ""}
     ${step === "creating" ? html4`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
   `;
   }
