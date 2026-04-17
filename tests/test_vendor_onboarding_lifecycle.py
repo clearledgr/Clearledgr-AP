@@ -73,7 +73,7 @@ def _seed_to_bank_verified(db, org="org_t", vendor="Acme Ltd"):
     db.create_organization(org, name="Customer Inc")
     db.upsert_vendor_profile(org, vendor)
     session = db.create_vendor_onboarding_session(org, vendor, invited_by="cfo@x.com")
-    for s in ("awaiting_kyc", "awaiting_bank", "bank_verified"):
+    for s in ("kyc", "bank_verify", "bank_verified"):
         db.transition_onboarding_session_state(session["id"], s, actor_id="agent")
     # Add contact metadata.
     import json
@@ -173,7 +173,7 @@ class TestChaseStaleSessionsLogic:
         assert result.escalations == 1
         # Session should now be in escalated state.
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "escalated"
+        assert updated["state"] == "blocked"
 
     def test_30d_session_abandoned(self, tmp_db, monkeypatch):
         from clearledgr.services import vendor_onboarding_lifecycle as mod
@@ -183,7 +183,7 @@ class TestChaseStaleSessionsLogic:
         result = asyncio.run(mod.chase_stale_sessions(db=tmp_db))
         assert result.abandonments == 1
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "abandoned"
+        assert updated["state"] == "closed_unsuccessful"
         assert updated["is_active"] is False
 
 

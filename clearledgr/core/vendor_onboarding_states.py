@@ -1,81 +1,86 @@
-"""Canonical vendor onboarding state machine — Phase 3.1.a.
+"""Canonical vendor onboarding state machine.
 
-DESIGN_THESIS.md §9 defines the four-stage Vendor Onboarding Pipeline:
-``Invited → KYC → Bank Verify → Active``. This module is the structural
-spine: every transition between vendor onboarding states MUST go through
-``validate_transition`` / ``transition_or_raise``. No service or API may
-write the ``state`` column on ``vendor_onboarding_sessions`` directly —
-the typed accessors on :class:`VendorStore` enforce this.
+Aligned to the vendor-onboarding spec §2.1 + design thesis §9. The
+user-facing pipeline has four stages (Invited → KYC → Bank Verify →
+Active) plus a `blocked` holding pattern and a `closed_unsuccessful`
+terminal. This module exposes those six canonical states. Internal
+sub-states (``bank_verified`` as a transient beat between provider
+confirmation and ERP write; ``ready_for_erp`` as the queue to the ERP
+connector) live below the surface but are still first-class state-
+machine members so the execution engine can retry at the correct
+resume point on a crash between "provider said yes" and "ERP wrote
+the vendor row."
 
-State landscape (richer than the thesis's four-stage summary, because the
-implementation needs to model partial-completion and recovery paths):
+Canonical stages (surfaced to Kanban, timeline, chase logic):
 
     invited
-        Invite email + magic link dispatched. Awaiting any vendor action.
+        Invite email + portal link dispatched. Awaiting any vendor action.
 
-    awaiting_kyc
-        Vendor opened the link or replied to the invite thread, but the
-        KYC fields are not yet complete or validated.
+    kyc
+        Vendor has accessed the portal and is submitting documents /
+        fields. The agent is running the KYC checks configured for the
+        workspace (completeness, basic, or full tier).
 
-    awaiting_bank
-        KYC submission complete and validated. Waiting for the vendor to
-        provide bank details (IBAN + account holder name).
+    bank_verify
+        KYC passed. The agent has dispatched the open banking
+        verification link. The agent is waiting for the provider's
+        signed confirmation and the name-match disposition.
 
     bank_verified
-        Vendor's bank account has been verified. In V1 this is set
-        directly when the vendor submits their IBAN; future versions
-        will route submitted bank details through a provider (Adyen for
-        EU customers, TrueLayer for UK + rest-of-world) and transition
-        to ``bank_verified`` only on successful provider verification.
-        The old micro-deposit flow that sat between these two states
-        was removed — we don't run rails, we orchestrate them.
+        (Internal.) Provider returned a pass and the name match landed
+        inside the auto-proceed band. The vendor-master record is
+        being drafted and validated. Users see this as still within
+        the `bank_verify` stage on the Kanban — the split exists so a
+        crash between "open banking succeeded" and "ERP wrote the
+        record" resumes at the right point, not from zero.
 
     ready_for_erp
-        Internal staging state — all data collected, queued for
-        :func:`create_vendor` dispatch to the customer's ERP.
+        (Internal.) Vendor-master draft validated. Queued for the ERP
+        connector's ``write_vendor_to_erp`` call. Same rationale as
+        bank_verified — this is the retry resume point if the ERP
+        write fails transiently.
 
     active (terminal)
         Vendor written to the ERP vendor master with AP-enabled status.
         The vendor can now submit invoices that flow through the AP
-        pipeline. Confirmation posted to the finance team's Slack.
+        pipeline.
 
-    escalated
-        72h passed at any pre-active stage with no vendor response. The
-        agent stops auto-chasing and routes to AP Manager via Slack.
-        Recoverable: AP Manager can intervene and restart from any
-        prior state once the vendor re-engages.
+    blocked
+        A specific blocker has been identified: missing document, KYC
+        check failure, bank verification name mismatch, or AP Manager
+        rejection of an exception. The blocker is named specifically
+        on the Box timeline. The agent chases the vendor or waits for
+        AP Manager decision rather than auto-advancing. Recoverable —
+        explicit edges back to every pre-active stage exist so AP
+        Manager intervention does not need to bypass the state
+        machine.
 
-    rejected (terminal)
-        Customer's AP team or CFO explicitly rejected the vendor (failed
-        KYC review, sanctions hit, fraud signal). No payments will ever
-        flow.
-
-    abandoned (terminal)
-        30 days passed without progress. Auto-closed by the chase loop.
-        A new onboarding session can be opened later if the vendor
-        re-engages — sessions are not unique per vendor over time.
+    closed_unsuccessful (terminal)
+        Onboarding ended without activation: vendor did not respond to
+        chases, AP Manager withdrew the invitation, or a check
+        produced a disposition that requires abandoning this session.
+        The specific reason lives on ``closed_unsuccessful_reason`` in
+        Box state.
 
 Design notes
 ============
 
-* **Recovery is modeled, not absent.** ``escalated`` is intentionally
+* **Recovery is modeled, not absent.** ``blocked`` is intentionally
   not terminal — most stalled onboardings unstick themselves once the
   AP Manager reaches out. The state machine has explicit edges from
-  ``escalated`` back to every prior pre-active state so intervention
-  doesn't require schema-bypass.
+  ``blocked`` back to every prior pre-active state.
 
-* **Re-onboarding is per-session, not per-vendor.** Sessions have their
-  own primary key. A vendor whose first onboarding ``abandoned`` can be
-  invited again — it's a brand-new session row, fresh state machine,
-  fresh chase clock. The vendor's ``vendor_profiles`` row carries the
-  durable identity; ``vendor_onboarding_sessions`` carries the temporal
-  workflow state. Two layers, two responsibilities.
+* **Re-onboarding is per-session, not per-vendor.** A vendor whose
+  first onboarding hit ``closed_unsuccessful`` can be invited again —
+  it is a brand-new session row with a fresh chase clock.
+  ``vendor_profiles`` carries the durable identity;
+  ``vendor_onboarding_sessions`` carries the workflow state.
 
-* **No legacy mapping.** Unlike :mod:`clearledgr.core.ap_states` which
-  carries a ``LEGACY_STATE_MAP`` for the old AP status strings, the
-  vendor onboarding state machine is greenfield. The
-  :class:`~clearledgr.services.vendor_management.VendorManagementService`
-  in-memory dict it replaces had no persisted state strings to migrate.
+* **Historical rows are migrated, not translated at read time.** The
+  prior names (awaiting_kyc, awaiting_bank, escalated, rejected,
+  abandoned) are gone from the enum. Migration v38 rewrites existing
+  rows in place and backfills ``closed_unsuccessful_reason`` from the
+  old terminal state so no audit context is lost.
 """
 from __future__ import annotations
 
@@ -87,77 +92,70 @@ logger = logging.getLogger(__name__)
 
 
 class VendorOnboardingState(str, Enum):
-    """Canonical vendor onboarding session states (DESIGN_THESIS.md §9)."""
+    """Canonical vendor onboarding session states (vendor-onboarding-spec §2.1)."""
 
     INVITED = "invited"
-    AWAITING_KYC = "awaiting_kyc"
-    AWAITING_BANK = "awaiting_bank"
+    KYC = "kyc"
+    BANK_VERIFY = "bank_verify"
+    # Internal sub-states within the user-facing "bank_verify" stage.
+    # Kept as first-class members so crash recovery resumes at the
+    # correct point — see module docstring.
     BANK_VERIFIED = "bank_verified"
     READY_FOR_ERP = "ready_for_erp"
     ACTIVE = "active"
-    ESCALATED = "escalated"
-    REJECTED = "rejected"
-    ABANDONED = "abandoned"
+    BLOCKED = "blocked"
+    CLOSED_UNSUCCESSFUL = "closed_unsuccessful"
 
 
-# Every legal forward edge. Recovery edges from ``escalated`` back to
+# Every legal forward edge. Recovery edges from ``blocked`` back to
 # pre-active states are listed explicitly — see the design note above.
 VALID_TRANSITIONS: Dict[VendorOnboardingState, FrozenSet[VendorOnboardingState]] = {
     VendorOnboardingState.INVITED: frozenset({
-        VendorOnboardingState.AWAITING_KYC,
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
-        VendorOnboardingState.ABANDONED,
+        VendorOnboardingState.KYC,
+        VendorOnboardingState.BLOCKED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
-    VendorOnboardingState.AWAITING_KYC: frozenset({
-        VendorOnboardingState.AWAITING_BANK,
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
-        VendorOnboardingState.ABANDONED,
+    VendorOnboardingState.KYC: frozenset({
+        VendorOnboardingState.BANK_VERIFY,
+        VendorOnboardingState.BLOCKED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
-    VendorOnboardingState.AWAITING_BANK: frozenset({
-        # V1 direct edge: vendor submits bank details in the portal,
-        # we mark verified. When Adyen/TrueLayer adapters land this
-        # same edge will be gated on provider-reported verification;
-        # failure paths will stay in AWAITING_BANK or escalate.
+    VendorOnboardingState.BANK_VERIFY: frozenset({
+        # Provider confirmation received + name match auto-passed.
+        # Transitions into the internal bank_verified sub-state.
         VendorOnboardingState.BANK_VERIFIED,
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
-        VendorOnboardingState.ABANDONED,
+        VendorOnboardingState.BLOCKED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
     VendorOnboardingState.BANK_VERIFIED: frozenset({
         VendorOnboardingState.READY_FOR_ERP,
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
+        VendorOnboardingState.BLOCKED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
     VendorOnboardingState.READY_FOR_ERP: frozenset({
         VendorOnboardingState.ACTIVE,
-        # ERP create_vendor failed and the retry queue exhausted —
-        # human intervention required.
-        VendorOnboardingState.ESCALATED,
-        VendorOnboardingState.REJECTED,
+        # ERP write failed and retry queue exhausted — human intervention.
+        VendorOnboardingState.BLOCKED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
-    VendorOnboardingState.ESCALATED: frozenset({
-        # AP Manager intervention can restart from any pre-active stage
-        # once the vendor re-engages. The recovery target is recorded
-        # on the audit event so the timeline is reconstructable.
+    VendorOnboardingState.BLOCKED: frozenset({
+        # AP Manager can restart from any pre-active stage once the
+        # blocker is resolved. Recovery target is logged to the audit
+        # event so the timeline is reconstructable.
         VendorOnboardingState.INVITED,
-        VendorOnboardingState.AWAITING_KYC,
-        VendorOnboardingState.AWAITING_BANK,
+        VendorOnboardingState.KYC,
+        VendorOnboardingState.BANK_VERIFY,
         VendorOnboardingState.BANK_VERIFIED,
         VendorOnboardingState.READY_FOR_ERP,
-        VendorOnboardingState.REJECTED,
-        VendorOnboardingState.ABANDONED,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL,
     }),
-    VendorOnboardingState.ACTIVE: frozenset(),       # terminal
-    VendorOnboardingState.REJECTED: frozenset(),     # terminal
-    VendorOnboardingState.ABANDONED: frozenset(),    # terminal
+    VendorOnboardingState.ACTIVE: frozenset(),               # terminal
+    VendorOnboardingState.CLOSED_UNSUCCESSFUL: frozenset(),  # terminal
 }
 
 TERMINAL_STATES: FrozenSet[VendorOnboardingState] = frozenset({
     VendorOnboardingState.ACTIVE,
-    VendorOnboardingState.REJECTED,
-    VendorOnboardingState.ABANDONED,
+    VendorOnboardingState.CLOSED_UNSUCCESSFUL,
 })
 
 # All valid state strings — exposed for DB-level constraint generation
@@ -167,12 +165,27 @@ VALID_STATE_VALUES: FrozenSet[str] = frozenset(s.value for s in VendorOnboarding
 
 # Pre-active states are the ones the chase loop watches. Once the
 # session is in any pre-active state, the auto-chase scheduler may
-# fire 24h/48h/72h reminders against it.
+# fire 24h/48h/72h reminders against it. ``blocked`` is also chase-
+# eligible because some blockers are resolved by continued vendor
+# engagement (e.g., a missing document still pending upload).
 PRE_ACTIVE_STATES: FrozenSet[VendorOnboardingState] = frozenset({
     VendorOnboardingState.INVITED,
-    VendorOnboardingState.AWAITING_KYC,
-    VendorOnboardingState.AWAITING_BANK,
+    VendorOnboardingState.KYC,
+    VendorOnboardingState.BANK_VERIFY,
 })
+
+
+# Backward-compat alias map. External callers (tests, legacy stored
+# JSON, older migrations) may still pass the prior names. ``normalize_state``
+# translates them to the new canonical values. Writes through the state
+# machine always use the new names; this is read-side compat only.
+_LEGACY_STATE_ALIASES: Dict[str, str] = {
+    "awaiting_kyc": VendorOnboardingState.KYC.value,
+    "awaiting_bank": VendorOnboardingState.BANK_VERIFY.value,
+    "escalated": VendorOnboardingState.BLOCKED.value,
+    "rejected": VendorOnboardingState.CLOSED_UNSUCCESSFUL.value,
+    "abandoned": VendorOnboardingState.CLOSED_UNSUCCESSFUL.value,
+}
 
 
 class IllegalVendorOnboardingTransitionError(ValueError):
@@ -192,13 +205,15 @@ class IllegalVendorOnboardingTransitionError(ValueError):
 def normalize_state(raw: str) -> str:
     """Normalize a state string to its canonical lowercase value.
 
-    Returns the canonical state string when the input matches a member
-    of :class:`VendorOnboardingState`. Unknown values are returned
-    unchanged so that downstream validation produces a meaningful
-    ``IllegalVendorOnboardingTransitionError`` rather than a silent
-    pass-through.
+    Recognises both the current canonical names and the prior
+    pre-rename names via ``_LEGACY_STATE_ALIASES`` so stored rows and
+    older callers still map cleanly. Unknown values pass through
+    unchanged so downstream validation surfaces a meaningful error
+    rather than a silent coerce.
     """
     raw_lower = (raw or "").strip().lower()
+    if raw_lower in _LEGACY_STATE_ALIASES:
+        return _LEGACY_STATE_ALIASES[raw_lower]
     try:
         return VendorOnboardingState(raw_lower).value
     except ValueError:

@@ -372,7 +372,7 @@ def escalate_onboarding(
 
     updated = db.transition_onboarding_session_state(
         session["id"],
-        VendorOnboardingState.ESCALATED.value,
+        VendorOnboardingState.BLOCKED.value,
         actor_id=_actor_label(user),
         reason=body.reason,
     )
@@ -408,7 +408,7 @@ def reject_onboarding(
 
     updated = db.transition_onboarding_session_state(
         session["id"],
-        VendorOnboardingState.REJECTED.value,
+        VendorOnboardingState.CLOSED_UNSUCCESSFUL.value,
         actor_id=_actor_label(user),
         reason=body.reason,
     )

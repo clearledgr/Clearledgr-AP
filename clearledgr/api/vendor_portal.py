@@ -20,14 +20,14 @@ Routes
         registered_address, director_names (newline-separated).
         Validates required fields, calls VendorStore.update_vendor_kyc
         with the new values, transitions the session from
-        invited|awaiting_kyc → awaiting_bank, returns a 303 redirect
+        invited|kyc → bank_verify, returns a 303 redirect
         back to the GET form so the vendor sees the updated state.
 
   POST  /portal/onboard/{token}/bank-details
         Form-encoded body: iban, account_holder_name, bank_name (opt).
         Encrypts the bank details via VendorStore.set_vendor_bank_details
         (Fernet column encryption from Phase 2.1.a — never plaintext),
-        transitions awaiting_bank → bank_verified, returns 303. V1 is a
+        transitions bank_verify → bank_verified, returns 303. V1 is a
         direct transition; once the Adyen (EU) and TrueLayer (UK/RoW)
         verifier adapters land, that edge will be gated on provider-
         reported verification.
@@ -238,7 +238,7 @@ def submit_kyc(
     portal: PortalSession = Depends(require_portal_token),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    """Save KYC fields, transition to awaiting_bank."""
+    """Save KYC fields, transition to bank_verify."""
     db = get_db()
 
     cleaned: Dict[str, Any] = {
@@ -268,19 +268,19 @@ def submit_kyc(
     if updated is None:
         return _redirect_with_error(token, "Could not save KYC details. Please try again.")
 
-    # Move from invited|awaiting_kyc → awaiting_bank. If the session is
+    # Move from invited|kyc → bank_verify. If the session is
     # already past this stage (vendor re-submitted by mistake), treat
     # the call as a no-op and just re-render the form.
-    if portal.onboarding_state in {"invited", "awaiting_kyc"}:
+    if portal.onboarding_state in {"invited", "kyc"}:
         if portal.onboarding_state == "invited":
             _safe_transition(
                 portal.session_id,
-                VendorOnboardingState.AWAITING_KYC,
+                VendorOnboardingState.KYC,
                 actor_id=f"vendor_portal:{portal.token_id}",
             )
         _safe_transition(
             portal.session_id,
-            VendorOnboardingState.AWAITING_BANK,
+            VendorOnboardingState.BANK_VERIFY,
             actor_id=f"vendor_portal:{portal.token_id}",
         )
 
@@ -363,7 +363,7 @@ def submit_bank_details(
 ):
     """Encrypt + save bank details, transition to bank_verified.
 
-    V1 ships a direct awaiting_bank → bank_verified edge after the IBAN
+    V1 ships a direct bank_verify → bank_verified edge after the IBAN
     passes structural + mod-97 checksum validation. The old micro-deposit
     confirmation step was removed; real account-ownership verification
     will land via pluggable provider adapters (Adyen for EU customers,
@@ -410,10 +410,10 @@ def submit_bank_details(
     if not ok:
         return _redirect_with_error(token, "Could not save bank details. Please try again.")
 
-    # Transition awaiting_bank → bank_verified. Only valid if the
-    # session is currently in awaiting_bank — otherwise treat as an
+    # Transition bank_verify → bank_verified. Only valid if the
+    # session is currently in bank_verify — otherwise treat as an
     # idempotent no-op.
-    if portal.onboarding_state == "awaiting_bank":
+    if portal.onboarding_state == "bank_verify":
         _safe_transition(
             portal.session_id,
             VendorOnboardingState.BANK_VERIFIED,

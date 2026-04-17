@@ -1753,7 +1753,7 @@ class VendorStore:
         # in. This means callers don't need to remember which side-table
         # column corresponds to which state — the state machine layer
         # handles the bookkeeping.
-        if target == VendorOnboardingState.AWAITING_BANK.value:
+        if target == VendorOnboardingState.BANK_VERIFY.value:
             updates["kyc_submitted_at"] = now
         elif target == VendorOnboardingState.BANK_VERIFIED.value:
             # The old micro-deposit path wrote microdeposit_initiated_at/by
@@ -1766,16 +1766,16 @@ class VendorStore:
         elif target == VendorOnboardingState.ACTIVE.value:
             updates["erp_activated_at"] = now
             updates["completed_at"] = now
-        elif target == VendorOnboardingState.ESCALATED.value:
+        elif target == VendorOnboardingState.BLOCKED.value:
             updates["escalated_at"] = now
             if reason:
                 updates["escalated_reason"] = reason
-        elif target == VendorOnboardingState.REJECTED.value:
+        elif target == VendorOnboardingState.CLOSED_UNSUCCESSFUL.value:
             updates["rejected_at"] = now
             updates["rejected_by"] = actor_id
             if reason:
                 updates["rejection_reason"] = reason
-        elif target == VendorOnboardingState.ABANDONED.value:
+        elif target == VendorOnboardingState.CLOSED_UNSUCCESSFUL.value:
             updates["abandoned_at"] = now
 
         # Terminal states deactivate the session so the next

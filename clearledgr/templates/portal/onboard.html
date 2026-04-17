@@ -11,9 +11,9 @@
 </p>
 
 <div class="progress">
-  <div class="step {% if state in ['awaiting_kyc', 'awaiting_bank', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'invited' %}active{% endif %}"></div>
-  <div class="step {% if state in ['awaiting_bank', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'awaiting_kyc' %}active{% endif %}"></div>
-  <div class="step {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'awaiting_bank' %}active{% endif %}"></div>
+  <div class="step {% if state in ['kyc', 'bank_verify', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'invited' %}active{% endif %}"></div>
+  <div class="step {% if state in ['bank_verify', 'bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'kyc' %}active{% endif %}"></div>
+  <div class="step {% if state in ['bank_verified', 'ready_for_erp', 'active'] %}done{% elif state == 'bank_verify' %}active{% endif %}"></div>
 </div>
 
 {% if flash_message %}
@@ -28,7 +28,7 @@
 {% endif %}
 
 <!-- Section 1: Business details -->
-<div class="card {% if kyc.kyc_completion_date %}complete{% elif state in ['invited', 'awaiting_kyc'] %}active{% else %}disabled{% endif %}">
+<div class="card {% if kyc.kyc_completion_date %}complete{% elif state in ['invited', 'kyc'] %}active{% else %}disabled{% endif %}">
   <h2>1. Business details
     {% if kyc.kyc_completion_date %}<span class="status-pill">Saved</span>{% endif %}
   </h2>
@@ -53,7 +53,7 @@
 </div>
 
 <!-- Section 2: Bank details -->
-<div class="card {% if bank_submitted %}complete{% elif state == 'awaiting_bank' %}active{% else %}disabled{% endif %}">
+<div class="card {% if bank_submitted %}complete{% elif state == 'bank_verify' %}active{% else %}disabled{% endif %}">
   <h2>2. Bank details
     {% if bank_submitted %}<span class="status-pill">Saved</span>{% endif %}
   </h2>

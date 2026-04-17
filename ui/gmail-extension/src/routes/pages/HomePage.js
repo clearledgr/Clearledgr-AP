@@ -405,7 +405,7 @@ export default function HomePage({
       .then((data) => {
         const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
         const now = Date.now();
-        const blockedStates = new Set(['invited', 'awaiting_kyc', 'awaiting_bank', 'escalated']);
+        const blockedStates = new Set(['invited', 'kyc', 'bank_verify', 'blocked']);
         const blocked = sessions.filter((s) => {
           if (!blockedStates.has(s.state)) return false;
           const elapsed = s.invited_at ? (now - new Date(s.invited_at).getTime()) / 3600000 : 0;
@@ -414,9 +414,9 @@ export default function HomePage({
           const hours = s.invited_at ? Math.floor((now - new Date(s.invited_at).getTime()) / 3600000) : 0;
           const days = Math.floor(hours / 24);
           const reasons = [];
-          if (s.state === 'awaiting_kyc') reasons.push('Missing KYC documents');
-          else if (s.state === 'awaiting_bank') reasons.push('Bank details not submitted');
-          else if (s.state === 'escalated') reasons.push('Escalated — needs manual resolution');
+          if (s.state === 'kyc') reasons.push('Missing KYC documents');
+          else if (s.state === 'bank_verify') reasons.push('Bank details not submitted');
+          else if (s.state === 'blocked') reasons.push('Blocked — needs manual resolution');
           else if (s.state === 'invited') reasons.push('Vendor has not responded');
           return { ...s, days, reason: reasons[0] || 'Blocked' };
         });

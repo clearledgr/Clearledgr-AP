@@ -410,7 +410,7 @@ class TestPortalKycPost:
 
         # Session should have transitioned from invited → awaiting_bank.
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "awaiting_bank"
+        assert updated["state"] == "bank_verify"
 
 
 class TestPortalBankDetailsPost:
@@ -423,10 +423,10 @@ class TestPortalBankDetailsPost:
         org, vendor, session = _seed(tmp_db)
         # Drive session to awaiting_bank first.
         tmp_db.transition_onboarding_session_state(
-            session["id"], "awaiting_kyc", actor_id="vendor"
+            session["id"], "kyc", actor_id="vendor"
         )
         tmp_db.transition_onboarding_session_state(
-            session["id"], "awaiting_bank", actor_id="vendor"
+            session["id"], "bank_verify", actor_id="vendor"
         )
         raw_token, _ = tmp_db.generate_onboarding_token(session["id"], issued_by="cfo@x.com")
 

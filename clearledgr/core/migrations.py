@@ -1020,11 +1020,19 @@ def _v25_object_model(cur, db):
         (vo_pipeline_id, now),
     )
 
+    # Vendor Onboarding Kanban stages — vendor-onboarding-spec §2.1.
+    # The user-facing pipeline is four forward stages + one "blocked"
+    # holding column + one terminal "closed unsuccessful" column. The
+    # internal bank_verified + ready_for_erp sub-states surface under
+    # bank_verify on the Kanban — they are retry resume points, not
+    # user-visible stages.
     vo_stages = [
         ("invited", "Invited", "#94A3B8", ["invited"], 0),
-        ("kyc", "KYC", "#CA8A04", ["awaiting_kyc"], 1),
-        ("bank_verify", "Bank Verify", "#2563EB", ["awaiting_bank"], 2),
-        ("active", "Active", "#16A34A", ["bank_verified", "ready_for_erp", "active"], 3),
+        ("kyc", "KYC", "#CA8A04", ["kyc"], 1),
+        ("bank_verify", "Bank Verify", "#2563EB", ["bank_verify", "bank_verified", "ready_for_erp"], 2),
+        ("active", "Active", "#16A34A", ["active"], 3),
+        ("blocked", "Blocked", "#DC2626", ["blocked"], 4),
+        ("closed_unsuccessful", "Closed Unsuccessful", "#6B7280", ["closed_unsuccessful"], 5),
     ]
     for slug, label, color, states, order in vo_stages:
         cur.execute(
@@ -1339,6 +1347,111 @@ def _v24_migration_state(cur, db):
             cur.execute(f"ALTER TABLE organizations ADD COLUMN {col} {col_type}")
         except Exception:
             pass
+
+
+@migration(38, "Rename vendor onboarding states to spec: awaiting_kyc→kyc, awaiting_bank→bank_verify, escalated→blocked, rejected+abandoned→closed_unsuccessful")
+def _v38_rename_vendor_onboarding_states(cur, db):
+    """Align vendor_onboarding_sessions.state values with
+    vendor-onboarding-spec §2.1 canonical names.
+
+    Rewrites historical rows in place so the code's new enum values
+    match what the DB actually stores. The prior values (awaiting_kyc,
+    awaiting_bank, escalated, rejected, abandoned) are retired from the
+    enum in the same change.
+
+    Two of the renames are pure cosmetic (awaiting_kyc→kyc,
+    awaiting_bank→bank_verify). Two are semantic consolidations:
+      - escalated → blocked (same behaviour, spec-canonical name)
+      - rejected + abandoned → closed_unsuccessful (both are
+        "onboarding ended without activation" terminals; the specific
+        reason moves to closed_unsuccessful_reason so audit context is
+        preserved).
+
+    The closed_unsuccessful_reason column is added here too if it
+    doesn't already exist, and backfilled from the prior terminal
+    value so nothing is lost.
+    """
+    # 1. Add closed_unsuccessful_reason column (idempotent on re-run).
+    try:
+        cur.execute(
+            "ALTER TABLE vendor_onboarding_sessions "
+            "ADD COLUMN closed_unsuccessful_reason TEXT"
+        )
+    except Exception:
+        pass  # Column already exists
+
+    # 2. Backfill closed_unsuccessful_reason for terminal rows that are
+    #    about to be renamed. Do this BEFORE the UPDATE so we capture
+    #    the old state value as the reason.
+    try:
+        cur.execute(
+            "UPDATE vendor_onboarding_sessions "
+            "SET closed_unsuccessful_reason = state "
+            "WHERE state IN ('rejected', 'abandoned') "
+            "AND (closed_unsuccessful_reason IS NULL OR closed_unsuccessful_reason = '')"
+        )
+    except Exception as exc:
+        # Table may not exist yet on a very fresh install — that's fine,
+        # migration v17 creates it and later v38 runs will rewrite no rows.
+        logger.debug("[Migration v38] backfill skipped: %s", exc)
+
+    # 3. Rename state values in place.
+    renames = [
+        ("awaiting_kyc", "kyc"),
+        ("awaiting_bank", "bank_verify"),
+        ("escalated", "blocked"),
+        ("rejected", "closed_unsuccessful"),
+        ("abandoned", "closed_unsuccessful"),
+    ]
+    for old, new in renames:
+        try:
+            cur.execute(
+                "UPDATE vendor_onboarding_sessions SET state = ? WHERE state = ?",
+                (new, old),
+            )
+        except Exception as exc:
+            logger.debug("[Migration v38] rename %s→%s skipped: %s", old, new, exc)
+
+    # 4. Update the AP onboarding pipeline stage map (pipeline_stages
+    #    rows seeded in the initial migration used the old state names
+    #    in source_states). Rewrite them to the new names.
+    import json as _json
+    try:
+        cur.execute(
+            "SELECT id, slug, source_states FROM pipeline_stages "
+            "WHERE pipeline_id IN (SELECT id FROM pipelines WHERE slug = 'vendor-onboarding')"
+        )
+        rows = cur.fetchall()
+    except Exception:
+        rows = []
+    state_name_map = {
+        "awaiting_kyc": "kyc",
+        "awaiting_bank": "bank_verify",
+        "escalated": "blocked",
+        "rejected": "closed_unsuccessful",
+        "abandoned": "closed_unsuccessful",
+    }
+    for row in rows:
+        try:
+            stage_id, slug, source_states_raw = row[0], row[1], row[2]
+            states = _json.loads(source_states_raw or "[]")
+            remapped = []
+            for s in states:
+                remapped.append(state_name_map.get(s, s))
+            # Dedup while preserving order (closed_unsuccessful may
+            # appear twice after merging rejected+abandoned).
+            seen = set()
+            deduped = []
+            for s in remapped:
+                if s not in seen:
+                    seen.add(s)
+                    deduped.append(s)
+            cur.execute(
+                "UPDATE pipeline_stages SET source_states = ? WHERE id = ?",
+                (_json.dumps(deduped), stage_id),
+            )
+        except Exception as exc:
+            logger.debug("[Migration v38] pipeline_stages rewrite skipped: %s", exc)
 
 
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")

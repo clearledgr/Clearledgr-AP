@@ -1173,16 +1173,16 @@ class ExecutionEngine:
                             pass
                     outstanding = {
                         "invited": ["onboarding form not yet opened"],
-                        "awaiting_kyc": [
+                        "kyc": [
                             "registered address",
                             "company registration number",
                             "director names",
                         ],
-                        "awaiting_bank": [
+                        "bank_verify": [
                             "bank IBAN",
                             "account holder name",
                         ],
-                        "escalated": ["responsive contact point"],
+                        "blocked": ["responsive contact point"],
                     }.get(session_state, [])
                     break
         except Exception:

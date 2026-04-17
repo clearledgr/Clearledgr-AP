@@ -80,11 +80,11 @@ class PortalSession:
 
     @property
     def is_kyc_stage(self) -> bool:
-        return self.onboarding_state in {"invited", "awaiting_kyc"}
+        return self.onboarding_state in {"invited", "kyc"}
 
     @property
     def is_bank_stage(self) -> bool:
-        return self.onboarding_state == "awaiting_bank"
+        return self.onboarding_state == "bank_verify"
 
 
 def require_portal_token(

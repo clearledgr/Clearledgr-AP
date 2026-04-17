@@ -19,15 +19,14 @@ const html = htm.bind(h);
 
 const ONBOARDING_STAGES = [
   { key: 'invited',             label: 'Invited',     states: ['invited'], color: '#9CA3AF' },
-  { key: 'kyc',                 label: 'KYC',         states: ['awaiting_kyc'], color: '#D97706' },
-  { key: 'bank_verify',         label: 'Bank Verify', states: ['awaiting_bank'], color: '#2563EB' },
-  { key: 'active',              label: 'Active',      states: ['bank_verified', 'ready_for_erp', 'active'], color: '#10B981' },
+  { key: 'kyc',                 label: 'KYC',         states: ['kyc'], color: '#D97706' },
+  { key: 'bank_verify',         label: 'Bank Verify', states: ['bank_verify', 'bank_verified', 'ready_for_erp'], color: '#2563EB' },
+  { key: 'active',              label: 'Active',      states: ['active'], color: '#10B981' },
 ];
 
 const SECONDARY_STATES = {
-  escalated:  { label: 'Escalated',  color: '#DC2626' },
-  rejected:   { label: 'Rejected',   color: '#991B1B' },
-  abandoned:  { label: 'Abandoned',  color: '#6B7280' },
+  blocked:             { label: 'Blocked',             color: '#DC2626' },
+  closed_unsuccessful: { label: 'Closed unsuccessful', color: '#6B7280' },
 };
 
 function daysElapsed(isoDate) {

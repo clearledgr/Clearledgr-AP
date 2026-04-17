@@ -123,7 +123,7 @@ async def chase_stale_sessions(
                 )
                 db.transition_onboarding_session_state(
                     session_id,
-                    VendorOnboardingState.ABANDONED.value,
+                    VendorOnboardingState.CLOSED_UNSUCCESSFUL.value,
                     actor_id="agent",
                     reason=f"No vendor response after {_ABANDON_DAYS} days",
                 )
@@ -134,14 +134,14 @@ async def chase_stale_sessions(
                 continue
 
             # Escalate after 72h.
-            if hours >= _ESCALATION_72H and state != "escalated":
+            if hours >= _ESCALATION_72H and state != "blocked":
                 # Only escalate if we haven't already.
                 from clearledgr.core.vendor_onboarding_states import (
                     VendorOnboardingState,
                 )
                 db.transition_onboarding_session_state(
                     session_id,
-                    VendorOnboardingState.ESCALATED.value,
+                    VendorOnboardingState.BLOCKED.value,
                     actor_id="agent",
                     reason="No vendor response after 72 hours",
                 )
@@ -194,6 +194,7 @@ async def _send_chase(
     vendor_name = session.get("vendor_name") or ""
     org_id = session.get("organization_id") or ""
     session_id = session.get("id") or ""
+    state = str(session.get("state") or "")
     days = int(hours_since_invite / 24)
 
     if not contact_email:
@@ -207,9 +208,9 @@ async def _send_chase(
     # intelligently if the Slack preview tells them WHAT we're chasing.
     _state_missing = {
         "invited": "onboarding form (they haven't opened the link yet)",
-        "awaiting_kyc": "business details — registered address, registration number, directors",
-        "awaiting_bank": "bank details (IBAN + account holder)",
-        "escalated": "onboarding (already escalated once)",
+        "kyc": "business details — registered address, registration number, directors",
+        "bank_verify": "bank details (IBAN + account holder)",
+        "blocked": "onboarding (blocker requires resolution)",
     }
     missing_doc = _state_missing.get(state, "onboarding response")
     if chase_type == "escalation_72h":

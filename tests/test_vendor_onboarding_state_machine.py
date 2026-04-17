@@ -64,16 +64,21 @@ class TestStateMachineEnum:
         members = {s.value for s in VendorOnboardingState}
         for required in (
             "invited",
-            "awaiting_kyc",
-            "awaiting_bank",
+            "kyc",
+            "bank_verify",
             "bank_verified",
             "ready_for_erp",
             "active",
-            "escalated",
-            "rejected",
-            "abandoned",
+            "blocked",
+            "closed_unsuccessful",
         ):
             assert required in members
+        # Sanity: retired names are gone from the enum.
+        assert "rejected" not in members
+        assert "abandoned" not in members
+        assert "escalated" not in members
+        assert "awaiting_kyc" not in members
+        assert "awaiting_bank" not in members
         # Sanity: micro-deposit intermediate state was removed — the flow
         # transitions awaiting_bank → bank_verified directly in V1.
         assert "microdeposit_pending" not in members
@@ -95,11 +100,11 @@ class TestStateMachineEnum:
         # awaiting_bank. Bank verified, ready_for_erp, escalated and
         # the terminals are NOT in this set.
         assert VendorOnboardingState.INVITED in PRE_ACTIVE_STATES
-        assert VendorOnboardingState.AWAITING_KYC in PRE_ACTIVE_STATES
-        assert VendorOnboardingState.AWAITING_BANK in PRE_ACTIVE_STATES
+        assert VendorOnboardingState.KYC in PRE_ACTIVE_STATES
+        assert VendorOnboardingState.BANK_VERIFY in PRE_ACTIVE_STATES
         assert VendorOnboardingState.BANK_VERIFIED not in PRE_ACTIVE_STATES
         assert VendorOnboardingState.READY_FOR_ERP not in PRE_ACTIVE_STATES
-        assert VendorOnboardingState.ESCALATED not in PRE_ACTIVE_STATES
+        assert VendorOnboardingState.BLOCKED not in PRE_ACTIVE_STATES
         assert VendorOnboardingState.ACTIVE not in PRE_ACTIVE_STATES
 
 
@@ -108,9 +113,9 @@ class TestValidTransitions:
     def test_happy_path_invited_to_active(self):
         from clearledgr.core.vendor_onboarding_states import validate_transition
         path = [
-            ("invited", "awaiting_kyc"),
-            ("awaiting_kyc", "awaiting_bank"),
-            ("awaiting_bank", "bank_verified"),
+            ("invited", "kyc"),
+            ("kyc", "bank_verify"),
+            ("bank_verify", "bank_verified"),
             ("bank_verified", "ready_for_erp"),
             ("ready_for_erp", "active"),
         ]
@@ -122,29 +127,32 @@ class TestValidTransitions:
         # Cannot leap from invited straight to active
         assert not validate_transition("invited", "active")
         # Cannot skip bank verification
-        assert not validate_transition("awaiting_bank", "ready_for_erp")
-        assert not validate_transition("awaiting_kyc", "bank_verified")
+        assert not validate_transition("bank_verify", "ready_for_erp")
+        assert not validate_transition("kyc", "bank_verified")
 
     def test_terminal_states_have_no_forward_edges(self):
         from clearledgr.core.vendor_onboarding_states import validate_transition
         # active is terminal — no escape
         assert not validate_transition("active", "invited")
-        assert not validate_transition("active", "escalated")
-        # rejected is terminal
+        assert not validate_transition("active", "blocked")
+        # closed_unsuccessful is terminal
+        assert not validate_transition("closed_unsuccessful", "invited")
+        # Legacy alias: the rename left normalize_state mapping
+        # rejected/abandoned → closed_unsuccessful, which is still
+        # terminal, so validate_transition stays False for those.
         assert not validate_transition("rejected", "invited")
-        # abandoned is terminal
         assert not validate_transition("abandoned", "invited")
 
     def test_escalated_can_recover_to_any_pre_active(self):
         from clearledgr.core.vendor_onboarding_states import validate_transition
         for target in (
             "invited",
-            "awaiting_kyc",
-            "awaiting_bank",
+            "kyc",
+            "bank_verify",
             "bank_verified",
             "ready_for_erp",
         ):
-            assert validate_transition("escalated", target), f"escalated->{target}"
+            assert validate_transition("blocked", target), f"escalated->{target}"
 
     def test_unknown_states_rejected(self):
         from clearledgr.core.vendor_onboarding_states import validate_transition
@@ -155,7 +163,7 @@ class TestValidTransitions:
     def test_normalize_state_lowercases_and_strips(self):
         from clearledgr.core.vendor_onboarding_states import normalize_state
         assert normalize_state("  INVITED ") == "invited"
-        assert normalize_state("Awaiting_KYC") == "awaiting_kyc"
+        assert normalize_state("Awaiting_KYC") == "kyc"
         # Unknown values pass through unchanged for downstream rejection
         assert normalize_state("garbage") == "garbage"
 
@@ -174,12 +182,14 @@ class TestValidTransitions:
     def test_predicates(self):
         from clearledgr.core.vendor_onboarding_states import is_pre_active, is_terminal
         assert is_terminal("active") is True
+        assert is_terminal("closed_unsuccessful") is True
+        # Legacy aliases — normalize to closed_unsuccessful which is terminal.
         assert is_terminal("rejected") is True
         assert is_terminal("abandoned") is True
         assert is_terminal("invited") is False
-        assert is_terminal("escalated") is False
+        assert is_terminal("blocked") is False
         assert is_pre_active("invited") is True
-        assert is_pre_active("awaiting_kyc") is True
+        assert is_pre_active("kyc") is True
         assert is_pre_active("bank_verified") is False
         assert is_pre_active("active") is False
 
@@ -308,12 +318,12 @@ class TestStateTransitions:
         )
         sid = session["id"]
         tmp_db.transition_onboarding_session_state(
-            sid, "awaiting_kyc", actor_id="vendor"
+            sid, "kyc", actor_id="vendor"
         )
         updated = tmp_db.transition_onboarding_session_state(
-            sid, "awaiting_bank", actor_id="vendor"
+            sid, "bank_verify", actor_id="vendor"
         )
-        assert updated["state"] == "awaiting_bank"
+        assert updated["state"] == "bank_verify"
         assert updated["kyc_submitted_at"] is not None
 
     def test_transition_to_bank_verified_stamps_submitted_and_verified(self, tmp_db):
@@ -326,8 +336,8 @@ class TestStateTransitions:
             org, vendor, invited_by="cfo@customer.com"
         )
         sid = session["id"]
-        tmp_db.transition_onboarding_session_state(sid, "awaiting_kyc", actor_id="vendor")
-        tmp_db.transition_onboarding_session_state(sid, "awaiting_bank", actor_id="vendor")
+        tmp_db.transition_onboarding_session_state(sid, "kyc", actor_id="vendor")
+        tmp_db.transition_onboarding_session_state(sid, "bank_verify", actor_id="vendor")
         updated = tmp_db.transition_onboarding_session_state(
             sid, "bank_verified", actor_id="vendor"
         )
@@ -341,7 +351,7 @@ class TestStateTransitions:
             org, vendor, invited_by="cfo@customer.com"
         )
         sid = session["id"]
-        for nxt in ("awaiting_kyc", "awaiting_bank",
+        for nxt in ("kyc", "bank_verify",
                     "bank_verified", "ready_for_erp", "active"):
             tmp_db.transition_onboarding_session_state(
                 sid, nxt, actor_id="agent"
@@ -387,6 +397,10 @@ class TestStateTransitions:
         session = tmp_db.create_vendor_onboarding_session(
             org, vendor, invited_by="cfo@customer.com"
         )
+        # "rejected" is a legacy alias for closed_unsuccessful — this is
+        # the spec-level "onboarding ended without activation" terminal.
+        # normalize_state() translates the legacy input before the
+        # transition machinery checks it.
         tmp_db.transition_onboarding_session_state(
             session["id"],
             "rejected",
@@ -394,7 +408,7 @@ class TestStateTransitions:
             reason="Failed sanctions screen",
         )
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "rejected"
+        assert updated["state"] == "closed_unsuccessful"
         assert updated["rejected_by"] == "cfo@customer.com"
         assert updated["rejection_reason"] == "Failed sanctions screen"
         assert updated["is_active"] is False
@@ -406,12 +420,12 @@ class TestStateTransitions:
         )
         tmp_db.transition_onboarding_session_state(
             session["id"],
-            "escalated",
+            "blocked",
             actor_id="agent",
             reason="No vendor response after 72h",
         )
         updated = tmp_db.get_onboarding_session_by_id(session["id"])
-        assert updated["state"] == "escalated"
+        assert updated["state"] == "blocked"
         assert updated["escalated_reason"] == "No vendor response after 72h"
         # Escalation is NOT terminal — session remains active so AP
         # Manager intervention can recover it.
@@ -423,15 +437,15 @@ class TestStateTransitions:
             org, vendor, invited_by="cfo@customer.com"
         )
         sid = session["id"]
-        tmp_db.transition_onboarding_session_state(sid, "awaiting_kyc", actor_id="vendor")
+        tmp_db.transition_onboarding_session_state(sid, "kyc", actor_id="vendor")
         tmp_db.transition_onboarding_session_state(
-            sid, "escalated", actor_id="agent", reason="stalled"
+            sid, "blocked", actor_id="agent", reason="stalled"
         )
         # Recovery: AP Manager re-engages and restarts at awaiting_bank
         recovered = tmp_db.transition_onboarding_session_state(
-            sid, "awaiting_bank", actor_id="ap_manager@customer.com"
+            sid, "bank_verify", actor_id="ap_manager@customer.com"
         )
-        assert recovered["state"] == "awaiting_bank"
+        assert recovered["state"] == "bank_verify"
         assert recovered["is_active"] is True
 
     def test_metadata_patch_merges(self, tmp_db):
@@ -441,7 +455,7 @@ class TestStateTransitions:
         )
         tmp_db.transition_onboarding_session_state(
             session["id"],
-            "awaiting_kyc",
+            "kyc",
             actor_id="vendor",
             metadata_patch={"opened_link_at": "2026-04-10T10:00:00+00:00"},
         )
@@ -462,7 +476,7 @@ class TestListPendingSessions:
 
         # Move Beta into bank_verified — should drop out of default filter
         beta = tmp_db.get_active_onboarding_session(org_a, "Beta")
-        for s in ("awaiting_kyc", "awaiting_bank", "bank_verified"):
+        for s in ("kyc", "bank_verify", "bank_verified"):
             tmp_db.transition_onboarding_session_state(beta["id"], s, actor_id="agent")
 
         all_pending = tmp_db.list_pending_onboarding_sessions()
@@ -492,11 +506,11 @@ class TestListPendingSessions:
         )
         sid = session["id"]
         tmp_db.transition_onboarding_session_state(
-            sid, "escalated", actor_id="agent", reason="x"
+            sid, "blocked", actor_id="agent", reason="x"
         )
-        escalated = tmp_db.list_pending_onboarding_sessions(states=["escalated"])
+        escalated = tmp_db.list_pending_onboarding_sessions(states=["blocked"])
         assert len(escalated) == 1
-        assert escalated[0]["state"] == "escalated"
+        assert escalated[0]["state"] == "blocked"
 
 
 class TestChaseTracking:
@@ -525,7 +539,7 @@ class TestErpAttachment:
         )
         sid = session["id"]
         # Drive to ready_for_erp
-        for nxt in ("awaiting_kyc", "awaiting_bank",
+        for nxt in ("kyc", "bank_verify",
                     "bank_verified", "ready_for_erp"):
             tmp_db.transition_onboarding_session_state(sid, nxt, actor_id="agent")
         updated = tmp_db.attach_erp_vendor_id(sid, "QB-VND-12345")
@@ -570,13 +584,13 @@ class TestAuditEmission:
             org, vendor, invited_by="cfo@customer.com"
         )
         tmp_db.transition_onboarding_session_state(
-            session["id"], "awaiting_kyc", actor_id="vendor@acme.com"
+            session["id"], "kyc", actor_id="vendor@acme.com"
         )
         events = self._audit_events(tmp_db, "vendor_onboarding_state_transition")
         assert len(events) == 1
         decision_reason = events[0].get("decision_reason") or ""
         assert "invited" in decision_reason
-        assert "awaiting_kyc" in decision_reason
+        assert "kyc" in decision_reason
 
     def test_chase_emits_audit_event(self, tmp_db):
         org, vendor = _seed_vendor(tmp_db)
