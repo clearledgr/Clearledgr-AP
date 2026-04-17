@@ -153,7 +153,11 @@ class PlanFeatures:
                 erp_posting=True,
                 approval_routing=True,
                 ai_categorization=True,
-                three_way_matching=False,
+                # §13 tier comparison: Starter gets "core AP and Vendor
+                # Onboarding workflows." Three-way match is the central
+                # AP primitive, not a premium add-on — without it
+                # Starter sells invoice scanning, not AP automation.
+                three_way_matching=True,
                 custom_gl_rules=False,
                 recurring_detection=False,
                 multi_currency=False,
@@ -162,7 +166,12 @@ class PlanFeatures:
                 slack_integration=True,
                 teams_integration=True,
                 custom_policies=False,
-                approval_chains=True,
+                # §13: "Approval routing — Single tier" on Starter.
+                # "Multi-tier with escalation and OOO routing" is a
+                # Professional / Enterprise differentiator. Code
+                # previously granted approval_chains to Starter, which
+                # was a pricing leak on the routing feature.
+                approval_chains=False,
                 vendor_intelligence=True,
                 audit_logs=True,
                 gl_auto_coding=True,
@@ -231,11 +240,17 @@ class PlanFeatures:
 # ---------------------------------------------------------------------------
 # Pricing Constants (display / billing reference -- not enforcement)
 # ---------------------------------------------------------------------------
+# §13 Pricing Structure: "Annual billing saves 20% on the seat charge."
+# The annual monthly-equivalent must be exactly 80% of the monthly
+# sticker so the billing summary's "20% annual savings" line is
+# arithmetically honest. Previously the annual prices rounded to the
+# nearest integer dollar (65/125/249), which produced ~17% discounts
+# and drifted from the thesis's explicit 20% claim.
 PLAN_PRICING: Dict[PlanTier, Dict[str, int]] = {
     PlanTier.FREE:         {"monthly": 0,   "annual": 0},
-    PlanTier.STARTER:      {"monthly": 79,  "annual": 65},
-    PlanTier.PROFESSIONAL: {"monthly": 149, "annual": 125},
-    PlanTier.ENTERPRISE:   {"monthly": 299, "annual": 249},
+    PlanTier.STARTER:      {"monthly": 79,  "annual": round(79 * 0.8)},    # 63
+    PlanTier.PROFESSIONAL: {"monthly": 149, "annual": round(149 * 0.8)},   # 119
+    PlanTier.ENTERPRISE:   {"monthly": 299, "annual": round(299 * 0.8)},   # 239
 }
 
 AI_CREDIT_COSTS: Dict[str, int] = {
