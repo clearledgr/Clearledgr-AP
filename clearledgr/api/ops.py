@@ -294,6 +294,28 @@ async def get_tenant_health(
     return {"health": metrics}
 
 
+@router.get("/box-health")
+async def get_box_health(
+    organization_id: str = Query("default"),
+    limit: int = Query(default=500, ge=1, le=2000),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Drill-down: which specific Boxes are stuck, in what stage, for how long.
+
+    Complements /tenant-health (aggregates) by listing the individual
+    AP Boxes plus time-in-stage buckets and exception clusters.
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    health = db.get_box_health(
+        organization_id,
+        stuck_threshold_minutes=_workflow_stuck_minutes(),
+        approval_sla_minutes=_approval_sla_minutes(organization_id),
+        limit=limit,
+    )
+    return {"health": health}
+
+
 @router.get("/ap-kpis")
 async def get_ap_kpis(
     organization_id: str = Query("default"),

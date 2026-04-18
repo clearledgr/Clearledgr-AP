@@ -1172,6 +1172,143 @@ class MetricsStore:
         }
 
     # ------------------------------------------------------------------
+    # Box health (drill-down — complements get_operational_metrics)
+    # ------------------------------------------------------------------
+
+    def get_box_health(
+        self,
+        organization_id: str,
+        stuck_threshold_minutes: int = 120,
+        approval_sla_minutes: int = 240,
+        limit: int = 500,
+    ) -> Dict[str, Any]:
+        """Drill-down view of AP Box health for the ops surface.
+
+        Complements ``get_operational_metrics``: that returns aggregates
+        ("4 stuck"), this returns the specific Boxes — which ones, in
+        what stage, for how long, and what the exception signal is.
+        Lets the team see the product breathing.
+        """
+        self.initialize()
+        now = datetime.now(timezone.utc)
+
+        items = self.list_ap_items(organization_id, limit=max(limit, 1000))
+        open_states = {
+            "received", "validated", "needs_info", "needs_approval",
+            "approved", "ready_to_post", "failed_post", "snoozed",
+        }
+        exception_states = {"needs_info", "failed_post"}
+
+        # Map (ap_item_id, state) → latest state_transition ts. list_audit_events
+        # returns ts DESC so the first hit per key is the most recent entry
+        # into that state.
+        transitions = self.list_audit_events(
+            organization_id,
+            event_types=["state_transition"],
+            limit=20000,
+        )
+        latest_entry: Dict[tuple, datetime] = {}
+        for evt in transitions:
+            ap_id = evt.get("ap_item_id")
+            new_state = evt.get("new_state")
+            ts = self._parse_iso(evt.get("ts"))
+            if not ap_id or not new_state or not ts:
+                continue
+            key = (ap_id, new_state)
+            if key not in latest_entry:
+                latest_entry[key] = ts
+
+        stuck_boxes: List[Dict[str, Any]] = []
+        time_in_stage_by_state: Dict[str, List[float]] = {}
+        exception_by_state: Dict[str, Dict[str, Any]] = {}
+
+        for item in items:
+            state = str(item.get("state") or "received")
+            if state not in open_states:
+                continue
+            ap_id = item.get("id") or item.get("ap_item_id")
+            entry_ts = (
+                latest_entry.get((ap_id, state))
+                or self._parse_iso(item.get("updated_at"))
+                or self._parse_iso(item.get("created_at"))
+            )
+            if not entry_ts:
+                continue
+            tis_min = max(0.0, (now - entry_ts).total_seconds() / 60.0)
+            time_in_stage_by_state.setdefault(state, []).append(tis_min)
+
+            is_stuck = False
+            stuck_reason: Optional[str] = None
+            if state == "needs_approval" and tis_min >= approval_sla_minutes:
+                is_stuck = True
+                stuck_reason = "awaiting_approval_over_sla"
+            elif tis_min >= stuck_threshold_minutes:
+                is_stuck = True
+                stuck_reason = f"stalled_in_{state}"
+
+            if state in exception_states:
+                bucket = exception_by_state.setdefault(state, {
+                    "count": 0,
+                    "sample_ap_item_ids": [],
+                    "sample_errors": [],
+                })
+                bucket["count"] += 1
+                if len(bucket["sample_ap_item_ids"]) < 5:
+                    bucket["sample_ap_item_ids"].append(str(ap_id))
+                err = item.get("last_error")
+                if err and len(bucket["sample_errors"]) < 5:
+                    bucket["sample_errors"].append(str(err)[:120])
+
+            if is_stuck:
+                stuck_boxes.append({
+                    "ap_item_id": ap_id,
+                    "vendor_name": item.get("vendor_name") or item.get("vendor"),
+                    "amount": safe_float(item.get("amount"), 0.0),
+                    "currency": item.get("currency") or "USD",
+                    "state": state,
+                    "time_in_stage_minutes": round(tis_min, 2),
+                    "entered_stage_at": entry_ts.isoformat(),
+                    "last_error": item.get("last_error"),
+                    "stuck_reason": stuck_reason,
+                })
+
+        stuck_boxes.sort(key=lambda b: b["time_in_stage_minutes"], reverse=True)
+        stuck_boxes = stuck_boxes[:limit]
+
+        time_in_stage_summary: Dict[str, Dict[str, Any]] = {}
+        for state, vals in time_in_stage_by_state.items():
+            if not vals:
+                continue
+            time_in_stage_summary[state] = {
+                "count": len(vals),
+                "avg_minutes": round(sum(vals) / len(vals), 2),
+                "max_minutes": round(max(vals), 2),
+                "p95_minutes": round(self._p95(vals) or 0.0, 2),
+            }
+
+        exception_clusters = [
+            {"state": state, **bucket}
+            for state, bucket in sorted(
+                exception_by_state.items(),
+                key=lambda kv: kv[1]["count"],
+                reverse=True,
+            )
+        ]
+
+        return {
+            "organization_id": organization_id,
+            "generated_at": now.isoformat(),
+            "stuck_count": len(stuck_boxes),
+            "stuck_boxes": stuck_boxes,
+            "time_in_stage": time_in_stage_summary,
+            "exception_clusters": exception_clusters,
+            "thresholds": {
+                "stuck_minutes": int(stuck_threshold_minutes),
+                "approval_sla_minutes": int(approval_sla_minutes),
+            },
+        }
+
+    # ------------------------------------------------------------------
     # AP KPIs
     # ------------------------------------------------------------------
 
