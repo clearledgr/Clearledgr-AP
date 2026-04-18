@@ -260,7 +260,7 @@ The committed sequence for the 12 months following V1 launch:
 
 | Quarter | What ships and why |
 |---------|---------------------|
-| Q1 — V1 Launch | AP Invoices pipeline with full 3-way match, Vendor Onboarding pipeline, Gmail label architecture, Slack/Teams integration, Google Workspace Add-on, self-serve onboarding for Xero/QuickBooks Starter customers, managed implementation for NetSuite/SAP Enterprise customers. |
+| Q1 — V1 Launch | AP Invoices pipeline with full 3-way match, Vendor Onboarding pipeline, Gmail label architecture, Slack approvals and decision surface, Google Workspace Add-on, self-serve onboarding for Xero/QuickBooks Starter customers, managed implementation for NetSuite/SAP Enterprise customers. Microsoft Teams adapter is scoped and built but gated behind a feature flag for V1.1. |
 | Q2 — Multi-entity and AR foundation | Multi-entity workspace structure for parent accounts. AR invoicing pipeline: the agent drafts and sends customer invoices from Gmail, tracks receipt, and chases overdue payments. Same infrastructure as AP, reversed direction. Targeting customers already on Clearledgr AP who are manually managing their AR in Gmail. |
 | Q3 — Reconciliation and Google Sheets depth | Bank reconciliation: agent matches ERP transactions to bank statement entries, surfaces unmatched items. Expanded Google Sheets integration: scheduled exports of full pipeline data, agent action logs, and vendor master for Controller-level reporting. Outlook Add-on scoping begins — not shipped, requirement gathering only. |
 | Q4 — Month-end close and payment execution pilot | Month-End Close checklist pipeline: the agent tracks close tasks, surfaces blockers, and notifies the Controller when the close is at risk. Payment execution pilot with a licensed payment institution partner for 3-5 Enterprise customers — direct bank integration, not ERP-intermediated. Learnings inform whether payment execution becomes a general feature or remains a specialist offering. |
@@ -525,7 +525,7 @@ Each Kanban column represents a stage. Cards are Boxes — one per invoice or ve
 
 Streak does not have a Slack integration designed for finance operations. Clearledgr does — and the design of this surface is where Clearledgr departs from the Streak reference most significantly. Slack and Teams are not bolt-ons. They are a fully designed decision surface that extends the coordination layer to wherever senior stakeholders already are: in a meeting, on a call, away from their desk. AP work renders in Gmail because AP is email-heavy; approval decisions render in Slack because approvers live there during the working day. The Box is the same Box in both places.
 
-The finance team chooses their platform — Slack or Microsoft Teams. Clearledgr connects to both. The experience is identical. Everything described below applies to both platforms. The word Slack is used for brevity.
+V1 ships with Slack. Microsoft Teams is a scoped follow-on: the surface is designed to be platform-agnostic — the message shapes, callback handlers, and decision flows translate cleanly — but the Teams adapter is deferred behind a feature flag and is not exposed to customers in V1. The word Slack is used throughout this section, and every flow described applies identically to Teams when the Teams adapter ships. This boundary, like the Outlook boundary, is stated explicitly in enterprise sales conversations before procurement asks.
 
 #### The Design Philosophy for Slack
 
@@ -1127,7 +1127,7 @@ Settings is accessible from the Clearledgr section in Gmail's left nav. It opens
 
 | Setting | What it controls |
 |---------|------------------|
-| Auto-approve threshold | Invoice value below which a passed 3-way match triggers automatic approval and ERP posting without human review. Default: £0 (all invoices require approval). Recommended starting value: £500. |
+| Auto-approve threshold | Invoice value below which a passed 3-way match triggers automatic approval and ERP posting without human review. Default: €0 (all invoices require approval). Recommended starting value: €500. |
 | Match tolerance | Maximum delta between invoice amount and GRN receipt amount before the agent raises an exception. Expressed as percentage and absolute value. Example: 2% or £50, whichever is lower. |
 | Duplicate detection window | Number of days the agent looks back when checking for duplicate invoices from the same vendor for the same amount. Default: 90 days. |
 | Payment terms default | Fallback payment terms applied when not specified on the invoice or in the vendor master. Used for due date calculation. |

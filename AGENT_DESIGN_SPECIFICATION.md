@@ -4,7 +4,9 @@
 
 ---
 
-This document defines the Clearledgr agent from the inside: its architecture, event system, formal action space, planning and execution layers, state management, LLM/deterministic boundary, invoice and vendor onboarding lifecycles, waiting and resumption model, error handling, and context window management. The Product Design Thesis describes what the agent does from the outside. This document is how it actually works.
+This document defines the Clearledgr agent from the inside: its architecture, event system, formal action space, planning and coordination layers, state management, LLM/deterministic boundary, invoice and vendor onboarding lifecycles, waiting and resumption model, error handling, and context window management. The Product Design Thesis describes what the agent does from the outside. This document is how it actually works.
+
+Clearledgr is the stateful coordination layer for finance operations. The agent specified in this document is the runtime that makes that layer real. Every workflow instance — an AP invoice, a vendor onboarding, a commission clawback — is a Box. The agent advances each Box where it can and escalates to a human on the exception. The Box holds state, timeline, exceptions, and outcome across days and email threads. The agent advances it. Gmail, Slack, and the customer's ERP are how Box state is rendered to the human operators. The agent has no customer-facing web surface of its own — following the Streak architectural precedent, all customer interaction happens inside the tools the finance team already uses.
 
 > Confidential — Clearledgr Ltd · Engineering team only
 
@@ -12,7 +14,7 @@ This document defines the Clearledgr agent from the inside: its architecture, ev
 
 ## 1. Architecture Overview
 
-The Clearledgr agent is an event-driven, stateful execution system with two primary layers: a planning engine that decides what needs to happen given an event and current Box state, and an execution engine that carries out the plan one action at a time, recording each action to the Box timeline before executing it.
+The Clearledgr agent is an event-driven, stateful coordination system with two primary layers: a planning engine that decides what needs to happen given an event and current Box state, and a coordination engine that carries out the plan one action at a time, recording each action to the Box timeline before executing it.
 
 The agent is not a single LLM call. It is an orchestration system that calls Claude for specific, bounded tasks — classification, extraction, natural language generation — and delegates everything else to deterministic rules. The intelligence is in knowing exactly where the boundary is. The audit trail is in recording every step before it happens.
 
@@ -25,10 +27,10 @@ The agent is not a single LLM call. It is an orchestration system that calls Cla
 | **Gmail Pub/Sub Listener** | Receives push notifications from Gmail when new emails arrive in watched inboxes. Validates the notification, fetches the message content, and enqueues an event. This is the entry point for all invoice and vendor email processing. |
 | **Event Queue** | A durable, ordered queue (Redis Streams or equivalent) that holds all incoming events pending agent processing. Events are not lost if the agent is unavailable — they wait. The queue decouples event receipt from agent processing. |
 | **Planning Engine (AgentPlanningEngine)** | Given an event and the current Box state, produces a Plan — an ordered sequence of Actions the agent intends to take. The plan is produced deterministically for known event types. Claude is called within the planning engine only for classification and extraction, where the input is unstructured. |
-| **Execution Engine (FinanceAgentRuntime)** | Executes the Plan produced by the planning engine, one Action at a time. Before executing each Action, writes a timeline entry recording what is about to happen and why. If an Action fails, records the failure and invokes the error handler. The execution engine never skips steps and never silently succeeds. |
+| **Coordination Engine (FinanceAgentRuntime)** | Executes the Plan produced by the planning engine, one Action at a time. Before executing each Action, writes a timeline entry recording what is about to happen and why. If an Action fails, records the failure and invokes the error handler. The coordination engine never skips steps and never silently succeeds. |
 | **Box State Store** | A PostgreSQL database table holding the current state of every Box: stage, all extracted fields, match result, pending plan (if interrupted), waiting condition (if the agent is paused), retry counts, and timestamps. This is the agent's memory across restarts and async waits. |
 | **Job Scheduler** | A scheduled job queue (Celery Beat or equivalent) that handles time-based resumption: checking GRN status in 4 hours, resending a vendor chase email in 48 hours, escalating a stalled approval. When the agent decides to wait, it enqueues a future job rather than blocking. |
-| **ERP Connector Layer** | A set of typed connector classes, one per supported ERP (NetSuite, SAP, Xero, QuickBooks), each implementing the same interface: `lookup_po()`, `lookup_grn()`, `lookup_vendor()`, `post_bill()`, `schedule_payment()`. The execution engine calls the interface; the connector handles ERP-specific authentication, rate limiting, and error translation. |
+| **ERP Connector Layer** | A set of typed connector classes, one per supported ERP (NetSuite, SAP, Xero, QuickBooks), each implementing the same interface: `lookup_po()`, `lookup_grn()`, `lookup_vendor()`, `post_bill()`, `schedule_payment()`. The coordination engine calls the interface; the connector handles ERP-specific authentication, rate limiting, and error translation. |
 | **LLM Gateway** | A thin wrapper around the Claude API that manages prompt construction, token counting, retry logic, and response validation. All Claude calls in the system go through this gateway. It logs every call with input tokens, output tokens, latency, and cost to the cost tracking database. |
 | **Gmail Action Client** | Handles all outbound Gmail API operations: applying labels, sending emails, splitting threads, watching inboxes. Separate from the Pub/Sub listener which handles inbound only. |
 | **Slack/Teams Client** | Posts structured messages, interactive approvals, and digests to Slack or Teams. Handles button callbacks — when an AP Manager clicks Approve in Slack, the callback arrives here and re-enters the event queue as an `approval_received` event. |
@@ -37,7 +39,7 @@ The agent is not a single LLM call. It is an orchestration system that calls Cla
 
 **Rule 1:** Every action is recorded to the Box timeline before it executes, not after. If the system crashes between the timeline write and the action execution, the timeline shows "about to post to ERP" — which is enough to reconstruct state and retry safely. An action that executes without a prior timeline entry is a bug.
 
-**Rule 2:** The execution engine never assumes success. Every external call — ERP write, Slack post, Gmail API — must return a confirmation before the Box stage advances. If the confirmation is not received, the Box stage does not change and the action is marked as pending. The agent retries on the next resume, it does not skip forward.
+**Rule 2:** The coordination engine never assumes success. Every external call — ERP write, Slack post, Gmail API — must return a confirmation before the Box stage advances. If the confirmation is not received, the Box stage does not change and the action is marked as pending. The agent retries on the next resume, it does not skip forward.
 
 ---
 
@@ -50,7 +52,7 @@ The customer's Gmail inbox (the shared ap@ address and any individual addresses 
 | Watch lifecycle step | Implementation detail |
 |----------------------|----------------------|
 | **Initial watch setup** | Called during onboarding when the customer connects their Gmail. Creates the watch subscription and stores the returned `historyId` as the cursor for this mailbox. Watch subscriptions expire after exactly 7 days — never less, never more. |
-| **Watch renewal** | A scheduled job runs every 6 days (with 1 day buffer before expiry) and renews all active watches via a fresh `watch()` call. The new `historyId` is stored as the new cursor. If renewal fails, the mailbox is marked as degraded and the CS team is alerted via the Backoffice ERP connector health dashboard. |
+| **Watch renewal** | A scheduled job runs every 6 days (with 1 day buffer before expiry) and renews all active watches via a fresh `watch()` call. The new `historyId` is stored as the new cursor. If renewal fails, the mailbox is marked as degraded and the CS team is alerted via the Operations Console ERP connector health dashboard. |
 | **Notification receipt** | The Pub/Sub push endpoint validates the Google-signed JWT on every notification. Invalid signatures are rejected immediately and logged. Valid notifications are acknowledged immediately — Gmail requires acknowledgment within 30 seconds or it retries. |
 | **Message fetch** | After acknowledging the notification, the listener calls `gmail.users.history.list()` with the stored cursor to get all message changes since the last notification. Each new message ID is enqueued as an `email_received` event. The cursor is updated to the new `historyId`. |
 | **Deduplication** | The event queue uses the Gmail message ID as the idempotency key. If the same message ID appears twice (Gmail occasionally delivers duplicate notifications), the second enqueue is silently dropped. |
@@ -169,7 +171,7 @@ The action space is closed. If a new capability is needed that is not expressibl
 
 ## 4. The Planning Engine
 
-The planning engine takes an event and the current Box state as inputs and produces a Plan — an ordered sequence of Actions. The planning engine is the agent's decision logic. It is invoked once per event. It does not execute anything — that is the execution engine's job.
+The planning engine takes an event and the current Box state as inputs and produces a Plan — an ordered sequence of Actions. The planning engine is the agent's decision logic. It is invoked once per event. It does not execute anything — that is the coordination engine's job.
 
 ### 4.1 Planning for `email_received`
 
@@ -193,7 +195,7 @@ This is the most complex planning path — it handles all incoming emails and mu
 | Decision | Plan |
 |----------|------|
 | **Approved, box in Matched stage** | `pre_post_validate` → `post_bill` → `move_box_stage(Approved)` → `apply_label(Approved)` → `schedule_payment` → `post_timeline_entry(DID-WHY-NEXT)` → `send_slack_override_window` → `watch_thread` for payment confirmation. |
-| **Approved with override (exception box)** | Same as above but with `override_reason` logged to timeline and override event sent to Backoffice quality dashboard. |
+| **Approved with override (exception box)** | Same as above but with `override_reason` logged to timeline and override event sent to the Operations Console quality dashboard. |
 | **Rejected** | `move_box_stage(Exception)` → `apply_label(Exception)` → `send_vendor_email(payment_query_response template with rejection reason)` → `post_timeline_entry` → notify AP Manager of rejection logged. |
 | **Approval timeout (`timer_fired: approval_timeout`)** | Escalate to the next approver in the hierarchy. If already at CFO level: `send_slack_exception` with urgency flag indicating payment due date. Do not auto-approve. Do not let it silently stall. |
 
@@ -209,13 +211,13 @@ This is the most complex planning path — it handles all incoming emails and mu
 
 ---
 
-## 5. The Execution Engine
+## 5. The Coordination Engine
 
-The execution engine takes a Plan from the planning engine and executes it, one action at a time. Its only job is faithful, recorded execution. It adds no intelligence — the planning engine has already decided what to do. The execution engine makes sure what was decided actually happens, in order, with a record of every step.
+The coordination engine takes a Plan from the planning engine and executes it, one action at a time. Its only job is faithful, recorded execution. It adds no intelligence — the planning engine has already decided what to do. The coordination engine makes sure what was decided actually happens, in order, with a record of every step.
 
 ### 5.1 The Execution Loop
 
-| Step | What the execution engine does |
+| Step | What the coordination engine does |
 |------|-------------------------------|
 | **1. Load plan** | Read the current plan from Box state (`set_pending_plan` stored by the planning engine). If a partial plan exists from a previous interrupted execution, resume from the first incomplete action. |
 | **2. Take next action** | Dequeue the next Action from the plan. |
@@ -227,16 +229,16 @@ The execution engine takes a Plan from the planning engine and executes it, one 
 
 ### 5.2 Error Handling
 
-Every action can fail in one of four ways. The execution engine's response depends on which type of failure occurred.
+Every action can fail in one of four ways. The coordination engine's response depends on which type of failure occurred.
 
 | Failure type | Execution engine response |
 |--------------|--------------------------|
 | **Transient** (network timeout, rate limit, temporary API unavailability) | Retry with exponential backoff. Maximum 3 retries with delays of 5s, 30s, 2min. If all retries fail: treat as persistent failure. |
 | **Persistent** (permission error, invalid data, ERP validation rejection) | Do not retry. Post a timeline entry with status: `failed` and the specific error. Move the Box to Exception stage. Send a Slack exception alert with the specific error message. A human must resolve before the agent can continue. |
-| **External dependency unavailable** (ERP offline, Slack API down) | Pause execution. Set `waiting_condition: external_dependency_unavailable`. Schedule a check in 15 minutes. Alert the CS team via Backoffice monitoring if the dependency has been unavailable for more than 30 minutes. |
+| **External dependency unavailable** (ERP offline, Slack API down) | Pause execution. Set `waiting_condition: external_dependency_unavailable`. Schedule a check in 15 minutes. Alert the CS team via Operations Console monitoring if the dependency has been unavailable for more than 30 minutes. |
 | **LLM failure** (Claude returns an error, safety refusal, malformed output) | For classification failures: treat as unclassifiable. For extraction failures: treat as extraction guardrail failure (surface to AP Manager). For generation failures (exception reason, vendor email draft): use a default template instead. Never surface a Claude error message directly to the AP team. |
 
-The execution engine never partially succeeds. If an action fails after the pre-execution timeline entry has been written, the timeline shows "executing" — which is exactly the information needed to investigate and retry. A partially-executed plan is recoverable. A silently-failed plan is not.
+The coordination engine never partially succeeds. If an action fails after the pre-execution timeline entry has been written, the timeline shows "executing" — which is exactly the information needed to investigate and retry. A partially-executed plan is recoverable. A silently-failed plan is not.
 
 ---
 
@@ -267,7 +269,7 @@ The agent's memory is the Box state stored in PostgreSQL. The agent has no in-pr
 
 ### 6.2 State Transitions and the Transition Rules
 
-Stage transitions are deterministic and validated. The execution engine calls `move_box_stage` only after confirming the transition is permitted. Attempting an invalid transition logs an error and does not move the Box.
+Stage transitions are deterministic and validated. The coordination engine calls `move_box_stage` only after confirming the transition is permitted. Attempting an invalid transition logs an error and does not move the Box.
 
 | From stage | Permitted next stages and conditions |
 |------------|--------------------------------------|
@@ -349,7 +351,7 @@ The planning engine maintains a structured summary of each Box alongside the ful
 
 ## 9. The Complete Invoice Lifecycle
 
-This section traces a single invoice from email arrival to payment confirmation, showing the exact sequence of planning engine decisions and execution engine actions at each step. This is the canonical reference for how a standard invoice moves through the system.
+This section traces a single invoice from email arrival to payment confirmation, showing the exact sequence of planning engine decisions and coordination engine actions at each step. This is the canonical reference for how a standard invoice moves through the system.
 
 ### 9.1 Standard Invoice — Happy Path
 
@@ -421,7 +423,7 @@ Same as happy path through step 15. At step 15: `run_three_way_match` returns fa
 
 ## 10. The Vendor Onboarding Lifecycle
 
-The vendor onboarding pipeline follows a parallel event-driven architecture to the invoice pipeline. The same planning engine handles onboarding events. The same execution engine runs onboarding actions. The same state model tracks onboarding Box state.
+The vendor onboarding pipeline follows a parallel event-driven architecture to the invoice pipeline. The same planning engine handles onboarding events. The same coordination engine runs onboarding actions. The same state model tracks onboarding Box state.
 
 ### 10.1 The Four Stages and Their Agent Actions
 
@@ -464,11 +466,11 @@ Every external API has rate limits that must be managed at the connector level, 
 | **Xero API** | Hard limit of 60 requests per minute per Xero organisation. The connector implements a token bucket rate limiter per workspace. Requests that would exceed the limit are queued and execute when the bucket refills. |
 | **QuickBooks Online API** | Similar to Xero — per-app, per-realm rate limits. Token bucket implementation per workspace. |
 | **Gmail API** | Per-user quotas. The connector respects Gmail's sendEmail quota (250 per day for Google Workspace users) and API call quotas. High-volume operations (bulk label application during migration) are spread over time. |
-| **Claude API** | Per-organisation tier limits. All Claude calls go through the LLM Gateway which tracks token usage and enforces a per-workspace monthly budget. Workspaces approaching their budget trigger a Backoffice alert. The LLM Gateway queues requests to stay within rate limits rather than failing them. |
+| **Claude API** | Per-organisation tier limits. All Claude calls go through the LLM Gateway which tracks token usage and enforces a per-workspace monthly budget. Workspaces approaching their budget trigger an Operations Console alert. The LLM Gateway queues requests to stay within rate limits rather than failing them. |
 
 ### 11.2 Concurrency Model
 
-The planning and execution engines are stateless — they read all state from PostgreSQL and Redis on every invocation and write results back before exiting. This is the prerequisite for horizontal scaling. Any worker can handle any workspace's events. No worker holds in-memory state between events.
+The planning and coordination engines are stateless — they read all state from PostgreSQL and Redis on every invocation and write results back before exiting. This is the prerequisite for horizontal scaling. Any worker can handle any workspace's events. No worker holds in-memory state between events.
 
 The gap this section closes: a finance team receiving 50 invoices on the first of the month creates 50 simultaneous events. Without a defined concurrency model, those 50 events process sequentially on a single worker, violating the Enterprise 2-minute SLA. With the model defined here, they process in parallel across a worker fleet — bounded by workspace concurrency limits and ERP rate limits — completing the full batch well within SLA.
 
@@ -518,9 +520,9 @@ The system monitors queue depth continuously. Sustained high queue depth indicat
 
 | Condition | Response |
 |-----------|----------|
-| **High queue depth** (>100 standard, >20 high-priority) | Kubernetes autoscaler adds workers. Backoffice dashboard shows queue depth spike. If depth does not reduce within 5 minutes of scaling, alert is raised — likely an ERP connectivity issue rather than a capacity issue. |
-| **ERP unavailable** (all events failing at ERP call step) | The execution engine sets `waiting_condition: erp_unavailable` on each Box. Events are not requeued for immediate retry — they wait for the ERP connectivity check timer. Queue depth drops as events complete the synchronous steps (classification, extraction) and park at the ERP step. |
-| **Workspace at concurrency limit for > 5 minutes** | Alert raised in Backoffice. May indicate the concurrency limit is too low for this workspace's volume, or that long-running boxes are not releasing their semaphore slots (a bug condition). |
+| **High queue depth** (>100 standard, >20 high-priority) | Kubernetes autoscaler adds workers. Operations Console dashboard shows queue depth spike. If depth does not reduce within 5 minutes of scaling, alert is raised — likely an ERP connectivity issue rather than a capacity issue. |
+| **ERP unavailable** (all events failing at ERP call step) | The coordination engine sets `waiting_condition: erp_unavailable` on each Box. Events are not requeued for immediate retry — they wait for the ERP connectivity check timer. Queue depth drops as events complete the synchronous steps (classification, extraction) and park at the ERP step. |
+| **Workspace at concurrency limit for > 5 minutes** | Alert raised in Operations Console. May indicate the concurrency limit is too low for this workspace's volume, or that long-running boxes are not releasing their semaphore slots (a bug condition). |
 | **Worker memory pressure** | Each worker process handles one event at a time with asyncio. Memory consumption per worker is bounded by the LLM gateway's token budget limits (maximum ~4,000 input tokens per Claude call). Workers are restarted by Kubernetes if memory exceeds 512MB — the event is redelivered to another worker after the visibility timeout. |
 
 #### 11.2.5 Preventing Race Conditions on Box State
@@ -557,7 +559,7 @@ If the agent process restarts while executing a plan (server crash, deployment, 
 
 1. Finds all Boxes with status: `pending_plan` in the Box state store.
 2. For each pending Box: reads the serialised plan and the last timeline entry.
-3. The last timeline entry shows the last action that was recorded as "executing". The execution engine checks whether that action completed (by querying the ERP or Gmail API for evidence of the action) or not.
+3. The last timeline entry shows the last action that was recorded as "executing". The coordination engine checks whether that action completed (by querying the ERP or Gmail API for evidence of the action) or not.
 4. If completed: marks it done in the plan, continues from the next action.
 5. If not completed: re-executes the action (all actions are idempotent — applying a label that already exists is a no-op, creating a bill that already has an ERP ID is caught by `pre_post_validate`).
 6. All actions are designed to be idempotent. The worst case of a restart is a duplicate API call that returns the same result. It is never a duplicate ERP post, because `pre_post_validate` catches existing bills.
@@ -566,9 +568,9 @@ If the agent process restarts while executing a plan (server crash, deployment, 
 
 If the ERP connector returns a connectivity error during execution:
 
-1. The execution engine pauses the plan: `set_waiting_condition(box_id, {type: 'erp_unavailable'})`.
+1. The coordination engine pauses the plan: `set_waiting_condition(box_id, {type: 'erp_unavailable'})`.
 2. Schedules a `timer_fired` check in 15 minutes.
-3. Alerts the Backoffice ERP connector health dashboard.
+3. Alerts the Operations Console ERP connector health dashboard.
 4. If the ERP has been unavailable for more than 30 minutes: alerts the CS team to contact the customer.
 5. When connectivity is restored: `clear_waiting_condition`, resume the plan from the paused action.
 6. No invoice is lost during an ERP outage. Invoices that arrive during the outage are classified and extracted. The matching and posting steps wait for ERP restoration.

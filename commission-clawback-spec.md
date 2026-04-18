@@ -12,29 +12,13 @@ engineering reference
 
 **1. Overview**
 
-The commission clawback agent is a new pipeline in the Clearledgr agent
-system. It is relevant to any business that pays commissions to
-partners, agents, or intermediaries and needs to reclaim them when a
-transaction is cancelled or refunded. Travel, hospitality, marketplaces,
-insurance, SaaS with reseller channels, and financial services all face
-this problem. The current process is always manual --- finance teams
-detect the refund event, look up the original booking or transaction,
-calculate the clawback amount, and post a reversal journal entry to the
-ERP.
+Commission Clawback is the second workflow class the Clearledgr coordination layer handles, extending the agent system beyond AP into a non-accounts-payable workflow. It is the first real test of the platform thesis: that the Box model, agent architecture, rules-decide-LLM-describes discipline, and ERP write layer all generalise to workflows the product wasn't originally designed for. It is relevant to any business that pays commissions to partners, agents, or intermediaries and needs to reclaim them when a transaction is cancelled or refunded. Travel, hospitality, marketplaces, insurance, SaaS with reseller channels, and financial services all face this problem. The current process is always manual --- finance teams detect the refund event, look up the original booking or transaction, calculate the clawback amount, and post a reversal journal entry to the ERP.
 
-The agent automates this end-to-end. It sits inside Gmail and Slack,
-reads refund and cancellation events, looks up the original booking
-record and commission paid, calculates the clawback amount, drafts the
-reversal journal entry, routes for approval, and posts to the ERP. No
-new tool. No migration. The finance team stays in their inbox.
+Clawback is structurally the same problem AP solves, running in reverse: where AP drives the cash *out* against a matched obligation, clawback drives the cash *back in* against a matched reversal. The same Box model applies: an event (the refund) kicks off a workflow instance, the agent reconstructs the commercial relationship (the original commission payment), deterministic calculation produces the reversal, a human approves on exceptions, the agent posts to the ERP, and the Box carries the full attributable history. The fact that Clearledgr's architecture generalises from AP to clawback without modification is the direct validation of the coordination-layer thesis: each new workflow is a new Box type running on the same platform, not a separate product.
 
-This spec extends the core Clearledgr Agent Design Specification. All
-architectural components --- the event system, planning engine,
-execution engine, state management, LLM/deterministic boundary, and
-error handling --- are inherited without modification. This document
-defines only what is new: the commission clawback event types, the
-extended action space, the new pipeline, the planning logic specific to
-clawback, and the complete lifecycle.
+The agent automates this end-to-end. It sits inside Gmail and Slack, reads refund and cancellation events, looks up the original booking record and commission paid, calculates the clawback amount, drafts the reversal journal entry, routes for approval, and posts to the ERP. No new tool. No migration. The finance team stays in their inbox.
+
+This spec extends the core Clearledgr Agent Design Specification. All architectural components --- the event system, planning engine, coordination engine, state management, LLM/deterministic boundary, and error handling --- are inherited without modification. This document defines only what is new: the commission clawback event types, the extended action space, the new pipeline, the planning logic specific to clawback, and the complete lifecycle.
 
 > *The fundamental design principle is unchanged: rules decide, Claude
 > describes. The clawback calculation is always deterministic. Claude is
@@ -244,7 +228,7 @@ The following actions are added to the formal action space. The complete
 action space is the union of the actions defined in the core spec and
 the actions defined here. The two non-negotiable rules apply to all new
 actions: every action is recorded to the Box timeline before it
-executes, and the execution engine never assumes success.
+executes, and the coordination engine never assumes success.
 
 Build status is indicated for each action: NEW means a net-new
 component, EXISTING means the action reuses the current architecture
@@ -628,8 +612,8 @@ branches without modifying the existing handlers.
                            partner dispute responses.
 
   **Approved with          Same as above. override_reason logged to
-  override**               timeline and sent to Backoffice quality
-                           dashboard.
+  override**               timeline and sent to the Operations Console
+                           quality dashboard (internal review).
 
   **Rejected**             move_box_stage(\'disputed\') →
                            post_timeline_entry with rejection reason →
@@ -1374,7 +1358,7 @@ nothing gets missed.
 **12.1 Reuse and adapt (≈60% of the action space)**
 
 Most actions the spec marks as EXISTING or ADAPTED have a concrete
-pattern already in the execution engine, LLM gateway, ERP router, or
+pattern already in the coordination engine, LLM gateway, ERP router, or
 Slack service. Build them as small extensions of the existing files,
 not as new modules.
 
