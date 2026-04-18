@@ -1341,11 +1341,16 @@ class ExecutionEngine:
         try:
             from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
             gateway = get_llm_gateway()
+            # Box-reconstructability invariant — pass the ap_item_id
+            # through so llm_call_log rows link back to the Box an
+            # auditor is reviewing.
             resp = await gateway.call(
                 LLMAction.CLASSIFY_VENDOR,
                 messages=[{"role": "user", "content": user_message}],
                 system_prompt=system_prompt,
                 organization_id=self.organization_id,
+                ap_item_id=plan.box_id,
+                correlation_id=getattr(plan, "correlation_id", None),
             )
             import json
             raw = str(resp.content or "").strip() if resp else ""

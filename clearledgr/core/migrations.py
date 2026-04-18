@@ -1580,6 +1580,46 @@ def _v40_agent_credit_ledger(cur, db):
         pass
 
 
+@migration(41, "LLM call log ↔ Box audit trail link (Box reconstructability invariant)")
+def _v41_llm_call_log_ap_item_link(cur, db):
+    """Add ap_item_id + correlation_id columns to llm_call_log.
+
+    Reconstructability invariant: an auditor with access to a Box's
+    audit_events rows must be able to rebuild the full history,
+    including what the LLM saw and said for each agent action.
+    Previously llm_call_log recorded every Claude call (tokens,
+    cost, latency, model) but carried no foreign key to the Box —
+    so the audit trail could name the extraction outcome but not
+    the specific call that produced it. Adding the link makes the
+    cross-join auditor-friendly: for any Box, join audit_events →
+    llm_call_log on correlation_id to see every model interaction
+    that shaped its state.
+
+    Columns are nullable so existing rows (which pre-date the
+    link) remain readable; new calls populate them when the caller
+    passes them through the gateway.
+    """
+    for col in ("ap_item_id", "correlation_id"):
+        try:
+            cur.execute(f"ALTER TABLE llm_call_log ADD COLUMN {col} TEXT")
+        except Exception:
+            pass  # Column may already exist (re-run after v41).
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_llm_call_log_ap_item "
+            "ON llm_call_log(ap_item_id)"
+        )
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_llm_call_log_correlation "
+            "ON llm_call_log(correlation_id)"
+        )
+    except Exception:
+        pass
+
+
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")
 def _v37_split_ap_posted_and_paid(cur, db):
     """Kanban correctness fix.
