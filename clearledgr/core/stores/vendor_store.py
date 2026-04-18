@@ -1882,47 +1882,72 @@ class VendorStore:
         sql = self._prepare_sql(
             f"UPDATE vendor_onboarding_sessions SET {set_clause} WHERE id = ?"
         )
+
+        # Box invariant — state and audit share a transaction. The
+        # thesis §7.6 "audit trail as evidence of trust" guarantee
+        # fails if a Box can reach a new state without a
+        # corresponding audit event. Previously the state UPDATE
+        # committed in its own transaction and the audit INSERT ran
+        # afterwards in a separate connection — a DB blip between
+        # the two produced an untracked state change. Now both
+        # writes share one cursor + one commit so they are atomic
+        # in both SQLite and Postgres.
+        import uuid as _uuid
+        audit_sql = self._prepare_sql(
+            "INSERT INTO audit_events "
+            "(id, ap_item_id, event_type, prev_state, new_state, "
+            " actor_type, actor_id, payload_json, decision_reason, "
+            " organization_id, source, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        audit_payload = {
+            "session_id": session_id,
+            "vendor_name": session.get("vendor_name"),
+            "from_state": current,
+            "to_state": target,
+            "reason": reason,
+        }
+        # Decision-reason carries the same one-line narrative the
+        # old append_ap_audit_event path wrote to the audit_events
+        # row. Audit feed consumers that filter on this string
+        # continue to work; structured fields (prev_state /
+        # new_state / payload_json) are the preferred read path.
+        audit_decision_reason = (
+            f"Vendor onboarding session {session_id}: {current} -> {target}"
+            + (f" — {reason}" if reason else "")
+        )
+
         try:
             with self.connect() as conn:
-                conn.execute(sql, params)
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                if emit_audit:
+                    cur.execute(
+                        audit_sql,
+                        (
+                            str(_uuid.uuid4()),
+                            "",  # ap_item_id — vendor onboarding events aren't AP items
+                            "vendor_onboarding_state_transition",
+                            str(current or ""),
+                            target,
+                            "user" if actor_id and actor_id != "agent" else "agent",
+                            actor_id or "agent",
+                            json.dumps(audit_payload),
+                            audit_decision_reason,
+                            session.get("organization_id") or "",
+                            "vendor_onboarding_state_machine",
+                            now,
+                        ),
+                    )
                 conn.commit()
         except Exception as exc:
             logger.warning(
-                "[VendorStore] transition_onboarding_session_state UPDATE failed: %s", exc
+                "[VendorStore] transition_onboarding_session_state failed "
+                "(state + audit rolled back together): %s", exc
             )
             return None
 
         updated = self.get_onboarding_session_by_id(session_id)
-
-        if emit_audit and hasattr(self, "append_ap_audit_event"):
-            try:
-                self.append_ap_audit_event(
-                    {
-                        "ap_item_id": "",
-                        "event_type": "vendor_onboarding_state_transition",
-                        "actor_type": "user" if actor_id else "agent",
-                        "actor_id": actor_id or "agent",
-                        "reason": (
-                            f"Vendor onboarding session {session_id}: "
-                            f"{current} -> {target}"
-                            + (f" — {reason}" if reason else "")
-                        ),
-                        "metadata": {
-                            "session_id": session_id,
-                            "vendor_name": session.get("vendor_name"),
-                            "from_state": current,
-                            "to_state": target,
-                            "reason": reason,
-                        },
-                        "organization_id": session.get("organization_id") or "",
-                        "source": "vendor_onboarding_state_machine",
-                    }
-                )
-            except Exception as audit_exc:
-                logger.warning(
-                    "[VendorStore] onboarding state transition audit failed (non-fatal): %s",
-                    audit_exc,
-                )
 
         # DESIGN_THESIS.md §3 Developer Platform — fire the public
         # vendor.* webhook for transitions the external surface cares

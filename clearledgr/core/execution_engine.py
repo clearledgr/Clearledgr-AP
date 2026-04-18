@@ -69,6 +69,28 @@ _ACTION_TIMEOUTS = {
 _DEFAULT_TIMEOUT = 15
 
 
+class _Rule1PreWriteFailed(Exception):
+    """Raised when the Rule 1 pre-write audit insert cannot land
+    after retries. Caught by the execution loop as a clean abort —
+    the action does NOT run, preserving the §7.6 guarantee that no
+    agent side effect happens without a corresponding timeline row.
+    """
+
+    def __init__(
+        self,
+        *,
+        action_name: str,
+        box_id: Optional[str],
+        original: Optional[Exception],
+    ) -> None:
+        super().__init__(
+            f"Rule 1 pre-write failed for action={action_name} box={box_id}: {original}"
+        )
+        self.action_name = action_name
+        self.box_id = box_id
+        self.original = original
+
+
 class ExecutionEngine:
     """§5: Formal execution loop consuming a Plan object.
 
@@ -242,7 +264,25 @@ class ExecutionEngine:
 
         for step, action in enumerate(plan.actions):
             # --- Step 3: Pre-execution timeline write (Rule 1) ---
-            timeline_id = self._pre_write(box_id, action, step)
+            # Fails closed: if the audit write can't land after
+            # retries, skip the action and park the plan with a
+            # clear error. §7.6 guarantee is that no side effect
+            # (ERP post, vendor email, Slack message) runs without
+            # a timeline row first.
+            try:
+                timeline_id = self._pre_write(box_id, action, step)
+            except _Rule1PreWriteFailed as rule1_exc:
+                if box_id:
+                    self._move_to_exception(
+                        box_id, action.name,
+                        "rule1_pre_write_failed — timeline unavailable, action aborted",
+                    )
+                return ExecutionResult(
+                    status="failed", steps_completed=steps_completed,
+                    steps_total=plan.step_count, box_id=box_id,
+                    error=f"rule1_pre_write_failed:{rule1_exc.original}",
+                    last_action=action.name,
+                )
 
             # --- Step 4: Execute the action ---
             result = await self._execute_with_retry(action, plan, step)
@@ -336,34 +376,64 @@ class ExecutionEngine:
 
         Uses the audit_events table (via append_ap_audit_event) as the
         Box timeline — every agent action is a recorded event.
+
+        Fails CLOSED per §7.6. The timeline is the evidence of trust;
+        an ERP post with no timeline record is the failure mode the
+        thesis says cannot happen. If the audit write can't land
+        after three retries, we raise _Rule1PreWriteFailed — the
+        execution loop catches it and aborts the action before any
+        side effect runs.
+
+        Earlier code logged "fail loud, continue anyway" — that
+        traded correctness for liveness on the ERP-posting path.
+        Wrong trade: an undocumented ERP write is a worse failure
+        than a delayed one.
         """
         timeline_id = f"TL-{uuid.uuid4().hex[:12]}"
         if not box_id or not hasattr(self.db, "append_ap_audit_event"):
             return timeline_id
-        try:
-            self.db.append_ap_audit_event({
-                "id": timeline_id,
-                "ap_item_id": box_id,
-                "event_type": f"agent_action:{action.name}:executing",
-                "actor_type": "agent",
-                "actor_id": "execution_engine",
-                "organization_id": self.organization_id,
-                "payload_json": {
-                    "action": action.name,
-                    "description": action.description,
-                    "status": "executing",
-                    "step": step,
-                    "layer": action.layer,
-                },
-            })
-        except Exception as exc:
-            # Rule 1 write failure — execution continues but log loudly
-            # so operators can investigate the timeline outage.
-            logger.warning(
-                "[ExecutionEngine] Rule 1 pre-write failed for %s: %s",
-                action.name, exc,
-            )
-        return timeline_id
+
+        payload = {
+            "id": timeline_id,
+            "ap_item_id": box_id,
+            "event_type": f"agent_action:{action.name}:executing",
+            "actor_type": "agent",
+            "actor_id": "execution_engine",
+            "organization_id": self.organization_id,
+            "payload_json": {
+                "action": action.name,
+                "description": action.description,
+                "status": "executing",
+                "step": step,
+                "layer": action.layer,
+            },
+        }
+
+        import time as _time
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                self.db.append_ap_audit_event(payload)
+                return timeline_id
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < 2:
+                    # Brief backoff — 50ms, 200ms. The common failure
+                    # modes (transient DB blip, connection-pool wait)
+                    # resolve inside a few hundred ms.
+                    _time.sleep(0.05 * (4 ** attempt))
+
+        logger.error(
+            "[ExecutionEngine] Rule 1 pre-write failed after 3 attempts for "
+            "box=%s action=%s — aborting the action to preserve §7.6 "
+            "audit-trail guarantee. Last error: %s",
+            box_id, action.name, last_exc,
+        )
+        raise _Rule1PreWriteFailed(
+            action_name=action.name,
+            box_id=box_id,
+            original=last_exc,
+        )
 
     def _post_write(self, box_id: Optional[str], action: Action, step: int,
                     timeline_id: str, status: str, result_summary: str) -> None:
