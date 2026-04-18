@@ -88,7 +88,7 @@ def _audit(
 ) -> None:
     if not ap_item_id:
         return
-    audit_row = db.append_ap_audit_event(
+    audit_row = db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": event_type,

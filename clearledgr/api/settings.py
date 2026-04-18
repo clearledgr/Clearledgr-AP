@@ -589,7 +589,7 @@ async def start_parallel_mode(
 
     db.update_organization(organization_id, migration_status="parallel", parallel_start_date=now)
 
-    db.append_ap_audit_event({
+    db.append_audit_event({
         "event_type": "migration_parallel_started",
         "actor_type": "user",
         "actor_id": actor_id,
@@ -634,7 +634,7 @@ async def migration_cutover(
         cutover_decision_by=actor_id,
     )
 
-    db.append_ap_audit_event({
+    db.append_audit_event({
         "event_type": "migration_cutover_decision",
         "actor_type": "user",
         "actor_id": actor_id,

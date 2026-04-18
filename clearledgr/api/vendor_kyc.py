@@ -254,7 +254,7 @@ def update_vendor_kyc(
 
     # Audit event — field names only, never values
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_kyc_updated",

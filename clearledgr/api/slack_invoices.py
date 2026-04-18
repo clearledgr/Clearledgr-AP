@@ -225,7 +225,7 @@ def _audit_callback_event(
 ) -> None:
     resolved_ap_item_id = ap_item_id or f"channel_callback:slack:{organization_id}"
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": resolved_ap_item_id,
                 "event_type": event_type,
@@ -282,7 +282,8 @@ async def _post_to_response_url(
                 organization_id=organization_id,
                 channel="slack_response_url",
                 payload={"response_url": response_url, "body": payload},
-                ap_item_id=ap_item_id,
+                box_id=ap_item_id,
+                box_type="ap_item" if ap_item_id else None,
             )
         except Exception as enq_exc:
             logger.error(

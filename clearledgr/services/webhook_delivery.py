@@ -170,7 +170,8 @@ async def emit_webhook_event(
                         "event_type": event_type,
                         "data": payload,
                     },
-                    ap_item_id=payload.get("ap_item_id"),
+                    box_id=payload.get("box_id"),
+                    box_type=payload.get("box_type"),
                     max_retries=5,
                 )
             except Exception as exc:
@@ -186,13 +187,20 @@ async def emit_state_change_webhook(
     prev_state: str = "",
     item_data: Optional[Dict[str, Any]] = None,
 ) -> int:
-    """Convenience: emit a webhook for an AP state transition."""
+    """Emit a webhook for an AP state transition.
+
+    Payload is Box-keyed: subscribers receive ``box_id`` +
+    ``box_type='ap_item'``. ``ap_item_id`` is accepted as the
+    function parameter for caller ergonomics (it IS the box_id for
+    AP Boxes) but is not emitted as a separate field in the payload.
+    """
     event_type = _STATE_TO_EVENT.get(new_state)
     if not event_type:
         return 0
 
     payload = {
-        "ap_item_id": ap_item_id,
+        "box_id": ap_item_id,
+        "box_type": "ap_item",
         "new_state": new_state,
         "prev_state": prev_state,
         "organization_id": organization_id,
@@ -229,7 +237,8 @@ async def emit_vendor_state_change_webhook(
         return 0
 
     payload = {
-        "session_id": session_id,
+        "box_id": session_id,
+        "box_type": "vendor_onboarding_session",
         "vendor_name": vendor_name,
         "new_state": new_state,
         "prev_state": prev_state,
@@ -261,7 +270,8 @@ async def emit_vendor_invited_webhook(
     is no prior state to compute an edge from.
     """
     payload = {
-        "session_id": session_id,
+        "box_id": session_id,
+        "box_type": "vendor_onboarding_session",
         "vendor_name": vendor_name,
         "new_state": "invited",
         "organization_id": organization_id,

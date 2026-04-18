@@ -512,7 +512,7 @@ async def submit_feedback(
 
     # Log to audit trail so we never lose a submission.
     try:
-        db.append_ap_audit_event({
+        db.append_audit_event({
             "ap_item_id": request.ap_item_id,
             "event_type": "user_feedback_submitted",
             "actor_type": "user",

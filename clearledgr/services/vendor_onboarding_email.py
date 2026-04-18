@@ -226,7 +226,7 @@ async def dispatch_onboarding_invite(
     # Audit event — template + recipient + method, never the email body
     # or the magic link value (§19 plaintext-free discipline).
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_onboarding_email_sent",
@@ -313,7 +313,7 @@ async def dispatch_onboarding_chase(
     db.record_onboarding_chase(session_id, chase_type)
 
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_onboarding_email_sent",

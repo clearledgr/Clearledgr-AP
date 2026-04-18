@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from clearledgr.core.database import get_db
-from clearledgr.core.execution_engine import (
-    ExecutionEngine,
+from clearledgr.core.coordination_engine import (
+    CoordinationEngine,
     _classify_failure,
     _ACTION_TO_SLA_STEP,
     _ACTION_TIMEOUTS,
@@ -19,7 +19,7 @@ from clearledgr.core.plan import Action, Plan
 @pytest.fixture
 def engine():
     db = get_db()
-    return ExecutionEngine(db=db, organization_id="test-org")
+    return CoordinationEngine(db=db, organization_id="test-org")
 
 
 class TestHandlerRegistry:
@@ -54,8 +54,8 @@ class TestConcurrencySafety:
     def test_ctx_is_instance_level(self):
         """_ctx must be per-instance, not class-level."""
         db = get_db()
-        engine1 = ExecutionEngine(db=db, organization_id="org-1")
-        engine2 = ExecutionEngine(db=db, organization_id="org-2")
+        engine1 = CoordinationEngine(db=db, organization_id="org-1")
+        engine2 = CoordinationEngine(db=db, organization_id="org-2")
         engine1._ctx["key"] = "value1"
         engine2._ctx["key"] = "value2"
         assert engine1._ctx["key"] == "value1"

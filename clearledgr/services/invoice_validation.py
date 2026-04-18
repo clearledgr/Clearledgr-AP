@@ -1015,7 +1015,7 @@ class InvoiceValidationMixin:
         except Exception:
             pass
         try:
-            self.db.append_ap_audit_event(
+            self.db.append_audit_event(
                 {
                     "ap_item_id": ap_item_id,
                     "event_type": "approval_action_lock_acquired",
@@ -1087,7 +1087,7 @@ class InvoiceValidationMixin:
         if not ap_item_id:
             return
         try:
-            self.db.append_ap_audit_event(
+            self.db.append_audit_event(
                 {
                     "ap_item_id": ap_item_id,
                     "event_type": event_type,
@@ -1358,7 +1358,7 @@ class InvoiceValidationMixin:
             is_override = self._is_human_override(claude_rec, human_action)
             if not is_override:
                 return
-            self.db.append_ap_audit_event({
+            self.db.append_audit_event({
                 "ap_item_id": ap_item_id,
                 "event_type": "ap_decision_override",
                 "actor_type": "user",
@@ -2728,7 +2728,7 @@ class InvoiceValidationMixin:
                     )
                 except Exception:
                     pass  # Non-fatal — audit event is the authoritative record
-                self.db.append_ap_audit_event(
+                self.db.append_audit_event(
                     {
                         "ap_item_id": ap_item_id,
                         "event_type": "deterministic_validation_failed",

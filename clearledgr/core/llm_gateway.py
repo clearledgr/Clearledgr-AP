@@ -400,13 +400,18 @@ class LLMGateway:
         organization_id: str,
         ap_item_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
+        box_id: Optional[str] = None,
+        box_type: Optional[str] = None,
     ) -> Optional[str]:
         """Persist call metadata to llm_call_log table.
 
-        Returns the call id on success, None on failure. Callers can
-        reference the returned id in their audit-events payload to
-        give auditors a direct join from the Box timeline to the
-        specific model invocation.
+        Returns the call id on success, None on failure. The row is
+        Box-keyed via ``box_id`` + ``box_type`` so auditors can join
+        llm_call_log → audit_events on the same Box. The
+        ``ap_item_id`` kwarg is an AP-convenience: if passed without
+        an explicit ``box_id``, it's used as the box_id for
+        ``box_type='ap_item'``. Classification calls that run before
+        a Box exists may pass nothing and the columns stay null.
         """
         if not self._db:
             try:
@@ -415,6 +420,14 @@ class LLMGateway:
             except Exception:
                 return None
 
+        # AP convenience: if the caller passed ap_item_id, that's the
+        # box_id for type ap_item. Explicit box_id/box_type kwargs
+        # always win over the AP shortcut.
+        if box_id is None and ap_item_id:
+            box_id = ap_item_id
+        if box_type is None and box_id is not None:
+            box_type = "ap_item"
+
         try:
             self._db.initialize()
             now = datetime.now(timezone.utc).isoformat()
@@ -422,17 +435,18 @@ class LLMGateway:
             sql = self._db._prepare_sql(
                 "INSERT INTO llm_call_log "
                 "(id, organization_id, action, model, input_tokens, output_tokens, "
-                "latency_ms, cost_estimate_usd, truncated, error, ap_item_id, "
-                "correlation_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "latency_ms, cost_estimate_usd, truncated, error, "
+                "correlation_id, created_at, box_id, box_type) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             with self._db.connect() as conn:
                 conn.execute(sql, (
                     call_id, organization_id, action.value, model,
                     input_tokens, output_tokens, latency_ms, cost_estimate,
                     1 if truncated else 0, error,
-                    ap_item_id, correlation_id,
+                    correlation_id,
                     now,
+                    box_id, box_type,
                 ))
                 conn.commit()
             return call_id
@@ -454,6 +468,8 @@ class LLMGateway:
         model_override: Optional[str] = None,
         ap_item_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
+        box_id: Optional[str] = None,
+        box_type: Optional[str] = None,
     ) -> LLMResponse:
         """Make a Claude API call through the gateway.
 
@@ -554,6 +570,8 @@ class LLMGateway:
                 organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
             )
             raise RuntimeError(
                 f"[LLMGateway] {action.value} skipped: Anthropic rate limit "
@@ -600,6 +618,8 @@ class LLMGateway:
                         organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
                     )
                     raise RuntimeError(
                         f"[LLMGateway] {action.value} failed: {last_error}"
@@ -623,6 +643,8 @@ class LLMGateway:
                         organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
                     )
                     raise RuntimeError(
                         f"[LLMGateway] {action.value} refused oversized response: {last_error}"
@@ -660,6 +682,8 @@ class LLMGateway:
                     organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
                 )
 
                 logger.info(
@@ -701,6 +725,8 @@ class LLMGateway:
             organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
         )
         raise RuntimeError(f"[LLMGateway] {action.value} failed after {_MAX_RETRIES} retries: {last_error}")
 
@@ -809,6 +835,8 @@ class LLMGateway:
                 organization_id=organization_id,
                 ap_item_id=ap_item_id,
                 correlation_id=correlation_id,
+                box_id=box_id,
+                box_type=box_type,
             )
 
     def call_sync(

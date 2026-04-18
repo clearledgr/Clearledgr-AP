@@ -468,7 +468,7 @@ async def resolve_non_invoice_review(
         _source="non_invoice_review_resolution",
         _decision_reason=outcome,
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "non_invoice_review_resolved",
@@ -715,7 +715,7 @@ def link_ap_item_gmail_thread(
         _actor_type="user",
         _actor_id=actor_id,
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "gmail_thread_linked",
@@ -809,7 +809,7 @@ def link_ap_item_compose_draft(
             _decision_reason="compose_draft_linked",
         )
 
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "compose_draft_linked",
@@ -936,7 +936,7 @@ def create_compose_record(
             }
         )
 
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "compose_record_created",
@@ -1017,7 +1017,7 @@ def update_ap_item_fields(
         _source="ap_items_api",
         _decision_reason="sidebar_record_edit",
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "record_fields_updated",
@@ -1070,7 +1070,7 @@ def create_ap_item_task(
         tags=["gmail_sidebar", "ap_record"],
         organization_id=item.get("organization_id") or "default",
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "task_created",
@@ -1183,7 +1183,7 @@ def add_ap_item_note(
         _source="ap_items_api",
         _decision_reason="record_note_added",
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "record_note_added",
@@ -1235,7 +1235,7 @@ def add_ap_item_comment(
         _source="ap_items_api",
         _decision_reason="record_comment_added",
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "record_comment_added",
@@ -1294,7 +1294,7 @@ def add_ap_item_file_link(
         _source="ap_items_api",
         _decision_reason="record_file_linked",
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "record_file_linked",
@@ -1429,7 +1429,7 @@ def resubmit_rejected_item(
         )
 
     audit_key = f"ap_item_resubmission:{source['id']}:{created['id']}"
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": source["id"],
             "event_type": "ap_item_resubmitted",
@@ -1447,7 +1447,7 @@ def resubmit_rejected_item(
             "idempotency_key": audit_key,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": created["id"],
             "event_type": "ap_item_resubmission_created",
@@ -1562,7 +1562,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(re
         source_meta["merge_source_state"] = source.get("state")
     db.update_ap_item(source["id"], metadata=source_meta)
 
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": target["id"],
             "event_type": "ap_item_merged",
@@ -1580,7 +1580,7 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(re
             "idempotency_key": f"merge:{target['id']}:{source['id']}",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": source["id"],
             "event_type": "ap_item_merged_into",
@@ -1664,7 +1664,7 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(requ
         if source.source_type == "gmail_message":
             db.update_ap_item(child["id"], message_id=source.source_ref)
 
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": child["id"],
                 "event_type": "ap_item_split_created",

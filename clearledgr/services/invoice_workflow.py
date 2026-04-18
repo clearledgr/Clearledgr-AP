@@ -1010,7 +1010,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             )
             # Emit structured audit event so SOC/compliance can count these.
             try:
-                self.db.append_ap_audit_event(
+                self.db.append_audit_event(
                     {
                         "ap_item_id": invoice_id or invoice.gmail_id or "",
                         "event_type": "llm_gate_override_applied",
@@ -1842,7 +1842,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if isinstance(teams_status, dict) and teams_status.get("status") == "sent":
                     channels_notified.append("teams")
                 try:
-                    self.db.append_ap_audit_event(
+                    self.db.append_audit_event(
                         {
                             "ap_item_id": ap_item_id,
                             "event_type": "approval_requested",

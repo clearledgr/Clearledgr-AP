@@ -163,7 +163,7 @@ class TestFullPipelineE2E:
 
         # 9. Verify audit trail completeness
         audit = db.list_audit_events(organization_id="e2e-org")
-        ap_events = [e for e in audit if e.get("ap_item_id") == ap_id]
+        ap_events = [e for e in audit if e.get("box_id") == ap_id]
 
         # Should have exactly 6 state_transition events
         transitions = [e for e in ap_events if e.get("event_type") == "state_transition"]
@@ -256,7 +256,7 @@ class TestFullPipelineE2E:
         audit = db.list_audit_events(organization_id="e2e-org")
         ap_events = [
             e for e in audit
-            if e.get("ap_item_id") == ap_id and e.get("event_type") == "state_transition"
+            if e.get("box_id") == ap_id and e.get("event_type") == "state_transition"
         ]
         fail_events = [e for e in ap_events if e.get("new_state") == "failed_post"]
         assert len(fail_events) >= 1, "Missing audit entry for failed_post transition"

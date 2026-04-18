@@ -349,11 +349,11 @@ class AuditTrailService:
     
     def _persist_event(self, invoice_id: str, event: AuditEvent, trail: Optional[AuditTrail] = None) -> None:
         """Persist legacy trail events through the shared AP audit store."""
-        if not hasattr(self.db, "append_ap_audit_event"):
+        if not hasattr(self.db, "append_audit_event"):
             return
         trail_payload = trail if isinstance(trail, AuditTrail) else None
         try:
-            self.db.append_ap_audit_event(
+            self.db.append_audit_event(
                 {
                     "id": f"audit-trail-{event.event_id}",
                     "ap_item_id": invoice_id,

@@ -6,14 +6,14 @@ import asyncio
 import pytest
 
 from clearledgr.core.database import get_db
-from clearledgr.core.execution_engine import ExecutionEngine
+from clearledgr.core.coordination_engine import CoordinationEngine
 from clearledgr.core.plan import Action, Plan
 
 
 @pytest.fixture
 def engine():
     db = get_db()
-    return ExecutionEngine(db=db, organization_id="idem-test-org")
+    return CoordinationEngine(db=db, organization_id="idem-test-org")
 
 
 class TestReadOnlyActionIdempotency:

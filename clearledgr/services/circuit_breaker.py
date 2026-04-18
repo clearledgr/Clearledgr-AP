@@ -121,7 +121,7 @@ async def check_circuit_breaker(
 
         # Audit event
         try:
-            db.append_ap_audit_event({
+            db.append_audit_event({
                 "event_type": "circuit_breaker_tripped",
                 "actor_type": "system",
                 "actor_id": "circuit_breaker",

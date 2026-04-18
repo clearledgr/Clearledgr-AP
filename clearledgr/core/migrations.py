@@ -1620,6 +1620,182 @@ def _v41_llm_call_log_ap_item_link(cur, db):
         pass
 
 
+@migration(42, "Box-keyed audit primitives: drop ap_item_id on audit_events, llm_call_log, pending_notifications after backfilling box_id/box_type")
+def _v42_box_keyed_audit(cur, db):
+    """Make the Box abstraction first-class on shared primitives.
+
+    Three shared audit-adjacent tables (``audit_events``,
+    ``llm_call_log``, ``pending_notifications``) used ``ap_item_id``
+    as their primary foreign key since inception. That name was
+    accurate when AP was the only workflow; with vendor onboarding
+    and forthcoming commission-clawback Boxes, it's a semantic lie
+    — vendor onboarding events already pass empty string for
+    ``ap_item_id`` because there's no AP item to point at.
+
+    This migration:
+
+    1. Adds ``box_id`` + ``box_type`` columns.
+    2. Backfills existing rows (AP rows → box_type='ap_item',
+       vendor-onboarding rows → extracts session_id from
+       payload_json).
+    3. Drops the ``ap_item_id`` column entirely. There is no
+       back-compat layer — the Box-keyed columns are the only
+       identifier going forward.
+
+    Backfill strategy per row:
+
+    * AP rows (``ap_item_id`` non-empty) → ``box_id = ap_item_id``,
+      ``box_type = 'ap_item'``.
+    * Vendor-onboarding rows (``event_type LIKE
+      'vendor_onboarding%'`` and ``ap_item_id`` empty) → ``box_id``
+      extracted from ``payload_json`` ``session_id`` field,
+      ``box_type = 'vendor_onboarding_session'``.
+    """
+    use_pg = bool(getattr(db, "use_postgres", False))
+
+    def _column_exists(table: str, column: str) -> bool:
+        if use_pg:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = %s AND column_name = %s",
+                (table, column),
+            )
+            return cur.fetchone() is not None
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(row[1] == column for row in cur.fetchall())
+
+    # Step 1: add box_id + box_type if absent.
+    for col in ("box_id", "box_type"):
+        for tbl in ("audit_events", "llm_call_log", "pending_notifications"):
+            if not _column_exists(tbl, col):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} TEXT")
+
+    for idx_sql in (
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_box "
+        "ON audit_events(box_type, box_id)",
+        "CREATE INDEX IF NOT EXISTS idx_llm_call_log_box "
+        "ON llm_call_log(box_type, box_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pending_notifications_box "
+        "ON pending_notifications(box_type, box_id)",
+    ):
+        try:
+            cur.execute(idx_sql)
+        except Exception:
+            pass
+
+    if use_pg:
+        json_session = "(payload_json::jsonb ->> 'session_id')"
+    else:
+        json_session = "json_extract(payload_json, '$.session_id')"
+
+    # Step 2: backfill. audit_events has an append-only trigger, so
+    # drop it for the duration of the backfill and reinstate it
+    # after. llm_call_log + pending_notifications are not guarded.
+    has_ap_col_ae = _column_exists("audit_events", "ap_item_id")
+    has_ap_col_llm = _column_exists("llm_call_log", "ap_item_id")
+    has_ap_col_pn = _column_exists("pending_notifications", "ap_item_id")
+
+    if has_ap_col_ae:
+        if use_pg:
+            cur.execute(
+                "DROP TRIGGER IF EXISTS trg_audit_events_no_update ON audit_events"
+            )
+        else:
+            cur.execute("DROP TRIGGER IF EXISTS trg_audit_events_no_update")
+        try:
+            cur.execute(
+                "UPDATE audit_events "
+                "SET box_id = ap_item_id, box_type = 'ap_item' "
+                "WHERE ap_item_id IS NOT NULL AND ap_item_id != '' "
+                "  AND box_id IS NULL"
+            )
+        except Exception as exc:
+            logger.warning("[Migration v42] audit_events AP backfill skipped: %s", exc)
+        try:
+            cur.execute(
+                "UPDATE audit_events "
+                f"SET box_id = {json_session}, "
+                "    box_type = 'vendor_onboarding_session' "
+                "WHERE event_type LIKE 'vendor_onboarding%' "
+                "  AND (ap_item_id IS NULL OR ap_item_id = '') "
+                "  AND box_id IS NULL"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Migration v42] audit_events vendor backfill skipped: %s", exc,
+            )
+
+    if has_ap_col_llm:
+        try:
+            cur.execute(
+                "UPDATE llm_call_log "
+                "SET box_id = ap_item_id, box_type = 'ap_item' "
+                "WHERE ap_item_id IS NOT NULL AND ap_item_id != '' "
+                "  AND box_id IS NULL"
+            )
+        except Exception as exc:
+            logger.warning("[Migration v42] llm_call_log backfill skipped: %s", exc)
+
+    if has_ap_col_pn:
+        try:
+            cur.execute(
+                "UPDATE pending_notifications "
+                "SET box_id = ap_item_id, box_type = 'ap_item' "
+                "WHERE ap_item_id IS NOT NULL AND ap_item_id != '' "
+                "  AND box_id IS NULL"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Migration v42] pending_notifications backfill skipped: %s", exc,
+            )
+
+    # Step 3: drop the legacy ap_item_id column. SQLite's automatic
+    # index drop on DROP COLUMN doesn't kick in when an index
+    # references the column by name, so we drop the known indexes
+    # first (they're all idx_*ap_item*) and then DROP COLUMN.
+    legacy_indexes = (
+        "idx_audit_item",
+        "idx_audit_events_ap_item_id",
+        "idx_llm_call_log_ap_item",
+    )
+    for idx in legacy_indexes:
+        try:
+            cur.execute(f"DROP INDEX IF EXISTS {idx}")
+        except Exception:
+            pass
+
+    for tbl, has_col in (
+        ("audit_events", has_ap_col_ae),
+        ("llm_call_log", has_ap_col_llm),
+        ("pending_notifications", has_ap_col_pn),
+    ):
+        if has_col:
+            try:
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN ap_item_id")
+            except Exception as exc:
+                logger.warning(
+                    "[Migration v42] %s.ap_item_id DROP skipped: %s", tbl, exc,
+                )
+
+    # Reinstate the audit_events append-only UPDATE trigger.
+    if has_ap_col_ae:
+        if use_pg:
+            cur.execute(
+                "CREATE TRIGGER trg_audit_events_no_update "
+                "BEFORE UPDATE ON audit_events "
+                "FOR EACH ROW "
+                "EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()"
+            )
+        else:
+            cur.execute(
+                "CREATE TRIGGER IF NOT EXISTS trg_audit_events_no_update "
+                "BEFORE UPDATE ON audit_events "
+                "BEGIN "
+                "    SELECT RAISE(ABORT, 'audit_events is append-only'); "
+                "END"
+            )
+
+
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")
 def _v37_split_ap_posted_and_paid(cur, db):
     """Kanban correctness fix.

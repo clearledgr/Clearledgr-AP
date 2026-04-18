@@ -743,7 +743,7 @@ class TestProcessNewInvoiceNarrowWaistEnforcement:
         )
 
         captured_audit = []
-        original_append = db.append_ap_audit_event
+        original_append = db.append_audit_event
 
         def _spy_append(payload):
             captured_audit.append(payload)
@@ -752,7 +752,7 @@ class TestProcessNewInvoiceNarrowWaistEnforcement:
             except Exception:
                 return None
 
-        monkeypatch.setattr(db, "append_ap_audit_event", _spy_append)
+        monkeypatch.setattr(db, "append_audit_event", _spy_append)
 
         # Build the invoice + a pre-computed 'approve' decision (mimicking
         # what the agent planning loop would hand over WITHOUT its own

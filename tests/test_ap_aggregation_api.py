@@ -175,7 +175,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "created_at": approved_created_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": touchless_item["id"],
             "event_type": "erp_post_attempted",
@@ -185,7 +185,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": approved_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": touchless_item["id"],
             "event_type": "erp_post_succeeded",
@@ -195,7 +195,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": posted_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": handled_item["id"],
             "event_type": "erp_post_attempted",
@@ -205,7 +205,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": approved_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": handled_item["id"],
             "event_type": "erp_post_failed",
@@ -215,7 +215,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": approved_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": handled_item["id"],
             "event_type": "erp_post_succeeded",
@@ -225,7 +225,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": posted_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": handled_item["id"],
             "event_type": "ap_decision_override",
@@ -273,7 +273,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "created_at": overdue_requested_at,
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": approval_item["id"],
             "event_type": "approval_escalation_sent",
@@ -283,7 +283,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "ts": now.isoformat(),
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": approval_item["id"],
             "event_type": "approval_reassigned",
@@ -344,7 +344,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             },
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": resolved_entity_item["id"],
             "event_type": "entity_route_resolved",

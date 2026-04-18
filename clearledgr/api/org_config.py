@@ -235,7 +235,7 @@ async def delete_organization(
     # Audit event — every admin action that changes tenant lifecycle
     # must be greppable in the audit trail.
     try:
-        db.append_ap_audit_event({
+        db.append_audit_event({
             "event_type": "organization_soft_deleted",
             "actor_type": "user",
             "actor_id": str(current_user.user_id or "unknown"),

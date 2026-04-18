@@ -727,7 +727,8 @@ class _ClearledgrDBBase:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id TEXT PRIMARY KEY,
-                    ap_item_id TEXT NOT NULL,
+                    box_id TEXT NOT NULL,
+                    box_type TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     prev_state TEXT,
                     new_state TEXT,
@@ -750,7 +751,8 @@ class _ClearledgrDBBase:
                 CREATE TABLE IF NOT EXISTS pending_notifications (
                     id TEXT PRIMARY KEY,
                     organization_id TEXT NOT NULL,
-                    ap_item_id TEXT,
+                    box_id TEXT,
+                    box_type TEXT,
                     channel TEXT NOT NULL DEFAULT 'slack',
                     payload_json TEXT NOT NULL,
                     retry_count INTEGER DEFAULT 0,
@@ -1079,7 +1081,7 @@ class _ClearledgrDBBase:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_items_superseded_by ON ap_items(superseded_by_ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_item_sources_item ON ap_item_sources(ap_item_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ap_item_sources_type_ref ON ap_item_sources(source_type, source_ref)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_item ON audit_events(ap_item_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_box ON audit_events(box_type, box_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_events(organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_org_event_ts ON audit_events(organization_id, event_type, ts)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_item ON approvals(ap_item_id)")

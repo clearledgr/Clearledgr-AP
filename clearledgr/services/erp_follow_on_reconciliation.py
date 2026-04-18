@@ -137,7 +137,7 @@ def reconcile_erp_follow_on_state(
                 _source="reconciliation_check",
                 _decision_reason=f"split_brain_repair_{action_type}",
             )
-            db.append_ap_audit_event({
+            db.append_audit_event({
                 "ap_item_id": related_id,
                 "event_type": "erp_follow_on_reconciliation_repair",
                 "actor_type": "system",

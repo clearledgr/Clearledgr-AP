@@ -404,7 +404,7 @@ class VendorDomainLockService:
         metadata: dict,
     ) -> None:
         try:
-            self.db.append_ap_audit_event(
+            self.db.append_audit_event(
                 {
                     "ap_item_id": "",
                     "event_type": event_type,

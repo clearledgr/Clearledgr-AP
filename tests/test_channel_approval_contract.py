@@ -871,13 +871,13 @@ def test_approval_surface_copy_uses_po_and_vendor_queue_context_in_why_summary(d
 
 def test_slack_interactive_rejects_invalid_signature_and_audits(monkeypatch, client, db):
     captured = []
-    original_append = db.append_ap_audit_event
+    original_append = db.append_audit_event
 
     def _spy_append(payload):
         captured.append(dict(payload))
         return original_append(payload)
 
-    monkeypatch.setattr(db, "append_ap_audit_event", _spy_append)
+    monkeypatch.setattr(db, "append_audit_event", _spy_append)
 
     async def _raise_invalid(_request):
         raise HTTPException(status_code=401, detail="Invalid Slack signature")
@@ -903,13 +903,13 @@ def test_slack_interactive_rejects_invalid_signature_and_audits(monkeypatch, cli
 
 def test_slack_interactive_invalid_payload_audits(monkeypatch, client, db):
     captured = []
-    original_append = db.append_ap_audit_event
+    original_append = db.append_audit_event
 
     def _spy_append(payload):
         captured.append(dict(payload))
         return original_append(payload)
 
-    monkeypatch.setattr(db, "append_ap_audit_event", _spy_append)
+    monkeypatch.setattr(db, "append_audit_event", _spy_append)
 
     async def _return_body(request):
         return await request.body()
@@ -1243,13 +1243,13 @@ def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, clie
 def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client, db):
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     captured = []
-    original_append = db.append_ap_audit_event
+    original_append = db.append_audit_event
 
     def _spy_append(payload):
         captured.append(dict(payload))
         return original_append(payload)
 
-    monkeypatch.setattr(db, "append_ap_audit_event", _spy_append)
+    monkeypatch.setattr(db, "append_audit_event", _spy_append)
 
     payload = {
         "action": "approve_invoice",
@@ -1271,13 +1271,13 @@ def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client
 def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     captured = []
-    original_append = db.append_ap_audit_event
+    original_append = db.append_audit_event
 
     def _spy_append(payload):
         captured.append(dict(payload))
         return original_append(payload)
 
-    monkeypatch.setattr(db, "append_ap_audit_event", _spy_append)
+    monkeypatch.setattr(db, "append_audit_event", _spy_append)
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
         lambda _auth: {"appid": "bot-test", "iat": int(time.time())},

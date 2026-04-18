@@ -445,7 +445,7 @@ async def delete_user(
 
     # Audit event
     try:
-        db.append_ap_audit_event({
+        db.append_audit_event({
             "event_type": "user_archived",
             "actor_type": "user",
             "actor_id": actor_email,

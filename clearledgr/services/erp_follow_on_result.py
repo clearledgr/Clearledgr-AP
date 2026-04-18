@@ -535,7 +535,7 @@ def _apply_erp_follow_on_result(
         else "failed"
     )
     for ap_item_id in (source_ap_item_id, related_ap_item_id):
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": ap_item_id,
                 "event_type": f"{event_prefix}_{event_suffix}",

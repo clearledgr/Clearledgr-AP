@@ -86,7 +86,7 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
     db.create_ap_item(_item_payload("alpha-2", "org-alpha"))
     db.create_ap_item(_item_payload("beta-1", "org-beta"))
 
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "id": "evt-alpha-1",
             "ap_item_id": "alpha-1",
@@ -96,7 +96,7 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
             "ts": "2026-03-01T01:00:00+00:00",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "id": "evt-alpha-2",
             "ap_item_id": "alpha-2",
@@ -106,7 +106,7 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
             "ts": "2026-03-01T02:00:00+00:00",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "id": "evt-beta-1",
             "ap_item_id": "beta-1",
@@ -128,7 +128,7 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
 
     events = payload["events"]
     assert len(events) == 2
-    assert all(str(event.get("ap_item_id", "")).startswith("alpha-") for event in events)
+    assert all(str(event.get("box_id", "")).startswith("alpha-") for event in events)
     assert events[0]["ts"] >= events[1]["ts"]  # newest first
     assert isinstance(events[0].get("operator_title"), str)
     assert isinstance(events[0].get("operator_message"), str)
@@ -145,7 +145,7 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
 
 def test_recent_ap_audit_rejects_cross_org_access(client, db):
     db.create_ap_item(_item_payload("alpha-1", "org-alpha"))
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "id": "evt-alpha-1",
             "ap_item_id": "alpha-1",

@@ -218,9 +218,9 @@ class OnboardingTokenStore:
             return None
 
         # Audit event with NO token value — only field names + actor.
-        if hasattr(self, "append_ap_audit_event"):
+        if hasattr(self, "append_audit_event"):
             try:
-                self.append_ap_audit_event(
+                self.append_audit_event(
                     {
                         "ap_item_id": "",
                         "event_type": "vendor_onboarding_token_issued",
@@ -424,9 +424,9 @@ class OnboardingTokenStore:
             )
             return None
 
-        if hasattr(self, "append_ap_audit_event"):
+        if hasattr(self, "append_audit_event"):
             try:
-                self.append_ap_audit_event(
+                self.append_audit_event(
                     {
                         "ap_item_id": "",
                         "event_type": "vendor_onboarding_token_revoked",

@@ -436,7 +436,7 @@ async def _persist_enrichment(
             )
 
         # Audit event.
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_enriched",

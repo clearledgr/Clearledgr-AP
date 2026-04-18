@@ -983,7 +983,7 @@ async def _check_approval_timeouts(org_id: str):
                         reason = (
                             f"approval_escalation_auto_{int(min_hours) if float(min_hours).is_integer() else min_hours}h"
                         )
-                    db.append_ap_audit_event(
+                    db.append_audit_event(
                         {
                             "ap_item_id": ap_item_id,
                             "event_type": event_type,
@@ -1144,7 +1144,7 @@ async def _verify_recent_erp_postings(org_id: str):
                         exception_code="erp_sync_mismatch",
                         exception_severity="high",
                     )
-                    db.append_ap_audit_event({
+                    db.append_audit_event({
                         "ap_item_id": ap_item_id,
                         "event_type": "erp_sync_mismatch",
                         "actor_type": "system",
@@ -1275,8 +1275,8 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                             ap_item = db.get_ap_item(ap_item_id)
                             if ap_item and str(ap_item.get("state") or "").lower() == "posted_to_erp":
                                 db.update_ap_item(ap_item_id, state="closed")
-                                if hasattr(db, "append_ap_audit_event"):
-                                    db.append_ap_audit_event(
+                                if hasattr(db, "append_audit_event"):
+                                    db.append_audit_event(
                                         ap_item_id=ap_item_id,
                                         event_type="closed_by_credit",
                                         prev_state="posted_to_erp",
@@ -1343,8 +1343,8 @@ async def _poll_payment_statuses(org_id: str) -> Dict[str, int]:
                             ap_item = db.get_ap_item(ap_item_id)
                             if ap_item and str(ap_item.get("state") or "").lower() == "posted_to_erp":
                                 db.update_ap_item(ap_item_id, state="closed")
-                                if hasattr(db, "append_ap_audit_event"):
-                                    db.append_ap_audit_event(
+                                if hasattr(db, "append_audit_event"):
+                                    db.append_audit_event(
                                         ap_item_id=ap_item_id,
                                         event_type="closed_by_payment",
                                         prev_state="posted_to_erp",
@@ -1815,7 +1815,7 @@ async def _sweep_exception_resolutions(org_id: str):
                 if result.get("resolved"):
                     items_resolved += 1
                     try:
-                        db.append_ap_audit_event({
+                        db.append_audit_event({
                             "ap_item_id": item.get("id"),
                             "event_type": "exception_auto_resolved",
                             "actor_type": "system",

@@ -585,7 +585,7 @@ class PurchaseOrderService:
         """Open POs for a vendor. Matches the legacy signature (vendor_id
         as input); the underlying store matches by vendor_name which is
         typically what's populated. Callers already pass vendor_name in
-        practice — see execution_engine and invoice_validation."""
+        practice — see coordination_engine and invoice_validation."""
         rows = self._db.list_purchase_orders_for_vendor(
             self.organization_id,
             vendor_id,
@@ -1095,7 +1095,7 @@ class PurchaseOrderService:
         match.override_reason = reason
         self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
         try:
-            self._db.append_ap_audit_event({
+            self._db.append_audit_event({
                 "ap_item_id": match.invoice_id,
                 "event_type": "po_match_override",
                 "from_state": prev_status,

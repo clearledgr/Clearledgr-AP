@@ -773,7 +773,7 @@ def _link_related_item_for_non_invoice_resolution(
         _source="non_invoice_downstream_linkage",
         _decision_reason=str(resolution.get("outcome") or "linked"),
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": str(related_item.get("id") or "").strip(),
             "event_type": _non_invoice_link_event_type(source_document_type),
@@ -2899,7 +2899,7 @@ async def _execute_field_review_resolution(
         _decision_reason="field_review_resolved",
     )
 
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": ap_item_id,
             "event_type": "field_correction",

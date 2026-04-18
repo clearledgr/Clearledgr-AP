@@ -463,7 +463,7 @@ async def activate_vendor_in_erp(
 
     # Audit event.
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_onboarding_activated",

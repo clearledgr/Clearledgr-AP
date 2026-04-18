@@ -10,6 +10,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 def _fresh_db(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "health.db"))
@@ -39,24 +41,25 @@ def _seed_ap_item(db, ap_id, state, **overrides):
     db.create_ap_item(payload)
 
 
-def _seed_state_entry(db, ap_id, new_state, minutes_ago):
+def _seed_state_entry(db, ap_id, new_state, minutes_ago, org_id="test-org",
+                      box_type="ap_item"):
     """Insert a state_transition audit event with a controlled ts so
     ``get_box_health`` sees the Box entered ``new_state`` that long ago.
     """
     ts = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
     sql = db._prepare_sql(
         """INSERT INTO audit_events
-        (id, ap_item_id, event_type, prev_state, new_state,
+        (id, box_id, box_type, event_type, prev_state, new_state,
          actor_type, actor_id, payload_json, source, correlation_id,
          workflow_id, run_id, decision_reason, organization_id, ts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
     )
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(sql, (
-            str(uuid.uuid4()), ap_id, "state_transition", None, new_state,
+            str(uuid.uuid4()), ap_id, box_type, "state_transition", None, new_state,
             "agent", "test", "{}", "test", None, None, None, None,
-            "test-org", ts,
+            org_id, ts,
         ))
         conn.commit()
 
@@ -78,11 +81,11 @@ class TestBoxHealthDrillDown:
             approval_sla_minutes=240,
         )
 
-        stuck_ids = [b["ap_item_id"] for b in health["stuck_boxes"]]
+        stuck_ids = [b["box_id"] for b in health["stuck_boxes"]]
         assert "ap-stuck-approval" in stuck_ids
         assert "ap-fresh" not in stuck_ids
 
-        stuck_row = next(b for b in health["stuck_boxes"] if b["ap_item_id"] == "ap-stuck-approval")
+        stuck_row = next(b for b in health["stuck_boxes"] if b["box_id"] == "ap-stuck-approval")
         assert stuck_row["state"] == "needs_approval"
         assert stuck_row["stuck_reason"] == "awaiting_approval_over_sla"
         assert stuck_row["time_in_stage_minutes"] >= 240
@@ -98,7 +101,7 @@ class TestBoxHealthDrillDown:
         _seed_state_entry(db, "ap-rejected", "rejected", minutes_ago=10_000)
 
         health = db.get_box_health("test-org")
-        stuck_ids = [b["ap_item_id"] for b in health["stuck_boxes"]]
+        stuck_ids = [b["box_id"] for b in health["stuck_boxes"]]
         assert "ap-posted" not in stuck_ids
         assert "ap-rejected" not in stuck_ids
         # Terminal states also don't show up in time_in_stage buckets.
@@ -118,7 +121,7 @@ class TestBoxHealthDrillDown:
 
         assert "needs_info" in clusters
         assert clusters["needs_info"]["count"] == 2
-        assert set(clusters["needs_info"]["sample_ap_item_ids"]) == {"ap-ni-1", "ap-ni-2"}
+        assert set(clusters["needs_info"]["sample_box_ids"]) == {"ap-ni-1", "ap-ni-2"}
         assert len(clusters["needs_info"]["sample_errors"]) == 2
 
         assert "failed_post" in clusters
@@ -156,7 +159,7 @@ class TestBoxHealthDrillDown:
         _seed_state_entry(db, "ap-newer", "validated", minutes_ago=200)
 
         health = db.get_box_health("test-org", stuck_threshold_minutes=120)
-        ids = [b["ap_item_id"] for b in health["stuck_boxes"]]
+        ids = [b["box_id"] for b in health["stuck_boxes"]]
         assert ids.index("ap-old") < ids.index("ap-newer")
 
     def test_organization_isolation(self, tmp_path, monkeypatch):
@@ -174,25 +177,78 @@ class TestBoxHealthDrillDown:
             "vendor_name": "Other Co",
             "amount": 500.0,
         })
-        # Insert their audit event under other-org
-        ts = (datetime.now(timezone.utc) - timedelta(minutes=500)).isoformat()
-        sql = db._prepare_sql(
-            """INSERT INTO audit_events
-            (id, ap_item_id, event_type, prev_state, new_state,
-             actor_type, actor_id, payload_json, source, correlation_id,
-             workflow_id, run_id, decision_reason, organization_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        # Insert their audit event under other-org (helper now
+        # writes box_id/box_type, not ap_item_id).
+        _seed_state_entry(
+            db, "ap-theirs", "validated", minutes_ago=500, org_id="other-org",
         )
-        with db.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(sql, (
-                str(uuid.uuid4()), "ap-theirs", "state_transition", None, "validated",
-                "agent", "test", "{}", "test", None, None, None, None,
-                "other-org", ts,
-            ))
-            conn.commit()
 
         health = db.get_box_health("test-org")
-        ids = [b["ap_item_id"] for b in health["stuck_boxes"]]
+        ids = [b["box_id"] for b in health["stuck_boxes"]]
         assert "ap-mine" in ids
         assert "ap-theirs" not in ids
+
+
+class TestBoxHealthAcrossBoxTypes:
+    """Post-Phase-1 generalization: get_box_health reads open/exception
+    state sets from the registry, so non-AP Box types work too.
+    """
+
+    def test_registry_drives_state_sets_for_ap(self, tmp_path, monkeypatch):
+        db = _fresh_db(tmp_path, monkeypatch)
+
+        _seed_ap_item(db, "ap-stuck", "validated")
+        _seed_state_entry(db, "ap-stuck", "validated", minutes_ago=500)
+
+        # Defaulting to ap_item (back-compat) still works.
+        health_default = db.get_box_health("test-org", stuck_threshold_minutes=120)
+        # Explicit box_type="ap_item" returns the same result.
+        health_explicit = db.get_box_health(
+            "test-org", stuck_threshold_minutes=120, box_type="ap_item",
+        )
+        assert health_default["stuck_count"] == health_explicit["stuck_count"]
+        assert health_explicit["box_type"] == "ap_item"
+
+    def test_vendor_onboarding_box_health(self, tmp_path, monkeypatch):
+        db = _fresh_db(tmp_path, monkeypatch)
+
+        # Seed one pending vendor onboarding session.
+        session = db.create_vendor_onboarding_session(
+            organization_id="test-org",
+            vendor_name="Acme Inc",
+            invited_by="ap@test-org",
+        )
+        session_id = session["id"]
+
+        # Backdate last_activity_at so the Box shows some time-in-stage.
+        # (Health's fallback to updated_at/created_at covers absence of a
+        # state_transition audit event for this session.)
+        past = (datetime.now(timezone.utc) - timedelta(minutes=300)).isoformat()
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                db._prepare_sql(
+                    "UPDATE vendor_onboarding_sessions "
+                    "SET updated_at = ?, created_at = ? WHERE id = ?"
+                ),
+                (past, past, session_id),
+            )
+            conn.commit()
+
+        health = db.get_box_health(
+            "test-org",
+            stuck_threshold_minutes=120,
+            box_type="vendor_onboarding_session",
+        )
+        assert health["box_type"] == "vendor_onboarding_session"
+        # The seeded session is in 'invited' state and past the stuck threshold.
+        assert health["stuck_count"] >= 1
+        stuck_ids = [b["box_id"] for b in health["stuck_boxes"]]
+        assert session_id in stuck_ids
+        # 'invited' is an open (pre-active) state → should appear in time-in-stage.
+        assert "invited" in health["time_in_stage"]
+
+    def test_unknown_box_type_raises(self, tmp_path, monkeypatch):
+        db = _fresh_db(tmp_path, monkeypatch)
+        with pytest.raises((KeyError, NotImplementedError)):
+            db.get_box_health("test-org", box_type="does_not_exist")

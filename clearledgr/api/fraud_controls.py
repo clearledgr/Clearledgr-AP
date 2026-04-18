@@ -9,7 +9,7 @@ Per DESIGN_THESIS.md §8, fraud controls are architectural:
   cannot be disabled from any API — only raised/lowered.
 - The *numeric parameters* (ceiling amount, velocity max, dormancy days)
   can be modified only by the CFO role (or owner as the superset).
-- Every modification is logged via ``db.append_ap_audit_event`` with
+- Every modification is logged via ``db.append_audit_event`` with
   ``event_type="fraud_control_modified"`` and a full before/after diff.
 
 Endpoints:

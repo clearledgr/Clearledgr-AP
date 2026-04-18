@@ -95,7 +95,7 @@ class TestActivationSlackWiring:
         db.attach_erp_vendor_id = MagicMock()
         db.transition_onboarding_session_state = MagicMock()
         db.revoke_session_tokens = MagicMock()
-        db.append_ap_audit_event = MagicMock()
+        db.append_audit_event = MagicMock()
         db.get_erp_connections = MagicMock(return_value=[{"erp_type": "quickbooks"}])
 
         from clearledgr.services import vendor_onboarding_lifecycle
@@ -139,7 +139,7 @@ class TestActivationSlackWiring:
         db.attach_erp_vendor_id = MagicMock()
         db.transition_onboarding_session_state = MagicMock()
         db.revoke_session_tokens = MagicMock()
-        db.append_ap_audit_event = MagicMock()
+        db.append_audit_event = MagicMock()
         db.get_erp_connections = MagicMock(return_value=[])
 
         from clearledgr.services import vendor_onboarding_lifecycle

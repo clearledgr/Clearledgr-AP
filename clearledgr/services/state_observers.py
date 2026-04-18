@@ -114,10 +114,10 @@ class AuditTrailObserver(StateObserver):
     }
 
     async def on_transition(self, event: StateTransitionEvent) -> None:
-        if not hasattr(self._db, "append_ap_audit_event"):
+        if not hasattr(self._db, "append_audit_event"):
             return
         next_action = self._NEXT_ACTION_MAP.get(event.new_state, "")
-        self._db.append_ap_audit_event({
+        self._db.append_audit_event({
             "ap_item_id": event.ap_item_id,
             "organization_id": event.organization_id,
             "event_type": "state_transition",

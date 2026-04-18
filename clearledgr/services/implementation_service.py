@@ -159,7 +159,7 @@ async def complete_implementation_step(
 
     # Audit
     try:
-        db.append_ap_audit_event({
+        db.append_audit_event({
             "event_type": "implementation_step_completed",
             "actor_type": "user",
             "actor_id": completed_by,

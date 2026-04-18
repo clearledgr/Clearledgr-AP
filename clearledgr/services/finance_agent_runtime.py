@@ -866,7 +866,7 @@ class FinanceAgentRuntime:
             evidence_refs=resolved_evidence_refs,
         )
         metadata_payload.setdefault("canonical_audit_event", canonical_event.to_dict())
-        audit_row = self.db.append_ap_audit_event(
+        audit_row = self.db.append_audit_event(
             {
                 "ap_item_id": ap_item_id,
                 "event_type": event_type,

@@ -1,12 +1,12 @@
 """Plan and Action dataclasses — Agent Design Specification §4/§5.
 
 A Plan is an ordered sequence of Actions produced by the Planning Engine
-and consumed by the Execution Engine. Plans are serializable to JSON
+and consumed by the Coordination Engine. Plans are serializable to JSON
 for persistence in the ``pending_plan`` column (crash recovery / async wait).
 
 Every Action is either DET (deterministic) or LLM (Claude-assisted).
-The Execution Engine enforces this boundary — a DET action that attempts
-to call Claude is logged as a bug.
+The Coordination Engine enforces this boundary — a DET action that
+attempts to call Claude is logged as a bug.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class Action:
 
     Attributes:
         name: The action identifier (e.g. "classify_email", "post_bill").
-              Must match a key in the ExecutionEngine's handler registry.
+              Must match a key in the CoordinationEngine's handler registry.
         layer: "DET" (deterministic) or "LLM" (Claude-assisted).
         params: Action-specific parameters passed to the handler.
         description: Human-readable text for the pre-execution timeline entry.
@@ -55,9 +55,10 @@ class Action:
 class Plan:
     """An ordered sequence of Actions produced by the Planning Engine.
 
-    The Execution Engine consumes the Plan one Action at a time.
-    If execution is interrupted (async wait or crash), the remaining
-    actions are serialized to ``pending_plan`` on the Box for resumption.
+    The Coordination Engine consumes the Plan one Action at a time.
+    If a run is interrupted (async wait or crash), the remaining
+    actions are serialized to ``pending_plan`` on the Box for
+    resumption.
     """
 
     event_type: str
@@ -110,8 +111,8 @@ class Plan:
 
 
 @dataclass
-class ExecutionResult:
-    """Result of executing a Plan through the Execution Engine."""
+class CoordinationResult:
+    """Result of running a Plan through the Coordination Engine."""
 
     status: str  # "completed" | "waiting" | "failed" | "aborted"
     steps_completed: int = 0

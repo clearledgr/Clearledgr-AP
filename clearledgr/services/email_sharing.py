@@ -88,8 +88,8 @@ async def share_individual_inbox_email(
     try:
         if hasattr(db, "append_ap_item_timeline_entry"):
             db.append_ap_item_timeline_entry(ap_item_id, timeline_entry)
-        elif hasattr(db, "append_ap_audit_event"):
-            db.append_ap_audit_event({
+        elif hasattr(db, "append_audit_event"):
+            db.append_audit_event({
                 "ap_item_id": ap_item_id,
                 "event_type": "email_shared_to_pipeline",
                 "actor_type": "agent",

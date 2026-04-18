@@ -529,7 +529,7 @@ class IbanChangeFreezeService:
     ) -> None:
         """Emit a structured audit event. Non-fatal on failure."""
         try:
-            self.db.append_ap_audit_event(
+            self.db.append_audit_event(
                 {
                     "ap_item_id": ap_item_id or "",
                     "event_type": event_type,

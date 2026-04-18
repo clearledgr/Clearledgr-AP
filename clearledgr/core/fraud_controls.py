@@ -231,7 +231,7 @@ def save_fraud_controls(
     # entity_type so SOC/compliance queries can filter cleanly.
     diff = _diff_configs(previous, config)
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": "",  # not an invoice-scoped event
                 "event_type": "fraud_control_modified",

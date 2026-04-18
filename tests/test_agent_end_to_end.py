@@ -10,7 +10,7 @@ import pytest
 
 from clearledgr.core.database import get_db
 from clearledgr.core.events import AgentEvent, AgentEventType
-from clearledgr.core.execution_engine import ExecutionEngine
+from clearledgr.core.coordination_engine import CoordinationEngine
 from clearledgr.core.planning_engine import DeterministicPlanningEngine
 from clearledgr.core.plan import Action, Plan
 
@@ -158,7 +158,7 @@ class TestFullPipelineExecution:
     def test_approval_event_end_to_end(self, db):
         """approval_received event produces plan, executes, and completes or aborts cleanly."""
         planning = DeterministicPlanningEngine(db)
-        execution = ExecutionEngine(db, "e2e-full-org")
+        execution = CoordinationEngine(db, "e2e-full-org")
 
         event = AgentEvent(
             type=AgentEventType.APPROVAL_RECEIVED, source="test",

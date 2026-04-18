@@ -663,7 +663,7 @@ class TestBackgroundSweep:
             return []
 
         mock_db.list_ap_items = _list_ap_items
-        mock_db.append_ap_audit_event = MagicMock(return_value=None)
+        mock_db.append_audit_event = MagicMock(return_value=None)
 
         mock_resolver = MagicMock()
         mock_resolver.resolve = AsyncMock(
@@ -683,7 +683,7 @@ class TestBackgroundSweep:
         # resolver called for both items
         assert mock_resolver.resolve.call_count == 2
         # audit event logged for the resolved one
-        assert mock_db.append_ap_audit_event.call_count == 1
+        assert mock_db.append_audit_event.call_count == 1
 
     def test_sweep_caps_at_25(self):
         from clearledgr.services import agent_background as bg_mod
@@ -703,7 +703,7 @@ class TestBackgroundSweep:
             return []
 
         mock_db.list_ap_items = _list_ap_items
-        mock_db.append_ap_audit_event = MagicMock()
+        mock_db.append_audit_event = MagicMock()
 
         mock_resolver = MagicMock()
         mock_resolver.resolve = AsyncMock(
@@ -737,7 +737,7 @@ class TestBackgroundSweep:
             return []
 
         mock_db.list_ap_items = _list_ap_items
-        mock_db.append_ap_audit_event = MagicMock()
+        mock_db.append_audit_event = MagicMock()
 
         mock_resolver = MagicMock()
         mock_resolver.resolve = AsyncMock(

@@ -104,16 +104,16 @@ def process_agent_event(self, event_data: dict) -> dict:
 
 
 def _dispatch_event(event) -> dict:
-    """§4 + §5: Planning Engine produces Plan, Execution Engine runs it.
+    """§4 + §5: Planning Engine produces Plan, Coordination Engine runs it.
 
     This is the canonical event processing path. Every event goes through:
     1. DeterministicPlanningEngine.plan(event, box_state) → Plan
-    2. ExecutionEngine.execute(plan) → ExecutionResult
+    2. CoordinationEngine.execute(plan) → CoordinationResult
     """
     import asyncio
     from clearledgr.core.database import get_db
     from clearledgr.core.planning_engine import get_planning_engine
-    from clearledgr.core.execution_engine import ExecutionEngine
+    from clearledgr.core.coordination_engine import CoordinationEngine
 
     db = get_db()
     box_state = _load_box_state(event, db)
@@ -129,8 +129,8 @@ def _dispatch_event(event) -> dict:
     if box_state.get("id"):
         plan.box_id = box_state["id"]
 
-    # §5: Execution engine runs the Plan (mechanical, one action at a time)
-    engine = ExecutionEngine(db, event.organization_id)
+    # §5: Coordination engine runs the Plan (mechanical, one action at a time)
+    engine = CoordinationEngine(db, event.organization_id)
     result = asyncio.run(engine.execute(plan))
 
     return result.to_dict()
@@ -380,7 +380,7 @@ def purge_soft_deleted_orgs() -> dict:
                     "[purge] stamping purged_at failed for org=%s: %s", org_id, exc
                 )
             try:
-                db.append_ap_audit_event({
+                db.append_audit_event({
                     "event_type": "organization_hard_purged",
                     "actor_type": "system",
                     "actor_id": "retention_job",

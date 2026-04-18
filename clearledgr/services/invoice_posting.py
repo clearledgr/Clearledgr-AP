@@ -1143,7 +1143,7 @@ class InvoicePostingMixin:
             )
             if ap_item_id:
                 try:
-                    self.db.append_ap_audit_event(
+                    self.db.append_audit_event(
                         {
                             "ap_item_id": ap_item_id,
                             "event_type": "erp_post_resumed",
@@ -1508,7 +1508,7 @@ class InvoicePostingMixin:
         # H3: Audit ERP post attempt before execution (PLAN.md S4.7)
         if ap_item_id:
             try:
-                self.db.append_ap_audit_event(
+                self.db.append_audit_event(
                     {
                         "ap_item_id": ap_item_id,
                         "event_type": "erp_post_attempted",
@@ -1554,7 +1554,7 @@ class InvoicePostingMixin:
         if ap_item_id:
             post_event_type = "erp_post_succeeded" if result.get("status") == "success" else "erp_post_failed"
             try:
-                self.db.append_ap_audit_event(
+                self.db.append_audit_event(
                     {
                         "ap_item_id": ap_item_id,
                         "event_type": post_event_type,

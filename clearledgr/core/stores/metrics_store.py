@@ -30,6 +30,16 @@ from clearledgr.core.utils import safe_float
 logger = logging.getLogger(__name__)
 
 
+def _state_transition_event_types(box_type: str) -> List[str]:
+    """Map a Box type to the audit event_type(s) that record its
+    state transitions. Vendor onboarding emits its own prefixed
+    event_type; AP uses the generic ``state_transition``.
+    """
+    if box_type == "vendor_onboarding_session":
+        return ["vendor_onboarding_state_transition"]
+    return ["state_transition"]
+
+
 class MetricsStore:
     # ------------------------------------------------------------------
     # Utility helpers
@@ -1181,40 +1191,47 @@ class MetricsStore:
         stuck_threshold_minutes: int = 120,
         approval_sla_minutes: int = 240,
         limit: int = 500,
+        box_type: str = "ap_item",
     ) -> Dict[str, Any]:
-        """Drill-down view of AP Box health for the ops surface.
+        """Drill-down view of Box health for the ops surface.
 
         Complements ``get_operational_metrics``: that returns aggregates
         ("4 stuck"), this returns the specific Boxes — which ones, in
         what stage, for how long, and what the exception signal is.
         Lets the team see the product breathing.
+
+        The open/terminal/exception state sets come from the Box type
+        registry so this view works for any registered Box type. AP is
+        the default for backward compatibility.
         """
+        from clearledgr.core import box_registry
+
         self.initialize()
         now = datetime.now(timezone.utc)
 
-        items = self.list_ap_items(organization_id, limit=max(limit, 1000))
-        open_states = {
-            "received", "validated", "needs_info", "needs_approval",
-            "approved", "ready_to_post", "failed_post", "snoozed",
-        }
-        exception_states = {"needs_info", "failed_post"}
+        bt = box_registry.get(box_type)
+        open_states = set(bt.open_states)
+        exception_states = set(bt.exception_states)
 
-        # Map (ap_item_id, state) → latest state_transition ts. list_audit_events
-        # returns ts DESC so the first hit per key is the most recent entry
-        # into that state.
+        items = self._list_boxes_for_health(box_type, organization_id, limit)
+
+        # Map (box_id, state) → latest state-transition ts. Events are ts DESC
+        # so the first hit per key is the most recent entry into that state.
         transitions = self.list_audit_events(
             organization_id,
-            event_types=["state_transition"],
+            event_types=_state_transition_event_types(box_type),
             limit=20000,
         )
         latest_entry: Dict[tuple, datetime] = {}
         for evt in transitions:
-            ap_id = evt.get("ap_item_id")
+            # Prefer the new generic column; fall back to the legacy one
+            # for rows written before migration v42.
+            bx_id = evt.get("box_id")
             new_state = evt.get("new_state")
             ts = self._parse_iso(evt.get("ts"))
-            if not ap_id or not new_state or not ts:
+            if not bx_id or not new_state or not ts:
                 continue
-            key = (ap_id, new_state)
+            key = (bx_id, new_state)
             if key not in latest_entry:
                 latest_entry[key] = ts
 
@@ -1223,12 +1240,12 @@ class MetricsStore:
         exception_by_state: Dict[str, Dict[str, Any]] = {}
 
         for item in items:
-            state = str(item.get("state") or "received")
+            state = str(item.get("state") or "")
             if state not in open_states:
                 continue
-            ap_id = item.get("id") or item.get("ap_item_id")
+            bx_id = item.get("id") or item.get("ap_item_id")
             entry_ts = (
-                latest_entry.get((ap_id, state))
+                latest_entry.get((bx_id, state))
                 or self._parse_iso(item.get("updated_at"))
                 or self._parse_iso(item.get("created_at"))
             )
@@ -1239,7 +1256,13 @@ class MetricsStore:
 
             is_stuck = False
             stuck_reason: Optional[str] = None
-            if state == "needs_approval" and tis_min >= approval_sla_minutes:
+            # AP-specific approval SLA override. For other box types,
+            # the generic stuck threshold applies uniformly.
+            if (
+                box_type == "ap_item"
+                and state == "needs_approval"
+                and tis_min >= approval_sla_minutes
+            ):
                 is_stuck = True
                 stuck_reason = "awaiting_approval_over_sla"
             elif tis_min >= stuck_threshold_minutes:
@@ -1249,19 +1272,20 @@ class MetricsStore:
             if state in exception_states:
                 bucket = exception_by_state.setdefault(state, {
                     "count": 0,
-                    "sample_ap_item_ids": [],
+                    "sample_box_ids": [],
                     "sample_errors": [],
                 })
                 bucket["count"] += 1
-                if len(bucket["sample_ap_item_ids"]) < 5:
-                    bucket["sample_ap_item_ids"].append(str(ap_id))
+                if len(bucket["sample_box_ids"]) < 5:
+                    bucket["sample_box_ids"].append(str(bx_id))
                 err = item.get("last_error")
                 if err and len(bucket["sample_errors"]) < 5:
                     bucket["sample_errors"].append(str(err)[:120])
 
             if is_stuck:
                 stuck_boxes.append({
-                    "ap_item_id": ap_id,
+                    "box_id": bx_id,
+                    "box_type": box_type,
                     "vendor_name": item.get("vendor_name") or item.get("vendor"),
                     "amount": safe_float(item.get("amount"), 0.0),
                     "currency": item.get("currency") or "USD",
@@ -1297,6 +1321,7 @@ class MetricsStore:
 
         return {
             "organization_id": organization_id,
+            "box_type": box_type,
             "generated_at": now.isoformat(),
             "stuck_count": len(stuck_boxes),
             "stuck_boxes": stuck_boxes,
@@ -1307,6 +1332,26 @@ class MetricsStore:
                 "approval_sla_minutes": int(approval_sla_minutes),
             },
         }
+
+    def _list_boxes_for_health(
+        self, box_type: str, organization_id: str, limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Dispatch to the right store method for the given Box type."""
+        from clearledgr.core import box_registry
+
+        fetch_limit = max(limit, 1000)
+        if box_type == "ap_item":
+            return self.list_ap_items(organization_id, limit=fetch_limit)
+        if box_type == "vendor_onboarding_session":
+            bt = box_registry.get("vendor_onboarding_session")
+            return self.list_pending_onboarding_sessions(
+                organization_id,
+                states=list(bt.open_states),
+                limit=fetch_limit,
+            )
+        raise NotImplementedError(
+            f"get_box_health has no lister for box_type={box_type!r}"
+        )
 
     # ------------------------------------------------------------------
     # AP KPIs
@@ -1511,10 +1556,13 @@ class MetricsStore:
         )
         audit_events_by_item: Dict[str, List[Dict[str, Any]]] = {}
         for event in shadow_audit_events:
-            ap_item_id = str(event.get("ap_item_id") or "").strip()
-            if not ap_item_id:
+            # Only AP-Box audit events contribute to AP metrics.
+            if str(event.get("box_type") or "") != "ap_item":
                 continue
-            audit_events_by_item.setdefault(ap_item_id, []).append(event)
+            item_id = str(event.get("box_id") or "").strip()
+            if not item_id:
+                continue
+            audit_events_by_item.setdefault(item_id, []).append(event)
 
         blocker_category_counts: Dict[str, int] = {
             "confidence": 0,

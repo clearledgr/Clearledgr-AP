@@ -2872,7 +2872,7 @@ class TestExtensionEndpoints:
         def list_ap_audit_events(self, ap_item_id):
             return list(self.audit_events) if str(ap_item_id) == str(self.ap_item.get("id") or "") else []
 
-        def append_ap_audit_event(self, payload):
+        def append_audit_event(self, payload):
             key = str((payload or {}).get("idempotency_key") or "").strip()
             if key:
                 existing = self.get_ap_audit_event_by_key(key)

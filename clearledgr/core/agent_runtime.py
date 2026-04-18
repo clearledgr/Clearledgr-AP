@@ -361,10 +361,10 @@ class AgentPlanningEngine:
                     if hasattr(task, "metadata") and isinstance(task.metadata, dict)
                     else None
                 )
-                if _ap_item_id and hasattr(db, "append_ap_audit_event"):
+                if _ap_item_id and hasattr(db, "append_audit_event"):
                     import uuid as _uuid
                     _pre_exec_timeline_id = f"TL-{_uuid.uuid4().hex[:12]}"
-                    db.append_ap_audit_event({
+                    db.append_audit_event({
                         "id": _pre_exec_timeline_id,
                         "ap_item_id": _ap_item_id,
                         "event_type": f"agent_action:{tool_name}:executing",
@@ -416,10 +416,10 @@ class AgentPlanningEngine:
 
             # §5.1 Rule 1: Update pre-execution timeline entry with result
             try:
-                if _pre_exec_timeline_id and _ap_item_id and hasattr(db, "append_ap_audit_event"):
+                if _pre_exec_timeline_id and _ap_item_id and hasattr(db, "append_audit_event"):
                     _result_status = "completed" if output.get("ok", True) else "failed"
                     _result_summary = str(output.get("error", ""))[:200] if not output.get("ok", True) else "ok"
-                    db.append_ap_audit_event({
+                    db.append_audit_event({
                         "id": f"{_pre_exec_timeline_id}-result",
                         "ap_item_id": _ap_item_id,
                         "event_type": f"agent_action:{tool_name}:{_result_status}",

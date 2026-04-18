@@ -519,7 +519,7 @@ async def import_vendors_csv(
             skipped.append({"row": row, "reason": str(exc)})
 
     # Audit event
-    db.append_ap_audit_event({
+    db.append_audit_event({
         "event_type": "vendor_csv_import",
         "actor_type": "user",
         "actor_id": actor_id,

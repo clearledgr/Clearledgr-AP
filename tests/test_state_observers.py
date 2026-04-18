@@ -116,15 +116,15 @@ def test_audit_observer_records_event():
     event = _make_event(old_state="validated", new_state="needs_approval")
     _run(obs.on_transition(event))
 
-    db.append_ap_audit_event.assert_called_once()
-    call_arg = db.append_ap_audit_event.call_args[0][0]
+    db.append_audit_event.assert_called_once()
+    call_arg = db.append_audit_event.call_args[0][0]
     assert call_arg["event_type"] == "state_transition"
     assert call_arg["details"]["old_state"] == "validated"
     assert call_arg["details"]["new_state"] == "needs_approval"
 
 
 def test_audit_observer_skips_without_method():
-    db = MagicMock(spec=[])  # no append_ap_audit_event
+    db = MagicMock(spec=[])  # no append_audit_event
     obs = AuditTrailObserver(db)
     _run(obs.on_transition(_make_event()))  # should not raise
 

@@ -946,7 +946,7 @@ class TestReverseBillDispatcher:
         """When an erp_reversal_succeeded audit event exists for the
         idempotency_key, reverse_bill must return the cached result
         without hitting the ERP."""
-        tmp_db.append_ap_audit_event(
+        tmp_db.append_audit_event(
             {
                 "ap_item_id": "AP-KEY",
                 "event_type": "erp_reversal_succeeded",

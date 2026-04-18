@@ -61,7 +61,7 @@ def test_purge_leaves_audit_events_intact(fresh_db):
     db = fresh_db
     db.ensure_organization("org_c", organization_name="C")
     item = db.create_ap_item({"organization_id": "org_c", "vendor_name": "Delta", "state": "received"})
-    db.append_ap_audit_event({
+    db.append_audit_event({
         "event_type": "test_event",
         "actor_type": "system",
         "actor_id": "pytest",

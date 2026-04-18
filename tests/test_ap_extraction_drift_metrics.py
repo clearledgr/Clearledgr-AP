@@ -247,7 +247,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
         erp_reference="ERP-SHADOW-1",
         erp_posted_at=now.isoformat(),
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": strong_item["id"],
             "organization_id": "default",
@@ -256,7 +256,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
             "actor_id": "test",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": strong_item["id"],
             "organization_id": "default",
@@ -297,7 +297,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
             "organization_id": "default",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": weak_item["id"],
             "organization_id": "default",
@@ -332,7 +332,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
             },
         },
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": mismatch_item["id"],
             "organization_id": "default",
@@ -341,7 +341,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
             "actor_id": "test",
         }
     )
-    db.append_ap_audit_event(
+    db.append_audit_event(
         {
             "ap_item_id": mismatch_item["id"],
             "organization_id": "default",

@@ -188,7 +188,7 @@ def _audit_erp_admin_action(
         }
         if extra:
             payload.update(extra)
-        db.append_ap_audit_event({
+        db.append_audit_event({
             "event_type": f"erp_admin_action:{action}",
             "actor_type": "user",
             "actor_id": actor_id,

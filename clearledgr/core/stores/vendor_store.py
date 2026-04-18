@@ -1895,10 +1895,10 @@ class VendorStore:
         import uuid as _uuid
         audit_sql = self._prepare_sql(
             "INSERT INTO audit_events "
-            "(id, ap_item_id, event_type, prev_state, new_state, "
+            "(id, box_id, box_type, event_type, prev_state, new_state, "
             " actor_type, actor_id, payload_json, decision_reason, "
             " organization_id, source, ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         audit_payload = {
             "session_id": session_id,
@@ -1908,10 +1908,9 @@ class VendorStore:
             "reason": reason,
         }
         # Decision-reason carries the same one-line narrative the
-        # old append_ap_audit_event path wrote to the audit_events
-        # row. Audit feed consumers that filter on this string
-        # continue to work; structured fields (prev_state /
-        # new_state / payload_json) are the preferred read path.
+        # audit feed consumers filter on. Structured fields
+        # (prev_state / new_state / payload_json) are the preferred
+        # read path.
         audit_decision_reason = (
             f"Vendor onboarding session {session_id}: {current} -> {target}"
             + (f" — {reason}" if reason else "")
@@ -1926,7 +1925,8 @@ class VendorStore:
                         audit_sql,
                         (
                             str(_uuid.uuid4()),
-                            "",  # ap_item_id — vendor onboarding events aren't AP items
+                            session_id,                      # box_id
+                            "vendor_onboarding_session",     # box_type
                             "vendor_onboarding_state_transition",
                             str(current or ""),
                             target,
@@ -2010,9 +2010,9 @@ class VendorStore:
             )
             return None
 
-        if hasattr(self, "append_ap_audit_event"):
+        if hasattr(self, "append_audit_event"):
             try:
-                self.append_ap_audit_event(
+                self.append_audit_event(
                     {
                         "ap_item_id": "",
                         "event_type": "vendor_onboarding_chase_sent",

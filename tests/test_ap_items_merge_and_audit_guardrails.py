@@ -125,7 +125,7 @@ def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(db):
 
 def test_audit_events_table_is_append_only(db):
     item = _create_ap_item(db, item_id="AP-AUDIT-1", thread_id="thread-audit")
-    event = db.append_ap_audit_event(
+    event = db.append_audit_event(
         {
             "ap_item_id": item["id"],
             "event_type": "test_audit_event",

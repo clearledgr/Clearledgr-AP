@@ -215,7 +215,7 @@ class _FakeDB:
                 return row
         return None
 
-    def append_ap_audit_event(self, payload):
+    def append_audit_event(self, payload):
         key = str((payload or {}).get("idempotency_key") or "").strip()
         if key:
             existing = self.get_ap_audit_event_by_key(key)

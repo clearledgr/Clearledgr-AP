@@ -156,7 +156,7 @@ def _audit_callback_event(
 ) -> None:
     resolved_ap_item_id = ap_item_id or f"channel_callback:teams:{organization_id}"
     try:
-        db.append_ap_audit_event(
+        db.append_audit_event(
             {
                 "ap_item_id": resolved_ap_item_id,
                 "event_type": event_type,

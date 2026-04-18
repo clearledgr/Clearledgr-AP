@@ -138,21 +138,20 @@ class TestAuditEventRetentionFilter:
         now = datetime.now(timezone.utc)
 
         def _insert_at(ts, event_type):
-            # audit_events column is decision_reason, not reason. We
-            # also need the primary-key id + organization_id columns
-            # to be present to satisfy the schema.
             with db.connect() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     db._prepare_sql(
                         "INSERT INTO audit_events "
-                        "(id, ap_item_id, event_type, actor_type, actor_id, "
+                        "(id, box_id, box_type, event_type, actor_type, actor_id, "
                         " organization_id, decision_reason, ts) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                     ),
                     (
-                        f"evt-{uuid.uuid4().hex[:8]}", "", event_type, "agent",
-                        "agent", "test-org", "test", ts.isoformat(),
+                        f"evt-{uuid.uuid4().hex[:8]}",
+                        "sentinel-box", "ap_item",
+                        event_type, "agent", "agent",
+                        "test-org", "test", ts.isoformat(),
                     ),
                 )
                 conn.commit()

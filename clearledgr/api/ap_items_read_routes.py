@@ -233,7 +233,12 @@ def export_audit_trail(
         ]
 
     export_fields = [
-        "id", "ap_item_id", "event_type", "ts", "actor_type", "actor_id",
+        # Box-keyed identifiers. For AP rows ``box_id`` equals the
+        # original AP item id, so compliance consumers that previously
+        # joined on ``ap_item_id`` can pivot by filtering
+        # ``box_type='ap_item'``.
+        "id", "box_id", "box_type",
+        "event_type", "ts", "actor_type", "actor_id",
         "prev_state", "new_state", "decision_reason", "organization_id",
         "vendor_name", "amount", "currency", "invoice_number",
     ]

@@ -1,21 +1,22 @@
-"""Execution Engine — Agent Design Specification §5.
+"""Coordination Engine — Agent Design Specification §5.
 
-Takes a Plan from the planning engine and executes it, one Action at a
-time. Its only job is faithful, recorded execution. It adds no
-intelligence — the planning engine has already decided what to do. The
-execution engine makes sure what was decided actually happens, in order,
-with a record of every step.
+Takes a Plan from the planning engine and coordinates its execution,
+one Action at a time. "Coordinate" rather than "execute" because the
+engine doesn't *just* run actions — it writes the timeline, handles
+waits, routes approvals to humans, and sequences agent work with
+external systems. Execution is one of the things it does; the product
+is the coordination around each Box.
 
 The Two Non-Negotiable Rules:
   Rule 1: Every action is recorded to the Box timeline BEFORE it executes.
-  Rule 2: The execution engine never assumes success. Every external call
-          must return a confirmation before the Box stage advances.
+  Rule 2: The coordination engine never assumes success. Every external
+          call must return a confirmation before the Box stage advances.
 
 Usage:
-    from clearledgr.core.execution_engine import ExecutionEngine
+    from clearledgr.core.coordination_engine import CoordinationEngine
     from clearledgr.core.plan import Plan
 
-    engine = ExecutionEngine(db=db, organization_id="acme")
+    engine = CoordinationEngine(db=db, organization_id="acme")
     result = await engine.execute(plan)
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from clearledgr.core.plan import Action, ExecutionResult, Plan
+from clearledgr.core.plan import Action, CoordinationResult, Plan
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class _Rule1PreWriteFailed(Exception):
         self.original = original
 
 
-class ExecutionEngine:
+class CoordinationEngine:
     """§5: Formal execution loop consuming a Plan object.
 
     The engine:
@@ -239,7 +240,7 @@ class ExecutionEngine:
             "resume_onboarding_from_override": self._handle_onboarding_adapter_pending,
         }
 
-    async def execute(self, plan: Plan) -> ExecutionResult:
+    async def execute(self, plan: Plan) -> CoordinationResult:
         """§5.1: The execution loop.
 
         Steps:
@@ -252,7 +253,7 @@ class ExecutionEngine:
         7. Complete or continue
         """
         if plan.is_empty:
-            return ExecutionResult(status="completed", steps_total=0)
+            return CoordinationResult(status="completed", steps_total=0)
 
         box_id = plan.box_id
         steps_completed = 0
@@ -277,7 +278,7 @@ class ExecutionEngine:
                         box_id, action.name,
                         "rule1_pre_write_failed — timeline unavailable, action aborted",
                     )
-                return ExecutionResult(
+                return CoordinationResult(
                     status="failed", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
                     error=f"rule1_pre_write_failed:{rule1_exc.original}",
@@ -292,7 +293,7 @@ class ExecutionEngine:
                 self._post_write(box_id, action, step, timeline_id, "failed", result.get("error", ""))
                 if box_id:
                     self._move_to_exception(box_id, action.name, result.get("error", ""))
-                return ExecutionResult(
+                return CoordinationResult(
                     status="failed", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
                     error=result.get("error"), last_action=action.name,
@@ -348,7 +349,7 @@ class ExecutionEngine:
                         )
                     except Exception:
                         pass
-                return ExecutionResult(
+                return CoordinationResult(
                     status="waiting", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
                     waiting_condition=result["waiting_condition"],
@@ -361,7 +362,7 @@ class ExecutionEngine:
                 self.db.update_ap_item(box_id, pending_plan=None)
             except Exception:
                 pass
-        return ExecutionResult(
+        return CoordinationResult(
             status="completed", steps_completed=steps_completed,
             steps_total=plan.step_count, box_id=box_id,
             last_action=plan.actions[-1].name if plan.actions else None,
@@ -374,7 +375,7 @@ class ExecutionEngine:
     def _pre_write(self, box_id: Optional[str], action: Action, step: int) -> str:
         """§5.1 Rule 1: Write timeline entry BEFORE execution.
 
-        Uses the audit_events table (via append_ap_audit_event) as the
+        Uses the audit_events table (via append_audit_event) as the
         Box timeline — every agent action is a recorded event.
 
         Fails CLOSED per §7.6. The timeline is the evidence of trust;
@@ -390,7 +391,7 @@ class ExecutionEngine:
         than a delayed one.
         """
         timeline_id = f"TL-{uuid.uuid4().hex[:12]}"
-        if not box_id or not hasattr(self.db, "append_ap_audit_event"):
+        if not box_id or not hasattr(self.db, "append_audit_event"):
             return timeline_id
 
         payload = {
@@ -398,7 +399,7 @@ class ExecutionEngine:
             "ap_item_id": box_id,
             "event_type": f"agent_action:{action.name}:executing",
             "actor_type": "agent",
-            "actor_id": "execution_engine",
+            "actor_id": "coordination_engine",
             "organization_id": self.organization_id,
             "payload_json": {
                 "action": action.name,
@@ -413,7 +414,7 @@ class ExecutionEngine:
         last_exc: Optional[Exception] = None
         for attempt in range(3):
             try:
-                self.db.append_ap_audit_event(payload)
+                self.db.append_audit_event(payload)
                 return timeline_id
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
@@ -424,7 +425,7 @@ class ExecutionEngine:
                     _time.sleep(0.05 * (4 ** attempt))
 
         logger.error(
-            "[ExecutionEngine] Rule 1 pre-write failed after 3 attempts for "
+            "[CoordinationEngine] Rule 1 pre-write failed after 3 attempts for "
             "box=%s action=%s — aborting the action to preserve §7.6 "
             "audit-trail guarantee. Last error: %s",
             box_id, action.name, last_exc,
@@ -438,15 +439,15 @@ class ExecutionEngine:
     def _post_write(self, box_id: Optional[str], action: Action, step: int,
                     timeline_id: str, status: str, result_summary: str) -> None:
         """Update pre-execution entry with result."""
-        if not box_id or not hasattr(self.db, "append_ap_audit_event"):
+        if not box_id or not hasattr(self.db, "append_audit_event"):
             return
         try:
-            self.db.append_ap_audit_event({
+            self.db.append_audit_event({
                 "id": f"{timeline_id}-result",
                 "ap_item_id": box_id,
                 "event_type": f"agent_action:{action.name}:{status}",
                 "actor_type": "agent",
-                "actor_id": "execution_engine",
+                "actor_id": "coordination_engine",
                 "organization_id": self.organization_id,
                 "payload_json": {
                     "action": action.name,
@@ -458,7 +459,7 @@ class ExecutionEngine:
             })
         except Exception as exc:
             logger.warning(
-                "[ExecutionEngine] post-write timeline failed for %s: %s",
+                "[CoordinationEngine] post-write timeline failed for %s: %s",
                 action.name, exc,
             )
 
@@ -471,7 +472,7 @@ class ExecutionEngine:
         import time as _time
         handler = self._handlers.get(action.name)
         if not handler:
-            logger.warning("[ExecutionEngine] No handler for action: %s", action.name)
+            logger.warning("[CoordinationEngine] No handler for action: %s", action.name)
             return {"ok": True, "_stop_plan": False}
 
         timeout = _ACTION_TIMEOUTS.get(action.name, _DEFAULT_TIMEOUT)
@@ -504,7 +505,7 @@ class ExecutionEngine:
                 if attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
                     logger.warning(
-                        "[ExecutionEngine] %s timed out, retry %d/%d in %ds",
+                        "[CoordinationEngine] %s timed out, retry %d/%d in %ds",
                         action.name, attempt + 1, _MAX_RETRIES, delay,
                     )
                     await asyncio.sleep(delay)
@@ -541,7 +542,7 @@ class ExecutionEngine:
                         }
                     }
                 if failure_type == "llm" and action.layer == "LLM":
-                    logger.warning("[ExecutionEngine] LLM failure in %s, using fallback", action.name)
+                    logger.warning("[CoordinationEngine] LLM failure in %s, using fallback", action.name)
                     return {"ok": True, "_fallback": True}
                 return {"_abort": True, "error": str(exc)}
 
@@ -628,12 +629,12 @@ class ExecutionEngine:
                 ctx["snippet"] = getattr(message, "snippet", "") or (message.get("snippet", "") if isinstance(message, dict) else "")
                 ctx["thread_id"] = getattr(message, "thread_id", "") or (message.get("thread_id", "") if isinstance(message, dict) else "")
                 ctx["attachments"] = getattr(message, "attachments", []) or (message.get("attachments", []) if isinstance(message, dict) else [])
-                logger.info("[ExecutionEngine] read_email: fetched %s (subject=%s)", message_id, ctx["subject"][:50])
+                logger.info("[CoordinationEngine] read_email: fetched %s (subject=%s)", message_id, ctx["subject"][:50])
                 return {"ok": True, "message_id": message_id, "has_content": True}
             else:
                 return {"_abort": True, "error": f"Message {message_id} not found in Gmail"}
         except Exception as exc:
-            logger.error("[ExecutionEngine] read_email failed: %s", exc)
+            logger.error("[CoordinationEngine] read_email failed: %s", exc)
             return {"_abort": True, "error": f"Gmail fetch failed: {exc}"}
 
     async def _handle_classify_email(self, action: Action, plan: Plan) -> dict:
@@ -659,7 +660,7 @@ class ExecutionEngine:
                 return {"ok": True, "_stop_plan": True, "reason": f"not_invoice: {classification_type}"}
             return {"ok": True, "type": classification_type, "confidence": confidence}
         except Exception as exc:
-            logger.warning("[ExecutionEngine] classify_email failed: %s", exc)
+            logger.warning("[CoordinationEngine] classify_email failed: %s", exc)
             return {"ok": True}  # Treat as unclassifiable per §5.2
 
     async def _handle_extract(self, action: Action, plan: Plan) -> dict:
@@ -679,7 +680,7 @@ class ExecutionEngine:
             ctx["extracted_fields"] = result
             return {"ok": True, "vendor_name": result.get("vendor_name"), "amount": result.get("amount")}
         except Exception as exc:
-            logger.warning("[ExecutionEngine] extract_invoice_fields failed: %s", exc)
+            logger.warning("[CoordinationEngine] extract_invoice_fields failed: %s", exc)
             return {"ok": True, "_fallback": True}
 
     async def _handle_guardrails(self, action: Action, plan: Plan) -> dict:
@@ -699,7 +700,7 @@ class ExecutionEngine:
                 return {"ok": True, "gate_passed": False, "reason_codes": reason_codes}
             return {"ok": True, "gate_passed": True}
         except Exception as exc:
-            logger.warning("[ExecutionEngine] guardrails failed: %s", exc)
+            logger.warning("[CoordinationEngine] guardrails failed: %s", exc)
             return {"ok": True}
 
     async def _handle_apply_label(self, action: Action, plan: Plan) -> dict:
@@ -723,7 +724,7 @@ class ExecutionEngine:
                     await apply_label(client, thread_id, label_key, user_email=user_id)
             return {"ok": True, "label": label}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] apply_label non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] apply_label non-fatal: %s", exc)
             return {"ok": True, "label": label}
 
     async def _handle_create_box(self, action: Action, plan: Plan) -> dict:
@@ -757,7 +758,7 @@ class ExecutionEngine:
             ctx["box_id"] = box_id
             return {"ok": True, "box_id": box_id}
         except Exception as exc:
-            logger.error("[ExecutionEngine] create_box failed: %s", exc)
+            logger.error("[CoordinationEngine] create_box failed: %s", exc)
             return {"_abort": True, "error": f"create_box: {exc}"}
 
     async def _handle_domain_match(self, action: Action, plan: Plan) -> dict:
@@ -781,7 +782,7 @@ class ExecutionEngine:
                 return {"ok": True, "_stop_plan": True, "reason": "domain_mismatch"}
             return {"ok": True, "domain_status": status}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] domain_match non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] domain_match non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_duplicate(self, action: Action, plan: Plan) -> dict:
@@ -812,7 +813,7 @@ class ExecutionEngine:
                     return {"ok": True, "_stop_plan": True, "reason": "duplicate_found"}
             return {"ok": True, "has_issues": has_issues}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] duplicate check non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] duplicate check non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_ceiling(self, action: Action, plan: Plan) -> dict:
@@ -836,7 +837,7 @@ class ExecutionEngine:
                 return {"ok": True, "exceeds_ceiling": True}
             return {"ok": True, "exceeds_ceiling": False}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] ceiling check non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] ceiling check non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_velocity(self, action: Action, plan: Plan) -> dict:
@@ -863,7 +864,7 @@ class ExecutionEngine:
                     return {"ok": True, "velocity_exceeded": True, "count": len(recent)}
             return {"ok": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] velocity check non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] velocity check non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_lookup_po(self, action: Action, plan: Plan) -> dict:
@@ -882,7 +883,7 @@ class ExecutionEngine:
             found = po is not None
             return {"ok": True, "po_found": found, "po_number": po_number}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] lookup_po non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] lookup_po non-fatal: %s", exc)
             ctx["po_result"] = None
             return {"ok": True, "po_found": False}
 
@@ -911,7 +912,7 @@ class ExecutionEngine:
                 }
             return {"ok": True, "grn_found": True, "grn_count": len(grns)}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] lookup_grn non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] lookup_grn non-fatal: %s", exc)
             ctx["grn_result"] = None
             return {"ok": True, "grn_found": False}
 
@@ -952,7 +953,7 @@ class ExecutionEngine:
                 return {"ok": True, "match_status": status, "match_passed": False, "_stop_plan": True}
             return {"ok": True, "match_status": status, "match_passed": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] three_way_match non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] three_way_match non-fatal: %s", exc)
             ctx["match_result"] = None
             return {"ok": True, "match_status": "error"}
 
@@ -987,7 +988,7 @@ class ExecutionEngine:
             try:
                 self.db.update_ap_item(plan.box_id, **update_kwargs)
             except Exception as exc:
-                logger.warning("[ExecutionEngine] update_box_fields failed: %s", exc)
+                logger.warning("[CoordinationEngine] update_box_fields failed: %s", exc)
         return {"ok": True, "fields_updated": list(update_kwargs.keys())}
 
     def _build_invoice_from_ctx(self, ctx: Dict[str, Any]):
@@ -1043,7 +1044,7 @@ class ExecutionEngine:
                 },
             }
         except Exception as exc:
-            logger.error("[ExecutionEngine] send_approval failed: %s", exc)
+            logger.error("[CoordinationEngine] send_approval failed: %s", exc)
             return {
                 "ok": True,
                 "waiting_condition": {
@@ -1126,7 +1127,7 @@ class ExecutionEngine:
             )
             return {"ok": True, "scheduled": True, "settled": False}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] schedule_payment non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] schedule_payment non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_set_waiting(self, action: Action, plan: Plan) -> dict:
@@ -1160,12 +1161,12 @@ class ExecutionEngine:
         return {"ok": True}
 
     async def _handle_timeline(self, action: Action, plan: Plan) -> dict:
-        if plan.box_id and hasattr(self.db, "append_ap_audit_event"):
-            self.db.append_ap_audit_event({
+        if plan.box_id and hasattr(self.db, "append_audit_event"):
+            self.db.append_audit_event({
                 "ap_item_id": plan.box_id,
                 "event_type": "agent_action:post_timeline_entry",
                 "actor_type": "agent",
-                "actor_id": "execution_engine",
+                "actor_id": "coordination_engine",
                 "organization_id": self.organization_id,
                 "payload_json": {
                     "summary": action.params.get("summary", action.description),
@@ -1183,7 +1184,7 @@ class ExecutionEngine:
                 # Store thread→box mapping so future replies route directly
                 self.db.update_ap_item(plan.box_id, thread_id=thread_id)
             except Exception as exc:
-                logger.debug("[ExecutionEngine] watch_thread non-fatal: %s", exc)
+                logger.debug("[CoordinationEngine] watch_thread non-fatal: %s", exc)
         return {"ok": True, "thread_id": thread_id}
 
     async def _handle_override_window(self, action: Action, plan: Plan) -> dict:
@@ -1203,7 +1204,7 @@ class ExecutionEngine:
             )
             return {"ok": True, "window_id": window.get("id") if isinstance(window, dict) else None}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] override_window non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] override_window non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_close_override(self, action: Action, plan: Plan) -> dict:
@@ -1211,7 +1212,7 @@ class ExecutionEngine:
             from clearledgr.services.agent_background import reap_expired_override_windows
             await reap_expired_override_windows()
         except Exception as exc:
-            logger.warning("[ExecutionEngine] close_override failed: %s", exc)
+            logger.warning("[CoordinationEngine] close_override failed: %s", exc)
         return {"ok": True}
 
     async def _handle_escalate(self, action: Action, plan: Plan) -> dict:
@@ -1219,7 +1220,7 @@ class ExecutionEngine:
             from clearledgr.services.agent_background import _check_approval_timeouts
             await _check_approval_timeouts(self.organization_id)
         except Exception as exc:
-            logger.debug("[ExecutionEngine] Escalation failed: %s", exc)
+            logger.debug("[CoordinationEngine] Escalation failed: %s", exc)
         return {"ok": True}
 
     async def _handle_send_vendor_email(self, action: Action, plan: Plan) -> dict:
@@ -1234,7 +1235,7 @@ class ExecutionEngine:
             await chase_stale_sessions(db=self.db)
             return {"ok": True, "template": template, "vendor": vendor_name}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] send_vendor_email non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] send_vendor_email non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_classify_vendor(self, action: Action, plan: Plan) -> dict:
@@ -1364,7 +1365,7 @@ class ExecutionEngine:
                 result = json.loads(raw) if raw else {}
             except ValueError:
                 logger.debug(
-                    "[ExecutionEngine] classify_vendor got non-JSON: %s",
+                    "[CoordinationEngine] classify_vendor got non-JSON: %s",
                     raw[:200],
                 )
                 result = {}
@@ -1390,7 +1391,7 @@ class ExecutionEngine:
                 "extracted": result.get("extracted") or {},
             }
         except Exception as exc:
-            logger.debug("[ExecutionEngine] classify_vendor non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] classify_vendor non-fatal: %s", exc)
             return {"ok": True, "type": "unclassifiable"}
 
     async def _handle_generate_exception(self, action: Action, plan: Plan) -> dict:
@@ -1420,7 +1421,7 @@ class ExecutionEngine:
                 self.db.update_ap_item(plan.box_id, exception_reason=reason)
             return {"ok": True, "reason": reason}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] generate_exception non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] generate_exception non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_route_vendor(self, action: Action, plan: Plan) -> dict:
@@ -1451,7 +1452,7 @@ class ExecutionEngine:
                     return {"ok": True, "valid": True, "session_id": session.get("id")}
             return {"ok": True, "valid": False, "reason": "no_active_session"}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] kyc_validate non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] kyc_validate non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_onboarding_adapter_pending(self, action: Action, plan: Plan) -> dict:
@@ -1470,7 +1471,7 @@ class ExecutionEngine:
         adapter before it goes live.
         """
         logger.info(
-            "[ExecutionEngine] %s — provider adapter pending (org=%s, box=%s)",
+            "[CoordinationEngine] %s — provider adapter pending (org=%s, box=%s)",
             action.name, self.organization_id, plan.box_id or "—",
         )
         return {
@@ -1495,7 +1496,7 @@ class ExecutionEngine:
                     return {"ok": True, "current_state": state, "session_id": session.get("id")}
             return {"ok": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] onboarding_progress non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] onboarding_progress non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_freeze_payments(self, action: Action, plan: Plan) -> dict:
@@ -1526,7 +1527,7 @@ class ExecutionEngine:
                 )
             return {"ok": True, "frozen": True, "vendor_id": vendor_id}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] freeze_payments non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] freeze_payments non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_iban_change(self, action: Action, plan: Plan) -> dict:
@@ -1581,7 +1582,7 @@ class ExecutionEngine:
                 "freeze_required": was_verified,
             }
         except Exception as exc:
-            logger.debug("[ExecutionEngine] iban_change non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] iban_change non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_iban_verify(self, action: Action, plan: Plan) -> dict:
@@ -1603,7 +1604,7 @@ class ExecutionEngine:
             await _check_vendor_followup_responses([self.organization_id])
             return {"ok": True, "checked": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] check_vendor_response non-fatal: %s", exc)
+            logger.debug("[CoordinationEngine] check_vendor_response non-fatal: %s", exc)
             return {"ok": True}
 
     async def _handle_evaluate_grn(self, action: Action, plan: Plan) -> dict:
@@ -1663,7 +1664,7 @@ class ExecutionEngine:
             from clearledgr.services.agent_background import _reap_expired_snoozes
             await _reap_expired_snoozes([self.organization_id])
         except Exception as exc:
-            logger.warning("[ExecutionEngine] unsnooze failed: %s", exc)
+            logger.warning("[CoordinationEngine] unsnooze failed: %s", exc)
         return {"ok": True}
 
     async def _handle_check_erp_connectivity(self, action: Action, plan: Plan) -> dict:
@@ -1699,7 +1700,7 @@ class ExecutionEngine:
                     "probe_error": str(probe_exc)[:200],
                 }
         except Exception as exc:
-            logger.debug("[ExecutionEngine] check_erp_connectivity: %s", exc)
+            logger.debug("[CoordinationEngine] check_erp_connectivity: %s", exc)
             return {"ok": True, "erp_available": False}
 
     async def _handle_evaluate_erp_recheck(self, action: Action, plan: Plan) -> dict:
@@ -1786,7 +1787,7 @@ class ExecutionEngine:
                     return {"ok": True, "fetched": True}
             return {"ok": True, "fetched": False}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] fetch_attachment: %s", exc)
+            logger.debug("[CoordinationEngine] fetch_attachment: %s", exc)
             return {"ok": True}
 
     async def _handle_remove_label(self, action: Action, plan: Plan) -> dict:
@@ -1806,7 +1807,7 @@ class ExecutionEngine:
                 await remove_label(client, thread_id, label_key)
             return {"ok": True, "label_removed": label}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] remove_label: %s", exc)
+            logger.debug("[CoordinationEngine] remove_label: %s", exc)
             return {"ok": True}
 
     async def _handle_split_thread(self, action: Action, plan: Plan) -> dict:
@@ -1814,7 +1815,7 @@ class ExecutionEngine:
         # Gmail API doesn't support native thread splitting.
         # Clearledgr simulates this by creating a new AP item for the message.
         ctx = self._ensure_ctx(plan)
-        logger.info("[ExecutionEngine] split_thread requested — creating new Box for split message")
+        logger.info("[CoordinationEngine] split_thread requested — creating new Box for split message")
         return {"ok": True}
 
     async def _handle_send_email(self, action: Action, plan: Plan) -> dict:
@@ -1835,7 +1836,7 @@ class ExecutionEngine:
                 return {"ok": True, "sent": True, "message_id": result.get("id") if isinstance(result, dict) else None}
             return {"_abort": True, "error": "Gmail auth failed"}
         except Exception as exc:
-            logger.warning("[ExecutionEngine] send_email failed: %s", exc)
+            logger.warning("[CoordinationEngine] send_email failed: %s", exc)
             return {"_abort": True, "error": str(exc)}
 
     async def _handle_lookup_vendor_master(self, action: Action, plan: Plan) -> dict:
@@ -1857,7 +1858,7 @@ class ExecutionEngine:
                     return {"ok": True, "found": True, "vendor": vendor_name}
             return {"ok": True, "found": False}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] lookup_vendor_master: %s", exc)
+            logger.debug("[CoordinationEngine] lookup_vendor_master: %s", exc)
             return {"ok": True, "found": False}
 
     async def _handle_reverse_erp_post(self, action: Action, plan: Plan) -> dict:
@@ -1869,7 +1870,7 @@ class ExecutionEngine:
         if not erp_ref:
             return {"_abort": True, "error": "No ERP reference to reverse"}
         reason = action.params.get("reason", "disaster_recovery")
-        logger.warning("[ExecutionEngine] reverse_erp_post requested for %s (ref=%s, reason=%s)", plan.box_id, erp_ref, reason)
+        logger.warning("[CoordinationEngine] reverse_erp_post requested for %s (ref=%s, reason=%s)", plan.box_id, erp_ref, reason)
         # ERP reversal would call the connector — for now, mark as reversed in DB
         self.db.update_ap_item(plan.box_id, state="reversed", last_error=f"reversed: {reason}")
         return {"ok": True, "reversed": True, "erp_reference": erp_ref}
@@ -1890,7 +1891,7 @@ class ExecutionEngine:
                     )
                 return {"ok": True, "linked": True}
             except Exception as exc:
-                logger.debug("[ExecutionEngine] link_vendor: %s", exc)
+                logger.debug("[CoordinationEngine] link_vendor: %s", exc)
         return {"ok": True}
 
     async def _handle_set_pending_plan(self, action: Action, plan: Plan) -> dict:
@@ -1915,7 +1916,7 @@ class ExecutionEngine:
             )
             return {"ok": True, "notified": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] send_slack_exception: %s", exc)
+            logger.debug("[CoordinationEngine] send_slack_exception: %s", exc)
             return {"ok": True}
 
     async def _handle_send_slack_digest(self, action: Action, plan: Plan) -> dict:
@@ -1925,7 +1926,7 @@ class ExecutionEngine:
             await send_digest(self.organization_id)
             return {"ok": True, "sent": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] send_slack_digest: %s", exc)
+            logger.debug("[CoordinationEngine] send_slack_digest: %s", exc)
             return {"ok": True}
 
     async def _handle_draft_vendor_response(self, action: Action, plan: Plan) -> dict:
@@ -1953,7 +1954,7 @@ class ExecutionEngine:
             ctx["vendor_draft"] = draft
             return {"ok": True, "draft_length": len(draft)}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] draft_vendor_response: %s", exc)
+            logger.debug("[CoordinationEngine] draft_vendor_response: %s", exc)
             return {"ok": True}
 
     async def _handle_send_teams_approval(self, action: Action, plan: Plan) -> dict:
@@ -1966,7 +1967,7 @@ class ExecutionEngine:
                 wf._send_teams_budget_card(invoice, {}, {})
                 return {"ok": True, "sent": True}
             except Exception as exc:
-                logger.debug("[ExecutionEngine] send_teams_approval: %s", exc)
+                logger.debug("[CoordinationEngine] send_teams_approval: %s", exc)
         return {"ok": True, "sent": False, "reason": "teams_not_configured"}
 
     async def _handle_post_gmail_notification(self, action: Action, plan: Plan) -> dict:
@@ -1981,12 +1982,12 @@ class ExecutionEngine:
             return {"ok": True}
         event_type = action.params.get("event_type", "agent_action")
         try:
-            if hasattr(self.db, "append_ap_audit_event"):
-                self.db.append_ap_audit_event({
+            if hasattr(self.db, "append_audit_event"):
+                self.db.append_audit_event({
                     "ap_item_id": plan.box_id,
                     "event_type": f"notification:{event_type}",
                     "actor_type": "agent",
-                    "actor_id": "execution_engine",
+                    "actor_id": "coordination_engine",
                     "organization_id": self.organization_id,
                     "payload_json": {
                         "summary": action.description,
@@ -1995,7 +1996,7 @@ class ExecutionEngine:
                 })
             return {"ok": True, "notification_recorded": True}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] post_gmail_notification: %s", exc)
+            logger.debug("[CoordinationEngine] post_gmail_notification: %s", exc)
             return {"ok": True}
 
     async def _handle_create_vendor_record(self, action: Action, plan: Plan) -> dict:
@@ -2012,7 +2013,7 @@ class ExecutionEngine:
                 )
             return {"ok": True, "vendor_name": vendor_name}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] create_vendor_record: %s", exc)
+            logger.debug("[CoordinationEngine] create_vendor_record: %s", exc)
             return {"ok": True}
 
     async def _handle_enrich_vendor(self, action: Action, plan: Plan) -> dict:
@@ -2025,7 +2026,7 @@ class ExecutionEngine:
             result = await enrich_vendor(vendor_id, organization_id=self.organization_id, db=self.db)
             return {"ok": True, "enriched": bool(result)}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] enrich_vendor: %s", exc)
+            logger.debug("[CoordinationEngine] enrich_vendor: %s", exc)
             return {"ok": True}
 
     async def _handle_adverse_media(self, action: Action, plan: Plan) -> dict:
@@ -2070,7 +2071,7 @@ class ExecutionEngine:
 
             if adverse_media_api_key:
                 # Third-party API integration point
-                logger.info("[ExecutionEngine] adverse_media: calling external API for %s", vendor_id)
+                logger.info("[CoordinationEngine] adverse_media: calling external API for %s", vendor_id)
                 # TODO: Wire to ComplyAdvantage/Refinitiv when API key is configured
                 # For now, pass through — API integration is a business decision
             else:
@@ -2089,7 +2090,7 @@ class ExecutionEngine:
 
             if flags:
                 logger.warning(
-                    "[ExecutionEngine] adverse_media: %d flag(s) for vendor %s",
+                    "[CoordinationEngine] adverse_media: %d flag(s) for vendor %s",
                     len(flags), vendor_id,
                 )
                 # Flag requires AP Manager review — don't auto-activate
@@ -2100,7 +2101,7 @@ class ExecutionEngine:
             return {"ok": True, "clear": len(flags) == 0, "flags": flags}
 
         except Exception as exc:
-            logger.warning("[ExecutionEngine] adverse_media check failed: %s", exc)
+            logger.warning("[CoordinationEngine] adverse_media check failed: %s", exc)
             # Fail open but log — don't block onboarding on check failure
             return {"ok": True, "clear": True, "flags": [], "error": str(exc)}
 
@@ -2119,7 +2120,7 @@ class ExecutionEngine:
             activated = result.activated if hasattr(result, "activated") else (result.get("activated") if isinstance(result, dict) else False)
             return {"ok": True, "activated": activated}
         except Exception as exc:
-            logger.debug("[ExecutionEngine] activate_vendor_in_erp: %s", exc)
+            logger.debug("[CoordinationEngine] activate_vendor_in_erp: %s", exc)
             return {"ok": True, "activated": False}
 
     async def _handle_flag_internal(self, action: Action, plan: Plan) -> dict:

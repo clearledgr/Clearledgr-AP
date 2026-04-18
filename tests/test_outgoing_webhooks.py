@@ -248,6 +248,11 @@ class TestEmitStateChangeWebhook:
         assert count == 1
         call_args = mock_deliver.call_args
         assert call_args.kwargs["event_type"] == "invoice.approved"
+        # Box-keyed payload — ap_item_id is gone.
+        payload = call_args.kwargs["payload"]
+        assert "ap_item_id" not in payload
+        assert payload["box_id"] == "ap-3"
+        assert payload["box_type"] == "ap_item"
 
     def test_unknown_state_returns_zero(self, db):
         count = asyncio.run(emit_state_change_webhook("default", "ap-4", "unknown_state"))
@@ -291,7 +296,8 @@ class TestEmitStateChangeWebhook:
         if isinstance(payload, str):
             payload = json.loads(payload)
         assert payload["event_type"] == "ap_item.state_changed"
-        assert payload["ap_item_id"] == item["id"]
+        assert payload["box_id"] == item["id"]
+        assert payload["box_type"] == "ap_item"
         assert payload["new_state"] == "validated"
 
 

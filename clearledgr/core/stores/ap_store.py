@@ -343,10 +343,10 @@ class APStore:
                 ) or ""
                 audit_sql = self._prepare_sql(
                     """INSERT INTO audit_events
-                    (id, ap_item_id, event_type, prev_state, new_state,
+                    (id, box_id, box_type, event_type, prev_state, new_state,
                      actor_type, actor_id, payload_json, source, correlation_id,
                      workflow_id, run_id, decision_reason, organization_id, ts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
                 )
                 audit_payload = {
                     k: v
@@ -357,7 +357,8 @@ class APStore:
                     audit_sql,
                     (
                         str(_uuid.uuid4()),
-                        ap_item_id,
+                        ap_item_id,   # box_id
+                        "ap_item",    # box_type
                         "state_transition",
                         prev_state,
                         kwargs["state"],
@@ -406,7 +407,8 @@ class APStore:
                             "webhook",
                             {
                                 "event_type": "ap_item.state_changed",
-                                "ap_item_id": ap_item_id,
+                                "box_id": ap_item_id,
+                                "box_type": "ap_item",
                                 "new_state": kwargs["state"],
                                 "prev_state": str(prev_state),
                             },
@@ -479,7 +481,7 @@ class APStore:
         This is intentionally best-effort and must not mask the original exception.
         """
         try:
-            self.append_ap_audit_event(
+            self.append_audit_event(
                 {
                     "ap_item_id": ap_item_id,
                     "event_type": "state_transition_rejected",
@@ -769,7 +771,8 @@ class APStore:
         organization_id: str,
         channel: str,
         payload: dict,
-        ap_item_id: str | None = None,
+        box_id: str | None = None,
+        box_type: str | None = None,
         max_retries: int = 5,
     ) -> str:
         """Insert a notification into the retry queue."""
@@ -779,13 +782,13 @@ class APStore:
         notif_id = f"notif-{_uuid.uuid4().hex[:12]}"
         sql = self._prepare_sql("""
             INSERT INTO pending_notifications
-            (id, organization_id, ap_item_id, channel, payload_json,
+            (id, organization_id, box_id, box_type, channel, payload_json,
              retry_count, max_retries, next_retry_at, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'pending', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'pending', ?, ?)
         """)
         with self.connect() as conn:
             conn.cursor().execute(sql, (
-                notif_id, organization_id, ap_item_id, channel,
+                notif_id, organization_id, box_id, box_type, channel,
                 json.dumps(payload), max_retries, now, now, now,
             ))
             conn.commit()
@@ -1642,7 +1645,13 @@ class APStore:
     # Audit events
     # ------------------------------------------------------------------
 
-    def append_ap_audit_event(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def append_audit_event(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Funnel for all audit event writes. Every row is Box-keyed:
+        ``box_id`` + ``box_type`` identify which Box this event is
+        about. Callers must pass either the pair explicitly or the
+        AP-convenience single ``ap_item_id`` field (which is
+        normalised to ``box_id``/``box_type='ap_item'``).
+        """
         self.initialize()
         import uuid
         now = payload.get("ts") or datetime.now(timezone.utc).isoformat()
@@ -1665,19 +1674,33 @@ class APStore:
                 payload_json.update(metadata)
         external_refs = payload.get("external_refs") or {}
 
+        # Resolve (box_id, box_type). Explicit kwargs win; a caller
+        # may also pass the AP-convenience ``ap_item_id`` alone, in
+        # which case it's the box_id for type ``ap_item``.
+        box_id = payload.get("box_id") or payload.get("ap_item_id")
+        box_type = payload.get("box_type")
+        if box_type is None and box_id is not None:
+            box_type = "ap_item"
+        if box_id is None or box_type is None:
+            raise ValueError(
+                "append_audit_event requires (box_id, box_type) or ap_item_id"
+            )
+
         sql = self._prepare_sql("""
             INSERT INTO audit_events
-            (id, ap_item_id, event_type, prev_state, new_state, actor_type, actor_id,
-             payload_json, external_refs, idempotency_key, source, correlation_id, workflow_id, run_id,
+            (id, box_id, box_type, event_type, prev_state, new_state,
+             actor_type, actor_id, payload_json, external_refs,
+             idempotency_key, source, correlation_id, workflow_id, run_id,
              decision_reason, organization_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         try:
             with self.connect() as conn:
                 cur = conn.cursor()
                 cur.execute(sql, (
                     event_id,
-                    payload.get("ap_item_id"),
+                    box_id,
+                    box_type,
                     payload.get("event_type"),
                     payload.get("from_state"),
                     payload.get("to_state"),
@@ -1737,13 +1760,36 @@ class APStore:
         limit: Optional[int] = None,
         order: str = "asc",
     ) -> List[Dict[str, Any]]:
+        """List audit events for one AP Box. Thin wrapper over
+        :meth:`list_box_audit_events` — the AP item's id is the
+        box_id for type ``ap_item``.
+        """
+        return self.list_box_audit_events(
+            box_type="ap_item",
+            box_id=ap_item_id,
+            limit=limit,
+            order=order,
+        )
+
+    def list_box_audit_events(
+        self,
+        box_type: str,
+        box_id: str,
+        limit: Optional[int] = None,
+        order: str = "asc",
+    ) -> List[Dict[str, Any]]:
+        """Generic reader for any Box type's audit trail."""
         self.initialize()
         direction = "DESC" if str(order).lower() == "desc" else "ASC"
-        sql = f"SELECT * FROM audit_events WHERE ap_item_id = ? ORDER BY ts {direction}"
-        params: Tuple[Any, ...] = (ap_item_id,)
+        sql = (
+            "SELECT * FROM audit_events "
+            "WHERE box_id = ? AND box_type = ? "
+            f"ORDER BY ts {direction}"
+        )
+        params: Tuple[Any, ...] = (box_id, box_type)
         if limit is not None:
             sql += " LIMIT ?"
-            params = (ap_item_id, int(limit))
+            params = (box_id, box_type, int(limit))
         sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1763,12 +1809,13 @@ class APStore:
                    ai.currency AS currency,
                    ai.invoice_number AS invoice_number
             FROM audit_events ae
-            LEFT JOIN ap_items ai ON ae.ap_item_id = ai.id
+            LEFT JOIN ap_items ai
+                   ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
             WHERE ae.organization_id = ?
                OR (ae.organization_id IS NULL AND ai.organization_id = ?)
             ORDER BY ae.ts DESC
             LIMIT ?
-            """
+"""
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1815,13 +1862,14 @@ class APStore:
                    ai.currency AS currency,
                    ai.invoice_number AS invoice_number
             FROM audit_events ae
-            LEFT JOIN ap_items ai ON ae.ap_item_id = ai.id
+            LEFT JOIN ap_items ai
+                   ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
             WHERE (ae.organization_id = ?
                    OR (ae.organization_id IS NULL AND ai.organization_id = ?))
               AND ae.ts >= ?
             ORDER BY ae.ts DESC
             LIMIT ?
-            """
+"""
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -2326,7 +2374,8 @@ class APStore:
         sql = self._prepare_sql(
             """
             SELECT ae.* FROM audit_events ae
-            JOIN ap_items ai ON ae.ap_item_id = ai.id
+            JOIN ap_items ai
+                 ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
             WHERE ai.organization_id = ? AND ai.thread_id = ?
             ORDER BY ae.ts ASC
             """

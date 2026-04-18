@@ -1183,7 +1183,7 @@ async def reverse_bill(
             "idempotency_key": idempotency_key,
             "decision_reason": reason_str,
         }
-        db.append_ap_audit_event(audit_payload)
+        db.append_audit_event(audit_payload)
     except Exception as audit_exc:
         logger.warning(
             "Reversal audit event write failed (non-fatal): %s", audit_exc
