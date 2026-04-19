@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from main import app
+import main as _main
 from clearledgr.core import database as db_module
 
 
@@ -28,7 +28,13 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(db):
-    return TestClient(app)
+    # Re-read ``main.app`` on every test rather than binding it at
+    # module import time. ``test_runtime_surface_scope`` reloads main
+    # which swaps ``main.app`` for a fresh FastAPI instance; any test
+    # file that did ``from main import app`` at import time would be
+    # left pointing at a stale pre-reload app and all its auth
+    # dependency-overrides would target the wrong instance.
+    return TestClient(_main.app)
 
 
 def _create_ap_item(
@@ -63,7 +69,8 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
     from datetime import datetime, timezone
 
     from clearledgr.core.auth import TokenData, get_current_user
-    from main import app
+    import main as _m
+    app = _m.app
 
     def _mock_user():
         return TokenData(
@@ -127,7 +134,8 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
     from datetime import datetime, timezone
 
     from clearledgr.core.auth import TokenData, get_current_user
-    from main import app
+    import main as _m
+    app = _m.app
 
     def _mock_user():
         return TokenData(

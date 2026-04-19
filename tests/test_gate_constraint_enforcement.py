@@ -289,27 +289,31 @@ class TestCallClaudeSendsForcedToolChoice:
 
         captured: Dict[str, Any] = {}
 
+        _fake_body = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_capture",
+                    "name": _DECISION_TOOL_NAME,
+                    "input": {
+                        "recommendation": "escalate",
+                        "reasoning": "Captured.",
+                        "confidence": 0.9,
+                        "risk_flags": [],
+                    },
+                }
+            ],
+            "model": "claude-sonnet-4-test",
+        }
+
         class _FakeResponse:
             status_code = 200
+            # gateway size-checks resp.content before json parsing.
+            content = json.dumps(_fake_body).encode("utf-8")
             def raise_for_status(self):
                 return None
             def json(self):
-                return {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_capture",
-                            "name": _DECISION_TOOL_NAME,
-                            "input": {
-                                "recommendation": "escalate",
-                                "reasoning": "Captured.",
-                                "confidence": 0.9,
-                                "risk_flags": [],
-                            },
-                        }
-                    ],
-                    "model": "claude-sonnet-4-test",
-                }
+                return _fake_body
 
         class _FakeAsyncClient:
             def __init__(self, *a, **kw):
@@ -318,13 +322,23 @@ class TestCallClaudeSendsForcedToolChoice:
                 return self
             async def __aexit__(self, *a):
                 return False
-            async def post(self, url, headers=None, json=None):
+            async def post(self, url, headers=None, json=None, **kwargs):
+                # Accept/ignore timeout and any other kwargs the real
+                # httpx.AsyncClient exposes — the real gateway now passes
+                # timeout= per call, which this stub must tolerate.
                 captured["url"] = url
                 captured["headers"] = headers
                 captured["json"] = json
                 return _FakeResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+        # get_http_client() caches a shared httpx.AsyncClient instance
+        # on first call. Reset the cache so the next get_http_client()
+        # (inside the LLM gateway) builds a fresh instance through the
+        # patched httpx.AsyncClient class. Restored automatically by
+        # monkeypatch at test teardown.
+        import clearledgr.core.http_client as http_mod
+        monkeypatch.setattr(http_mod, "_shared_client", None)
 
         svc = APDecisionService(api_key="test-key")
         schema = _build_decision_tool_schema(
@@ -354,7 +368,9 @@ class TestDecideServiceEnforcesGate:
 
     def test_claude_approve_plus_failed_gate_overridden_to_escalate(self, monkeypatch):
         from clearledgr.services.ap_decision import APDecisionService
+        from clearledgr.core.llm_gateway import reset_llm_gateway
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        reset_llm_gateway()  # rebuild singleton so it reads the new env var
         invoice = _make_invoice(confidence=0.97)
 
         # Even if a hypothetically broken Claude response said "approve",
@@ -464,7 +480,9 @@ class TestGetAPDecisionHandlerEnforces:
         db = ClearledgrDB(db_path=str(tmp_path / "gate_h.db"))
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
+        from clearledgr.core.llm_gateway import reset_llm_gateway
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        reset_llm_gateway()
 
         invoice = _make_invoice()
         invoice_dict = {

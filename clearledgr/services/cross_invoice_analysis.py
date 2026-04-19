@@ -531,13 +531,24 @@ class CrossInvoiceAnalyzer:
         }
     
     def _within_days(self, date_value: Any, days: int) -> bool:
-        """Check if a date is within N days of now."""
+        """Check if a date is within N days of now.
+
+        Previously this stripped tzinfo off ``date_value`` then compared
+        to a tz-aware ``cutoff`` — raises TypeError on every call since
+        Python rejects naive/aware comparisons. The bug silently
+        disabled the frequency anomaly check (every timestamp fell
+        through the except and returned False). Normalize both sides
+        to tz-aware UTC before comparing.
+        """
         try:
             if isinstance(date_value, str):
                 date_value = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
-            
+            if date_value.tzinfo is None:
+                # Treat naive timestamps as UTC — consistent with how
+                # the rest of the codebase persists timestamps.
+                date_value = date_value.replace(tzinfo=timezone.utc)
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            return date_value.replace(tzinfo=None) >= cutoff
+            return date_value >= cutoff
         except Exception:
             return False
 

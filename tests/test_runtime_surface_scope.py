@@ -112,18 +112,38 @@ def test_strict_profile_contract_ignores_legacy_runtime_flags(monkeypatch):
 
 
 def test_production_https_redirect_respects_proxy_headers_and_exempts_health(monkeypatch):
+    """In production ENV, plain-HTTP requests must redirect to HTTPS
+    unless the load balancer sets ``x-forwarded-proto: https`` (proxied
+    TLS termination) OR the path is health-exempt. We can't use
+    ``/openapi.json`` as the probe path because production disables
+    OpenAPI entirely (``openapi_url=None``). Use an allow-listed ops
+    endpoint instead — the HTTPS middleware fires before auth, so a
+    401 response means the middleware let the request through.
+    """
     monkeypatch.setenv("ENV", "production")
 
     app = _reload_main_module().app
+
+    probe_path = "/api/ops/monitoring-health"
 
     with TestClient(app) as client:
         health = client.get("/health", follow_redirects=False)
         assert health.status_code == 200
 
-        proxied = client.get("/openapi.json", headers={"x-forwarded-proto": "https"}, follow_redirects=False)
-        assert proxied.status_code == 200
+        # Proxied HTTPS request — middleware should NOT redirect.
+        # The request reaches auth and returns 401 (no creds). Any
+        # non-3xx status proves the HTTPS middleware let it through.
+        proxied = client.get(
+            probe_path,
+            headers={"x-forwarded-proto": "https"},
+            follow_redirects=False,
+        )
+        assert proxied.status_code != 307, (
+            f"Proxied HTTPS request was redirected (status={proxied.status_code})"
+        )
 
-        redirected = client.get("/openapi.json", follow_redirects=False)
+        # Non-HTTPS request → should redirect to HTTPS.
+        redirected = client.get(probe_path, follow_redirects=False)
         assert redirected.status_code == 307
         assert redirected.headers["location"].startswith("https://")
 
@@ -157,21 +177,28 @@ def test_legacy_surface_override_does_not_restore_deleted_legacy_routes(monkeypa
 
 
 def test_strict_profile_filters_legacy_paths_from_openapi(monkeypatch):
+    """Legacy paths must not be exposed in strict AP-v1 production.
+
+    Production disables ``openapi.json`` entirely (``openapi_url=None``),
+    so this test checks the filtering via the mounted route list —
+    equivalent coverage without depending on an endpoint that doesn't
+    exist in production.
+    """
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_STRICT_SURFACES", raising=False)
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
-    with TestClient(_app()) as client:
-        response = client.get("/openapi.json")
-        assert response.status_code == 200
-        paths = response.json()["paths"]
-        assert "/email/tasks" not in paths
-        assert "/audit/trail" not in paths
-        assert "/outlook/status/{user_id}" not in paths
-        assert "/config/organizations/{organization_id}" not in paths
-        assert "/erp/status/{organization_id}" not in paths
-        assert "/api/agent/intents/preview" in paths
+    with TestClient(_app()) as _client:
+        paths = _mounted_paths()
+
+    assert "/email/tasks" not in paths
+    assert "/audit/trail" not in paths
+    assert "/outlook/status/{user_id}" not in paths
+    assert "/config/organizations/{organization_id}" not in paths
+    assert "/erp/status/{organization_id}" not in paths
+    # The canonical agent intent surface must stay exposed.
+    assert "/api/agent/intents/preview" in paths
 
 
 def test_strict_profile_route_surface_is_minimized(monkeypatch):

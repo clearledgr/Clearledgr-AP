@@ -68,6 +68,7 @@ class TestGetPaymentStatusQuickbooks:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -103,6 +104,7 @@ class TestGetPaymentStatusQuickbooks:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -128,6 +130,7 @@ class TestGetPaymentStatusQuickbooks:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -175,6 +178,7 @@ class TestGetPaymentStatusXero:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -212,6 +216,7 @@ class TestGetPaymentStatusNetsuite:
             async def post(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
         monkeypatch.setattr(mod, "_oauth_header", lambda *a, **kw: "OAuth fake")
 
         class Conn:
@@ -251,6 +256,7 @@ class TestGetPaymentStatusSAP:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
         monkeypatch.setattr(mod, "_open_sap_service_layer_session", AsyncMock(return_value=session_result))
 
         class Conn:
@@ -1211,6 +1217,7 @@ class TestQuickbooksPaymentFailed:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -1248,6 +1255,7 @@ class TestQuickbooksCreditClosure:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -1284,6 +1292,7 @@ class TestXeroPaymentFailed:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -1321,6 +1330,7 @@ class TestXeroCreditClosure:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
 
         class Conn:
             access_token = "tok"
@@ -1357,6 +1367,7 @@ class TestNetsuitePaymentFailed:
             async def post(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
         monkeypatch.setattr(mod, "_oauth_header", lambda *a, **kw: "OAuth fake")
 
         class Conn:
@@ -1397,6 +1408,7 @@ class TestSapPaymentFailed:
             async def get(self, *a, **kw): return FakeResponse()
 
         monkeypatch.setattr(mod, "httpx", type("M", (), {"AsyncClient": lambda **kw: FakeClient(), "HTTPStatusError": Exception}))
+        monkeypatch.setattr(mod, "get_http_client", lambda: FakeClient())
         monkeypatch.setattr(mod, "_open_sap_service_layer_session", AsyncMock(return_value=session_result))
 
         class Conn:

@@ -184,6 +184,12 @@ class TestCSVSerialization:
         columns = ["name", "amount"]
         csv_str = rows_to_csv(rows, columns)
 
+        # rows_to_csv prepends a UTF-8 BOM so Excel on Windows opens
+        # the file as UTF-8. csv.DictReader is BOM-unaware — it would
+        # read the first column as '\ufeffname'. Strip the BOM before
+        # parsing so the keys match the columns list as users see them.
+        if csv_str.startswith("\ufeff"):
+            csv_str = csv_str[1:]
         reader = csv.DictReader(io.StringIO(csv_str))
         parsed = list(reader)
         assert len(parsed) == 2

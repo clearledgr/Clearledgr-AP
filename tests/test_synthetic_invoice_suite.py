@@ -96,8 +96,13 @@ class TestExtractionFromFixtures:
     """Test that the email parser extracts correct fields from each fixture."""
 
     @pytest.mark.skipif(
-        not os.environ.get("ANTHROPIC_API_KEY"),
-        reason="Full extraction tests require ANTHROPIC_API_KEY (LLM-dependent)",
+        os.environ.get("CLEARLEDGR_RUN_LLM_TESTS") != "1",
+        reason=(
+            "Full extraction tests hit the real Claude API — opt in "
+            "with CLEARLEDGR_RUN_LLM_TESTS=1 and a valid "
+            "ANTHROPIC_API_KEY. Skipped by default so CI runs are "
+            "deterministic and don't burn quota."
+        ),
     )
     def test_happy_path_extraction_fields(self, happy_path_invoices):
         """Happy path invoices should extract all expected fields."""
@@ -113,8 +118,12 @@ class TestExtractionFromFixtures:
                 sender=email["sender"],
             )
 
-            # Vendor name extraction depends on LLM availability — skip if no API key
-            if expected.get("vendor_name") and os.environ.get("ANTHROPIC_API_KEY"):
+            # Vendor name extraction depends on LLM availability.
+            # Match the skipif guard above — sentinel test-keys from
+            # other tests don't count as a real API key.
+            _api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            _have_real_key = bool(_api_key) and not _api_key.startswith("test-")
+            if expected.get("vendor_name") and _have_real_key:
                 extracted_vendor = (result.get("vendor_name") or "").strip()
                 assert extracted_vendor, f"Fixture {inv['id']}: vendor_name not extracted"
 

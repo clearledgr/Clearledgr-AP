@@ -434,10 +434,15 @@ class TestPortalBankDetailsPost:
         app.include_router(router)
         client = TestClient(app)
 
+        # GB33BUKB20201555555555 is the canonical UK IBAN example
+        # that passes mod-97 checksum validation. The previous test
+        # value (GB82 BARC 2000 0055 5555 55) was structurally
+        # UK-shaped but failed mod-97 — the portal now rejects that
+        # correctly, so the test has to use a real-shape IBAN.
         resp = client.post(
             f"/portal/onboard/{raw_token}/bank-details",
             data={
-                "iban": "GB82 BARC 2000 0055 5555 55",
+                "iban": "GB33 BUKB 2020 1555 5555 55",
                 "account_holder_name": "Acme Limited",
                 "bank_name": "Barclays",
             },
@@ -450,7 +455,7 @@ class TestPortalBankDetailsPost:
         assert profile.get("bank_details_encrypted") is not None
         # Plaintext IBAN should NOT appear in the profile.
         profile_str = str(profile)
-        assert "GB82BARC20000055555555" not in profile_str
+        assert "GB33BUKB20201555555555" not in profile_str
 
         # Session should now be bank_verified (V1 direct edge; the old
         # micro-deposit intermediate state was removed).

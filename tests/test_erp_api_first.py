@@ -27,6 +27,23 @@ def db(tmp_path, monkeypatch):
     return db
 
 
+@pytest.fixture(autouse=True)
+def _bypass_pre_post_validate(monkeypatch):
+    """Tests in this file exercise the API-first post path specifically.
+    The ``pre_post_validate`` gate (three-way match, amount/vendor/GL
+    checks) is a separate product boundary with its own test suite;
+    leaving it on would require seeding full PO/GRN/vendor-master
+    fixtures per test. Stub it to always pass here.
+    """
+    from clearledgr.integrations import erp_router
+
+    monkeypatch.setattr(
+        erp_router,
+        "pre_post_validate",
+        lambda ap_item_id, organization_id, db=None: {"valid": True, "failures": []},
+    )
+
+
 def _create_item(db) -> Dict[str, str]:
     return db.create_ap_item(
         {
