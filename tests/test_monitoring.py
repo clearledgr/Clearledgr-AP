@@ -68,6 +68,33 @@ class TestDeadLetterCheck:
         assert result["alert"] is True
         assert result["value"] == 6
 
+    def test_dead_letters_include_per_channel_breakdown(self, db):
+        """Per-channel breakdown tells CS *which* integration is
+        broken — generic 'N dead-lettered notifications' isn't
+        actionable without it."""
+        # Seed a mix of channels.
+        channel_plan = [("slack", 3), ("webhook", 2), ("teams_card_update", 1)]
+        for channel, n in channel_plan:
+            for _ in range(n):
+                nid = db.enqueue_notification("default", channel, {"x": "y"})
+                sql = db._prepare_sql(
+                    "UPDATE pending_notifications SET status = 'dead_letter' WHERE id = ?"
+                )
+                with db.connect() as conn:
+                    conn.cursor().execute(sql, (nid,))
+                    conn.commit()
+
+        result = MonitoringService("default")._check_dead_letters()
+        assert result["value"] == 6
+        assert result["by_channel"] == {
+            "slack": 3,
+            "webhook": 2,
+            "teams_card_update": 1,
+        }
+        # Message includes the breakdown so Slack ops alert surfaces it.
+        assert "slack=3" in result["message"]
+        assert "webhook=2" in result["message"]
+
 
 class TestAuthFailureCheck:
     def test_no_failures_is_healthy(self, db):

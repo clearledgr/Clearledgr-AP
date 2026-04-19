@@ -375,8 +375,30 @@ class InvoicePostingMixin:
         if isinstance(field_confidences, dict) and field_confidences:
             self._update_ap_item_metadata(ap_item_id, {"field_confidences": field_confidences})
 
+        # Compose the reason the human gave for approving. Multiple
+        # gates can fire on one invoice (PO exception + budget); join
+        # them so the audit event carries the full justification rather
+        # than just whichever was passed first.
+        _approve_reason_parts: List[str] = []
+        if po_override_reason and str(po_override_reason).strip():
+            _approve_reason_parts.append(f"po_override: {po_override_reason}")
+        if override_justification and str(override_justification).strip():
+            _approve_reason_parts.append(f"justification: {override_justification}")
+        _approve_reason = " | ".join(_approve_reason_parts) if _approve_reason_parts else None
+
+        _override_ctx_dict: Optional[Dict[str, Any]] = None
+        if override_context is not None:
+            try:
+                from dataclasses import asdict, is_dataclass
+                _override_ctx_dict = asdict(override_context) if is_dataclass(override_context) else dict(override_context)  # type: ignore[arg-type]
+            except Exception:
+                _override_ctx_dict = None
+
         self._maybe_record_ap_decision_override(
-            ap_item_id, "approved", approved_by, correlation_id=correlation_id
+            ap_item_id, "approved", approved_by,
+            correlation_id=correlation_id,
+            human_reason=_approve_reason,
+            override_context=_override_ctx_dict,
         )
         self._record_approval_snapshot(
             ap_item_id=ap_item_id,
@@ -908,7 +930,9 @@ class InvoicePostingMixin:
                 resolved_channel_id, resolved_message_ref, invoice_data, rejected_by_label, reason
             )
         self._maybe_record_ap_decision_override(
-            ap_item_id, "rejected", rejected_by, correlation_id=correlation_id
+            ap_item_id, "rejected", rejected_by,
+            correlation_id=correlation_id,
+            human_reason=reason,
         )
         self._record_approval_snapshot(
             ap_item_id=ap_item_id,

@@ -120,29 +120,65 @@ class MonitoringService:
     # ------------------------------------------------------------------
 
     def _check_dead_letters(self) -> Dict[str, Any]:
-        """Check for dead-lettered notifications (exhausted retries)."""
+        """Check for dead-lettered notifications (exhausted retries).
+
+        Returns an aggregate count plus a per-channel breakdown so CS
+        can tell at a glance whether the dead-letters are Slack
+        callbacks, Teams callbacks, outbound webhooks, or something
+        else. Without the breakdown, "5 dead-lettered notifications"
+        is unactionable — you don't know which integration is failing.
+        """
+        count = 0
+        by_channel: Dict[str, int] = {}
         try:
-            sql = self.db._prepare_sql(
-                "SELECT COUNT(*) FROM pending_notifications "
-                "WHERE organization_id = ? AND status = 'dead_letter'"
-            )
             self.db.initialize()
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(sql, (self.organization_id,))
+                # Aggregate total
+                cur.execute(
+                    self.db._prepare_sql(
+                        "SELECT COUNT(*) FROM pending_notifications "
+                        "WHERE organization_id = ? AND status = 'dead_letter'"
+                    ),
+                    (self.organization_id,),
+                )
                 row = cur.fetchone()
-            count = int(row[0]) if row else 0
+                count = int(row[0]) if row else 0
+                # Per-channel breakdown
+                cur.execute(
+                    self.db._prepare_sql(
+                        "SELECT channel, COUNT(*) AS n FROM pending_notifications "
+                        "WHERE organization_id = ? AND status = 'dead_letter' "
+                        "GROUP BY channel"
+                    ),
+                    (self.organization_id,),
+                )
+                for r in cur.fetchall():
+                    if hasattr(r, "keys"):
+                        by_channel[str(r["channel"] or "unknown")] = int(r["n"] or 0)
+                    else:
+                        by_channel[str(r[0] or "unknown")] = int(r[1] or 0)
         except Exception:
             count = 0
+            by_channel = {}
 
         threshold = int(_threshold("dead_letter_max"))
+        # Build a compact, CS-readable summary of which channels are broken.
+        breakdown_str = (
+            ", ".join(f"{ch}={n}" for ch, n in sorted(by_channel.items()))
+            if by_channel else ""
+        )
         return {
             "check": "dead_letters",
             "value": count,
             "threshold": threshold,
             "alert": count > threshold,
             "severity": "critical" if count > threshold * 2 else "warning",
-            "message": f"{count} dead-lettered notifications (threshold: {threshold})",
+            "message": (
+                f"{count} dead-lettered notifications (threshold: {threshold})"
+                + (f" — {breakdown_str}" if breakdown_str else "")
+            ),
+            "by_channel": by_channel,
         }
 
     def _check_auth_failures(self) -> Dict[str, Any]:

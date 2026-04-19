@@ -1338,11 +1338,24 @@ class InvoiceValidationMixin:
         human_action: str,  # "approved" or "rejected"
         actor_id: str,
         correlation_id: Optional[str] = None,
+        human_reason: Optional[str] = None,
+        override_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Emit ap_decision_override audit event when a human disagrees with Claude.
 
         Disagreement: human approved something Claude said escalate/reject,
         or human rejected something Claude said approve.
+
+        ``human_reason`` captures the free-text justification the user
+        provided (rejection reason, PO-override reason, etc.). CS
+        dashboards and the AP Decision health endpoint surface this
+        back to customers so "agent approved but I rejected" can be
+        answered with "because X" instead of just "because they
+        overrode."
+
+        ``override_context`` optionally carries structured override
+        metadata (gate_type, specific reason codes, confidence_pct)
+        from the OverrideContext dataclass.
         """
         if not ap_item_id:
             return
@@ -1358,24 +1371,41 @@ class InvoiceValidationMixin:
             is_override = self._is_human_override(claude_rec, human_action)
             if not is_override:
                 return
+
+            event_metadata: Dict[str, Any] = {
+                "human_action": human_action,
+                "claude_recommendation": claude_rec,
+                "claude_model": meta.get("ap_decision_model", "unknown"),
+            }
+            reason_trimmed = (human_reason or "").strip()
+            if reason_trimmed:
+                # Truncate to keep timeline rows reasonable; full text
+                # is still on the source ap_item (rejection_reason /
+                # override_justification columns).
+                event_metadata["human_reason"] = reason_trimmed[:500]
+            if override_context:
+                # Copy scalar fields from OverrideContext — don't
+                # serialize the whole object, keep the event metadata
+                # small and queryable.
+                for key in ("gate_type", "reason_code", "confidence_pct", "amount_delta_pct"):
+                    if override_context.get(key) is not None:
+                        event_metadata[key] = override_context.get(key)
+
             self.db.append_audit_event({
                 "ap_item_id": ap_item_id,
                 "event_type": "ap_decision_override",
                 "actor_type": "user",
                 "actor_id": actor_id,
                 "reason": f"human_{human_action}_override_claude_{claude_rec}",
-                "metadata": {
-                    "human_action": human_action,
-                    "claude_recommendation": claude_rec,
-                    "claude_model": meta.get("ap_decision_model", "unknown"),
-                },
+                "metadata": event_metadata,
                 "organization_id": self.organization_id,
                 "correlation_id": correlation_id,
                 "source": "human_decision",
             })
             logger.info(
-                "[APDecision] Override recorded: human=%s claude=%s ap_item=%s actor=%s",
+                "[APDecision] Override recorded: human=%s claude=%s ap_item=%s actor=%s reason=%r",
                 human_action, claude_rec, ap_item_id, actor_id,
+                reason_trimmed[:80] if reason_trimmed else "",
             )
         except Exception as exc:
             logger.error("Could not record ap_decision_override: %s", exc)
