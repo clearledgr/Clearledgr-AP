@@ -303,6 +303,7 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/monitoring-health",
     "/api/ops/retry-queue",
     "/api/ops/vendor-onboarding/sessions",
+    "/api/ops/llm-cost-summary",
 }
 
 STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {

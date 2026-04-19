@@ -28,6 +28,10 @@ _DEFAULTS = {
     "overdue_invoices_max": 20,     # max overdue invoices before alert
     "erp_error_rate_pct": 30,       # % of ERP calls that failed recently
     "approver_stale_days": 30,      # days since last login to flag approver as stale
+    # Gmail watch subscriptions expire after 7 days; renewal cron runs
+    # every 6 days. Alert if any active watch for this org is within
+    # 24h of expiry OR already expired.
+    "gmail_watch_warn_hours": 24,
 }
 
 
@@ -98,6 +102,7 @@ class MonitoringService:
             self._check_overdue_invoices(),
             self._check_posting_failures(),
             self._check_approver_health(),
+            self._check_gmail_watch_expiration(),
         ]
         alerts = [c for c in checks if c.get("alert")]
         return {
@@ -398,6 +403,96 @@ class MonitoringService:
                 + (" ..." if count > 5 else "")
             ) if problems else "All configured approvers are active org members",
             "problems": problems,
+        }
+
+    def _check_gmail_watch_expiration(self) -> Dict[str, Any]:
+        """Detect Gmail watch subscriptions about to expire or already expired.
+
+        Gmail watch subscriptions expire after 7 days. The renewal cron
+        runs every 6 days and calls ``watch()`` on each active mailbox.
+        If that cron silently fails (auth revoked, quota hit, new
+        workspace not seeded), invoices stop arriving and nothing else
+        detects it — the agent just doesn't process anything. This
+        check compares ``watch_expiration`` against now + warn window
+        and raises a critical alert if ANY active watch in the org is
+        about to expire or has already expired.
+        """
+        expiring: List[Dict[str, Any]] = []
+        expired: List[Dict[str, Any]] = []
+        missing_watch: List[Dict[str, Any]] = []
+
+        try:
+            self.db.initialize()
+            # gmail_autopilot_state is keyed by user_id, not org_id.
+            # For V1 single-tenant deployments this is sufficient; when
+            # multi-tenant sharding is real the query here grows a JOIN
+            # to the users table. For now we surface every watch in the
+            # DB — a connected Gmail account with no watch_expiration is
+            # itself the signal (never renewed / never set up).
+            sql = self.db._prepare_sql(
+                "SELECT email, watch_expiration, last_watch_at "
+                "FROM gmail_autopilot_state"
+            )
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql)
+                rows = cur.fetchall()
+        except Exception:
+            rows = []
+
+        now = datetime.now(timezone.utc)
+        warn_hours = float(_threshold("gmail_watch_warn_hours"))
+        warn_cutoff = now + timedelta(hours=warn_hours)
+
+        for row in rows:
+            # Rows may be dict-like (sqlite Row) or tuple-like depending on adapter.
+            if hasattr(row, "keys"):
+                email = row["email"]
+                watch_exp = row["watch_expiration"]
+            else:
+                email, watch_exp = row[0], row[1]
+
+            if not watch_exp:
+                missing_watch.append({"email": email})
+                continue
+
+            try:
+                exp_dt = datetime.fromisoformat(str(watch_exp).replace("Z", "+00:00"))
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                # Malformed timestamp — treat as missing so it surfaces.
+                missing_watch.append({"email": email, "reason": "malformed_expiration"})
+                continue
+
+            if exp_dt <= now:
+                expired.append({
+                    "email": email,
+                    "expired_at": exp_dt.isoformat(),
+                    "hours_past": round((now - exp_dt).total_seconds() / 3600.0, 1),
+                })
+            elif exp_dt <= warn_cutoff:
+                expiring.append({
+                    "email": email,
+                    "expires_at": exp_dt.isoformat(),
+                    "hours_until": round((exp_dt - now).total_seconds() / 3600.0, 1),
+                })
+
+        problem_count = len(expired) + len(expiring) + len(missing_watch)
+        has_critical = len(expired) > 0 or len(missing_watch) > 0
+        return {
+            "check": "gmail_watch_expiration",
+            "value": problem_count,
+            "threshold": 0,
+            "alert": problem_count > 0,
+            "severity": "critical" if has_critical else "warning",
+            "message": (
+                f"{len(expired)} expired, {len(expiring)} expiring soon, "
+                f"{len(missing_watch)} missing watch subscription"
+            ) if problem_count else "All Gmail watches are healthy",
+            "expired": expired,
+            "expiring": expiring,
+            "missing_watch": missing_watch,
         }
 
 

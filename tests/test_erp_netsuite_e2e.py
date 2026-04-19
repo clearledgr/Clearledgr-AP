@@ -276,3 +276,113 @@ class TestPostBillToNetsuite:
 
         assert result["status"] == "error"
         assert result.get("needs_reauth") is True
+
+    def test_bill_post_emits_per_line_vat_when_provided(self):
+        """Per-line tax_rate + tax_code_id → NetSuite expense line
+        carries taxRate1 + taxCode; lump-sum taxTotal is omitted so
+        we don't double-count."""
+        created = _mock_response(201, {"id": "B-VAT", "tranId": "INV-VAT"})
+        client = _fake_http_client({"POST": []})
+        captured: Dict[str, Any] = {}
+
+        async def _fake_post(url, **kwargs):
+            captured["body"] = kwargs.get("json")
+            return created
+
+        client.post.side_effect = _fake_post
+        bill = _FakeBill(
+            line_items=[
+                {"amount": 1000.0, "tax_rate": 7.5, "tax_code_id": "5", "tax_amount": 75.0,
+                 "description": "Cloud — Apr"},
+            ],
+            tax_amount=75.0,
+        )
+
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+                result = asyncio.run(post_bill_to_netsuite(_ns_connection(), bill))
+
+        assert result["status"] == "success"
+        line = captured["body"]["expense"]["items"][0]
+        assert line["taxRate1"] == 7.5
+        assert line["taxCode"] == {"id": "5"}
+        assert line["tax1Amt"] == 75.0
+        # Per-line tax present → lump-sum taxTotal is suppressed.
+        assert "taxTotal" not in captured["body"]
+
+    def test_bill_post_falls_back_to_lump_sum_tax_when_no_per_line(self):
+        """No per-line tax_rate → fallback to ``taxTotal`` lump sum so
+        customers without per-line tax breakdown keep working."""
+        created = _mock_response(201, {"id": "B-LUMP", "tranId": "INV-LUMP"})
+        client = _fake_http_client({"POST": []})
+        captured: Dict[str, Any] = {}
+
+        async def _fake_post(url, **kwargs):
+            captured["body"] = kwargs.get("json")
+            return created
+
+        client.post.side_effect = _fake_post
+        bill = _FakeBill(tax_amount=75.0)
+
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+                asyncio.run(post_bill_to_netsuite(_ns_connection(), bill))
+
+        assert captured["body"]["taxTotal"] == 75.0
+
+    def test_bill_post_currency_internal_id_preferred_over_refname(self):
+        """When gl_map supplies ``currency_id_<CODE>``, bill uses the
+        internal ID — lets exotic-currency tenants work without the
+        3-letter refName lookup breaking."""
+        created = _mock_response(201, {"id": "B-FX", "tranId": "INV-FX"})
+        client = _fake_http_client({"POST": []})
+        captured: Dict[str, Any] = {}
+
+        async def _fake_post(url, **kwargs):
+            captured["body"] = kwargs.get("json")
+            return created
+
+        client.post.side_effect = _fake_post
+        bill = _FakeBill(currency="NGN")
+        gl_map = {"expenses": "67", "currency_id_NGN": "42"}
+
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+                asyncio.run(post_bill_to_netsuite(_ns_connection(), bill, gl_map=gl_map))
+
+        # Internal ID wins when provided.
+        assert captured["body"]["currency"] == {"id": "42"}
+
+    def test_attach_to_netsuite_uses_correct_arg_order(self):
+        """Regression test for the arg-order + dict-vs-string bug that
+        lived in ``_attach_to_netsuite`` since inception. The function
+        should call ``_oauth_header(connection, "POST", url)``, compose
+        the full header dict, and POST successfully."""
+        from clearledgr.integrations.erp_netsuite import _attach_to_netsuite
+
+        captured: Dict[str, Any] = {}
+
+        async def _fake_post(url, **kwargs):
+            captured["url"] = url
+            captured["headers"] = kwargs.get("headers")
+            captured["json"] = kwargs.get("json")
+            return _mock_response(204)
+
+        client = MagicMock()
+        client.post = AsyncMock(side_effect=_fake_post)
+
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake") as mock_hdr:
+                result = asyncio.run(_attach_to_netsuite(
+                    _ns_connection(), "BILL-1", b"hello", "invoice.pdf",
+                ))
+
+        assert result == {"attached": True, "erp": "netsuite", "filename": "invoice.pdf"}
+        # _oauth_header called with (connection, method, url) — the
+        # previous buggy form passed (connection, url, method).
+        call_args = mock_hdr.call_args
+        assert call_args.args[1] == "POST"
+        assert "/vendorbill/BILL-1/file" in call_args.args[2]
+        # Headers dict is composed correctly (not the raw OAuth string).
+        assert captured["headers"]["Authorization"] == "OAuth fake"
+        assert captured["headers"]["Content-Type"] == "application/json"

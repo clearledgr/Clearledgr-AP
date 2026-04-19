@@ -327,25 +327,51 @@ async def post_bill_to_netsuite(
     if getattr(connection, "subsidiary_id", None):
         ns_bill["subsidiary"] = {"id": str(connection.subsidiary_id)}
 
-    # Currency — NetSuite references currencies by refName (3-letter
-    # code works for all OneWorld tenants; single-sub tenants with
-    # exotic currencies may need internal IDs, which is a configuration
-    # edge case to handle via the gl_map in future).
+    # Currency. NetSuite references currencies by refName (3-letter
+    # ISO code works for most tenants). Some subsidiaries with exotic
+    # currencies need internal IDs — if the caller has supplied a
+    # NetSuite currency internal ID via gl_map (key:
+    # ``currency_id_<CODE>``), prefer that over the refName. This
+    # matches the same gl_map convention used for GL account codes.
     bill_currency = str(getattr(bill, "currency", "") or "").strip().upper()
-    if bill_currency and len(bill_currency) == 3:
-        ns_bill["currency"] = {"refName": bill_currency}
+    if bill_currency:
+        currency_key = f"currency_id_{bill_currency}"
+        if gl_map and gl_map.get(currency_key):
+            ns_bill["currency"] = {"id": str(gl_map[currency_key])}
+        elif len(bill_currency) == 3:
+            ns_bill["currency"] = {"refName": bill_currency}
 
     # Add line items as expenses. Money boundary: quantize before
     # serialising so what we send to NetSuite matches our internal
-    # Decimal value exactly.
+    # Decimal value exactly. Per-line tax rate (``tax_rate`` + optional
+    # ``tax_code_id``) is attached when provided — required for UK
+    # VAT, EU reverse-charge, NG VAT, AU GST reporting. When not
+    # provided, we fall back to the lump-sum ``taxTotal`` for tenants
+    # that don't break out per-line tax.
+    has_per_line_tax = False
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
-            ns_bill["expense"]["items"].append({
+            line = {
                 "line": i + 1,
                 "account": {"id": item.get("gl_code") or item.get("account_id") or expense_account},
                 "amount": money_to_float(item.get("amount", 0)),
                 "memo": item.get("description", ""),
-            })
+            }
+            line_tax_rate = item.get("tax_rate")
+            line_tax_code = item.get("tax_code_id") or item.get("tax_code")
+            if line_tax_rate is not None or line_tax_code:
+                has_per_line_tax = True
+                if line_tax_rate is not None:
+                    try:
+                        line["taxRate1"] = float(line_tax_rate)
+                    except (TypeError, ValueError):
+                        pass
+                if line_tax_code:
+                    line["taxCode"] = {"id": str(line_tax_code)}
+                line_tax_amt = item.get("tax_amount")
+                if line_tax_amt is not None:
+                    line["tax1Amt"] = money_to_float(line_tax_amt)
+            ns_bill["expense"]["items"].append(line)
     else:
         ns_bill["expense"]["items"].append({
             "line": 1,
@@ -354,8 +380,13 @@ async def post_bill_to_netsuite(
             "memo": bill.description or f"Invoice {bill.invoice_number}",
         })
 
-    # Add tax if provided
-    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+    # Lump-sum tax only when per-line tax isn't present — avoids
+    # double-counting when both are set.
+    if (
+        getattr(bill, "tax_amount", None)
+        and bill.tax_amount > 0
+        and not has_per_line_tax
+    ):
         ns_bill["taxTotal"] = money_to_float(bill.tax_amount)
 
     # Discount as negative expense line
@@ -1198,23 +1229,34 @@ async def find_bill_netsuite(
 async def _attach_to_netsuite(
     connection, bill_id: str, file_bytes: bytes, filename: str,
 ) -> Optional[Dict[str, Any]]:
-    """Upload attachment to a NetSuite VendorBill."""
+    """Upload an attachment to a NetSuite VendorBill.
+
+    Reads the NetSuite account_id from the connection (not from a
+    ``credentials`` attribute — ``ERPConnection`` is flat). Builds the
+    OAuth Authorization header and composes the full header dict for
+    the POST; previous version passed wrong arg order to
+    ``_oauth_header`` and treated the returned string as a dict.
+    """
     import base64
 
-    creds = connection.credentials or {}
-    account_id = creds.get("account_id", "")
+    account_id = getattr(connection, "account_id", None) or ""
     if not account_id:
         return None
     encoded = base64.b64encode(file_bytes).decode()
     base_url = f"https://{account_id}.suitetalk.api.netsuite.com"
     url = f"{base_url}/services/rest/record/v1/vendorbill/{bill_id}/file"
-    headers = _oauth_header(connection, url, "POST")
-    headers["Content-Type"] = "application/json"
+    # _oauth_header returns the Authorization string; the full header
+    # dict is composed here.
+    auth_header = _oauth_header(connection, "POST", url)
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": "application/json",
+    }
     payload = {"name": filename, "content": encoded}
     client = get_http_client()
     resp = await client.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
-    return {"attached": True, "erp": "netsuite"}
+    return {"attached": True, "erp": "netsuite", "filename": filename}
 
 
 # ==================== Payment Status Lookup ====================

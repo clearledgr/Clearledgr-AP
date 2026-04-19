@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -314,6 +315,139 @@ async def get_box_health(
         limit=limit,
     )
     return {"health": health}
+
+
+@router.get("/llm-cost-summary")
+async def get_llm_cost_summary(
+    organization_id: str = Query("default"),
+    window_days: int = Query(default=30, ge=1, le=365),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """LLM token usage + cost attribution for one tenant.
+
+    Aggregates ``llm_call_log`` rows within ``window_days``. Returns
+    the total dollar spend, the action-by-action breakdown, and a
+    day-by-day trend so CS can spot cost spikes and capacity plan
+    against the Anthropic bill. Without this endpoint a runaway
+    tenant is invisible until the monthly bill arrives.
+    """
+    _assert_org_access(user, organization_id)
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=window_days)).isoformat()
+
+    db.initialize()
+    summary = {
+        "organization_id": organization_id,
+        "window_days": int(window_days),
+        "window_start": cutoff,
+        "generated_at": now.isoformat(),
+        "total_calls": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cost_usd": 0.0,
+        "error_calls": 0,
+        "by_action": [],
+        "by_day": [],
+    }
+
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            # Aggregates
+            cur.execute(
+                db._prepare_sql(
+                    "SELECT COUNT(*) AS n, "
+                    "       COALESCE(SUM(input_tokens), 0) AS input_tok, "
+                    "       COALESCE(SUM(output_tokens), 0) AS output_tok, "
+                    "       COALESCE(SUM(cost_estimate_usd), 0) AS cost, "
+                    "       COALESCE(SUM(CASE WHEN error IS NOT NULL AND error != '' THEN 1 ELSE 0 END), 0) AS errs "
+                    "FROM llm_call_log "
+                    "WHERE organization_id = ? AND created_at >= ?"
+                ),
+                (organization_id, cutoff),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                if hasattr(row, "keys"):
+                    r = dict(row)
+                    summary["total_calls"] = int(r.get("n") or 0)
+                    summary["total_input_tokens"] = int(r.get("input_tok") or 0)
+                    summary["total_output_tokens"] = int(r.get("output_tok") or 0)
+                    summary["total_cost_usd"] = round(float(r.get("cost") or 0.0), 4)
+                    summary["error_calls"] = int(r.get("errs") or 0)
+                else:
+                    summary["total_calls"] = int(row[0] or 0)
+                    summary["total_input_tokens"] = int(row[1] or 0)
+                    summary["total_output_tokens"] = int(row[2] or 0)
+                    summary["total_cost_usd"] = round(float(row[3] or 0.0), 4)
+                    summary["error_calls"] = int(row[4] or 0)
+
+            # Per-action breakdown
+            cur.execute(
+                db._prepare_sql(
+                    "SELECT action, "
+                    "       COUNT(*) AS n, "
+                    "       COALESCE(SUM(input_tokens), 0) AS input_tok, "
+                    "       COALESCE(SUM(output_tokens), 0) AS output_tok, "
+                    "       COALESCE(SUM(cost_estimate_usd), 0) AS cost "
+                    "FROM llm_call_log "
+                    "WHERE organization_id = ? AND created_at >= ? "
+                    "GROUP BY action "
+                    "ORDER BY cost DESC"
+                ),
+                (organization_id, cutoff),
+            )
+            for row in cur.fetchall():
+                if hasattr(row, "keys"):
+                    r = dict(row)
+                    summary["by_action"].append({
+                        "action": r.get("action"),
+                        "calls": int(r.get("n") or 0),
+                        "input_tokens": int(r.get("input_tok") or 0),
+                        "output_tokens": int(r.get("output_tok") or 0),
+                        "cost_usd": round(float(r.get("cost") or 0.0), 4),
+                    })
+                else:
+                    summary["by_action"].append({
+                        "action": row[0],
+                        "calls": int(row[1] or 0),
+                        "input_tokens": int(row[2] or 0),
+                        "output_tokens": int(row[3] or 0),
+                        "cost_usd": round(float(row[4] or 0.0), 4),
+                    })
+
+            # Per-day trend (substr(created_at, 1, 10) = 'YYYY-MM-DD')
+            cur.execute(
+                db._prepare_sql(
+                    "SELECT substr(created_at, 1, 10) AS day, "
+                    "       COUNT(*) AS n, "
+                    "       COALESCE(SUM(cost_estimate_usd), 0) AS cost "
+                    "FROM llm_call_log "
+                    "WHERE organization_id = ? AND created_at >= ? "
+                    "GROUP BY substr(created_at, 1, 10) "
+                    "ORDER BY day ASC"
+                ),
+                (organization_id, cutoff),
+            )
+            for row in cur.fetchall():
+                if hasattr(row, "keys"):
+                    r = dict(row)
+                    summary["by_day"].append({
+                        "day": r.get("day"),
+                        "calls": int(r.get("n") or 0),
+                        "cost_usd": round(float(r.get("cost") or 0.0), 4),
+                    })
+                else:
+                    summary["by_day"].append({
+                        "day": row[0],
+                        "calls": int(row[1] or 0),
+                        "cost_usd": round(float(row[2] or 0.0), 4),
+                    })
+    except Exception as exc:
+        logger.warning("llm-cost-summary query failed: %s", exc)
+
+    return {"summary": summary}
 
 
 @router.get("/ap-kpis")

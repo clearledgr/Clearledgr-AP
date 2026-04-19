@@ -268,6 +268,59 @@ class TestApproverHealthCheck:
 
 
 # ---------------------------------------------------------------------------
+# Gmail watch expiration check (P1d)
+# ---------------------------------------------------------------------------
+
+
+class TestGmailWatchExpiration:
+    def test_healthy_watch_is_no_alert(self, db):
+        future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+        db.save_gmail_autopilot_state(
+            user_id="u1", email="ops@co.com",
+            last_history_id="123", watch_expiration=future,
+        )
+        result = MonitoringService("default")._check_gmail_watch_expiration()
+        assert result["alert"] is False
+        assert result["value"] == 0
+
+    def test_expired_watch_triggers_critical_alert(self, db):
+        past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        db.save_gmail_autopilot_state(
+            user_id="u1", email="ops@co.com",
+            last_history_id="123", watch_expiration=past,
+        )
+        result = MonitoringService("default")._check_gmail_watch_expiration()
+        assert result["alert"] is True
+        assert result["severity"] == "critical"
+        assert len(result["expired"]) == 1
+        assert result["expired"][0]["email"] == "ops@co.com"
+        assert result["expired"][0]["hours_past"] > 0
+
+    def test_expiring_soon_triggers_warning(self, db):
+        soon = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+        db.save_gmail_autopilot_state(
+            user_id="u1", email="ops@co.com",
+            last_history_id="123", watch_expiration=soon,
+        )
+        result = MonitoringService("default")._check_gmail_watch_expiration()
+        assert result["alert"] is True
+        assert result["severity"] == "warning"
+        assert len(result["expiring"]) == 1
+
+    def test_missing_watch_expiration_is_critical(self, db):
+        # Connected Gmail account but no watch set up = invoices
+        # won't arrive. Critical.
+        db.save_gmail_autopilot_state(
+            user_id="u1", email="ops@co.com",
+            last_history_id="123", watch_expiration=None,
+        )
+        result = MonitoringService("default")._check_gmail_watch_expiration()
+        assert result["alert"] is True
+        assert result["severity"] == "critical"
+        assert len(result["missing_watch"]) == 1
+
+
+# ---------------------------------------------------------------------------
 # Full run tests
 # ---------------------------------------------------------------------------
 
@@ -277,7 +330,7 @@ class TestRunAllChecks:
         result = svc.run_all_checks()
         assert result["healthy"] is True
         assert result["alert_count"] == 0
-        assert result["check_count"] == 6
+        assert result["check_count"] == 7
 
     def test_unhealthy_system(self, db):
         # Create auth failures
@@ -357,7 +410,7 @@ class TestMonitoringEndpoint:
         assert "healthy" in data
         assert "checks" in data
         assert "alerts" in data
-        assert data["check_count"] == 6
+        assert data["check_count"] == 7
 
 
 # ---------------------------------------------------------------------------
