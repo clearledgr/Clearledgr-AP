@@ -249,6 +249,7 @@ class ERPConnectionRecord:
     consumer_secret: Optional[str] = None  # NetSuite TBA
     token_id: Optional[str] = None  # NetSuite TBA
     token_secret: Optional[str] = None  # NetSuite TBA
+    subsidiary_id: Optional[str] = None  # NetSuite OneWorld subsidiary internal ID
     base_url: Optional[str] = None  # SAP
     created_at: str = ""
     updated_at: str = ""
@@ -279,6 +280,7 @@ def save_erp_connection(record: ERPConnectionRecord):
         consumer_secret=record.consumer_secret,
         token_id=record.token_id,
         token_secret=record.token_secret,
+        subsidiary_id=record.subsidiary_id,
         base_url=record.base_url,
     )
     set_erp_connection(record.organization_id, connection)

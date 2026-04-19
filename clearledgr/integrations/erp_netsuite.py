@@ -317,6 +317,16 @@ async def post_bill_to_netsuite(
         "expense": {"items": []},
     }
 
+    # Subsidiary (OneWorld tenants only). NetSuite OneWorld requires
+    # ``subsidiary`` on every Vendor Bill — single-subsidiary accounts
+    # omit the field. We store the configured subsidiary internal ID
+    # on ``ERPConnection.subsidiary_id`` at onboarding; if present we
+    # attach it here. Bill post will fail with a clear schema error
+    # on OneWorld accounts that haven't configured a subsidiary, which
+    # is what we want — silent post to the wrong entity is much worse.
+    if getattr(connection, "subsidiary_id", None):
+        ns_bill["subsidiary"] = {"id": str(connection.subsidiary_id)}
+
     # Currency — NetSuite references currencies by refName (3-letter
     # code works for all OneWorld tenants; single-sub tenants with
     # exotic currencies may need internal IDs, which is a configuration
@@ -1396,6 +1406,138 @@ async def get_chart_of_accounts_netsuite(connection) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to fetch NetSuite chart of accounts: %s", type(e).__name__)
         return []
+
+
+# ==================== Preflight ====================
+
+
+async def preflight_netsuite(connection) -> Dict[str, Any]:
+    """Validate a NetSuite connection beyond "auth works".
+
+    The bare ``get_netsuite_accounts()`` connection test accepts any
+    tokens that NetSuite accepts — even if the Integration Record
+    lacks the scopes needed to actually post vendor bills. The first
+    invoice then fails with a 403 weeks after the customer thought
+    they were set up.
+
+    This preflight actively exercises the three code paths the AP
+    pipeline depends on (read vendors, read vendor bills, read chart
+    of accounts) and reports per-check status + the rough shape of
+    the customer's chart (how many accounts, how many expense
+    accounts, how many liability accounts). Callers should surface
+    the per-check result so the customer can see exactly which
+    permission is missing before onboarding advances.
+
+    Returns::
+
+        {
+            "ok": bool,               # all critical checks passed
+            "checks": {
+                "vendors_readable": {...},
+                "vendor_bills_readable": {...},
+                "chart_of_accounts_readable": {...},
+            },
+            "chart_summary": {
+                "total": int,
+                "expense_accounts": int,
+                "liability_accounts": int,
+                "bank_accounts": int,
+            },
+            "warnings": [str, ...],
+        }
+    """
+    checks: Dict[str, Dict[str, Any]] = {}
+    warnings: List[str] = []
+
+    if not connection.account_id:
+        return {
+            "ok": False,
+            "checks": {},
+            "chart_summary": {},
+            "warnings": ["account_id missing"],
+        }
+
+    base_url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest"
+    client = get_http_client()
+
+    async def _probe(label: str, url: str) -> Dict[str, Any]:
+        """GET the URL, treat HTTP status as the check outcome."""
+        try:
+            auth_header = _oauth_header(connection, "GET", url)
+            response = await client.get(
+                url,
+                headers={"Authorization": auth_header, "Prefer": "transient"},
+                params={"limit": 1},
+                timeout=30,
+            )
+            status = response.status_code
+            if status == 200:
+                return {"ok": True, "status": status, "detail": "readable"}
+            if status in (401, 403):
+                return {
+                    "ok": False,
+                    "status": status,
+                    "detail": (
+                        "forbidden — the Integration Record token does not "
+                        f"have permission to read {label}. Check the role's "
+                        "permissions in NetSuite."
+                    ),
+                }
+            return {
+                "ok": False,
+                "status": status,
+                "detail": f"unexpected status {status}",
+            }
+        except Exception as exc:
+            return {"ok": False, "status": None, "detail": f"network error: {exc}"}
+
+    checks["vendors_readable"] = await _probe(
+        "vendors", f"{base_url}/record/v1/vendor"
+    )
+    checks["vendor_bills_readable"] = await _probe(
+        "vendor bills", f"{base_url}/record/v1/vendorBill"
+    )
+
+    # Chart of accounts via the existing helper — gives us counts
+    # per account type which the UI uses to confirm the customer's
+    # chart is sane (at least one expense account exists).
+    accounts = await get_chart_of_accounts_netsuite(connection)
+    chart_summary = {
+        "total": len(accounts),
+        "expense_accounts": sum(1 for a in accounts if str(a.get("type", "")).lower() == "expense"),
+        "liability_accounts": sum(1 for a in accounts if str(a.get("type", "")).lower() == "liability"),
+        "bank_accounts": sum(1 for a in accounts if str(a.get("type", "")).lower() in {"bank", "asset"}),
+    }
+    checks["chart_of_accounts_readable"] = {
+        "ok": chart_summary["total"] > 0,
+        "status": 200 if chart_summary["total"] > 0 else None,
+        "detail": (
+            f"{chart_summary['total']} accounts readable"
+            if chart_summary["total"] > 0
+            else "no accounts returned — check SuiteQL / Lists permission"
+        ),
+    }
+
+    if chart_summary["total"] > 0 and chart_summary["expense_accounts"] == 0:
+        warnings.append(
+            "chart has no expense accounts — AP bills need at least one expense "
+            "account to debit against"
+        )
+    if chart_summary["total"] > 0 and chart_summary["liability_accounts"] == 0:
+        warnings.append(
+            "chart has no liability accounts — the AP account bills credit against "
+            "may be missing"
+        )
+
+    critical_ok = all(c["ok"] for c in checks.values())
+
+    return {
+        "ok": critical_ok and not warnings,
+        "critical_ok": critical_ok,
+        "checks": checks,
+        "chart_summary": chart_summary,
+        "warnings": warnings,
+    }
 
 
 # ==================== Vendor List ====================

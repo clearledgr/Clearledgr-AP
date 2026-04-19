@@ -173,6 +173,7 @@ class ERPConnection:
     consumer_secret: Optional[str] = None  # NetSuite consumer secret
     token_id: Optional[str] = None  # NetSuite token ID
     token_secret: Optional[str] = None  # NetSuite token secret
+    subsidiary_id: Optional[str] = None  # NetSuite OneWorld subsidiary internal ID
 
 
 # Database-backed connection storage
@@ -207,6 +208,7 @@ def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
         consumer_secret=creds.get('consumer_secret'),
         token_id=creds.get('token_id'),
         token_secret=creds.get('token_secret'),
+        subsidiary_id=creds.get('subsidiary_id'),
     )
 
 
@@ -473,6 +475,8 @@ def set_erp_connection(organization_id: str, connection: ERPConnection):
         credentials['token_secret'] = connection.token_secret
     if connection.company_code:
         credentials['company_code'] = connection.company_code
+    if connection.subsidiary_id:
+        credentials['subsidiary_id'] = connection.subsidiary_id
 
     db.save_erp_connection(
         organization_id=organization_id,

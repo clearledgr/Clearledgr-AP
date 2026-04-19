@@ -12,6 +12,54 @@ function formatDisplayDate(value) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Per-tenant GL account categories the AP pipeline reads from
+// ``settings_json["gl_account_map"]``. ``expenses`` is the only one
+// strictly required for AP bill posting; the rest configure optional
+// downstream workflows (payment execution, FX reconciliation).
+const AP_GL_CATEGORIES = [
+  {
+    key: 'expenses',
+    label: 'Expenses (AP debit)',
+    required: true,
+    placeholder: 'e.g., 6100',
+    help: 'Default account debited when posting a vendor bill. Required.',
+    accountType: 'expense',
+  },
+  {
+    key: 'accounts_payable',
+    label: 'Accounts Payable',
+    required: false,
+    placeholder: 'e.g., 2000',
+    help: 'Liability account credited on bill post. Most ERPs infer this automatically for Vendor Bills.',
+    accountType: 'liability',
+  },
+  {
+    key: 'cash',
+    label: 'Cash',
+    required: false,
+    placeholder: 'e.g., 1000',
+    help: 'Used for payment execution and bank reconciliation.',
+    accountType: 'asset',
+  },
+  {
+    key: 'payment_fees',
+    label: 'Payment fees',
+    required: false,
+    placeholder: 'e.g., 6800',
+    help: 'Bank service charges and payment processor fees.',
+    accountType: 'expense',
+  },
+  {
+    key: 'fx_gain_loss',
+    label: 'FX gain/loss',
+    required: false,
+    placeholder: 'e.g., 7000',
+    help: 'Foreign exchange adjustments when invoice currency differs from functional currency.',
+    accountType: 'expense',
+  },
+];
+
+
 function InviteRow({ invite, onRevoke, canManage }) {
   return html`<div class="secondary-row">
     <div class="secondary-row-copy">
@@ -43,6 +91,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   const canManageAny = canManageTeam || canManageCompany || canManagePlan;
 
   const erpRef = useRef(null);
+  const glMappingRef = useRef(null);
   const policyRef = useRef(null);
   const approvalRef = useRef(null);
   const vendorPolicyRef = useRef(null);
@@ -111,6 +160,74 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   const [billingSummary, setBillingSummary] = useState(null);
   const [implStatus, setImplStatus] = useState(null);
 
+  // --- GL Mapping state ---
+  // The AP pipeline posts bills against per-tenant GL codes stored in
+  // ``settings_json["gl_account_map"]``. Reads via GET /erp/gl-map,
+  // writes via PUT /erp/gl-map. Chart of accounts from the connected
+  // ERP powers the dropdowns via GET /api/workspace/chart-of-accounts.
+  const [glMap, setGlMap] = useState({});
+  const [glMapOriginal, setGlMapOriginal] = useState({});
+  const [chartAccounts, setChartAccounts] = useState([]);
+  const [loadingChart, setLoadingChart] = useState(false);
+  const glMapDirty = JSON.stringify(glMap) !== JSON.stringify(glMapOriginal);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let cancelled = false;
+    api(`/erp/gl-map?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
+      .then((res) => {
+        if (cancelled) return;
+        const mapping = res?.gl_account_map || {};
+        setGlMap(mapping);
+        setGlMapOriginal(mapping);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [orgId]);
+
+  const fetchChart = async (force = false) => {
+    if (!erp.connected) {
+      toast?.('Connect your ERP first.', 'error');
+      return;
+    }
+    setLoadingChart(true);
+    try {
+      const qs = new URLSearchParams({
+        organization_id: orgId,
+        active_only: 'true',
+        ...(force ? { force_refresh: 'true' } : {}),
+      });
+      const res = await api(`/api/workspace/chart-of-accounts?${qs.toString()}`);
+      setChartAccounts(Array.isArray(res?.accounts) ? res.accounts : []);
+      const count = res?.account_count ?? 0;
+      toast?.(`Loaded ${count} accounts from ${res?.erp_type || 'ERP'}.`, 'success');
+    } catch (exc) {
+      toast?.('Could not load chart of accounts.', 'error');
+    } finally {
+      setLoadingChart(false);
+    }
+  };
+
+  const updateGlMap = (key, value) => {
+    const trimmed = String(value || '').trim();
+    setGlMap((prev) => {
+      const next = { ...prev };
+      if (trimmed) next[key] = trimmed;
+      else delete next[key];
+      return next;
+    });
+  };
+
+  const [saveGlMap, savingGlMap] = useAction(async () => {
+    if (!canManageCompany) return;
+    await api(`/erp/gl-map?organization_id=${encodeURIComponent(orgId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ gl_account_map: glMap }),
+    });
+    setGlMapOriginal(glMap);
+    toast?.('GL mapping saved.', 'success');
+  });
+
   // §13: Fetch metered billing summary + implementation status
   useEffect(() => {
     if (!orgId) return;
@@ -174,6 +291,19 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       return;
     }
 
+    // Validate approver emails before save. A misspelled address
+    // ("alice@co") silently breaks routing — the callback never
+    // reaches a real inbox and the invoice stalls. Backend runs the
+    // same validation (email-validator) but catching it here gives
+    // the user fast feedback before the Save round-trip.
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    const invalidEmails = approvers.filter((a) => !emailRegex.test(a));
+    if (invalidEmails.length) {
+      document.getElementById('cl-rule-approvers')?.style?.setProperty('border-color', '#DC2626');
+      toast?.(`Invalid approver email: ${invalidEmails.join(', ')}`, 'error');
+      return;
+    }
+
     const newRule = { min_amount: min, max_amount: max, approver_channel: channel, approvers, gl_codes: glCodes, departments, vendors, approval_type: approvalType };
     const updated = [...approvalRules, newRule];
     setApprovalRules(updated);
@@ -216,6 +346,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       </div>
       <div class="secondary-banner-actions" style="flex-wrap:wrap">
         <button class="segmented-button btn-sm" onClick=${() => scrollToSection(erpRef)}>ERP Connection</button>
+        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(glMappingRef)}>GL Mapping</button>
         <button class="segmented-button btn-sm" onClick=${() => scrollToSection(policyRef)}>AP Policy</button>
         <button class="segmented-button btn-sm" onClick=${() => scrollToSection(approvalRef)}>Approval Routing</button>
         <button class="segmented-button btn-sm" onClick=${() => scrollToSection(vendorPolicyRef)}>Vendor Onboarding</button>
@@ -287,6 +418,96 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- §16.1b GL Account Mapping -->
+      <div class="panel" ref=${glMappingRef}>
+        <div class="panel-head compact">
+          <div>
+            <h3 style="margin-top:0">GL Account Mapping</h3>
+            <p class="muted" style="margin:0">
+              Map Clearledgr's AP categories to the GL codes in your ${erpType || 'ERP'}. Bills post to these accounts when approved.
+            </p>
+          </div>
+          ${erp.connected ? html`
+            <button
+              class="segmented-button btn-sm"
+              onClick=${() => fetchChart(chartAccounts.length > 0)}
+              disabled=${loadingChart}
+            >
+              ${loadingChart ? 'Loading…' : (chartAccounts.length ? 'Refresh chart' : 'Load from ERP')}
+            </button>
+          ` : null}
+        </div>
+
+        ${!erp.connected ? html`
+          <div class="muted" style="font-size:12px;padding:8px 0;">Connect your ERP above, then return here to map accounts.</div>
+        ` : html`
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 12px;">
+            ${AP_GL_CATEGORIES.map((cat) => {
+              const currentValue = glMap[cat.key] || '';
+              const matchingAccounts = chartAccounts.filter((a) => {
+                if (!cat.accountType) return true;
+                const t = String(a.type || a.account_type || '').toLowerCase();
+                return t.includes(cat.accountType);
+              });
+              return html`
+                <div>
+                  <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">
+                    ${cat.label}${cat.required ? html`<span style="color:#DC2626;margin-left:4px">*</span>` : null}
+                  </label>
+                  ${chartAccounts.length ? html`
+                    <select
+                      value=${currentValue}
+                      style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;background:#fff;"
+                      onChange=${(e) => updateGlMap(cat.key, e.target.value)}
+                    >
+                      <option value="">— Select account —</option>
+                      ${matchingAccounts.map((a) => {
+                        const code = a.code || a.number || a.id || '';
+                        const name = a.name || a.label || '';
+                        return html`<option value=${code}>${code}${name ? ' — ' + name : ''}</option>`;
+                      })}
+                      ${currentValue && !matchingAccounts.some((a) => (a.code || a.number || a.id) === currentValue) ? html`
+                        <option value=${currentValue}>${currentValue} (not in chart)</option>
+                      ` : null}
+                    </select>
+                  ` : html`
+                    <input
+                      type="text"
+                      value=${currentValue}
+                      placeholder=${cat.placeholder}
+                      style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
+                      onChange=${(e) => updateGlMap(cat.key, e.target.value)}
+                    />
+                  `}
+                  <div class="muted" style="font-size:11px;margin-top:4px;">${cat.help}</div>
+                </div>
+              `;
+            })}
+          </div>
+
+          <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;padding-top:4px;">
+            <div class="muted" style="font-size:12px">
+              ${(() => {
+                const required = AP_GL_CATEGORIES.filter((c) => c.required);
+                const requiredSet = required.filter((c) => glMap[c.key]).length;
+                const totalSet = AP_GL_CATEGORIES.filter((c) => glMap[c.key]).length;
+                if (requiredSet < required.length) {
+                  return html`<span style="color:#DC2626">⚠ ${required.length - requiredSet} required category still unmapped.</span>`;
+                }
+                return `${totalSet} of ${AP_GL_CATEGORIES.length} categories mapped.`;
+              })()}
+            </div>
+            <button
+              class="btn-primary btn-sm"
+              onClick=${saveGlMap}
+              disabled=${!glMapDirty || savingGlMap || !canManageCompany}
+            >
+              ${savingGlMap ? 'Saving…' : 'Save mapping'}
+            </button>
+          </div>
+        `}
       </div>
 
       <!-- §16.2 AP Policy -->
@@ -362,8 +583,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           </div>
           <div>
             <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Bank verification</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">Micro-deposit</div>
-            <div class="muted" style="font-size:11px;">Two small deposits verified by the vendor via the onboarding portal.</div>
+            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">Open banking</div>
+            <div class="muted" style="font-size:11px;">Vendor confirms ownership through the configured open banking provider via the onboarding portal.</div>
           </div>
           <div>
             <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Abandonment</label>

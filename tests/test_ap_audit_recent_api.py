@@ -143,6 +143,109 @@ def test_recent_ap_audit_is_org_scoped_and_normalized(client, db):
     assert events[1]["operator_evidence_label"] == "Policy check"
 
 
+def test_recent_ap_audit_since_ts_filters_older_events(client, db):
+    """since_ts filters out events before the requested timestamp —
+    lets CS answer "what happened for this customer after 9am today"
+    without paging through overnight activity.
+    """
+    db.create_ap_item(_item_payload("alpha-1", "org-alpha"))
+    db.append_audit_event({
+        "id": "evt-old",
+        "ap_item_id": "alpha-1",
+        "event_type": "state_transition",
+        "to_state": "validated",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T08:00:00+00:00",
+    })
+    db.append_audit_event({
+        "id": "evt-new",
+        "ap_item_id": "alpha-1",
+        "event_type": "state_transition",
+        "to_state": "needs_approval",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T10:00:00+00:00",
+    })
+
+    response = client.get(
+        "/api/ap/audit/recent?organization_id=org-alpha&since_ts=2026-03-01T09:00:00Z",
+        headers=_auth_headers("org-alpha"),
+    )
+    assert response.status_code == 200
+    events = response.json()["events"]
+    # Only the 10:00 event survives the 09:00 cutoff.
+    assert len(events) == 1
+    assert events[0]["ts"].startswith("2026-03-01T10")
+
+
+def test_recent_ap_audit_event_type_filter(client, db):
+    db.create_ap_item(_item_payload("alpha-1", "org-alpha"))
+    db.append_audit_event({
+        "id": "evt-st",
+        "ap_item_id": "alpha-1",
+        "event_type": "state_transition",
+        "to_state": "validated",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T08:00:00+00:00",
+    })
+    db.append_audit_event({
+        "id": "evt-post",
+        "ap_item_id": "alpha-1",
+        "event_type": "erp_post_attempted",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T09:00:00+00:00",
+    })
+
+    response = client.get(
+        "/api/ap/audit/recent?organization_id=org-alpha&event_type=erp_post_attempted",
+        headers=_auth_headers("org-alpha"),
+    )
+    assert response.status_code == 200
+    events = response.json()["events"]
+    assert len(events) == 1
+    assert events[0]["event_type"] == "erp_post_attempted"
+
+
+def test_recent_ap_audit_failures_only_filter(client, db):
+    """The most common CS question is 'what broke today?' —
+    failures_only=true filters to the known-failure event types.
+    """
+    db.create_ap_item(_item_payload("alpha-1", "org-alpha"))
+    db.append_audit_event({
+        "id": "evt-ok",
+        "ap_item_id": "alpha-1",
+        "event_type": "state_transition",
+        "to_state": "validated",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T08:00:00+00:00",
+    })
+    db.append_audit_event({
+        "id": "evt-fail",
+        "ap_item_id": "alpha-1",
+        "event_type": "erp_post_failed",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T09:00:00+00:00",
+    })
+    db.append_audit_event({
+        "id": "evt-nudge-fail",
+        "ap_item_id": "alpha-1",
+        "event_type": "approval_nudge_failed",
+        "organization_id": "org-alpha",
+        "ts": "2026-03-01T10:00:00+00:00",
+    })
+
+    response = client.get(
+        "/api/ap/audit/recent?organization_id=org-alpha&failures_only=true",
+        headers=_auth_headers("org-alpha"),
+    )
+    assert response.status_code == 200
+    events = response.json()["events"]
+    assert len(events) == 2
+    types = {e["event_type"] for e in events}
+    assert "state_transition" not in types
+    assert "erp_post_failed" in types
+    assert "approval_nudge_failed" in types
+
+
 def test_recent_ap_audit_rejects_cross_org_access(client, db):
     db.create_ap_item(_item_payload("alpha-1", "org-alpha"))
     db.append_audit_event(

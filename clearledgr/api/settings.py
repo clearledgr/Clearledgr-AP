@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from clearledgr.core.database import get_db
 from clearledgr.core.auth import get_current_user, TokenData
@@ -76,6 +76,30 @@ class ApprovalThreshold(BaseModel):
     vendors: List[str] = Field(default_factory=list)  # Vendor name filter
     entities: List[str] = Field(default_factory=list)  # Legal entity filter
     approval_type: str = "any"  # "any" = first approver wins, "all" = unanimous
+
+    @field_validator("approvers")
+    @classmethod
+    def _validate_approver_emails(cls, value: List[str]) -> List[str]:
+        """Reject malformed approver emails at the boundary.
+
+        A misspelled approver email ("alice@co" missing TLD) silently
+        breaks approval routing — the Slack/email callback never
+        reaches a real inbox and the invoice stalls. Fail fast at the
+        settings write instead of at the routing time.
+        """
+        from email_validator import EmailNotValidError, validate_email
+
+        normalized: List[str] = []
+        for raw in value or []:
+            addr = (raw or "").strip()
+            if not addr:
+                continue
+            try:
+                info = validate_email(addr, check_deliverability=False)
+            except EmailNotValidError as exc:
+                raise ValueError(f"Invalid approver email {addr!r}: {exc}")
+            normalized.append(info.normalized)
+        return normalized
 
 
 class SlackChannelConfig(BaseModel):

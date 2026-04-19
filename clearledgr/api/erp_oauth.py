@@ -69,6 +69,11 @@ class NetSuiteConnectRequest(BaseModel):
     consumer_secret: str
     token_id: str
     token_secret: str
+    # OneWorld tenants only. Internal ID of the subsidiary this
+    # workspace posts bills against (NetSuite returns these from the
+    # ``/record/v1/subsidiary`` endpoint). Single-subsidiary accounts
+    # may omit this field.
+    subsidiary_id: Optional[str] = None
 
 
 class SAPConnectRequest(BaseModel):
@@ -228,7 +233,7 @@ async def connect_netsuite(request: NetSuiteConnectRequest):
     3. Create an Integration record
     4. Create a Token for the Integration
     """
-    # Validate by attempting to fetch accounts
+    # Validate by running the full preflight.
     connection = ERPConnection(
         type="netsuite",
         account_id=request.account_id,
@@ -236,19 +241,42 @@ async def connect_netsuite(request: NetSuiteConnectRequest):
         consumer_secret=request.consumer_secret,
         token_id=request.token_id,
         token_secret=request.token_secret,
+        subsidiary_id=request.subsidiary_id,
     )
     
-    # Test the connection
-    from clearledgr.integrations.erp_router import get_netsuite_accounts
+    # Full preflight: authenticate + validate AP permissions + sanity-check the
+    # customer's chart of accounts. Bare auth success is not enough — a token
+    # with wrong scopes will pass OAuth but fail on the first bill post weeks
+    # later. Fail fast at connect time instead.
+    from clearledgr.integrations.erp_netsuite import preflight_netsuite
     try:
-        accounts = await get_netsuite_accounts(connection)
-        if not accounts:
-            # Connection worked but no accounts returned - still valid
-            logger.warning("NetSuite connected but no accounts found")
+        preflight = await preflight_netsuite(connection)
     except Exception as e:
-        logger.error(f"NetSuite connection test failed: {e}")
+        logger.error(f"NetSuite preflight failed: {e}")
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
-    
+
+    # Any failed critical check (vendor read, vendor-bill read, chart read)
+    # blocks the connection. The customer sees exactly which permission is
+    # missing so they can fix it in NetSuite before retrying.
+    if not preflight.get("critical_ok"):
+        failed = {
+            name: check
+            for name, check in preflight.get("checks", {}).items()
+            if not check.get("ok")
+        }
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "reason": "netsuite_preflight_failed",
+                "failed_checks": failed,
+                "fix": (
+                    "Update the NetSuite Integration Record + Role to grant "
+                    "read access to Vendors, Vendor Bills, and Lists. See the "
+                    "'NetSuite permissions' section of your onboarding guide."
+                ),
+            },
+        )
+
     # Save connection
     record = ERPConnectionRecord(
         id=str(uuid.uuid4()),
@@ -262,16 +290,25 @@ async def connect_netsuite(request: NetSuiteConnectRequest):
         consumer_secret=request.consumer_secret,
         token_id=request.token_id,
         token_secret=request.token_secret,
+        subsidiary_id=request.subsidiary_id,
     )
     save_erp_connection(record)
-    
+
     logger.info(f"Connected NetSuite for organization {request.organization_id}")
-    
+
+    # Return the preflight detail alongside the success so the UI can
+    # show the customer exactly what was validated and warn about any
+    # soft issues (e.g., chart has no expense accounts yet).
     return {
         "status": "success",
         "erp": "netsuite",
         "organization_id": request.organization_id,
         "account_id": request.account_id,
+        "preflight": {
+            "checks": preflight.get("checks", {}),
+            "chart_summary": preflight.get("chart_summary", {}),
+            "warnings": preflight.get("warnings", []),
+        },
     }
 
 
