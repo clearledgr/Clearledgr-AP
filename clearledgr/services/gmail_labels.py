@@ -482,18 +482,40 @@ async def apply_label(client, message_id: str, label_key: str, user_email: str =
 
 
 async def remove_label(client, message_id: str, label_key: str, user_email: str = ""):
-    """Remove a Clearledgr label and any legacy aliases from a Gmail message."""
+    """Remove a Clearledgr label and any legacy aliases from a Gmail message.
+
+    Gmail's modify API silently succeeds when the target label isn't
+    applied to the message, so we don't have to swallow a 404 for that
+    case. Real failures (auth expiry, rate limits, network timeouts)
+    used to be silently discarded by a blanket ``except: pass``; now
+    each sub-step logs at WARNING with context so monitoring can
+    catch repeated failures. Gmail labels are a display layer — we
+    don't raise and break the caller's state transition.
+    """
     try:
         labels = await _load_label_name_map(client, user_email)
-        label_ids = [
-            labels.get(label_name)
-            for label_name in _label_names_for_key(label_key)
-            if labels.get(label_name)
-        ]
-        if label_ids:
-            await client.remove_label(message_id, [label_id for label_id in label_ids if label_id])
-    except Exception:
-        pass  # Label may not exist or may not be on the message
+    except Exception as exc:
+        logger.warning(
+            "Could not load label map to remove %s from %s: %s",
+            label_key, message_id, exc,
+        )
+        return
+    label_ids = [
+        labels.get(label_name)
+        for label_name in _label_names_for_key(label_key)
+        if labels.get(label_name)
+    ]
+    if not label_ids:
+        return
+    try:
+        await client.remove_label(
+            message_id, [label_id for label_id in label_ids if label_id],
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not remove label %s from %s: %s",
+            label_key, message_id, exc,
+        )
 
 
 async def update_ap_label(client, message_id: str, new_state: str, user_email: str = ""):

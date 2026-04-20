@@ -1090,30 +1090,35 @@ class PurchaseOrderService:
         if not match:
             raise ValueError(f"Match {match_id} not found")
         prev_status = match.status.value
+        # Audit-first invariant: if the append fails we must raise
+        # BEFORE mutating state so an un-audited override never
+        # reaches the DB. The idempotency_key guards against the
+        # reverse hazard (audit committed, state write crashes, user
+        # retries) — a repeat override with the same (match_id,
+        # override_by) returns the existing audit row via
+        # append_audit_event's built-in dedupe.
+        self._db.append_audit_event({
+            "ap_item_id": match.invoice_id,
+            "event_type": "po_match_override",
+            "from_state": prev_status,
+            "to_state": "override",
+            "actor_type": "user",
+            "actor_id": override_by,
+            "idempotency_key": f"po_match_override:{match_id}:{override_by}",
+            "metadata": {
+                "match_id": match_id,
+                "override_reason": reason,
+                "exceptions": match.exceptions,
+                "price_variance": match.price_variance,
+                "quantity_variance": match.quantity_variance,
+            },
+            "organization_id": self.organization_id,
+            "source": "purchase_orders",
+        })
         match.status = MatchStatus.OVERRIDE
         match.override_by = override_by
         match.override_reason = reason
         self._db.save_three_way_match(_match_to_store_dict(match, self.organization_id))
-        try:
-            self._db.append_audit_event({
-                "ap_item_id": match.invoice_id,
-                "event_type": "po_match_override",
-                "from_state": prev_status,
-                "to_state": "override",
-                "actor_type": "user",
-                "actor_id": override_by,
-                "metadata": {
-                    "match_id": match_id,
-                    "override_reason": reason,
-                    "exceptions": match.exceptions,
-                    "price_variance": match.price_variance,
-                    "quantity_variance": match.quantity_variance,
-                },
-                "organization_id": self.organization_id,
-                "source": "purchase_orders",
-            })
-        except Exception as exc:
-            logger.warning("Failed to write PO override audit event: %s", exc)
         logger.info("Match %s overridden by %s: %s", match_id, override_by, reason)
         return match
 
