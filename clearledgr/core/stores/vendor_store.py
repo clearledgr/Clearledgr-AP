@@ -1949,6 +1949,28 @@ class VendorStore:
 
         updated = self.get_onboarding_session_by_id(session_id)
 
+        # Auto-revoke all live onboarding tokens when the session
+        # reaches a terminal state. Until now, a forwarded magic-link
+        # remained authentication-valid until its TTL (14 days) even
+        # after the vendor finished onboarding. The session-level
+        # ``is_active`` check in portal_auth already blocks access
+        # post-termination, but revoking the token closes the hole at
+        # the token layer so defense-in-depth holds even if a future
+        # refactor bypasses the session check.
+        if terminal and hasattr(self, "revoke_session_tokens"):
+            try:
+                self.revoke_session_tokens(
+                    session_id,
+                    revoked_by=actor_id or "system",
+                    reason=f"session_terminal:{target}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[VendorStore] auto-revoke tokens on terminal failed "
+                    "(non-fatal): %s",
+                    exc,
+                )
+
         # DESIGN_THESIS.md §3 Developer Platform — fire the public
         # vendor.* webhook for transitions the external surface cares
         # about (kyc_complete / bank_verified / activated / suspended).
