@@ -180,11 +180,26 @@ async def outlook_webhook(request: Request):
     except Exception:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
 
-    webhook_secret = os.getenv("OUTLOOK_WEBHOOK_SECRET", "")
+    webhook_secret = os.getenv("OUTLOOK_WEBHOOK_SECRET", "").strip()
+    # Fail-closed: if no secret is configured, this endpoint must not
+    # accept unauthenticated webhooks. An empty secret used to skip
+    # the clientState check entirely, which let any caller drop
+    # notifications onto the autopilot poll loop.
+    if not webhook_secret:
+        logger.error(
+            "Outlook webhook rejected: OUTLOOK_WEBHOOK_SECRET is not set"
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"error": "webhook_not_configured"},
+        )
 
+    import hmac as _hmac
     for notification in body.get("value", []):
-        client_state = notification.get("clientState", "")
-        if webhook_secret and client_state != webhook_secret:
+        client_state = str(notification.get("clientState", ""))
+        # Constant-time compare — clientState equality is a shared-secret
+        # check, not a user-visible identifier.
+        if not _hmac.compare_digest(client_state, webhook_secret):
             logger.warning("Outlook webhook: invalid clientState")
             continue
 

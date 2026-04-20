@@ -175,6 +175,12 @@ class ERPConnection:
     token_secret: Optional[str] = None  # NetSuite token secret
     subsidiary_id: Optional[str] = None  # NetSuite OneWorld subsidiary internal ID
 
+    # Inbound webhook shared secret (per-tenant). QBO calls this the
+    # "verifier token"; Xero calls it the "webhook key"; NetSuite and
+    # SAP use a generic HMAC shared secret. One field regardless of
+    # ERP — the webhook verifier module treats each per its protocol.
+    webhook_secret: Optional[str] = None
+
 
 # Database-backed connection storage
 def _get_db():
@@ -209,6 +215,7 @@ def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
         token_id=creds.get('token_id'),
         token_secret=creds.get('token_secret'),
         subsidiary_id=creds.get('subsidiary_id'),
+        webhook_secret=creds.get('webhook_secret'),
     )
 
 
@@ -477,6 +484,8 @@ def set_erp_connection(organization_id: str, connection: ERPConnection):
         credentials['company_code'] = connection.company_code
     if connection.subsidiary_id:
         credentials['subsidiary_id'] = connection.subsidiary_id
+    if connection.webhook_secret:
+        credentials['webhook_secret'] = connection.webhook_secret
 
     db.save_erp_connection(
         organization_id=organization_id,

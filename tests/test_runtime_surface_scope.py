@@ -215,7 +215,11 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # routes: /api/pipelines/* (5), /api/saved-views (2), /api/box-links,
         # /api/ops/vendor-onboarding/sessions, /api/user/preferences (split
         # from /api/workspace/user/preferences). Cap raised from 215 to 230.
-        assert len(paths) <= 230
+        # 2026-04-20 hardening pass: 4 inbound ERP webhook endpoints
+        # (/erp/webhooks/{qbo|xero|netsuite|sap}/{org_id}) — each does
+        # HMAC signature verification before any processing; cap raised
+        # 230 → 240 to accommodate them.
+        assert len(paths) <= 240
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -238,6 +242,9 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             "/settings",
             # DESIGN_THESIS.md §4.07 — frontend perf telemetry
             "/api/ui",
+            # 2026-04-20 hardening pass: inbound ERP webhooks
+            # (signature-verified, per-tenant URL-scoped).
+            "/erp/webhooks",
         }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.

@@ -316,7 +316,26 @@ class TestOutlookRoutes:
         assert resp.status_code == 200
         assert resp.text == "test-token-123"
 
-    def test_webhook_notification(self, client):
+    def test_webhook_notification(self, client, monkeypatch):
+        # Outlook webhook is now fail-closed: without a configured
+        # secret it returns 503, and notifications whose clientState
+        # doesn't match the secret are silently dropped (still 202).
+        # Configure a secret and send a matching clientState so the
+        # happy-path assertion still exercises a legitimate callsite.
+        monkeypatch.setenv("OUTLOOK_WEBHOOK_SECRET", "outlook-secret-abc")
+        resp = client.post("/outlook/webhook", json={
+            "value": [
+                {
+                    "changeType": "created",
+                    "resource": "me/mailFolders('Inbox')/messages/msg-1",
+                    "clientState": "outlook-secret-abc",
+                }
+            ]
+        })
+        assert resp.status_code == 202
+
+    def test_webhook_notification_unset_secret_is_fail_closed(self, client, monkeypatch):
+        monkeypatch.delenv("OUTLOOK_WEBHOOK_SECRET", raising=False)
         resp = client.post("/outlook/webhook", json={
             "value": [
                 {
@@ -326,4 +345,5 @@ class TestOutlookRoutes:
                 }
             ]
         })
-        assert resp.status_code == 202
+        assert resp.status_code == 503
+        assert resp.json()["error"] == "webhook_not_configured"

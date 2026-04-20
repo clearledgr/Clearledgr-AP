@@ -285,6 +285,11 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     # are unauthenticated by design (navigator.sendBeacon cannot set
     # headers) and contain only surface name + latency, no PII.
     "/api/ui",
+    # Inbound ERP webhook endpoints. Each route verifies a per-tenant
+    # HMAC signature before doing anything; unconfigured org/ERP pairs
+    # fail-closed with 503. Kept outside auth middleware because the
+    # caller is the ERP itself, not a user — signature is the auth.
+    "/erp/webhooks",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -1152,6 +1157,12 @@ if STRICT_PROFILE_ACTIVE:
 else:
     from clearledgr.api.erp_connections import router as erp_connections_router
     app.include_router(erp_connections_router)
+
+# Inbound ERP webhook endpoints (HMAC-signed; QBO/Xero/NetSuite/SAP).
+# Each route verifies signature before processing — unconfigured
+# secrets fail-closed with 503 "webhook_not_configured".
+from clearledgr.api.erp_webhooks import router as erp_webhooks_router
+app.include_router(erp_webhooks_router)
 
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
