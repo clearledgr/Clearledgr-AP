@@ -166,6 +166,7 @@ class SnoozeAPItemRequest(BaseModel):
     """DESIGN_THESIS.md §3 Gmail Power Features: snooze a thread."""
     duration_minutes: int = Field(..., gt=0, le=43200, description="Snooze duration in minutes (max 30 days)")
     note: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,7 @@ class BulkApproveRequest(BaseModel):
     override: bool = False
     override_justification: Optional[str] = None
     note: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class BulkRejectRequest(BaseModel):
@@ -193,6 +195,7 @@ class BulkRejectRequest(BaseModel):
     ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
     reason: str = Field(..., min_length=1)
     note: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class BulkSnoozeRequest(BaseModel):
@@ -200,8 +203,10 @@ class BulkSnoozeRequest(BaseModel):
     ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
     duration_minutes: int = Field(..., gt=0, le=43200)
     note: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class BulkRetryPostRequest(BaseModel):
     """Bulk retry ERP posting for items stuck in failed_post."""
     ap_item_ids: List[str] = Field(..., min_length=1, max_length=100)
+    idempotency_key: Optional[str] = None

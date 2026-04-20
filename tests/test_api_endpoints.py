@@ -2197,7 +2197,27 @@ class TestExtensionEndpoints:
         assert captured["invoice_payload"]["organization_id"] == "default"
         assert captured["invoice_payload"]["user_id"] == "extension-user-1"
         assert captured["invoice_payload"]["confidence"] >= 0.95
-        assert not fake_db.audit_rows
+        # The endpoint should delegate domain writes to the runtime —
+        # the ONLY audit row it writes directly is the idempotency
+        # response cache (so retries with the same Idempotency-Key
+        # replay the real response, not just a stub).
+        idempotency_rows = [
+            r for r in fake_db.audit_rows
+            if r.get("event_type") == "api_idempotent_response"
+        ]
+        non_idempotency_rows = [
+            r for r in fake_db.audit_rows
+            if r.get("event_type") != "api_idempotent_response"
+        ]
+        assert len(idempotency_rows) == 1, (
+            "expected exactly one idempotency-cache row when the request "
+            "carried an idempotency_key"
+        )
+        assert idempotency_rows[0]["idempotency_key"] == "idem-submit-runtime-1"
+        assert not non_idempotency_rows, (
+            "endpoint must not write domain audit rows directly — those "
+            "belong to the runtime / store layer"
+        )
         assert not fake_audit.events
 
     def test_escalate_endpoint_uses_runtime_contract(self, monkeypatch):

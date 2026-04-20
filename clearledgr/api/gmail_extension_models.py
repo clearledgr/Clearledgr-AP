@@ -72,6 +72,7 @@ class ApproveAndPostRequest(BaseModel):
     override: bool = False  # Force post despite low confidence
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class VerifyConfidenceRequest(BaseModel):
@@ -163,6 +164,7 @@ class RejectInvoiceRequest(BaseModel):
     reason: str
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class BudgetDecisionRequest(BaseModel):

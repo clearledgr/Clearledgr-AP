@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from clearledgr.api.ap_item_contracts import (
     AddApItemCommentRequest,
@@ -40,6 +40,12 @@ from clearledgr.api.ap_item_contracts import (
 from clearledgr.core.ap_states import APState
 from clearledgr.core.auth import require_ops_user
 from clearledgr.core.errors import safe_error
+from clearledgr.core.idempotency import (
+    IDEMPOTENCY_HEADER,
+    load_idempotent_response,
+    resolve_idempotency_key,
+    save_idempotent_response,
+)
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.ap_entity_routing import (
     match_entity_candidate,
@@ -1716,10 +1722,17 @@ def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(requ
 async def retry_erp_post(
     ap_item_id: str,
     organization_id: str = "default",
+    idempotency_key: Optional[str] = Header(default=None, alias=IDEMPOTENCY_HEADER),
     _user=Depends(require_ops_user),
 ):
     verify_org_access(organization_id, _user)
     db = shared.get_db()
+
+    if idempotency_key:
+        replay = load_idempotent_response(db, idempotency_key)
+        if replay:
+            return replay
+
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="AP item not found")
@@ -1753,25 +1766,42 @@ async def retry_erp_post(
         raise HTTPException(status_code=502, detail=safe_error(exc, "ERP posting")) from exc
 
     status = str((retry_result or {}).get("status") or "").strip().lower()
+    actor_label = (
+        getattr(_user, "email", None)
+        or getattr(_user, "user_id", None)
+        or "ap_retry"
+    )
     if status == "posted":
-        return {
+        response = {
             "status": "posted",
             "ap_item_id": ap_item_id,
             "erp_reference": (retry_result or {}).get("erp_reference"),
             "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
             "retry_result": retry_result,
         }
+        save_idempotent_response(
+            db, idempotency_key, response,
+            box_id=ap_item_id, box_type="ap_item",
+            organization_id=organization_id, actor_id=actor_label,
+        )
+        return response
     if status == "blocked":
         reason = str((retry_result or {}).get("reason") or "retry_not_recoverable")
         raise HTTPException(status_code=400, detail=reason)
     if status == "ready_to_post":
-        return {
+        response = {
             "status": "ready_to_post",
             "ap_item_id": ap_item_id,
             "erp_reference": (retry_result or {}).get("erp_reference"),
             "resume_result": retry_result.get("result") if isinstance(retry_result, dict) else None,
             "retry_result": retry_result,
         }
+        save_idempotent_response(
+            db, idempotency_key, response,
+            box_id=ap_item_id, box_type="ap_item",
+            organization_id=organization_id, actor_id=actor_label,
+        )
+        return response
     if status == "error":
         reason = str((retry_result or {}).get("reason") or "erp_post_failed")
         raise HTTPException(
@@ -1956,6 +1986,12 @@ async def snooze_ap_item(
 
     db = get_db()
     verify_org_access(organization_id, user)
+
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
+
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
@@ -1967,8 +2003,20 @@ async def snooze_ap_item(
     from datetime import timedelta
     snoozed_until = now + timedelta(minutes=request.duration_minutes)
 
-    # Store pre-snooze state so the reaper can restore it
-    metadata = dict(item.get("metadata") or {})
+    # Store pre-snooze state so the reaper can restore it. Metadata
+    # comes back as JSON text from SQLite and as a parsed dict from
+    # Postgres; handle both shapes (mirrors bulk_snooze).
+    raw_meta = item.get("metadata")
+    if isinstance(raw_meta, str) and raw_meta.strip():
+        import json as _json
+        try:
+            metadata = dict(_json.loads(raw_meta) or {})
+        except (ValueError, TypeError):
+            metadata = {}
+    elif isinstance(raw_meta, dict):
+        metadata = dict(raw_meta)
+    else:
+        metadata = {}
     metadata["pre_snooze_state"] = current_state
     metadata["snoozed_until"] = snoozed_until.isoformat()
     if request.note:
@@ -1977,20 +2025,27 @@ async def snooze_ap_item(
     db.update_ap_item(ap_item_id, state="snoozed", metadata=metadata)
 
     actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
-    db.append_ap_item_timeline_entry(ap_item_id, {
-        "event_type": "snoozed",
-        "summary": f"Snoozed for {request.duration_minutes} minutes.",
-        "reason": request.note or "",
-        "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
-        "actor": actor_id,
-        "timestamp": now.isoformat(),
-    })
+    if hasattr(db, "append_ap_item_timeline_entry"):
+        db.append_ap_item_timeline_entry(ap_item_id, {
+            "event_type": "snoozed",
+            "summary": f"Snoozed for {request.duration_minutes} minutes.",
+            "reason": request.note or "",
+            "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
+            "actor": actor_id,
+            "timestamp": now.isoformat(),
+        })
 
-    return {
+    response = {
         "status": "snoozed",
         "snoozed_until": snoozed_until.isoformat(),
         "pre_snooze_state": current_state,
     }
+    save_idempotent_response(
+        db, request.idempotency_key, response,
+        box_id=ap_item_id, box_type="ap_item",
+        organization_id=organization_id, actor_id=actor_id,
+    )
+    return response
 
 
 @router.post("/{ap_item_id}/unsnooze")
@@ -2130,6 +2185,11 @@ async def bulk_approve_ap_items(
     verify_org_access(organization_id, user)
     db = shared.get_db()
 
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
+
     runtime_cls = shared._finance_agent_runtime_cls()
     actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_approve")
     runtime = runtime_cls(
@@ -2191,12 +2251,17 @@ async def bulk_approve_ap_items(
             "erp_reference": (result or {}).get("erp_reference"),
         })
 
-    return {
+    response = {
         "total": len(request.ap_item_ids),
         "succeeded": succeeded,
         "failed": len(request.ap_item_ids) - succeeded,
         "results": results,
     }
+    save_idempotent_response(
+        db, request.idempotency_key, response,
+        organization_id=organization_id, actor_id=actor_id,
+    )
+    return response
 
 
 @router.post("/bulk-reject")
@@ -2208,6 +2273,11 @@ async def bulk_reject_ap_items(
     """Reject N items with a shared reason."""
     verify_org_access(organization_id, user)
     db = shared.get_db()
+
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
 
     runtime_cls = shared._finance_agent_runtime_cls()
     actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_reject")
@@ -2264,12 +2334,17 @@ async def bulk_reject_ap_items(
             "reason": (result or {}).get("reason"),
         })
 
-    return {
+    response = {
         "total": len(request.ap_item_ids),
         "succeeded": succeeded,
         "failed": len(request.ap_item_ids) - succeeded,
         "results": results,
     }
+    save_idempotent_response(
+        db, request.idempotency_key, response,
+        organization_id=organization_id, actor_id=actor_id,
+    )
+    return response
 
 
 @router.post("/bulk-snooze")
@@ -2285,6 +2360,11 @@ async def bulk_snooze_ap_items(
 
     verify_org_access(organization_id, user)
     db = shared.get_db()
+
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
 
     results: List[Dict[str, Any]] = []
     succeeded = 0
@@ -2356,13 +2436,18 @@ async def bulk_snooze_ap_items(
                 "reason": safe_error(exc, "bulk_snooze"),
             })
 
-    return {
+    response = {
         "total": len(request.ap_item_ids),
         "succeeded": succeeded,
         "failed": len(request.ap_item_ids) - succeeded,
         "snoozed_until": snoozed_until.isoformat(),
         "results": results,
     }
+    save_idempotent_response(
+        db, request.idempotency_key, response,
+        organization_id=organization_id, actor_id=actor_id,
+    )
+    return response
 
 
 @router.post("/bulk-retry-post")
@@ -2374,6 +2459,11 @@ async def bulk_retry_post_ap_items(
     """Retry ERP posting for N items stuck in failed_post."""
     verify_org_access(organization_id, user)
     db = shared.get_db()
+
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
 
     runtime_cls = shared._finance_agent_runtime_cls()
     actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_retry")
@@ -2435,9 +2525,14 @@ async def bulk_retry_post_ap_items(
             "erp_reference": (retry_result or {}).get("erp_reference"),
         })
 
-    return {
+    response = {
         "total": len(request.ap_item_ids),
         "succeeded": succeeded,
         "failed": len(request.ap_item_ids) - succeeded,
         "results": results,
     }
+    save_idempotent_response(
+        db, request.idempotency_key, response,
+        organization_id=organization_id, actor_id=actor_id,
+    )
+    return response

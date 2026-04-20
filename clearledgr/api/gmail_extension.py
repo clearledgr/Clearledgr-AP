@@ -48,6 +48,10 @@ from clearledgr.api.gmail_extension_common import (
 from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
 from clearledgr.core.database import get_db
+from clearledgr.core.idempotency import (
+    load_idempotent_response,
+    save_idempotent_response,
+)
 from clearledgr.core.utils import safe_int
 
 logger = logging.getLogger(__name__)
@@ -1137,6 +1141,11 @@ async def approve_and_post(
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     db = get_db()
 
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
+
     # D7: Subscription limit check
     try:
         from clearledgr.services.subscription import get_subscription_service
@@ -1177,10 +1186,20 @@ async def approve_and_post(
         except Exception:
             pass
 
-    return {
+    response = {
         "email_id": request.email_id,
         **result,
     }
+    save_idempotent_response(
+        db,
+        request.idempotency_key,
+        response,
+        box_id=ap_item_id,
+        box_type="ap_item" if ap_item_id else None,
+        organization_id=org_id,
+        actor_id=getattr(user, "email", None) or getattr(user, "user_id", None) or "api",
+    )
+    return response
 
 
 @router.post("/verify-confidence")
@@ -1331,25 +1350,28 @@ def _resolve_ap_item_for_extension_action(db: Any, organization_id: str, referen
 
 
 def _load_idempotent_extension_response(db: Any, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Thin wrapper over :func:`clearledgr.core.idempotency.load_idempotent_response`.
+
+    Kept for back-compat with callers that pre-date the centralized
+    helper (submit_for_approval, approval_nudge, etc.). Returns the
+    cached response, or a synthetic ``idempotent_replay`` shape if
+    the audit event exists but no response payload was recorded
+    (older write paths that only persisted side-effects).
+    """
+    replay = load_idempotent_response(db, idempotency_key)
+    if replay is not None:
+        return replay
     key = str(idempotency_key or "").strip()
     if not key:
         return None
     existing = db.get_ap_audit_event_by_key(key)
-    if not existing:
-        return None
-    payload = existing.get("payload_json") if isinstance(existing, dict) else {}
-    payload = payload if isinstance(payload, dict) else {}
-    response = payload.get("response")
-    if isinstance(response, dict):
-        replay = dict(response)
-        replay.setdefault("audit_event_id", existing.get("id"))
-        replay["idempotency_replayed"] = True
-        return replay
-    return {
-        "status": "idempotent_replay",
-        "audit_event_id": existing.get("id"),
-        "idempotency_replayed": True,
-    }
+    if existing:
+        return {
+            "status": "idempotent_replay",
+            "audit_event_id": existing.get("id"),
+            "idempotency_replayed": True,
+        }
+    return None
 
 
 def _build_finance_lead_summary_payload(
@@ -1573,6 +1595,15 @@ async def submit_for_approval(
         "email_id": request.email_id,
         "ap_item_id": str((result or {}).get("ap_item_id") or request.email_id),
     }
+    save_idempotent_response(
+        db,
+        request.idempotency_key,
+        response_payload,
+        box_id=str((result or {}).get("ap_item_id") or "") or None,
+        box_type="ap_item" if (result or {}).get("ap_item_id") else None,
+        organization_id=org_id,
+        actor_id=actor_email,
+    )
     return response_payload
 
 
@@ -1586,6 +1617,12 @@ async def reject_invoice(
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     rejected_by = _authenticated_actor(user)
     db = get_db()
+
+    if request.idempotency_key:
+        replay = load_idempotent_response(db, request.idempotency_key)
+        if replay:
+            return replay
+
     ap_item = _resolve_ap_item_for_extension_action(db, org_id, request.ap_item_id or request.email_id)
     ap_item_id = str((ap_item or {}).get("id") or request.ap_item_id or "").strip() or None
     gmail_ref = str((ap_item or {}).get("thread_id") or request.email_id or "").strip()
@@ -1606,6 +1643,15 @@ async def reject_invoice(
 
     if result.get("status") != "rejected":
         raise HTTPException(status_code=400, detail=result.get("reason", "Reject failed"))
+    save_idempotent_response(
+        db,
+        request.idempotency_key,
+        result,
+        box_id=ap_item_id,
+        box_type="ap_item" if ap_item_id else None,
+        organization_id=org_id,
+        actor_id=rejected_by,
+    )
     return result
 
 
