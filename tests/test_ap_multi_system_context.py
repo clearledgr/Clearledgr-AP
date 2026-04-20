@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -12,9 +15,34 @@ from clearledgr.services.ap_item_service import _build_context_payload
 from clearledgr.services.purchase_orders import get_purchase_order_service
 
 
+@pytest.fixture(autouse=True)
+def _isolate_service_singletons(tmp_path: Path, monkeypatch):
+    """Point every service singleton at the test's tmp-path DB.
+
+    PurchaseOrderService caches ``self._db = get_db()`` at construction
+    time, and ``_instances`` caches the service per org_id. Without
+    resetting both, a test can end up with a service that holds a
+    stale reference to a prior test's DB. Mirror the conftest pattern
+    used elsewhere: set the env var, null the DB singleton, then
+    clear the PO service cache so the next construct picks up the
+    fresh DB.
+    """
+    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ap-multi-context.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import clearledgr.core.database as _db_mod
+    _db_mod._DB_INSTANCE = None
+    import clearledgr.services.purchase_orders as _po_mod
+    _po_mod._instances.clear()
+    yield
+
+
 def _make_db(tmp_path: Path) -> ClearledgrDB:
-    db_path = tmp_path / "ap-multi-context.db"
-    db = ClearledgrDB(str(db_path))
+    """Return the global DB singleton (the fixture already pointed it
+    at the tmp-path). Callers that want the PurchaseOrderService to
+    see the same DB must go through ``get_db()`` — keep this in sync.
+    """
+    from clearledgr.core.database import get_db
+    db = get_db()
     db.initialize()
     return db
 
@@ -37,15 +65,6 @@ def _create_item(db: ClearledgrDB, *, item_id: str, vendor: str, metadata: dict)
             "metadata": metadata,
         }
     )
-
-
-def _reset_procurement() -> None:
-    service = get_purchase_order_service("default")
-    service._purchase_orders.clear()
-    service._goods_receipts.clear()
-    service._matches.clear()
-    service._po_by_number.clear()
-    service._po_by_vendor.clear()
 
 
 def test_context_links_bank_and_spreadsheet_sources(tmp_path: Path):
@@ -117,7 +136,6 @@ def test_context_links_card_and_dms_sources(tmp_path: Path):
 
 
 def test_context_links_procurement_source_with_po_match(tmp_path: Path):
-    _reset_procurement()
     db = _make_db(tmp_path)
 
     po_service = get_purchase_order_service("default")
