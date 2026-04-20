@@ -71,6 +71,15 @@ from fastapi.templating import Jinja2Templates
 
 from clearledgr.core.database import get_db
 from clearledgr.core.portal_auth import PortalSession, require_portal_token
+from clearledgr.core.portal_input import (
+    PortalInputError,
+    validate_account_holder_name,
+    validate_bank_name,
+    validate_director_names,
+    validate_registered_address,
+    validate_registration_number,
+    validate_vat_number,
+)
 from clearledgr.core.vendor_onboarding_states import (
     IllegalVendorOnboardingTransitionError,
     VendorOnboardingState,
@@ -241,14 +250,26 @@ def submit_kyc(
     """Save KYC fields, transition to bank_verify."""
     db = get_db()
 
+    # Validate each field against the portal-input allowlist. Rejects
+    # control chars, zero-width joiners, RTL overrides, and anything
+    # outside the documented character class for each field. NFKC-
+    # normalizes so Unicode quirks don't slip through.
+    try:
+        reg_number_clean = validate_registration_number(registration_number)
+        address_clean = validate_registered_address(registered_address)
+        vat_clean = validate_vat_number(vat_number)
+        directors_list = validate_director_names(director_names)
+    except PortalInputError as exc:
+        return _redirect_with_error(
+            token, f"Please check the {exc.field.replace('_', ' ')} field: {exc.message}.",
+        )
+
     cleaned: Dict[str, Any] = {
-        "registered_address": registered_address.strip(),
-        "registration_number": registration_number.strip(),
+        "registered_address": address_clean,
+        "registration_number": reg_number_clean,
     }
-    vat_clean = (vat_number or "").strip()
     if vat_clean:
         cleaned["vat_number"] = vat_clean
-    directors_list = _split_director_names(director_names)
     if directors_list:
         cleaned["director_names"] = directors_list
     # Stamp the KYC completion date — the vendor just submitted it.
@@ -308,7 +329,7 @@ def submit_kyc(
             _enrich_vendor_background,
             organization_id=portal.organization_id,
             vendor_name=portal.vendor_name,
-            registration_number=registration_number.strip(),
+            registration_number=reg_number_clean,
             vat_number=vat_clean,
         )
 
@@ -374,6 +395,17 @@ def submit_bank_details(
 
     db = get_db()
 
+    # Validate account-holder and bank-name input before we touch
+    # encryption. Rejects control chars, RTL overrides, homoglyph
+    # baits. IBAN validation stays below (mod-97 check is separate).
+    try:
+        holder_clean = validate_account_holder_name(account_holder_name)
+        bank_clean = validate_bank_name(bank_name)
+    except PortalInputError as exc:
+        return _redirect_with_error(
+            token, f"Please check the {exc.field.replace('_', ' ')} field: {exc.message}.",
+        )
+
     # IBAN structural + mod-97 checksum validation. A typo in any
     # single digit of an IBAN fails the checksum, which is the only
     # line of defence between "paid Acme" and "paid the stranger whose
@@ -390,9 +422,8 @@ def submit_bank_details(
 
     bank_payload: Dict[str, Any] = {
         "iban": iban_normalised,
-        "account_holder_name": account_holder_name.strip(),
+        "account_holder_name": holder_clean,
     }
-    bank_clean = (bank_name or "").strip()
     if bank_clean:
         bank_payload["bank_name"] = bank_clean
 
