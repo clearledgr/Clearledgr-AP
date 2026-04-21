@@ -71,8 +71,39 @@ class DeterministicPlanningEngine:
         }
         handler = dispatcher.get(event.type)
         if not handler:
-            logger.warning("[PlanningEngine] No handler for event type: %s", event.type.value)
-            return Plan(event_type=event.type.value, actions=[], organization_id=event.organization_id)
+            # §4: every event type must have a planner. Silent-drop would
+            # stall any Box attached to the event with no audit trail.
+            # Record a box exception (if the event names a Box) and raise
+            # so CoordinationEngine logs a concrete failure instead of
+            # executing an empty plan. V1.2 clawback events are enum-
+            # reserved but unimplemented — they'll land here until wired.
+            box_id = event.payload.get("box_id") or event.payload.get("ap_item_id")
+            box_type = event.payload.get("box_type") or (
+                "ap_item" if event.payload.get("ap_item_id") else None
+            )
+            if box_id and box_type and hasattr(self._get_db(), "raise_box_exception"):
+                try:
+                    self._get_db().raise_box_exception(
+                        box_id=box_id,
+                        box_type=box_type,
+                        organization_id=event.organization_id,
+                        exception_type="unhandled_event_type",
+                        severity="high",
+                        reason=(
+                            f"No planner for event type '{event.type.value}'. "
+                            "Either the planner is not wired (e.g. a V1.2 "
+                            "reserved event producer fired early) or the enum "
+                            "has drifted from the dispatch table."
+                        ),
+                        metadata={"event_type": event.type.value, "event_payload": event.payload},
+                        raised_by="planning_engine",
+                        raised_actor_type="system",
+                    )
+                except Exception as exc:
+                    logger.warning("[PlanningEngine] Failed to record box exception: %s", exc)
+            raise RuntimeError(
+                f"[PlanningEngine] No planner for event type: {event.type.value}"
+            )
 
         plan = handler(event, box_state)
         plan.organization_id = event.organization_id

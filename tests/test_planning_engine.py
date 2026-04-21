@@ -188,13 +188,61 @@ class TestPlanSerialization:
 
 
 class TestUnknownEventType:
-    """Unknown events produce empty plans, not crashes."""
+    """Unknown events raise, not silently drop."""
 
-    def test_empty_payload_does_not_crash(self, engine):
+    def test_empty_payload_for_known_event_does_not_crash(self, engine):
+        """A known event with minimal payload still plans successfully."""
         event = AgentEvent(
             type=AgentEventType.EMAIL_RECEIVED, source="test",
             payload={}, organization_id="test",
         )
-        # Should not raise
         plan = engine.plan(event, {})
         assert isinstance(plan, Plan)
+
+    def test_unknown_event_type_raises(self, engine):
+        """An enum member with no planner must raise — silent drop would
+        stall any Box attached to the event with no audit trail."""
+        event = AgentEvent(
+            type=AgentEventType.REFUND_DETECTED,  # V1.2 reserved, no planner
+            source="test",
+            payload={},
+            organization_id="test",
+        )
+        with pytest.raises(RuntimeError, match="No planner for event type"):
+            engine.plan(event, {})
+
+    def test_unknown_event_with_box_id_records_exception(self, engine, tmp_path, monkeypatch):
+        """When the event names a Box, the unhandled-event failure is
+        recorded as a box exception so it's auditable."""
+        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core import database as db_module
+
+        db = ClearledgrDB(db_path=str(tmp_path / "unknown_event.db"))
+        db.initialize()
+        monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
+
+        engine._db = db
+
+        db.create_ap_item({
+            "id": "AP-UNHANDLED",
+            "thread_id": "thr-1",
+            "state": "received",
+            "vendor_name": "Test",
+            "amount": 100.0,
+            "organization_id": "org-1",
+        })
+
+        event = AgentEvent(
+            type=AgentEventType.REFUND_DETECTED,
+            source="test",
+            payload={"box_id": "AP-UNHANDLED", "box_type": "ap_item"},
+            organization_id="org-1",
+        )
+        with pytest.raises(RuntimeError):
+            engine.plan(event, {"id": "AP-UNHANDLED"})
+
+        exceptions = db.list_box_exceptions(box_type="ap_item", box_id="AP-UNHANDLED")
+        assert len(exceptions) == 1
+        assert exceptions[0]["exception_type"] == "unhandled_event_type"
+        assert exceptions[0]["severity"] == "high"
+        assert "refund_detected" in exceptions[0]["reason"]
