@@ -153,4 +153,29 @@ describe('ThreadSidebar contract', () => {
     assert.match(mapBlock, /approval_response: 'approval'/);
     assert.match(mapBlock, /external_dependency_unavailable: 'ERP to come back online'/);
   });
+
+  it('does not render an approve primary action in the sidebar — DESIGN_THESIS.md §6.3', () => {
+    // Thesis commitment: "Sidebar does NOT have approve/reject buttons —
+    // those route to Slack/Teams." Decisions live on the decision surface
+    // (Slack), not the work surface (Gmail sidebar). An approve button
+    // in the sidebar bypasses the runtime intent bus and creates a
+    // second audit trail — both unacceptable.
+    assert.doesNotMatch(source, /cl-ts-approve-btn/,
+      'approve button CSS class must not exist in the sidebar');
+    assert.doesNotMatch(source, /onApprove/,
+      'onApprove prop must not be wired into the sidebar');
+    assert.doesNotMatch(source, /approveAndPost/,
+      'sidebar must not call approveAndPost directly');
+  });
+
+  it('renders an awaiting-approval notice when the Box is in needs_approval', () => {
+    // Replacement for the removed approve button. The sidebar explains
+    // WHY there is no button here — otherwise users trained on the old
+    // UI will think the sidebar is broken.
+    assert.match(source, /cl-ts-awaiting-approval-title/);
+    assert.match(source, /Awaiting approval in Slack/);
+    // Gated on needs_approval / pending_approval state.
+    assert.match(source, /needsApproval = state === 'needs_approval' \|\| state === 'pending_approval'/);
+    assert.match(source, /\$\{needsApproval \? html`/);
+  });
 });

@@ -110,13 +110,17 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-linked-box-status.pending { background: #FEFCE8; color: #92400E; }
 .cl-ts-linked-box-status.completed { background: #EFF6FF; color: #1D4ED8; }
 .cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E2E8F0; }
-.cl-ts-approve-btn {
-  width: 100%; padding: 10px 16px; border: none; border-radius: 8px;
-  background: #00D67E; color: #0A1628; font-size: 14px; font-weight: 600;
-  cursor: pointer; font-family: inherit; margin-bottom: 8px;
+.cl-ts-awaiting-approval {
+  padding: 10px 12px; border-radius: 8px;
+  background: #EFF6FF; border: 1px solid #DBEAFE;
+  margin-bottom: 8px;
 }
-.cl-ts-approve-btn:hover { background: #00C271; }
-.cl-ts-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-awaiting-approval-title {
+  font: 600 13px/1.3 'DM Sans', sans-serif; color: #1D4ED8;
+}
+.cl-ts-awaiting-approval-sub {
+  font: 400 12px/1.4 'DM Sans', sans-serif; color: #475569; margin-top: 2px;
+}
 .cl-ts-snooze-btn {
   padding: 6px 14px; border: 1px solid #CA8A04; border-radius: 6px;
   background: #FEFCE8; color: #92400E;
@@ -997,7 +1001,6 @@ function LoadingSkeleton() {
 export function ThreadSidebar({
   item,
   auditEvents,
-  onApprove,
   onSnooze,
   onQuery,
   onUndoOverride,
@@ -1289,7 +1292,7 @@ export function ThreadSidebar({
   if (!item) return null;
 
   const state = String(item.state || '').toLowerCase();
-  const matchPassed = state === 'needs_approval' || state === 'pending_approval';
+  const needsApproval = state === 'needs_approval' || state === 'pending_approval';
   const canSnooze = ['needs_approval', 'pending_approval', 'needs_info', 'validated', 'failed_post'].includes(state);
   const isSnoozed = state === 'snoozed';
   const snoozedUntil = item.metadata?.snoozed_until || item.snoozed_until;
@@ -1332,11 +1335,11 @@ export function ThreadSidebar({
       <${AgentActionsSection} item=${item} auditEvents=${auditEvents} />
 
       <div class="cl-ts-actions-bar">
-        ${matchPassed ? html`
-          <button
-            class="cl-ts-approve-btn"
-            onClick=${() => onApprove && onApprove(item)}
-          >Approve</button>
+        ${needsApproval ? html`
+          <div class="cl-ts-awaiting-approval" role="status">
+            <div class="cl-ts-awaiting-approval-title">Awaiting approval in Slack</div>
+            <div class="cl-ts-awaiting-approval-sub">Approver notified. Decision returns here.</div>
+          </div>
         ` : ''}
         ${canSnooze && onSnooze ? html`
           <button

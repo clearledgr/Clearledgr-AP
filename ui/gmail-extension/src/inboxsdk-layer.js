@@ -1142,55 +1142,13 @@ function registerThreadToolbarButtons() {
     return;
   }
 
-  // 1. Approve button — visible when the current thread maps to an AP item
-  //    in needs_approval state. Calls the same queueManager.approveAndPost()
-  //    that the sidebar's primary action uses.
-  sdk.Toolbars.registerThreadButton({
-    title: 'Approve',
-    iconUrl: getAssetUrl(LOGO_PATH) || undefined,
-    positions: ['THREAD'],
-    threadSection: 'METADATA_STATE',
-    orderHint: 1,
-    onClick: async (event) => {
-      const threadViews = event.selectedThreadViews || [];
-      if (!threadViews.length) return;
-      const threadView = threadViews[0];
-      let threadId = null;
-      try {
-        threadId = typeof threadView.getThreadIDAsync === 'function'
-          ? await threadView.getThreadIDAsync()
-          : null;
-      } catch (_) { return; }
-      if (!threadId) return;
-
-      const item = store.findItemByThreadId(threadId);
-      if (!item?.id) {
-        showToast('No invoice found for this thread', 'error');
-        return;
-      }
-
-      const state = String(item.state || '').toLowerCase();
-      if (state !== 'needs_approval' && state !== 'pending_approval') {
-        showToast(`Cannot approve — invoice is ${state.replace(/_/g, ' ')}`, 'error');
-        return;
-      }
-
-      try {
-        const result = await queueManager.approveAndPost(item, { override: false });
-        const ok = ['posted', 'approved', 'posted_to_erp'].includes(
-          String(result?.status || '').toLowerCase()
-        );
-        showToast(ok ? 'Invoice approved' : (result?.reason || 'Approval failed'), ok ? 'success' : 'error');
-        if (ok) await queueManager.refreshQueue();
-      } catch (err) {
-        showToast(`Approval failed: ${err.message || err}`, 'error');
-      }
-    },
-  });
-
-  // 2. Review Exception button — visible when the thread has an AP item
-  //    with an exception (needs_info, failed_post, etc.). Opens the item
-  //    in the full pipeline view where the user can resolve it.
+  // Review Exception button — visible when the thread has an AP item
+  // with an exception (needs_info, failed_post, etc.). Opens the item
+  // in the full pipeline view where the user can resolve it.
+  //
+  // An Approve button previously lived here for needs_approval items
+  // but was removed: Gmail is the work surface, Slack is the decision
+  // surface (DESIGN_THESIS.md §6.3). Approvals route to Slack.
   sdk.Toolbars.registerThreadButton({
     title: 'Review exception',
     positions: ['THREAD'],
