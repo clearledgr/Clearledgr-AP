@@ -596,7 +596,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         except Exception as exc:
             logger.warning("[APDecision] Unexpected error, using conservative fallback: %s", exc)
             from clearledgr.services.ap_decision import APDecisionService
-            return APDecisionService()._fallback_decision(
+            return APDecisionService()._compute_routing_decision(
                 invoice,
                 validation_gate,
                 decision_feedback=decision_feedback,

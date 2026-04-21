@@ -1,18 +1,14 @@
-"""Tests for the AP reasoning layer (APDecisionService + VendorStore).
+"""Tests for the AP routing decision layer (APDecisionService + VendorStore).
 
-All tests use a temp-file SQLite DB — no :memory: (connections don't share state).
-Claude API calls are monkeypatched so tests run offline.
+Post-Phase 4, APDecisionService is deterministic: the 10-step policy
+cascade in `_compute_routing_decision` produces the routing
+recommendation. No Claude mocks — rules are tested directly.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
 
 import pytest
 
@@ -54,50 +50,20 @@ def _make_invoice(**kwargs) -> Any:
     return InvoiceData(**defaults)
 
 
-def _fake_claude_response(recommendation: str, reasoning: str, info_needed=None, risk_flags=None) -> Dict:
-    """Return a fake Anthropic API response shaped like a forced tool_use call.
-
-    After the Layer 1 upgrade to tool-use, APDecisionService._parse_response
-    reads the ``record_ap_decision`` tool_use block's ``input`` directly
-    instead of parsing JSON out of a text block. These test fixtures must
-    match the production API shape.
-    """
-    payload = {
-        "recommendation": recommendation,
-        "reasoning": reasoning,
-        "confidence": 0.92,
-        "info_needed": info_needed,
-        "risk_flags": risk_flags or [],
-    }
-    return {
-        "content": [
-            {
-                "type": "tool_use",
-                "id": "toolu_fake",
-                "name": "record_ap_decision",
-                "input": payload,
-            }
-        ],
-        "model": "claude-sonnet-4-6",
-        "stop_reason": "tool_use",
-    }
-
-
 # ---------------------------------------------------------------------------
-# Tests
+# Tests: deterministic routing cascade
 # ---------------------------------------------------------------------------
 
 class TestAPDecisionService:
 
-    def test_approve_known_vendor_matching_pattern(self, tmp_path, monkeypatch):
-        """Vendor with 6 clean invoices in the right amount range → approve."""
+    def test_approve_trusted_vendor(self, tmp_path):
+        """Vendor with clean history and high confidence → approve."""
         from clearledgr.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
         org_id = "org_test"
         vendor = "Test Vendor Inc"
 
-        # Seed vendor profile + 6 clean history rows
         db.upsert_vendor_profile(org_id, vendor,
             invoice_count=6, avg_invoice_amount=2400.0, amount_stddev=150.0,
             always_approved=1, requires_po=0)
@@ -112,31 +78,20 @@ class TestAPDecisionService:
         vendor_profile = db.get_vendor_profile(org_id, vendor)
         vendor_history = db.get_vendor_invoice_history(org_id, vendor, limit=6)
 
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-
-        # Patch the HTTP call
-        with patch.object(APDecisionService, "_call_claude",
-                          new_callable=AsyncMock,
-                          return_value=_fake_claude_response(
-                              "approve",
-                              "Test Vendor Inc has 6 clean invoices at avg $2,400. "
-                              "Current amount $2,500 is within 2σ. No anomalies. Approving.",
-                          )):
-            svc = APDecisionService(api_key="test-key")
-            decision = asyncio.run(svc.decide(
-                invoice,
-                vendor_profile=vendor_profile,
-                vendor_history=vendor_history,
-                validation_gate={"passed": True, "reason_codes": []},
-            ))
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            vendor_profile=vendor_profile,
+            vendor_history=vendor_history,
+            validation_gate={"passed": True, "reason_codes": []},
+        ))
 
         assert decision.recommendation == "approve"
-        assert decision.fallback is False
-        assert "Test Vendor" in decision.reasoning or "invoice" in decision.reasoning.lower()
+        assert decision.model == "rules"
         assert decision.risk_flags == []
 
-    def test_risk_flag_bank_details_changed(self, tmp_path, monkeypatch):
-        """Bank details changed within 30 days → risk_flags contains bank signal."""
+    def test_escalate_bank_details_recently_changed(self, tmp_path):
+        """Bank details changed within 30 days → escalate (fraud signal)."""
         from clearledgr.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
@@ -151,27 +106,19 @@ class TestAPDecisionService:
         invoice = _make_invoice(vendor_name=vendor, amount=1000.0)
         vendor_profile = db.get_vendor_profile(org_id, vendor)
 
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        with patch.object(APDecisionService, "_call_claude",
-                          new_callable=AsyncMock,
-                          return_value=_fake_claude_response(
-                              "escalate",
-                              "Bank details changed 5 days ago — flagging for human review.",
-                              risk_flags=["bank_details_changed"],
-                          )):
-            svc = APDecisionService(api_key="test-key")
-            decision = asyncio.run(svc.decide(
-                invoice,
-                vendor_profile=vendor_profile,
-                vendor_history=[],
-                validation_gate={"passed": True, "reason_codes": []},
-            ))
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            vendor_profile=vendor_profile,
+            vendor_history=[],
+            validation_gate={"passed": True, "reason_codes": []},
+        ))
 
         assert decision.recommendation == "escalate"
-        assert "bank_details_changed" in decision.risk_flags
+        assert "bank_details_recently_changed" in decision.risk_flags
 
-    def test_needs_info_missing_po_required(self, tmp_path, monkeypatch):
-        """PO required by vendor profile but missing → needs_info with a question."""
+    def test_needs_info_missing_po_required(self, tmp_path):
+        """PO required but missing → needs_info with a question."""
         from clearledgr.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
@@ -184,69 +131,52 @@ class TestAPDecisionService:
         invoice = _make_invoice(vendor_name=vendor, amount=5000.0, po_number=None)
         vendor_profile = db.get_vendor_profile(org_id, vendor)
 
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        with patch.object(APDecisionService, "_call_claude",
-                          new_callable=AsyncMock,
-                          return_value=_fake_claude_response(
-                              "needs_info",
-                              "PO reference is required for PO Vendor Corp but was not found.",
-                              info_needed="Please provide the PO number for invoice INV-001.",
-                          )):
-            svc = APDecisionService(api_key="test-key")
-            decision = asyncio.run(svc.decide(
-                invoice,
-                vendor_profile=vendor_profile,
-                vendor_history=[],
-                validation_gate={"passed": True, "reason_codes": ["po_required_missing"]},
-            ))
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            vendor_profile=vendor_profile,
+            vendor_history=[],
+            validation_gate={"passed": True, "reason_codes": ["po_required_missing"]},
+        ))
 
         assert decision.recommendation == "needs_info"
         assert decision.info_needed is not None
         assert len(decision.info_needed) > 10  # has a real question
 
-    def test_fallback_no_api_key(self, tmp_path, monkeypatch):
-        """No API key → fallback=True, APDecision still valid and derived from gate."""
+    def test_approve_when_confidence_meets_threshold(self, tmp_path):
+        """Passing gate and confidence >= threshold → approve."""
         from clearledgr.services.ap_decision import APDecisionService
-
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         invoice = _make_invoice(confidence=0.97)
-        svc = APDecisionService(api_key=None)
+        svc = APDecisionService()
         decision = asyncio.run(svc.decide(
             invoice,
             validation_gate={"passed": True, "reason_codes": []},
         ))
 
-        assert decision.fallback is True
-        assert decision.recommendation in {"approve", "needs_info", "escalate", "reject"}
-        assert decision.model == "fallback"
-        # High-confidence invoice with passing gate should recommend approve
         assert decision.recommendation == "approve"
+        assert decision.model == "rules"
 
-    def test_fallback_low_confidence(self, tmp_path, monkeypatch):
-        """No API key, low confidence → fallback escalates to human."""
+    def test_escalate_low_confidence(self, tmp_path):
+        """Low confidence below threshold → escalate."""
         from clearledgr.services.ap_decision import APDecisionService
 
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
         invoice = _make_invoice(confidence=0.72)
-        svc = APDecisionService(api_key=None)
+        svc = APDecisionService()
         decision = asyncio.run(svc.decide(
             invoice,
             validation_gate={"passed": True, "reason_codes": []},
         ))
 
-        assert decision.fallback is True
         assert decision.recommendation == "escalate"
         assert "low_extraction_confidence" in decision.risk_flags
 
-    def test_fallback_respects_strict_human_feedback_bias(self, monkeypatch):
-        """Strict vendor feedback should make fallback more conservative."""
+    def test_escalate_under_strict_human_feedback_bias(self):
+        """Strict feedback signals operator skepticism → escalate even on high confidence."""
         from clearledgr.services.ap_decision import APDecisionService
 
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         invoice = _make_invoice(confidence=0.97, vendor_name="Feedback Vendor")
-        svc = APDecisionService(api_key=None)
+        svc = APDecisionService()
 
         decision = asyncio.run(svc.decide(
             invoice,
@@ -258,7 +188,6 @@ class TestAPDecisionService:
             },
         ))
 
-        assert decision.fallback is True
         assert decision.recommendation == "escalate"
         assert "human_feedback_strict_bias" in decision.risk_flags
 
@@ -271,10 +200,8 @@ class TestVendorStore:
         org_id = "org_test"
         vendor = "Learning Vendor SA"
 
-        # Seed initial profile
         db.upsert_vendor_profile(org_id, vendor, invoice_count=0)
 
-        # First outcome
         db.update_vendor_profile_from_outcome(
             org_id, vendor,
             ap_item_id="AP-001",
@@ -290,7 +217,6 @@ class TestVendorStore:
         assert profile["avg_invoice_amount"] == pytest.approx(1000.0)
         assert profile["always_approved"] == 0  # need >= 3 for always_approved
 
-        # Add more outcomes to trigger always_approved
         for i in range(2):
             db.update_vendor_profile_from_outcome(
                 org_id, vendor,
@@ -303,7 +229,6 @@ class TestVendorStore:
         profile = db.get_vendor_profile(org_id, vendor)
         assert profile["invoice_count"] == 3
         assert profile["always_approved"] == 1  # all 3 approved
-        # amounts: 1000, 1000, 1100 → avg = 1033.33
         assert profile["avg_invoice_amount"] == pytest.approx(1033.33, rel=0.01)
 
     def test_get_vendor_invoice_history_respects_limit(self, tmp_path):
