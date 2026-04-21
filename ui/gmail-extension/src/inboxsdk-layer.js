@@ -49,6 +49,7 @@ import SettingsPage from './routes/pages/SettingsPage.js';
 import PlanPage from './routes/pages/PlanPage.js';
 import ReconciliationPage from './routes/pages/ReconciliationPage.js';
 import HealthPage from './routes/pages/HealthPage.js';
+import ExceptionsPage from './routes/pages/ExceptionsPage.js';
 import PipelinePage from './routes/pages/PipelinePage.js';
 import InvoiceDetailPage from './routes/pages/InvoiceDetailPage.js';
 import VendorsPage from './routes/pages/VendorsPage.js';
@@ -1724,6 +1725,7 @@ function registerAppMenuAndRoutes() {
     'clearledgr/upcoming': UpcomingPage,
     'clearledgr/invoices': PipelinePage,
     'clearledgr/activity': ActivityPage,
+    'clearledgr/exceptions': ExceptionsPage,
     'clearledgr/vendor-onboarding': VendorOnboardingPage,
     'clearledgr/vendors': VendorsPage,
     'clearledgr/templates': TemplatesPage,

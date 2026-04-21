@@ -290,6 +290,10 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     # fail-closed with 503. Kept outside auth middleware because the
     # caller is the ERP itself, not a user — signature is the auth.
     "/erp/webhooks",
+    # §8 customer-admin surface inside Gmail (Streak pattern) — box
+    # exception queue, stats, resolve. Org-scoped + admin-role gated
+    # in the handlers themselves.
+    "/api/admin/box",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -1192,6 +1196,10 @@ app.include_router(ops_router)
 # page at /workspace is gated separately (§4 Principle 01).
 from clearledgr.api.workspace_shell import router as workspace_shell_router
 app.include_router(workspace_shell_router)
+
+# Phase 9 Backoffice surface — Box exceptions admin UI endpoints.
+from clearledgr.api.box_exceptions_admin import router as box_exceptions_admin_router
+app.include_router(box_exceptions_admin_router)
 
 # Per-user preferences — /api/user/* prefix, not /api/workspace/*, because
 # preferences are per-user data (UI state, saved views, template choices)

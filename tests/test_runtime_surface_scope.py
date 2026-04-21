@@ -245,6 +245,10 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             # 2026-04-20 hardening pass: inbound ERP webhooks
             # (signature-verified, per-tenant URL-scoped).
             "/erp/webhooks",
+            # Phase 9 customer-admin surface inside Gmail (Streak
+            # pattern) — box exception queue + resolve. Org-scoped +
+            # admin-role gated in the handlers.
+            "/api/admin/box",
         }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.

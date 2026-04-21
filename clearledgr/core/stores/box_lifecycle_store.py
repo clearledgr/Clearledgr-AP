@@ -65,6 +65,64 @@ class BoxLifecycleStore:
     is available on ``self`` — it is, via :class:`APStore`).
     """
 
+    def _emit_box_webhook(
+        self,
+        *,
+        event_type: str,
+        organization_id: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Fire-and-forget Backoffice webhook for a Box lifecycle change.
+
+        Customers subscribe to `box.exception_raised`,
+        `box.exception_resolved`, `box.outcome_recorded` via the
+        admin /webhooks surface. Delivery is async with retry via the
+        notification queue; this helper schedules the emit on the
+        running loop when present, or enqueues a notification for the
+        background loop otherwise. Failures are swallowed — webhook
+        delivery is observational, not part of the write contract.
+        """
+        try:
+            import asyncio
+
+            from clearledgr.services.webhook_delivery import emit_webhook_event
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    emit_webhook_event(
+                        organization_id=organization_id,
+                        event_type=event_type,
+                        payload=payload,
+                    )
+                )
+                return
+            except RuntimeError:
+                pass  # No running loop — fall through to queue enqueue.
+
+            if hasattr(self, "enqueue_notification"):
+                try:
+                    self.enqueue_notification(
+                        organization_id=organization_id,
+                        channel="webhook",
+                        payload={
+                            "event_type": event_type,
+                            "data": payload,
+                        },
+                        box_id=payload.get("box_id"),
+                        box_type=payload.get("box_type"),
+                    )
+                except Exception as enq_exc:
+                    logger.debug(
+                        "[BoxLifecycleStore] webhook enqueue fallback failed: %s",
+                        enq_exc,
+                    )
+        except Exception as wh_exc:
+            logger.warning(
+                "[BoxLifecycleStore] webhook emission failed for %s: %s",
+                event_type, wh_exc,
+            )
+
     # ------------------------------------------------------------------
     # Exceptions
     # ------------------------------------------------------------------
@@ -173,6 +231,27 @@ class BoxLifecycleStore:
                     audit_exc,
                 )
 
+        # Emit to Backoffice webhook subscribers.
+        self._emit_box_webhook(
+            event_type="box.exception_raised",
+            organization_id=organization_id,
+            payload={
+                "box_id": box_id,
+                "box_type": box_type,
+                "organization_id": organization_id,
+                "exception": {
+                    "id": exception_id,
+                    "exception_type": exception_type,
+                    "severity": severity,
+                    "reason": reason,
+                    "raised_at": now,
+                    "raised_by": raised_by,
+                    "raised_actor_type": raised_actor_type,
+                    "metadata": metadata or {},
+                },
+            },
+        )
+
         return self.get_box_exception(exception_id)
 
     def resolve_box_exception(
@@ -238,6 +317,25 @@ class BoxLifecycleStore:
                     "failed (non-fatal): %s",
                     audit_exc,
                 )
+
+        # Emit to Backoffice webhook subscribers.
+        self._emit_box_webhook(
+            event_type="box.exception_resolved",
+            organization_id=existing["organization_id"],
+            payload={
+                "box_id": existing["box_id"],
+                "box_type": existing["box_type"],
+                "organization_id": existing["organization_id"],
+                "exception": {
+                    "id": exception_id,
+                    "exception_type": existing.get("exception_type"),
+                    "resolved_at": now,
+                    "resolved_by": resolved_by,
+                    "resolved_actor_type": resolved_actor_type,
+                    "resolution_note": resolution_note,
+                },
+            },
+        )
 
         return self.get_box_exception(exception_id)
 
@@ -428,6 +526,25 @@ class BoxLifecycleStore:
                     "failed (non-fatal): %s",
                     audit_exc,
                 )
+
+        # Emit to Backoffice webhook subscribers.
+        self._emit_box_webhook(
+            event_type="box.outcome_recorded",
+            organization_id=organization_id,
+            payload={
+                "box_id": box_id,
+                "box_type": box_type,
+                "organization_id": organization_id,
+                "outcome": {
+                    "id": outcome_id,
+                    "outcome_type": outcome_type,
+                    "recorded_at": now,
+                    "recorded_by": recorded_by,
+                    "recorded_actor_type": recorded_actor_type,
+                    "data": data or {},
+                },
+            },
+        )
 
         return self._get_box_outcome_by_id(outcome_id)
 
