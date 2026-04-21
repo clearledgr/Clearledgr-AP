@@ -287,10 +287,17 @@ class APStore:
         prev_state: Optional[str] = None
         new_state: Optional[str] = kwargs.get("state")
         current: Optional[Dict[str, Any]] = None
+        # §8 Box lifecycle mirror: capture prev exception_code so the
+        # post-commit hook can emit raise/resolve on box_exceptions.
+        prev_exception_code: Optional[str] = None
+        _will_update_exception = "exception_code" in kwargs
+        if _will_update_exception or new_state is not None:
+            current = self.get_ap_item(ap_item_id)
+            if current:
+                prev_exception_code = current.get("exception_code")
         if new_state is not None:
             from clearledgr.core.ap_states import transition_or_raise, normalize_state
 
-            current = self.get_ap_item(ap_item_id)
             if current:
                 prev_state = current.get("state")
                 if prev_state:
@@ -417,6 +424,83 @@ class APStore:
                         logger.debug("Webhook enqueue fallback failed: %s", enq_exc)
             except Exception as wh_exc:
                 logger.warning("[APStore] Webhook emission failed for %s (will retry via queue): %s", ap_item_id, wh_exc)
+
+        # --- §8 Box lifecycle mirror ---
+        # Keep box_exceptions + box_outcomes in sync with ap_items control-
+        # plane columns. The legacy columns drive the state machine; these
+        # tables are the first-class audit/attribution record. Without this
+        # mirror, surfaces that read from box_exceptions/box_outcomes see
+        # empty tables while the workflow happily updates ap_items.
+        if updated:
+            org_id = (
+                kwargs.get("organization_id")
+                or (current.get("organization_id") if current else None)
+                or ""
+            )
+            # Exception mirror.
+            if _will_update_exception:
+                new_exception_code = kwargs.get("exception_code")
+                try:
+                    if new_exception_code and new_exception_code != prev_exception_code:
+                        if hasattr(self, "raise_box_exception"):
+                            self.raise_box_exception(
+                                box_id=ap_item_id,
+                                box_type="ap_item",
+                                organization_id=org_id,
+                                exception_type=str(new_exception_code),
+                                severity=str(kwargs.get("exception_severity") or "medium"),
+                                reason=str(kwargs.get("exception_reason") or new_exception_code),
+                                metadata={"source": "update_ap_item"},
+                                raised_by=str(actor_id or "system"),
+                                raised_actor_type=str(actor_type or "system"),
+                                idempotency_key=f"ap_excp:{ap_item_id}:{new_exception_code}:{now}",
+                            )
+                    elif new_exception_code in (None, "") and prev_exception_code:
+                        if hasattr(self, "list_box_exceptions") and hasattr(self, "resolve_box_exception"):
+                            unresolved = self.list_box_exceptions(
+                                box_type="ap_item",
+                                box_id=ap_item_id,
+                                only_unresolved=True,
+                            )
+                            for exc_row in unresolved:
+                                self.resolve_box_exception(
+                                    exception_id=exc_row["id"],
+                                    resolved_by=str(actor_id or "system"),
+                                    resolved_actor_type=str(actor_type or "system"),
+                                    resolution_note="Cleared via ap_items.exception_code",
+                                )
+                except Exception as mirror_exc:
+                    logger.warning(
+                        "[APStore] box_exception mirror failed for %s: %s",
+                        ap_item_id, mirror_exc,
+                    )
+
+            # Outcome mirror.
+            _OUTCOME_STATES = {"posted_to_erp", "rejected", "reversed"}
+            if new_state in _OUTCOME_STATES and hasattr(self, "record_box_outcome"):
+                try:
+                    # Re-read to get the now-committed erp_reference etc.
+                    post = self.get_ap_item(ap_item_id) or {}
+                    self.record_box_outcome(
+                        box_id=ap_item_id,
+                        box_type="ap_item",
+                        organization_id=org_id,
+                        outcome_type=str(new_state),
+                        recorded_by=str(actor_id or "system"),
+                        recorded_actor_type=str(actor_type or "system"),
+                        data={
+                            "erp_reference": post.get("erp_reference"),
+                            "invoice_number": post.get("invoice_number"),
+                            "amount": post.get("amount"),
+                            "currency": post.get("currency"),
+                            "vendor_name": post.get("vendor_name"),
+                        },
+                    )
+                except Exception as mirror_exc:
+                    logger.warning(
+                        "[APStore] box_outcome mirror failed for %s: %s",
+                        ap_item_id, mirror_exc,
+                    )
 
         return updated
 

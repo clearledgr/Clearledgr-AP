@@ -310,6 +310,58 @@ def get_ap_item_audit(
     return {"events": normalize_operator_audit_events(events)}
 
 
+@router.get("/{ap_item_id}/box")
+def get_ap_item_box(
+    ap_item_id: str,
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the full §8 Box contract for this AP item.
+
+    state + timeline + exceptions + outcome. This is the canonical
+    read surfaces should consume — Gmail sidebar, Slack cards, admin
+    console, Backoffice webhooks. Direct reads from ap_items.exception_code
+    or ap_items.erp_reference miss the audit trail the deck promises
+    customers.
+    """
+    db = shared.get_db()
+    item = shared._require_item(
+        db, ap_item_id,
+        expected_organization_id=getattr(_user, "organization_id", None),
+    )
+    verify_org_access(item.get("organization_id") or "default", _user)
+
+    timeline = normalize_operator_audit_events(db.list_ap_audit_events(ap_item_id))
+
+    exceptions: list = []
+    if hasattr(db, "list_box_exceptions"):
+        try:
+            exceptions = db.list_box_exceptions(
+                box_type="ap_item",
+                box_id=ap_item_id,
+            )
+        except Exception:
+            exceptions = []
+
+    outcome = None
+    if hasattr(db, "get_box_outcome"):
+        try:
+            outcome = db.get_box_outcome(
+                box_type="ap_item",
+                box_id=ap_item_id,
+            )
+        except Exception:
+            outcome = None
+
+    return {
+        "box_id": ap_item_id,
+        "box_type": "ap_item",
+        "state": item.get("state"),
+        "timeline": timeline,
+        "exceptions": exceptions,
+        "outcome": outcome,
+    }
+
+
 @router.get("/{ap_item_id}/sources")
 def get_ap_item_sources(
     ap_item_id: str,

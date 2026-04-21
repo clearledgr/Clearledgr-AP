@@ -357,3 +357,104 @@ class TestOutcomes:
         assert len(posted) == 2
         assert len(rejected) == 1
         assert len(all_ap) == 3
+
+
+# ---------------------------------------------------------------------------
+# §8 — update_ap_item mirrors exception + outcome changes
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateApItemMirror:
+    """Drift fence for Phase 8 surface symmetry: every time the
+    workflow touches ap_items.exception_code or transitions to a
+    terminal-ish state, the box_exceptions / box_outcomes tables must
+    reflect it. Without this fence, Gmail sidebar and admin console
+    timelines would stay empty while ap_items silently updates.
+    """
+
+    def test_setting_exception_code_raises_box_exception(self, db):
+        _seed_ap_box(db, "AP-MIRR-1", state="validated")
+        db.update_ap_item(
+            "AP-MIRR-1",
+            exception_code="po_required_missing",
+            exception_severity="high",
+            exception_reason="PO number missing on invoice",
+            _actor_type="system",
+            _actor_id="invoice_workflow",
+        )
+        excs = db.list_box_exceptions(box_type="ap_item", box_id="AP-MIRR-1")
+        assert len(excs) == 1
+        assert excs[0]["exception_type"] == "po_required_missing"
+        assert excs[0]["severity"] == "high"
+        assert excs[0]["reason"] == "PO number missing on invoice"
+        assert excs[0]["raised_by"] == "invoice_workflow"
+
+    def test_clearing_exception_code_resolves_unresolved_exceptions(self, db):
+        _seed_ap_box(db, "AP-MIRR-2", state="validated")
+        db.update_ap_item(
+            "AP-MIRR-2",
+            exception_code="amount_anomaly_high",
+            exception_severity="medium",
+            _actor_type="agent",
+            _actor_id="ap_decision",
+        )
+        assert len(db.list_box_exceptions(
+            box_type="ap_item", box_id="AP-MIRR-2", only_unresolved=True,
+        )) == 1
+
+        db.update_ap_item(
+            "AP-MIRR-2",
+            exception_code=None,
+            _actor_type="user",
+            _actor_id="operator@acme.com",
+        )
+        unresolved = db.list_box_exceptions(
+            box_type="ap_item", box_id="AP-MIRR-2", only_unresolved=True,
+        )
+        assert len(unresolved) == 0
+        all_excs = db.list_box_exceptions(box_type="ap_item", box_id="AP-MIRR-2")
+        assert len(all_excs) == 1
+        assert all_excs[0]["resolved_at"] is not None
+        assert all_excs[0]["resolved_by"] == "operator@acme.com"
+
+    def test_terminal_state_transition_records_outcome(self, db):
+        # Walk through enough states to get to posted_to_erp legally.
+        _seed_ap_box(db, "AP-MIRR-3", state="ready_to_post")
+        db.update_ap_item(
+            "AP-MIRR-3",
+            state="posted_to_erp",
+            erp_reference="QB-123456",
+            _actor_type="agent",
+            _actor_id="invoice_posting",
+        )
+        outcome = db.get_box_outcome(box_type="ap_item", box_id="AP-MIRR-3")
+        assert outcome is not None
+        assert outcome["outcome_type"] == "posted_to_erp"
+        assert outcome["recorded_by"] == "invoice_posting"
+        import json as _json
+        data = _json.loads(outcome["data_json"]) if isinstance(outcome["data_json"], str) else outcome["data_json"]
+        assert data["erp_reference"] == "QB-123456"
+
+    def test_rejected_state_records_outcome(self, db):
+        _seed_ap_box(db, "AP-MIRR-4", state="needs_approval")
+        db.update_ap_item(
+            "AP-MIRR-4",
+            state="rejected",
+            _actor_type="user",
+            _actor_id="ap_manager@acme.com",
+        )
+        outcome = db.get_box_outcome(box_type="ap_item", box_id="AP-MIRR-4")
+        assert outcome is not None
+        assert outcome["outcome_type"] == "rejected"
+        assert outcome["recorded_by"] == "ap_manager@acme.com"
+
+    def test_non_terminal_transition_records_no_outcome(self, db):
+        _seed_ap_box(db, "AP-MIRR-5", state="received")
+        db.update_ap_item(
+            "AP-MIRR-5",
+            state="validated",
+            _actor_type="agent",
+            _actor_id="invoice_workflow",
+        )
+        outcome = db.get_box_outcome(box_type="ap_item", box_id="AP-MIRR-5")
+        assert outcome is None
