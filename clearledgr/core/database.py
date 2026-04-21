@@ -66,6 +66,7 @@ def _load_store_symbols() -> None:
     global OnboardingTokenStore
     global PipelineStore
     global PurchaseOrderStore
+    global BoxLifecycleStore
 
     if "APStore" in globals():
         return
@@ -97,6 +98,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.purchase_order_store import (
         PurchaseOrderStore as _PurchaseOrderStore,
     )
+    from clearledgr.core.stores.box_lifecycle_store import (
+        BoxLifecycleStore as _BoxLifecycleStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -117,6 +121,7 @@ def _load_store_symbols() -> None:
     OnboardingTokenStore = _OnboardingTokenStore
     PipelineStore = _PipelineStore
     PurchaseOrderStore = _PurchaseOrderStore
+    BoxLifecycleStore = _BoxLifecycleStore
 
 
 class _ClearledgrDBBase:
@@ -1361,6 +1366,7 @@ def _get_db_impl_class():
             OverrideWindowStore,
             PipelineStore,
             PurchaseOrderStore,
+            BoxLifecycleStore,
             _ClearledgrDBBase,
         ):
             pass

@@ -1926,3 +1926,104 @@ def _v35_organizations_deleted_at(cur, db):
         cur.execute("ALTER TABLE organizations ADD COLUMN deleted_at TEXT")
     except Exception:
         pass  # Already exists on a re-run or older schema
+
+
+@migration(43, "Box-lifecycle records: box_exceptions + box_outcomes tables")
+def _v43_box_lifecycle_records(cur, db):
+    """Make exceptions and outcomes first-class per Box, not implicit.
+
+    The deck promises every workflow instance becomes "a persistent,
+    attributable record: state, timeline, exceptions, outcome." Today,
+    state and timeline are first-class (ap_items/vo_sessions state
+    field + audit_events). Exceptions and outcomes are not — they're
+    implicit in state enums and scattered across ad-hoc fields
+    (last_error, metadata.fraud_flags, erp_reference, rejected_reason,
+    completed_at).
+
+    This migration adds two tables that make both pieces first-class,
+    Box-keyed, and queryable across workflow types:
+
+    - ``box_exceptions`` — one row per raised exception. Carries
+      raised_at, raised_by, resolved_at, resolved_by, resolution_note.
+      Multiple exceptions per Box allowed. An unresolved exception is
+      one with resolved_at IS NULL. idempotency_key UNIQUE so replays
+      don't duplicate.
+
+    - ``box_outcomes`` — one row per Box (UNIQUE on (box_type, box_id)).
+      Records the terminal outcome (posted_to_erp, rejected,
+      vendor_activated, closed_unsuccessful, reversed) with who
+      recorded it, when, and structured data (erp_reference, reason,
+      etc.).
+
+    Both tables are additive. Existing fields (state enum, erp_ref,
+    rejected_reason, last_error) are left alone; Phase-2 writers
+    populate the new tables on new transitions, and a later backfill
+    can populate historical Boxes if needed.
+    """
+    # box_exceptions ------------------------------------------------
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS box_exceptions (
+            id TEXT PRIMARY KEY,
+            box_id TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            exception_type TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'medium',
+            reason TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            raised_at TEXT NOT NULL,
+            raised_by TEXT NOT NULL,
+            raised_actor_type TEXT NOT NULL DEFAULT 'agent',
+            resolved_at TEXT,
+            resolved_by TEXT,
+            resolved_actor_type TEXT,
+            resolution_note TEXT,
+            idempotency_key TEXT UNIQUE
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_box_exceptions_box "
+        "ON box_exceptions(box_type, box_id)",
+        "CREATE INDEX IF NOT EXISTS idx_box_exceptions_unresolved "
+        "ON box_exceptions(box_type, box_id) WHERE resolved_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_box_exceptions_org_raised "
+        "ON box_exceptions(organization_id, raised_at)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v43] box_exceptions index skipped: %s", exc
+            )
+
+    # box_outcomes --------------------------------------------------
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS box_outcomes (
+            id TEXT PRIMARY KEY,
+            box_id TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            outcome_type TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            recorded_at TEXT NOT NULL,
+            recorded_by TEXT NOT NULL,
+            recorded_actor_type TEXT NOT NULL DEFAULT 'agent',
+            UNIQUE(box_type, box_id)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_box_outcomes_type "
+        "ON box_outcomes(box_type, outcome_type)",
+        "CREATE INDEX IF NOT EXISTS idx_box_outcomes_org_recorded "
+        "ON box_outcomes(organization_id, recorded_at)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v43] box_outcomes index skipped: %s", exc
+            )
