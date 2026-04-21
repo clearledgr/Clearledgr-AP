@@ -228,35 +228,24 @@ def _schedule_from_env(name: str, default_csv: str) -> List[int]:
 
 
 def _execution_contract_status() -> Dict[str, Any]:
+    """Runtime contract status for ops monitoring.
+
+    The agent runtime is now a single path: DeterministicPlanningEngine →
+    CoordinationEngine, per AGENT_DESIGN_SPECIFICATION.md §4 + §5. The
+    old Claude tool-use loop (AgentPlanningEngine) was retired and its
+    env flags (``AGENT_PLANNING_LOOP``, ``AGENT_LEGACY_FALLBACK_ON_ERROR``)
+    are no longer consulted. The contract is always "deterministic
+    planning with Claude called only at spec \u00a77.1 bounded points."
+    """
     production_env = _is_production_env()
-    planning_loop_requested = _env_flag("AGENT_PLANNING_LOOP", True)
-    planning_loop_enabled = True
-    legacy_fallback_requested = _env_flag("AGENT_LEGACY_FALLBACK_ON_ERROR", False)
-    legacy_fallback_on_error = False
-
-    warnings: List[str] = []
-    if not planning_loop_requested and planning_loop_enabled:
-        warnings.append(
-            "planning_loop_forced_on_in_production"
-            if production_env
-            else "planning_loop_opt_out_ignored"
-        )
-    if legacy_fallback_requested and not legacy_fallback_on_error:
-        warnings.append(
-            "legacy_fallback_forced_off_in_production"
-            if production_env
-            else "legacy_fallback_opt_in_ignored"
-        )
-
     return {
-        "mode": "agentic_runtime",
+        "mode": "deterministic_planning",
         "production_env": production_env,
         "production_contract_enforced": production_env,
-        "planning_loop_requested": planning_loop_requested,
-        "planning_loop_enabled": planning_loop_enabled,
-        "legacy_fallback_requested": legacy_fallback_requested,
-        "legacy_fallback_on_error": legacy_fallback_on_error,
-        "warnings": warnings,
+        "planning_engine": "DeterministicPlanningEngine",
+        "coordination_engine": "CoordinationEngine",
+        "llm_surface": "spec_7_1_bounded_actions_only",
+        "warnings": [],
     }
 
 
