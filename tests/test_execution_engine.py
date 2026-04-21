@@ -25,7 +25,7 @@ def engine():
 class TestHandlerRegistry:
     """Every spec §3 action must have a handler."""
 
-    def test_all_49_spec_actions_registered(self, engine):
+    def test_all_spec_actions_registered(self, engine):
         spec_actions = {
             "read_email", "fetch_attachment", "apply_label", "remove_label",
             "split_thread", "send_email", "watch_thread",
@@ -46,6 +46,105 @@ class TestHandlerRegistry:
         }
         missing = spec_actions - set(engine._handlers.keys())
         assert not missing, f"Missing handlers: {missing}"
+
+
+class TestLLMBoundaryFence:
+    """Drift fence for spec §7.1: exactly 5 actions call the LLM.
+
+    classify_email, extract_invoice_fields, generate_exception_reason,
+    classify_vendor_response, draft_vendor_response.
+
+    Any growth here must be a spec change first. The deck promise is
+    "Rules decide. LLM describes." Adding another LLM call without a
+    spec update breaks the audit story finance buyers will ask about.
+    """
+
+    SPEC_LLM_ACTIONS = frozenset({
+        "classify_email",
+        "extract_invoice_fields",
+        "generate_exception_reason",
+        "classify_vendor_response",
+        "draft_vendor_response",
+    })
+
+    def test_spec_llm_actions_all_have_handlers(self, engine):
+        missing = self.SPEC_LLM_ACTIONS - set(engine._handlers.keys())
+        assert not missing, f"Spec §7.1 LLM actions missing handlers: {missing}"
+
+    def test_llm_gateway_called_only_by_spec_llm_actions(self):
+        """Grep-level drift fence: the only handlers whose source text
+        invokes `gateway.call` or `gateway.call_sync` must be the spec
+        §7.1 five. V1.1 onboarding stubs (classify_submitted_document,
+        extract_vendor_fields) route to a pending-adapter handler that
+        does NOT call the gateway, so the runtime surface stays at 5
+        even though the planner flags them as LLM-kind.
+        """
+        import inspect
+        from clearledgr.core import coordination_engine as ce_mod
+
+        source = inspect.getsource(ce_mod)
+        # Find handler methods that mention gateway calls. This is a
+        # coarse grep but catches any new handler that quietly adds an
+        # LLM call without spec review.
+        import re
+        handler_defs = re.findall(
+            r"def (_handle_\w+)\b[\s\S]+?(?=\n    def |\nclass |\Z)",
+            source,
+        )
+        llm_handlers = []
+        # inspect.getsource is monolithic; use a different parse that
+        # slices on def boundaries.
+        method_blocks = re.split(r"\n    def (_handle_\w+)\b", source)
+        # Pairs after split: [preamble, name, body, name, body, ...]
+        for i in range(1, len(method_blocks), 2):
+            name = method_blocks[i]
+            body = method_blocks[i + 1] if i + 1 < len(method_blocks) else ""
+            if "gateway.call" in body or "gateway.call_sync" in body:
+                llm_handlers.append(name)
+
+        # Map handler names back to action names via the dispatch dict.
+        db = get_db()
+        engine = CoordinationEngine(db=db, organization_id="fence-check")
+        method_to_action: dict = {}
+        for action_name, handler in engine._handlers.items():
+            method_name = getattr(handler, "__name__", None)
+            if method_name:
+                method_to_action.setdefault(method_name, []).append(action_name)
+
+        llm_actions = set()
+        for method_name in llm_handlers:
+            for action_name in method_to_action.get(method_name, []):
+                llm_actions.add(action_name)
+
+        extra = llm_actions - self.SPEC_LLM_ACTIONS
+        assert not extra, (
+            f"Handlers calling the LLM gateway outside spec §7.1: {extra}. "
+            "If this is intentional, update AGENT_DESIGN_SPECIFICATION.md §7.1 "
+            "and SPEC_LLM_ACTIONS in this test."
+        )
+
+
+class TestPlannerActionCoverage:
+    """Drift fence: every action the planner produces must have a
+    coordination-engine handler. Without this fence, a new planner
+    action would KeyError at runtime on first dispatch.
+    """
+
+    def test_every_planner_action_has_handler(self, engine):
+        import re
+        from clearledgr.core import planning_engine as pe_mod
+        import inspect
+
+        source = inspect.getsource(pe_mod)
+        # Action names are the first positional arg to Action(...)
+        planner_actions = set(re.findall(r'Action\(\s*"([^"]+)"', source))
+        missing = planner_actions - set(engine._handlers.keys())
+        assert not missing, (
+            f"Planner emits actions without handlers: {missing}. "
+            "Every Action(...) constructed in planning_engine.py must map "
+            "to a handler in CoordinationEngine._handlers, or coordination "
+            "will KeyError at dispatch."
+        )
 
 
 class TestConcurrencySafety:
