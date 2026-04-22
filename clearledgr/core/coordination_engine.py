@@ -1460,22 +1460,27 @@ class CoordinationEngine:
         KYC / open-banking / ERP-write provider adapters.
 
         The spec (vendor-onboarding-spec §5) names these actions and
-        wires them into the planner. Real implementations land when
-        the customer-side provider contracts are signed and the
-        adapters register themselves via
-        :func:`register_kyc_provider` and
-        :func:`register_bank_verifier`. Until then, this stub records
-        a neutral "adapter pending" timeline entry so the pipeline
-        runs end-to-end against mock providers, and the AP Manager can
-        see in the Box timeline exactly which step needs a real
-        adapter before it goes live.
+        wires them into the planner. Real implementations land when the
+        customer-side provider contracts are signed and the adapters
+        register themselves via :func:`register_kyc_provider` and
+        :func:`register_bank_verifier`.
+
+        Until then, this stub HALTS the plan via ``_stop_plan``. The
+        Rule 1 pre-write already recorded the action to the timeline;
+        ``_stop_plan`` tells the execute loop (§5.1 step 3) to exit
+        cleanly without running any subsequent actions. That is the
+        guardrail: downstream steps (including any ``move_box_stage``)
+        must not run against fake adapter results. The Box stays in
+        whatever state it was in before the plan started. When real
+        adapters are wired, the stub is replaced with the adapter call
+        and the plan runs to completion.
         """
         logger.info(
-            "[CoordinationEngine] %s — provider adapter pending (org=%s, box=%s)",
+            "[CoordinationEngine] %s — provider adapter pending (org=%s, box=%s). Plan halted.",
             action.name, self.organization_id, plan.box_id or "—",
         )
         return {
-            "ok": True,
+            "_stop_plan": True,
             "adapter_pending": True,
             "action": action.name,
             "reason": "provider_adapter_pending",
@@ -1589,13 +1594,20 @@ class CoordinationEngine:
         """§3: IBAN verification hook.
 
         The old micro-deposit flow was removed. Until the Adyen (EU) and
-        TrueLayer (UK/RoW) verifier adapters land, this handler is a
-        no-op — the portal transitions awaiting_bank → bank_verified
-        directly on IBAN submission (mod-97 checksum is the only gate).
-        Keep the action in the planner so existing plans don't error;
-        swap the implementation in when the adapters are ready.
+        TrueLayer (UK/RoW) verifier adapters land, this handler HALTS
+        the plan — same reason as ``_handle_onboarding_adapter_pending``:
+        downstream actions must not run against a stubbed verification
+        result. The portal transitions ``awaiting_bank → bank_verified``
+        directly on IBAN submission (mod-97 checksum is the only gate),
+        so production state still advances via that path; the agent
+        plan simply doesn't do any of it until an adapter is registered.
         """
-        return {"ok": True, "initiated": False, "reason": "provider_adapter_pending"}
+        return {
+            "_stop_plan": True,
+            "initiated": False,
+            "adapter_pending": True,
+            "reason": "provider_adapter_pending",
+        }
 
     async def _handle_check_vendor_response(self, action: Action, plan: Plan) -> dict:
         """§4.3: Check if vendor has responded to a chase email."""

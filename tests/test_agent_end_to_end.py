@@ -174,3 +174,85 @@ class TestFullPipelineExecution:
         assert result.status in ("completed", "failed", "waiting")
         # At minimum, the first step (clear_waiting_condition) should attempt
         assert result.steps_completed >= 0
+
+
+class TestAdapterPendingHaltsPlan:
+    """Vendor-onboarding v1.1 stub handlers must halt the plan so no
+    downstream action (including ``move_box_stage``) runs against fake
+    adapter results.
+
+    Regression test for a latent risk identified 2026-04-22:
+    ``_handle_onboarding_adapter_pending`` previously returned
+    ``{"ok": True, "adapter_pending": True}``. The execute loop does
+    not check ``adapter_pending``, so a plan like
+    ``[check_vendor_duplicate, move_box_stage(active)]`` would have
+    advanced the Box to 'active' on a stubbed verification. Dormant
+    today (no producer for OPEN_BANKING_VERIFICATION_COMPLETED) but
+    unsafe when adapters land in dependency order.
+
+    Fix: stubs now return ``_stop_plan: True`` so the execute loop
+    exits cleanly after the stubbed action. This test locks that in.
+    """
+
+    def test_onboarding_adapter_pending_halts_plan_before_move_box_stage(self, db):
+        """A plan with a stubbed adapter action followed by move_box_stage
+        must halt after the stub — move_box_stage must not run."""
+        execution = CoordinationEngine(db, "adapter-pending-test-org")
+
+        # Simulate the OPEN_BANKING_VERIFICATION_COMPLETED plan shape:
+        # a chain of stubbed adapter actions ending in move_box_stage(active).
+        # If the stubs don't halt the plan, the Box advances to 'active'
+        # on fabricated adapter results — exactly the risk we're closing.
+        plan = Plan(
+            event_type="open_banking_verification_completed",
+            actions=[
+                Action("evaluate_name_match", "DET", {"account_holder_name": "Test"},
+                       "Stubbed adapter action #1"),
+                Action("write_vendor_to_erp", "DET", {},
+                       "Stubbed adapter action #2"),
+                Action("move_box_stage", "DET", {"target": "active"},
+                       "This must NOT run — plan should halt before here"),
+            ],
+            box_id="adapter-pending-box-001",
+            organization_id="adapter-pending-test-org",
+        )
+
+        result = asyncio.run(execution.execute(plan))
+
+        # Plan ended cleanly (stop_plan is a success-shaped exit, not a failure)
+        assert result.status == "completed", (
+            f"expected 'completed' (stop_plan exit), got {result.status!r}"
+        )
+        # The critical guardrail: only the first action ran. Subsequent
+        # actions — including move_box_stage(target='active') — were
+        # never dispatched. If this assertion ever fires at >1, the
+        # stub started letting the plan continue on stubbed results.
+        assert result.steps_completed == 1, (
+            f"expected exactly 1 step completed (the stub that halted "
+            f"the plan); got {result.steps_completed}. If steps_completed "
+            f"equals {result.steps_total}, the Box was advanced to "
+            f"'active' on stubbed adapter output — this is the exact "
+            f"failure mode this test exists to prevent."
+        )
+        assert result.steps_total == 3  # sanity: plan had 3 actions
+
+    def test_iban_verify_stub_halts_plan(self, db):
+        """Same guardrail for _handle_iban_verify (the other adapter_pending stub)."""
+        execution = CoordinationEngine(db, "iban-verify-test-org")
+
+        plan = Plan(
+            event_type="iban_change_submitted",
+            actions=[
+                Action("initiate_iban_verification", "DET", {},
+                       "Stubbed IBAN verifier — should halt plan"),
+                Action("move_box_stage", "DET", {"target": "active"},
+                       "Must not run"),
+            ],
+            box_id="iban-verify-box-001",
+            organization_id="iban-verify-test-org",
+        )
+
+        result = asyncio.run(execution.execute(plan))
+        assert result.status == "completed"
+        assert result.steps_completed == 1
+        assert result.steps_total == 2
