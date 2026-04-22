@@ -25,6 +25,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import InviteVendorModal from './InviteVendorModal.js';
+import BudgetPausedBanner from './BudgetPausedBanner.js';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -1011,6 +1012,9 @@ export function ThreadSidebar({
   orgId,
   toast,
   loading,
+  budgetStatus,
+  onBudgetOverride,
+  budgetOverridePending,
 }) {
   const [boxLinks, setBoxLinks] = useState([]);
   const [onboardingStatus, setOnboardingStatus] = useState(null);
@@ -1301,6 +1305,11 @@ export function ThreadSidebar({
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
 
+      <${BudgetPausedBanner}
+        status=${budgetStatus}
+        onRequestOverride=${onBudgetOverride}
+        pending=${budgetOverridePending}
+      />
       <${ResubmissionBanner} item=${item} />
       <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
       <${WaitingBanner} waiting=${item.waiting_condition} />

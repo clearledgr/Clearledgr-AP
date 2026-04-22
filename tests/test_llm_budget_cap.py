@@ -410,6 +410,96 @@ class TestCustomerOverrideEndpoint:
         assert row.get("decision_reason") == "legitimate operational need"
 
 
+class TestLlmBudgetStatusEndpoint:
+    """GET /api/workspace/llm-budget/status — drives the in-product banner.
+
+    The banner needs four things to render correctly: (a) is this
+    workspace paused right now, (b) what's the cost vs cap, (c) when
+    does the cycle reset, (d) can this specific user lift the pause
+    without leaving Gmail. All four come from this endpoint.
+    """
+
+    def test_unpaused_org_returns_paused_false(self, db):
+        client, ws_module, ops_module = _make_test_client(db, role="ap_clerk")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["paused"] is False
+        assert body["paused_at"] is None
+        assert body["cap_usd"] > 0  # Tier default kicks in
+        assert "period_start" in body and "period_end" in body
+
+    def test_paused_org_returns_paused_true_with_timestamp(self, db):
+        paused_at = datetime.now(timezone.utc).isoformat()
+        db.update_organization("budget-test-org", llm_cost_paused_at=paused_at)
+        client, ws_module, ops_module = _make_test_client(db, role="ap_clerk")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["paused"] is True
+        assert body["paused_at"] == paused_at
+
+    def test_can_override_is_true_for_cfo(self, db):
+        client, ws_module, ops_module = _make_test_client(db, role="cfo")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+        assert resp.status_code == 200
+        assert resp.json()["can_override"] is True
+
+    def test_can_override_is_true_for_owner(self, db):
+        client, ws_module, ops_module = _make_test_client(db, role="owner")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+        assert resp.status_code == 200
+        assert resp.json()["can_override"] is True
+
+    def test_can_override_is_false_for_ap_clerk(self, db):
+        client, ws_module, ops_module = _make_test_client(db, role="ap_clerk")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+        assert resp.status_code == 200
+        assert resp.json()["can_override"] is False
+
+    def test_status_respects_per_org_override(self, db):
+        db.update_organization(
+            "budget-test-org",
+            settings={"llm_cost_hard_cap_usd_override": 777.77},
+        )
+        client, ws_module, ops_module = _make_test_client(db, role="ap_clerk")
+        try:
+            resp = client.get("/api/workspace/llm-budget/status")
+        finally:
+            from main import app
+            app.dependency_overrides.pop(ws_module.get_current_user, None)
+            app.dependency_overrides.pop(ops_module.get_current_user, None)
+        assert resp.status_code == 200
+        assert resp.json()["cap_usd"] == 777.77
+
+
 class TestOpsResetEndpoint:
     """POST /api/ops/llm-budget/reset — CS-accessible for incidents."""
 

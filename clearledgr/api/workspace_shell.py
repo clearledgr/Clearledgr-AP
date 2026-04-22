@@ -2908,6 +2908,64 @@ def get_billing_summary(
     return _get_subscription_service().get_billing_summary(org_id)
 
 
+@router.get("/llm-budget/status")
+def get_llm_budget_status(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Read-only view of the LLM cost budget for the in-product banner.
+
+    The banner uses this to tell an operator why the agent paused and
+    whether they can lift it without leaving Gmail. Rendered at the
+    top of ThreadSidebar + HomePage whenever ``paused`` is true.
+
+    Returns:
+        paused: whether calls are currently being refused
+        paused_at: ISO timestamp of the pause event (null if not paused)
+        cost_usd: month-to-date Claude spend for this workspace
+        cap_usd: the effective monthly hard cap (tier default or org override)
+        period_start / period_end: UTC month boundaries
+        can_override: whether the calling user has rank ≥ CFO and can lift
+    """
+    from clearledgr.core.auth import has_cfo
+    from datetime import datetime as _dt
+    from calendar import monthrange
+
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.get_organization(org_id) or {}
+
+    paused_at = org.get("llm_cost_paused_at")
+    paused = bool(paused_at)
+
+    svc = _get_subscription_service()
+    try:
+        cap_usd = float(svc.get_effective_llm_cost_cap(org_id))
+    except Exception:
+        cap_usd = 0.0
+    try:
+        cost_row = svc._get_llm_cost_this_month(org_id) or {}
+        cost_usd = float(cost_row.get("total_cost_usd") or 0.0)
+    except Exception:
+        cost_usd = 0.0
+
+    now = _dt.now(timezone.utc)
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_day = monthrange(now.year, now.month)[1]
+    period_end = period_start.replace(day=last_day, hour=23, minute=59, second=59)
+
+    return {
+        "organization_id": org_id,
+        "paused": paused,
+        "paused_at": paused_at,
+        "cost_usd": round(cost_usd, 4),
+        "cap_usd": round(cap_usd, 4),
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "can_override": has_cfo(user.role),
+    }
+
+
 class LLMBudgetOverrideRequest(BaseModel):
     """CFO-authorized override of the LLM runaway-spend guard.
 

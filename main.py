@@ -391,6 +391,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/reports/export",
     "/api/workspace/webhooks",
     "/api/workspace/llm-budget/override",
+    "/api/workspace/llm-budget/status",
     "/api/workspace/vendor-intelligence/duplicates",
     "/api/workspace/vendor-intelligence/merge",
     "/api/workspace/disputes",

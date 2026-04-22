@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:ec66fa533497ebe37d5a49e43736d2ed77b1bdd70a0507b7a461bb363d2acefb */
+/* clearledgr-source-fingerprint:af4151ea58463bf1ca99828fdf43a6631c06ad524e0d5a108dc0d26336410068 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -54645,6 +54645,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return { status: "error", reason: "network_error" };
       }
     }
+    async fetchLlmBudgetStatus() {
+      if (!this.runtimeConfig?.backendUrl)
+        return null;
+      try {
+        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/workspace/llm-budget/status`);
+        if (!response || response.ok === false)
+          return null;
+        return response;
+      } catch (_2) {
+        return null;
+      }
+    }
+    async overrideLlmBudgetPause(reason) {
+      if (!this.runtimeConfig?.backendUrl)
+        return { status: "error", reason: "no_backend" };
+      const trimmed = String(reason || "").trim();
+      if (!trimmed)
+        return { status: "error", reason: "reason_required" };
+      try {
+        const response = await this.backendFetch(`${this.runtimeConfig.backendUrl}/api/workspace/llm-budget/override`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: trimmed })
+        });
+        return response || { status: "error", reason: "empty_response" };
+      } catch (err) {
+        return { status: "error", reason: err?.message || "network_error" };
+      }
+    }
     async getGlSuggestions(item) {
       if (!item || !this.runtimeConfig?.backendUrl)
         return null;
@@ -55131,95 +55160,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
   }
 
-  // src/utils/store.js
-  var _listeners = new Set;
-  var store = {
-    queueState: [],
-    scanStatus: {},
-    currentUserRole: null,
-    gmailIntegration: null,
-    selectedItemId: null,
-    currentThreadId: null,
-    agentSessionsState: new Map,
-    browserTabContext: [],
-    agentInsightsState: new Map,
-    sourcesState: new Map,
-    contextState: new Map,
-    tasksState: new Map,
-    notesState: new Map,
-    commentsState: new Map,
-    filesState: new Map,
-    activeContextTab: "email",
-    contextUiState: { itemId: null, loading: false, error: "" },
-    agentSummaryState: { itemId: null, mode: null, loading: false, error: "", data: null },
-    agentPreviewState: { key: null, loading: false, error: "", data: null },
-    batchOpsState: { mode: null, loading: false, error: "", data: null },
-    batchOpsPolicyState: { maxItems: 5, amountThreshold: "", selectionPreset: "queue_order" },
-    auditState: { itemId: null, loading: false, events: [] },
-    rowDecorated: new Set,
-    openComposeWithPrefill: null,
-    update(patch) {
-      Object.assign(this, patch);
-      _listeners.forEach((fn) => fn());
-    },
-    subscribe(fn) {
-      _listeners.add(fn);
-      return () => _listeners.delete(fn);
-    },
-    findItemByThreadId(threadId) {
-      if (!threadId)
-        return null;
-      return this.queueState.find((item) => item.thread_id === threadId || item.threadId === threadId || item.message_id === threadId || item.messageId === threadId) || null;
-    },
-    findItemById(itemId) {
-      if (!itemId)
-        return null;
-      return this.queueState.find((item) => item.id === itemId || item.invoice_key === itemId) || null;
-    },
-    setSelectedItem(itemId) {
-      this.update({
-        selectedItemId: itemId || null,
-        activeContextTab: "email",
-        auditState: { itemId: null, loading: false, events: [] },
-        contextUiState: { itemId: null, loading: false, error: "" }
-      });
-    },
-    async composeWithPrefill(prefill = {}) {
-      if (typeof this.openComposeWithPrefill !== "function") {
-        throw new Error("compose_launcher_unavailable");
-      }
-      return this.openComposeWithPrefill(prefill);
-    },
-    getPrimaryItem() {
-      const selected = this.findItemById(this.selectedItemId);
-      if (selected)
-        return selected;
-      const threadItem = this.findItemByThreadId(this.currentThreadId);
-      if (threadItem)
-        return threadItem;
-      if (!this.queueState.length)
-        return null;
-      return this.queueState[0];
-    },
-    getPrimaryItemIndex() {
-      const item = this.getPrimaryItem();
-      if (!item)
-        return -1;
-      return this.queueState.findIndex((entry) => (entry.id || entry.invoice_key) === (item.id || item.invoice_key));
-    },
-    selectItemByOffset(offset) {
-      if (!this.queueState.length)
-        return;
-      const current = Math.max(0, this.getPrimaryItemIndex());
-      const next = Math.max(0, Math.min(this.queueState.length - 1, current + offset));
-      const nextItem = this.queueState[next];
-      if (!nextItem)
-        return;
-      this.setSelectedItem(nextItem.id || nextItem.invoice_key || null);
-    }
-  };
-  var store_default = store;
-
   // node_modules/preact/hooks/dist/hooks.module.js
   var t4;
   var r2;
@@ -55369,6 +55309,102 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function D2(n3, t5) {
     return typeof t5 == "function" ? t5(n3) : t5;
   }
+
+  // src/utils/store.js
+  var _listeners = new Set;
+  function useStore() {
+    const [, forceUpdate] = d2(0);
+    y2(() => store.subscribe(() => forceUpdate((n3) => n3 + 1)), []);
+    return store;
+  }
+  var store = {
+    queueState: [],
+    scanStatus: {},
+    currentUserRole: null,
+    gmailIntegration: null,
+    selectedItemId: null,
+    currentThreadId: null,
+    agentSessionsState: new Map,
+    browserTabContext: [],
+    agentInsightsState: new Map,
+    sourcesState: new Map,
+    contextState: new Map,
+    tasksState: new Map,
+    notesState: new Map,
+    commentsState: new Map,
+    filesState: new Map,
+    activeContextTab: "email",
+    contextUiState: { itemId: null, loading: false, error: "" },
+    agentSummaryState: { itemId: null, mode: null, loading: false, error: "", data: null },
+    agentPreviewState: { key: null, loading: false, error: "", data: null },
+    batchOpsState: { mode: null, loading: false, error: "", data: null },
+    batchOpsPolicyState: { maxItems: 5, amountThreshold: "", selectionPreset: "queue_order" },
+    auditState: { itemId: null, loading: false, events: [] },
+    rowDecorated: new Set,
+    openComposeWithPrefill: null,
+    llmBudgetStatus: null,
+    llmBudgetOverridePending: false,
+    update(patch) {
+      Object.assign(this, patch);
+      _listeners.forEach((fn) => fn());
+    },
+    subscribe(fn) {
+      _listeners.add(fn);
+      return () => _listeners.delete(fn);
+    },
+    findItemByThreadId(threadId) {
+      if (!threadId)
+        return null;
+      return this.queueState.find((item) => item.thread_id === threadId || item.threadId === threadId || item.message_id === threadId || item.messageId === threadId) || null;
+    },
+    findItemById(itemId) {
+      if (!itemId)
+        return null;
+      return this.queueState.find((item) => item.id === itemId || item.invoice_key === itemId) || null;
+    },
+    setSelectedItem(itemId) {
+      this.update({
+        selectedItemId: itemId || null,
+        activeContextTab: "email",
+        auditState: { itemId: null, loading: false, events: [] },
+        contextUiState: { itemId: null, loading: false, error: "" }
+      });
+    },
+    async composeWithPrefill(prefill = {}) {
+      if (typeof this.openComposeWithPrefill !== "function") {
+        throw new Error("compose_launcher_unavailable");
+      }
+      return this.openComposeWithPrefill(prefill);
+    },
+    getPrimaryItem() {
+      const selected = this.findItemById(this.selectedItemId);
+      if (selected)
+        return selected;
+      const threadItem = this.findItemByThreadId(this.currentThreadId);
+      if (threadItem)
+        return threadItem;
+      if (!this.queueState.length)
+        return null;
+      return this.queueState[0];
+    },
+    getPrimaryItemIndex() {
+      const item = this.getPrimaryItem();
+      if (!item)
+        return -1;
+      return this.queueState.findIndex((entry) => (entry.id || entry.invoice_key) === (item.id || item.invoice_key));
+    },
+    selectItemByOffset(offset) {
+      if (!this.queueState.length)
+        return;
+      const current = Math.max(0, this.getPrimaryItemIndex());
+      const next = Math.max(0, Math.min(this.queueState.length - 1, current + offset));
+      const nextItem = this.queueState[next];
+      if (!nextItem)
+        return;
+      this.setSelectedItem(nextItem.id || nextItem.invoice_key || null);
+    }
+  };
+  var store_default = store;
 
   // src/utils/perf-budget.js
   var PERF_BUDGETS_MS = {
@@ -59268,6 +59304,100 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
 
+  // src/components/BudgetPausedBanner.js
+  var html3 = htm_module_default.bind(_);
+  function formatUsd(value) {
+    const n3 = Number(value);
+    if (!Number.isFinite(n3))
+      return "$0";
+    return n3 >= 100 ? `$${n3.toFixed(0)}` : `$${n3.toFixed(2)}`;
+  }
+  function formatPeriodEnd(iso) {
+    if (!iso)
+      return "";
+    try {
+      const d3 = new Date(iso);
+      if (Number.isNaN(d3.getTime()))
+        return "";
+      return d3.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch (_2) {
+      return "";
+    }
+  }
+  function BudgetPausedBanner({ status, onRequestOverride, pending }) {
+    if (!status || !status.paused)
+      return null;
+    const cost = formatUsd(status.cost_usd);
+    const cap = formatUsd(status.cap_usd);
+    const resumesOn = formatPeriodEnd(status.period_end);
+    const canOverride = Boolean(status.can_override);
+    return html3`
+    <div class="cl-ts-banner cl-budget-paused" role="status" aria-live="polite">
+      <style>${BUDGET_PAUSED_BANNER_CSS}</style>
+      <div class="cl-ts-banner-icon">!</div>
+      <div class="cl-ts-banner-body">
+        <div class="cl-ts-banner-title">Agent paused — monthly LLM cost cap reached</div>
+        <div class="cl-ts-banner-detail">
+          ${cost} of ${cap} spent this month.${resumesOn ? ` Resumes on ${resumesOn} at the latest.` : ""}
+        </div>
+        ${canOverride ? html3`
+          <button
+            class="cl-budget-paused-action"
+            type="button"
+            disabled=${Boolean(pending)}
+            onClick=${() => {
+      if (!pending && typeof onRequestOverride === "function")
+        onRequestOverride();
+    }}
+          >${pending ? "Lifting…" : "Lift pause"}</button>
+        ` : html3`
+          <div class="cl-budget-paused-hint">
+            Ask your CFO or account owner to lift the pause.
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+  }
+  var BUDGET_PAUSED_BANNER_CSS = `
+.cl-ts-banner.cl-budget-paused {
+  background: #FEF3C7;            /* amber-100: warning, not error */
+  border: 1px solid #F59E0B;      /* amber-500 */
+}
+.cl-ts-banner.cl-budget-paused .cl-ts-banner-icon {
+  background: #F59E0B;
+  color: #78350F;
+}
+.cl-ts-banner.cl-budget-paused .cl-ts-banner-title {
+  color: #78350F;                 /* amber-900 */
+}
+.cl-ts-banner.cl-budget-paused .cl-ts-banner-detail {
+  color: #92400E;                 /* amber-800 */
+}
+.cl-budget-paused-action {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1px solid #78350F;
+  border-radius: 6px;
+  background: #FFFBEB;
+  color: #78350F;
+  font: 600 12px/1.2 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.cl-budget-paused-action:hover:not(:disabled) {
+  background: #FEF3C7;
+}
+.cl-budget-paused-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cl-budget-paused-hint {
+  margin-top: 6px;
+  font: 500 11px/1.3 'DM Sans', sans-serif;
+  color: #92400E;
+}
+`;
+
   // src/components/ThreadSidebar.js
   var THREAD_SIDEBAR_CSS = `
 .cl-thread-sidebar { padding: 0; max-width: 100%; overflow-x: hidden; }
@@ -60220,7 +60350,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     inviteVendorApi,
     orgId,
     toast,
-    loading
+    loading,
+    budgetStatus,
+    onBudgetOverride,
+    budgetOverridePending
   }) {
     const [boxLinks, setBoxLinks] = d2([]);
     const [onboardingStatus, setOnboardingStatus] = d2(null);
@@ -60480,6 +60613,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="cl-thread-sidebar">
       <style>${THREAD_SIDEBAR_CSS}</style>
 
+      <${BudgetPausedBanner}
+        status=${budgetStatus}
+        onRequestOverride=${onBudgetOverride}
+        pending=${budgetOverridePending}
+      />
       <${ResubmissionBanner} item=${item} />
       <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
       <${WaitingBanner} waiting=${item.waiting_condition} />
@@ -62095,7 +62233,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/components/SidebarApp.js
-  var html3 = htm_module_default.bind(_);
+  var html4 = htm_module_default.bind(_);
   var LOGO_PATH = "icons/icon48.png";
 
   class ErrorBoundary extends x {
@@ -62111,7 +62249,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     render() {
       if (this.state.error) {
-        return html3`<div class="cl-empty" role="alert">
+        return html4`<div class="cl-empty" role="alert">
         <p>${this.props.fallback || "Something went wrong."}</p>
         <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${() => this.setState({ error: null })}>Retry</button>
       </div>`;
@@ -62119,7 +62257,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return this.props.children;
     }
   }
-  function useStore() {
+  function useStore2() {
     const [, update] = d2(0);
     y2(() => store_default.subscribe(() => update((n3) => n3 + 1)), []);
     return store_default;
@@ -62176,14 +62314,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         _toastEl = null;
       };
     }, []);
-    return html3`<div ref=${ref} class="cl-toast" style="display:none" onClick=${() => {
+    return html4`<div ref=${ref} class="cl-toast" style="display:none" onClick=${() => {
       if (_toastEl)
         _toastEl.style.display = "none";
       clearTimeout(_toastTimer);
     }}></div>`;
   }
   function ScanStatus() {
-    const s3 = useStore();
+    const s3 = useStore2();
     const status = s3.scanStatus;
     const gmail = s3.gmailIntegration || {};
     const state = status?.state || "idle";
@@ -62219,10 +62357,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text = "Gmail connection lost. Reconnect to resume invoice processing.";
       tone = "warning";
     }
-    return html3`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
+    return html4`<div id="cl-scan-status" class="cl-scan-status" data-tone=${tone}>${text}</div>`;
   }
   function AuthPrompt({ queueManager }) {
-    const s3 = useStore();
+    const s3 = useStore2();
     const gmail = s3.gmailIntegration || {};
     const canOpenConnections = hasAdminAccessRole(s3.currentUserRole);
     const goConnections = q2(() => {
@@ -62248,7 +62386,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         await queueManager.refreshQueue();
       }
     });
-    return html3`
+    return html4`
     <div class="cl-section cl-auth-panel">
       <div class="cl-section-title">Connect Gmail</div>
       <div class="cl-auth-copy">
@@ -62258,7 +62396,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
           ${pending ? "Connecting…" : gmail?.requires_reconnect ? "Reconnect Gmail" : "Connect Gmail"}
         </button>
-        ${canOpenConnections && html3`
+        ${canOpenConnections && html4`
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${goConnections}>Connections</button>
         `}
       </div>
@@ -62337,7 +62475,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, [queueManager, threadId]);
     if (threadSelected) {
       if (!canMutate) {
-        return html3`<div class="cl-section"><div class="cl-empty">
+        return html4`<div class="cl-section"><div class="cl-empty">
         <p>No finance record is linked to this email yet.</p>
         <p class="cl-muted">Open the queue to review records Clearledgr already found. Only operators can create or link records from Gmail.</p>
         <div class="cl-thread-actions cl-empty-actions">
@@ -62345,7 +62483,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div></div>`;
       }
-      return html3`
+      return html4`
       <div class="cl-section">
         <div class="cl-empty cl-empty-stretch">
         <p>No finance record is linked to this email yet.</p>
@@ -62376,13 +62514,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               ${searching ? "Searching…" : "Find record"}
             </button>
           </div>
-          ${searching && html3`<div class="cl-muted">Looking for matching finance records…</div>`}
-          ${!searching && hasSearched && search.trim() && results.length === 0 && html3`
+          ${searching && html4`<div class="cl-muted">Looking for matching finance records…</div>`}
+          ${!searching && hasSearched && search.trim() && results.length === 0 && html4`
             <div class="cl-muted">No matching finance records found yet.</div>
           `}
-          ${results.length > 0 && html3`
+          ${results.length > 0 && html4`
             <div class="cl-card-stack cl-empty-results">
-              ${results.map((candidate) => html3`
+              ${results.map((candidate) => html4`
                 <div key=${candidate.id} class="cl-mini-card">
                   <div class="cl-mini-card-main">
                     <div class="cl-mini-card-copy">
@@ -62411,7 +62549,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     `;
     }
     if (queueCount > 0) {
-      return html3`<div class="cl-section"><div class="cl-empty">
+      return html4`<div class="cl-section"><div class="cl-empty">
       <p>${queueCount} record${queueCount !== 1 ? "s are" : " is"} ready in the queue.</p>
       <p class="cl-muted">Open an email to work one record, or open Invoices to see the full queue.</p>
       <div class="cl-thread-actions cl-empty-actions">
@@ -62420,7 +62558,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     </div></div>`;
     }
-    return html3`<div class="cl-section"><div class="cl-empty">
+    return html4`<div class="cl-section"><div class="cl-empty">
     <p>Nothing is waiting right now.</p>
     <p class="cl-muted">Invoices is your control plane. Home is available if you want the lighter overview.</p>
     <div class="cl-thread-actions cl-empty-actions">
@@ -62430,7 +62568,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   </div></div>`;
   }
   function SidebarApp({ queueManager }) {
-    const s3 = useStore();
+    const s3 = useStore2();
     const item = s3.getPrimaryItem();
     const logoUrl = getAssetUrl(LOGO_PATH);
     const queueCount = s3.queueState.length;
@@ -62452,6 +62590,47 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       userEmail: queueManager?.runtimeConfig?.userEmail || ""
     };
     const openPipeline = q2(() => navigateInboxRoute("clearledgr/invoices", store_default.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
+    y2(() => {
+      let cancelled = false;
+      (async () => {
+        if (typeof queueManager?.fetchLlmBudgetStatus !== "function")
+          return;
+        const status = await queueManager.fetchLlmBudgetStatus();
+        if (!cancelled)
+          store_default.update({ llmBudgetStatus: status });
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [queueManager]);
+    const onBudgetOverride = q2(async () => {
+      if (s3.llmBudgetOverridePending)
+        return;
+      let reason = null;
+      if (typeof window !== "undefined" && typeof window.prompt === "function") {
+        reason = window.prompt(`Lift the LLM budget pause for this workspace?
+
+Reason (required — logged to the audit trail):`);
+      }
+      if (!reason || !String(reason).trim())
+        return;
+      store_default.update({ llmBudgetOverridePending: true });
+      try {
+        const result = await queueManager.overrideLlmBudgetPause(String(reason).trim());
+        if (result && result.status === "cleared") {
+          showToast("Agent resumed — LLM budget pause lifted.", "success");
+          const fresh = await queueManager.fetchLlmBudgetStatus();
+          store_default.update({ llmBudgetStatus: fresh });
+        } else {
+          const detail = result?.detail || result?.reason || "unknown_error";
+          showToast(`Could not lift pause: ${detail}`, "error");
+        }
+      } catch (err) {
+        showToast(`Could not lift pause: ${err?.message || err}`, "error");
+      } finally {
+        store_default.update({ llmBudgetOverridePending: false });
+      }
+    }, [queueManager, s3.llmBudgetOverridePending]);
     const fetchOnboardingStatus = q2(async (vendorName) => {
       try {
         const orgIdVal = queueManager.runtimeConfig?.organizationId || "default";
@@ -62650,17 +62829,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         store_default.update({ auditState: { itemId: item.id, loading: false, events: [] } });
       });
     }, [item?.id, queueManager]);
-    return html3`
+    return html4`
     <div class="cl-sidebar">
       <style>${SIDEBAR_CSS}${STATE_PILL_CSS}</style>
 
       <div class="cl-header">
         <div class="cl-title">
-          ${logoUrl && html3`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${(e3) => e3.target.remove()} />`}
+          ${logoUrl && html4`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${(e3) => e3.target.remove()} />`}
           Clearledgr AP
         </div>
         <div class="cl-header-right">
-          ${hasQueueNavigation ? html3`
+          ${hasQueueNavigation ? html4`
                 <div class="cl-header-queue" aria-label="Queue navigation">
                   <button
                     class="cl-header-nav-btn"
@@ -62680,7 +62859,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                     disabled=${currentIndex >= queueCount - 1}
                   >›</button>
                 </div>
-              ` : queueCount > 0 && html3`
+              ` : queueCount > 0 && html4`
                 <button class="cl-header-count" onClick=${openPipeline} title="Open invoices">
                   ${queueCount} record${queueCount !== 1 ? "s" : ""}
                 </button>
@@ -62694,15 +62873,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <${ScanStatus} />
       <//>
 
-      ${authRequired && html3`
+      ${authRequired && html4`
         <${ErrorBoundary} fallback="Authorization prompt unavailable">
           <${AuthPrompt} queueManager=${queueManager} />
         <//>
       `}
 
       <${ErrorBoundary} fallback="Could not load record details">
-        ${item ? html3`
-            ${html3`<${ThreadSidebar}
+        ${item ? html4`
+            ${html4`<${ThreadSidebar}
                 item=${item}
                 auditEvents=${store_default.auditState?.events || []}
                 orgId=${queueManager.runtimeConfig?.organizationId || "default"}
@@ -62719,6 +62898,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
                 fetchOnboardingStatus=${fetchOnboardingStatus}
                 inviteVendorApi=${inviteVendorApi}
+                budgetStatus=${s3.llmBudgetStatus}
+                onBudgetOverride=${onBudgetOverride}
+                budgetOverridePending=${s3.llmBudgetOverridePending}
                 onSnooze=${async (snoozeItem) => {
       try {
         const result = await queueManager.backendFetch(queueManager.runtimeConfig?.backendUrl + "/api/ap/items/" + snoozeItem.id + "/snooze?organization_id=" + encodeURIComponent(queueManager.runtimeConfig?.organizationId || "default"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration_minutes: 240 }) });
@@ -62771,21 +62953,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         showToast("Reverse failed: " + (err.message || err), "error");
       }
     }}
-              />`}` : html3`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
+              />`}` : html4`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
     </div>
   `;
   }
 
   // src/components/OnboardingFlow.js
-  var html4 = htm_module_default.bind(_);
+  var html5 = htm_module_default.bind(_);
   var LOGO_URL = typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon48.png") : "";
   function AuthModal({ onSignIn, pending, onDismiss }) {
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal">
         <div style="text-align:center;margin-bottom:20px;">
-          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:48px;height:48px;margin-bottom:12px;" />` : ""}
+          ${LOGO_URL ? html5`<img src=${LOGO_URL} alt="" style="width:48px;height:48px;margin-bottom:12px;" />` : ""}
           <h2 style="font:700 20px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 8px;">Clearledgr AP</h2>
           <p style="font:400 14px/1.5 'DM Sans',sans-serif;color:#475569;margin:0;max-width:320px;">
             Clearledgr helps your finance team process invoices inside Gmail.
@@ -62819,17 +63001,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function CreateWorkspace({ onContinue, pending, errorMessage, defaultName }) {
     const [name, setName] = d2(defaultName || "");
     const trimmed = name.trim();
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
-          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          ${LOGO_URL ? html5`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
           <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Name your workspace</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             One workspace per finance team. Use your company name — you can change it later.
           </p>
         </div>
-        ${errorMessage ? html4`
+        ${errorMessage ? html5`
           <div style="
             background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
@@ -62874,17 +63056,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       { id: "netsuite", name: "NetSuite", icon: "NS" },
       { id: "sap", name: "SAP", icon: "SP" }
     ];
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
-          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          ${LOGO_URL ? html5`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
           <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Which accounting system do you use?</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Clearledgr connects to your ERP to read POs, GRNs, and vendor master data.
           </p>
         </div>
-        ${errorMessage ? html4`
+        ${errorMessage ? html5`
           <div style="
             background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
@@ -62892,7 +63074,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           ">${errorMessage}</div>
         ` : ""}
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
-          ${erps.map((erp) => html4`
+          ${erps.map((erp) => html5`
             <button
               key=${erp.id}
               onClick=${() => setSelected(erp.id)}
@@ -62922,17 +63104,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [tolerance, setTolerance] = d2("2");
     const [approverEmail, setApproverEmail] = d2("");
     const canContinue = Boolean(threshold && !Number.isNaN(Number(threshold)) && tolerance && !Number.isNaN(Number(tolerance)) && approverEmail.trim());
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal" style="max-width:480px;">
         <div style="text-align:center;margin-bottom:20px;">
-          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          ${LOGO_URL ? html5`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
           <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Set your AP policy</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Three defaults you can fine-tune later from Settings > Policy.
           </p>
         </div>
-        ${errorMessage ? html4`
+        ${errorMessage ? html5`
           <div style="
             background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
@@ -62999,31 +63181,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function SlackConnect({ onConnect, onSkip, pending, errorMessage, connected }) {
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
-          ${LOGO_URL ? html4`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
+          ${LOGO_URL ? html5`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ""}
           <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Connect Slack</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Approvals and escalations happen in Slack. The AP pipeline stays in Gmail.
           </p>
         </div>
-        ${errorMessage ? html4`
+        ${errorMessage ? html5`
           <div style="
             background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
             font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
           ">${errorMessage}</div>
         ` : ""}
-        ${connected ? html4`
+        ${connected ? html5`
           <div style="
             background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
             font:500 13px/1.4 'DM Sans',sans-serif;color:#065F46;
           ">✓ Slack connected. You can change the channel anytime from Settings > Connections.</div>
         ` : ""}
-        ${!connected ? html4`
+        ${!connected ? html5`
           <button
             class="cl-onboard-primary-btn"
             onClick=${onConnect}
@@ -63042,7 +63224,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <p style="font:400 11px/1.4 'DM Sans',sans-serif;color:#94A3B8;text-align:center;margin:12px 0 0;">
             If you skip, approvals route to email until Slack is connected. You can set it up anytime from Settings.
           </p>
-        ` : html4`
+        ` : html5`
           <button
             class="cl-onboard-primary-btn"
             onClick=${onSkip}
@@ -63071,7 +63253,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       ];
       return () => timers.forEach(clearTimeout);
     }, []);
-    return html4`
+    return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal" style="max-width:480px;">
         <div style="display:flex;gap:24px;">
@@ -63080,7 +63262,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               Setting up your AP workspace...
             </h2>
             <div style="display:flex;flex-direction:column;gap:14px;">
-              ${steps.map((step) => html4`
+              ${steps.map((step) => html5`
                 <div key=${step.id} style="display:flex;gap:10px;align-items:flex-start;">
                   <div style="
                     width:20px;height:20px;border-radius:50%;flex-shrink:0;margin-top:1px;
@@ -63099,7 +63281,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
           <div style="width:180px;flex-shrink:0;background:#F7F9FB;border-radius:8px;padding:14px;">
             <div style="font:600 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:8px;">Pipeline view</div>
-            ${["Received", "Matching", "Exception", "Approved", "Paid"].map((stage) => html4`
+            ${["Received", "Matching", "Exception", "Approved", "Paid"].map((stage) => html5`
               <div key=${stage} style="font:500 11px/2 'DM Sans',sans-serif;color:#0A1628;border-bottom:1px solid #E2E8F0;">${stage}</div>
             `)}
             <div style="font:400 10px/1 'DM Sans',sans-serif;color:#94A3B8;margin-top:8px;">← Stages</div>
@@ -63264,7 +63446,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, [api, onComplete]);
     if (step === "done")
       return null;
-    return html4`
+    return html5`
     <style>
       .cl-onboard-overlay {
         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -63292,12 +63474,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       .cl-onboard-primary-btn:hover { background: #00C271; }
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
-    ${step === "auth" ? html4`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
-    ${step === "workspace" ? html4`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ""}
-    ${step === "erp" ? html4`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
-    ${step === "policy" ? html4`<${PolicyForm} onContinue=${handlePolicyContinue} pending=${pending} errorMessage=${policyError} />` : ""}
-    ${step === "slack" ? html4`<${SlackConnect} onConnect=${handleSlackConnect} onSkip=${handleSlackFinish} pending=${pending} errorMessage=${slackError} connected=${slackConnected} />` : ""}
-    ${step === "creating" ? html4`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
+    ${step === "auth" ? html5`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
+    ${step === "workspace" ? html5`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ""}
+    ${step === "erp" ? html5`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
+    ${step === "policy" ? html5`<${PolicyForm} onContinue=${handlePolicyContinue} pending=${pending} errorMessage=${policyError} />` : ""}
+    ${step === "slack" ? html5`<${SlackConnect} onConnect=${handleSlackConnect} onSkip=${handleSlackFinish} pending=${pending} errorMessage=${slackError} connected=${slackConnected} />` : ""}
+    ${step === "creating" ? html5`<${PipelineCreation} erpType=${erpType} onComplete=${handleCreationComplete} />` : ""}
   `;
   }
 
@@ -65881,7 +66063,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/route-helpers.js
-  var html5 = htm_module_default.bind(_);
+  var html6 = htm_module_default.bind(_);
   var TZ = "Europe/London";
   var LOCALE = "en-GB";
   function fmtDateTime(v3) {
@@ -65991,7 +66173,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/routes/pages/HomePage.js
   var _homePerfStarted = false;
-  var html6 = htm_module_default.bind(_);
+  var html7 = htm_module_default.bind(_);
   var HOME_PIPELINE_SHORTCUTS = [
     "waiting_on_approval",
     "ready_to_post",
@@ -66007,7 +66189,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
   }
   function ToolbarAction({ label, detail, meta = "Open", onClick }) {
-    return html6`<button class="home-quick-card" onClick=${onClick}>
+    return html7`<button class="home-quick-card" onClick=${onClick}>
     <span class="home-quick-meta">${meta}</span>
     <strong class="home-quick-title">${label}</strong>
     <span class="home-quick-detail muted">${detail}</span>
@@ -66020,22 +66202,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       entry?.invoice_number || "",
       amountLabel
     ].filter(Boolean).join(" · ");
-    return html6`<div class="home-event-row">
+    return html7`<div class="home-event-row">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
           <strong style="font-size:13px">${entry?.title || entry?.operator_title || "Update"}</strong>
-          ${Number(entry?._repeatCount) > 1 ? html6`<span style="
+          ${Number(entry?._repeatCount) > 1 ? html7`<span style="
                 font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;
                 background:#F1F5F9;color:#64748B;font-family:var(--font-mono);
               " title="This action repeated ${entry._repeatCount} times today">×${entry._repeatCount}</span>` : null}
-          ${entry?.operator_severity ? html6`<span style="
+          ${entry?.operator_severity ? html7`<span style="
                 font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;
                 background:${entry.operator_severity === "success" ? "#ECFDF5" : entry.operator_severity === "warning" ? "#FEF3C7" : entry.operator_severity === "error" ? "#FEF2F2" : "#EFF6FF"};
                 color:${entry.operator_severity === "success" ? "#166534" : entry.operator_severity === "warning" ? "#92400E" : entry.operator_severity === "error" ? "#B91C1C" : "#1D4ED8"};
               ">${entry.operator_severity}</span>` : null}
         </div>
-        ${metaLine ? html6`<div class="muted" style="font-size:12px;margin-bottom:4px">${metaLine}</div>` : null}
+        ${metaLine ? html7`<div class="muted" style="font-size:12px;margin-bottom:4px">${metaLine}</div>` : null}
         <div class="muted" style="font-size:12px;line-height:1.5">${entry?.detail || entry?.operator_message || entry?.summary || "Recent activity is available."}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
@@ -66056,7 +66238,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }) {
     if (!Array.isArray(missingSetup) || missingSetup.length === 0)
       return null;
-    return html6`<div class="home-banner warning">
+    return html7`<div class="home-banner warning">
     <div style="min-width:0;flex:1">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
         <span style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:${showGmailAction ? "#FEF3C7" : "#EFF6FF"};color:${showGmailAction ? "#A16207" : "#1D4ED8"}">
@@ -66070,27 +66252,27 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${adminAccess ? showGmailAction ? `${missingSetup.join(", ")} still need attention before invoices can be processed.` : `${missingSetup.join(", ")} — connect these to unlock approvals, ERP posting, and full automation.` : `${missingSetup.join(", ")} still need attention. Ask an admin to finish setup.`}
       </p>
     </div>
-    ${adminAccess && html6`<div style="display:flex;gap:8px;flex-wrap:wrap">
-      ${showGmailAction ? html6`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending}>${gmailPending ? "Working…" : "Connect Gmail"}</button>` : null}
+    ${adminAccess && html7`<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${showGmailAction ? html7`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending}>${gmailPending ? "Working…" : "Connect Gmail"}</button>` : null}
       <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/connections")}>Open connections</button>
-      ${showRulesAction ? html6`<button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/rules")}>Review rules</button>` : null}
+      ${showRulesAction ? html7`<button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/rules")}>Review rules</button>` : null}
     </div>`}
   </div>`;
   }
   function EmptyPanelState({ text }) {
-    return html6`<div class="home-empty-state">
+    return html7`<div class="home-empty-state">
     <div class="home-empty-glyph"></div>
     <div class="home-empty-copy">${text}</div>
   </div>`;
   }
   function SectionPanel({ title, detail, actionLabel = "", onAction, children, panelMinHeight = 0, className = "" }) {
-    return html6`<div class=${`panel home-surface-panel ${className}`.trim()}>
+    return html7`<div class=${`panel home-surface-panel ${className}`.trim()}>
     <div class="home-surface-head">
       <div>
         <h3 style="margin:0 0 4px">${title}</h3>
-        ${detail ? html6`<p class="muted" style="margin:0">${detail}</p>` : null}
+        ${detail ? html7`<p class="muted" style="margin:0">${detail}</p>` : null}
       </div>
-      ${actionLabel ? html6`<button class="btn-secondary btn-sm" onClick=${onAction}>${actionLabel}</button>` : null}
+      ${actionLabel ? html7`<button class="btn-secondary btn-sm" onClick=${onAction}>${actionLabel}</button>` : null}
     </div>
     <div style=${panelMinHeight ? `min-height:${panelMinHeight}px` : ""}>${children}</div>
   </div>`;
@@ -66108,6 +66290,51 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       _homePerfStarted = true;
       perfMarkStart("home");
     }
+    const s3 = useStore();
+    y2(() => {
+      let cancelled = false;
+      if (s3.llmBudgetStatus !== null)
+        return;
+      (async () => {
+        try {
+          const status = await api("/api/workspace/llm-budget/status", { silent: true });
+          if (!cancelled)
+            store_default.update({ llmBudgetStatus: status });
+        } catch (_2) {}
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [s3.llmBudgetStatus, api]);
+    const onBudgetOverride = async () => {
+      if (s3.llmBudgetOverridePending)
+        return;
+      const reason = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt(`Lift the LLM budget pause for this workspace?
+
+Reason (required — logged to the audit trail):`) : null;
+      if (!reason || !String(reason).trim())
+        return;
+      store_default.update({ llmBudgetOverridePending: true });
+      try {
+        const result = await api("/api/workspace/llm-budget/override", {
+          method: "POST",
+          body: JSON.stringify({ reason: String(reason).trim() })
+        });
+        if (result && result.status === "cleared") {
+          toast?.("Agent resumed — LLM budget pause lifted.", "success");
+          try {
+            const fresh = await api("/api/workspace/llm-budget/status", { silent: true });
+            store_default.update({ llmBudgetStatus: fresh });
+          } catch (_2) {}
+        } else {
+          toast?.(`Could not lift pause: ${result?.detail || "unknown"}`, "error");
+        }
+      } catch (err) {
+        toast?.(`Could not lift pause: ${err?.message || err}`, "error");
+      } finally {
+        store_default.update({ llmBudgetOverridePending: false });
+      }
+    };
     const gmail = integrationByName(bootstrap, "gmail");
     const slack = integrationByName(bootstrap, "slack");
     const teams = integrationByName(bootstrap, "teams");
@@ -66214,24 +66441,24 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
         const now = Date.now();
         const blockedStates = new Set(["invited", "kyc", "bank_verify", "blocked"]);
-        const blocked = sessions.filter((s3) => {
-          if (!blockedStates.has(s3.state))
+        const blocked = sessions.filter((s4) => {
+          if (!blockedStates.has(s4.state))
             return false;
-          const elapsed = s3.invited_at ? (now - new Date(s3.invited_at).getTime()) / 3600000 : 0;
+          const elapsed = s4.invited_at ? (now - new Date(s4.invited_at).getTime()) / 3600000 : 0;
           return elapsed >= 48;
-        }).map((s3) => {
-          const hours = s3.invited_at ? Math.floor((now - new Date(s3.invited_at).getTime()) / 3600000) : 0;
+        }).map((s4) => {
+          const hours = s4.invited_at ? Math.floor((now - new Date(s4.invited_at).getTime()) / 3600000) : 0;
           const days = Math.floor(hours / 24);
           const reasons = [];
-          if (s3.state === "kyc")
+          if (s4.state === "kyc")
             reasons.push("Missing KYC documents");
-          else if (s3.state === "bank_verify")
+          else if (s4.state === "bank_verify")
             reasons.push("Bank details not submitted");
-          else if (s3.state === "blocked")
+          else if (s4.state === "blocked")
             reasons.push("Blocked — needs manual resolution");
-          else if (s3.state === "invited")
+          else if (s4.state === "invited")
             reasons.push("Vendor has not responded");
-          return { ...s3, days, reason: reasons[0] || "Blocked" };
+          return { ...s4, days, reason: reasons[0] || "Blocked" };
         });
         setOnboardingBlockers(blocked);
       }).catch(() => {
@@ -66410,16 +66637,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const secondaryUtilities = utilityItems.filter((item) => item.tone !== "accent");
     const queue = Array.isArray(bootstrap?.queue) ? bootstrap.queue : [];
     const exceptionQueue = T2(() => queue.filter((item) => {
-      const s3 = String(item?.state || "").toLowerCase();
-      return s3 === "needs_info" || s3 === "failed_post" || s3 === "reversed" || Boolean(item?.exception_code);
+      const s4 = String(item?.state || "").toLowerCase();
+      return s4 === "needs_info" || s4 === "failed_post" || s4 === "reversed" || Boolean(item?.exception_code);
     }).sort((a3, b) => {
       const dueA = a3?.due_date || a3?.payment_due_date || "9999";
       const dueB = b?.due_date || b?.payment_due_date || "9999";
       return dueA < dueB ? -1 : dueA > dueB ? 1 : 0;
     }).slice(0, 10), [queue]);
     const awaitingApproval = T2(() => queue.filter((item) => {
-      const s3 = String(item?.state || "").toLowerCase();
-      return s3 === "needs_approval" || s3 === "pending_approval";
+      const s4 = String(item?.state || "").toLowerCase();
+      return s4 === "needs_approval" || s4 === "pending_approval";
     }).sort((a3, b) => {
       const dueA = a3?.due_date || a3?.payment_due_date || "9999";
       const dueB = b?.due_date || b?.payment_due_date || "9999";
@@ -66429,8 +66656,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const now = new Date;
       const weekFromNow = new Date(now.getTime() + 7 * 86400000);
       return queue.filter((item) => {
-        const s3 = String(item?.state || "").toLowerCase();
-        if (s3 !== "approved" && s3 !== "ready_to_post" && s3 !== "posted_to_erp")
+        const s4 = String(item?.state || "").toLowerCase();
+        if (s4 !== "approved" && s4 !== "ready_to_post" && s4 !== "posted_to_erp")
           return false;
         const due = item?.due_date || item?.payment_due_date;
         if (!due)
@@ -66475,7 +66702,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }).slice(0, 10);
       return collapsed.map(({ event, count }) => count > 1 ? { ...event, _repeatCount: count } : event);
     }, [recentAudit]);
-    return html6`
+    return html7`
+    <${BudgetPausedBanner}
+      status=${s3.llmBudgetStatus}
+      onRequestOverride=${onBudgetOverride}
+      pending=${s3.llmBudgetOverridePending}
+    />
     <div class="topbar home-header-shell">
       <div class="home-header-copy">
         <div class="home-eyebrow">Clearledgr Home</div>
@@ -66486,7 +66718,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     </div>
 
-    ${showSetupBanner ? html6`<${SetupNotice}
+    ${showSetupBanner ? html7`<${SetupNotice}
             adminAccess=${adminAccess}
             missingSetup=${missingSetup}
             navigate=${navigate}
@@ -66497,7 +66729,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           />` : null}
 
     <!-- §7.5 Trust Arc: Week 1 persistent banner -->
-    ${bootstrap?.trust_arc?.phase === "week1_observation" ? html6`
+    ${bootstrap?.trust_arc?.phase === "week1_observation" ? html7`
       <div style="padding:12px 16px;background:#0A1628;color:#fff;border-radius:8px;margin-bottom:16px;font:500 13px/1.4 'DM Sans',sans-serif;">
         <strong style="color:#00D67E">Agent in observation mode</strong>
         <span style="opacity:0.8"> — Week 1. Every action is logged with full reasoning. Override window extended to 30 minutes. Watch, correct if needed.</span>
@@ -66514,8 +66746,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
       panelMinHeight=${120}
     >
-      ${exceptionQueue.length > 0 ? html6`<div class="home-list-stack">
-            ${exceptionQueue.map((item, i3) => html6`
+      ${exceptionQueue.length > 0 ? html7`<div class="home-list-stack">
+            ${exceptionQueue.map((item, i3) => html7`
               <${AuditEventRow}
                 key=${item.id || i3}
                 entry=${{
@@ -66532,7 +66764,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 onAction=${() => openRecord(item.id, { id: item.id })}
               />
             `)}
-          </div>` : html6`<${EmptyPanelState} text="Exceptions that need resolution before their due date will appear here." />`}
+          </div>` : html7`<${EmptyPanelState} text="Exceptions that need resolution before their due date will appear here." />`}
     </${SectionPanel}>
 
     <!-- §6.1 Section 2: Awaiting Your Approval -->
@@ -66545,8 +66777,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
       panelMinHeight=${120}
     >
-      ${awaitingApproval.length > 0 ? html6`<div class="home-list-stack">
-            ${awaitingApproval.map((item, i3) => html6`
+      ${awaitingApproval.length > 0 ? html7`<div class="home-list-stack">
+            ${awaitingApproval.map((item, i3) => html7`
               <${AuditEventRow}
                 key=${item.id || i3}
                 entry=${{
@@ -66558,7 +66790,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 onAction=${() => openRecord(item.id, { id: item.id })}
               />
             `)}
-          </div>` : html6`<${EmptyPanelState} text="Invoices the agent has matched and routed for your sign-off will appear here." />`}
+          </div>` : html7`<${EmptyPanelState} text="Invoices the agent has matched and routed for your sign-off will appear here." />`}
     </${SectionPanel}>
 
     <div class="home-panel-grid">
@@ -66570,8 +66802,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onAction=${() => navigate("clearledgr/invoices")}
         panelMinHeight=${160}
       >
-        ${dueThisWeek.length > 0 ? html6`<div class="home-list-stack">
-              ${dueThisWeek.map((item, i3) => html6`
+        ${dueThisWeek.length > 0 ? html7`<div class="home-list-stack">
+              ${dueThisWeek.map((item, i3) => html7`
                 <${AuditEventRow}
                   key=${item.id || i3}
                   entry=${{
@@ -66584,7 +66816,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   onAction=${() => openRecord(item.id, { id: item.id })}
                 />
               `)}
-            </div>` : html6`<${EmptyPanelState} text="Approved invoices scheduled for payment in the next 7 days will appear here." />`}
+            </div>` : html7`<${EmptyPanelState} text="Approved invoices scheduled for payment in the next 7 days will appear here." />`}
       </${SectionPanel}>
 
       <!-- §6.1 Section 4: Agent Actions Today -->
@@ -66595,18 +66827,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onAction=${() => navigate("clearledgr/activity")}
         panelMinHeight=${160}
       >
-        ${agentActionsToday.length > 0 ? html6`<div class="home-list-stack">
+        ${agentActionsToday.length > 0 ? html7`<div class="home-list-stack">
               ${agentActionsToday.map((entry, index) => {
       const recordId = String(entry?.ap_item_id || "").trim();
       const auditRow = buildAuditRow(entry);
-      return html6`<${AuditEventRow}
+      return html7`<${AuditEventRow}
                   key=${entry?.id || `${entry?.ts || "event"}:${index}`}
                   entry=${{ ...entry, ...auditRow, operator_severity: auditRow.severity }}
                   actionLabel=${recordId ? "Open" : ""}
                   onAction=${() => recordId && openRecord(recordId, { id: recordId })}
                 />`;
     })}
-            </div>` : html6`<${EmptyPanelState} text="The agent's actions since midnight will appear here — one line each." />`}
+            </div>` : html7`<${EmptyPanelState} text="The agent's actions since midnight will appear here — one line each." />`}
       </${SectionPanel}>
     </div>
 
@@ -66617,7 +66849,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         detail="Vendors stuck in onboarding for more than 48 hours."
         panelMinHeight=${120}
       >
-        ${onboardingBlockers.length === 0 ? html6`<${EmptyPanelState} text="No blocked vendor onboarding engagements." />` : onboardingBlockers.map((b) => html6`
+        ${onboardingBlockers.length === 0 ? html7`<${EmptyPanelState} text="No blocked vendor onboarding engagements." />` : onboardingBlockers.map((b) => html7`
             <div class="home-blocker-row" key=${b.id || b.vendor_name} onClick=${() => navigate("clearledgr/vendor/" + encodeURIComponent(b.vendor_name || ""))} style="cursor:pointer;padding:6px 0;border-bottom:1px solid #f0f0ed;display:flex;align-items:baseline;gap:8px;">
               <span style="font:600 13px/1.3 'DM Sans',sans-serif;color:#1b1b1b;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${b.vendor_name || "Unknown vendor"}</span>
               <span style="font:500 11px/1 'DM Sans',sans-serif;color:#92400e;flex-shrink:0;">${b.state?.replace(/_/g, " ")}</span>
@@ -66974,7 +67206,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ReviewPage.js
-  var html7 = htm_module_default.bind(_);
+  var html8 = htm_module_default.bind(_);
   var SECTION_CONFIG = {
     field_review: {
       title: "Field checks",
@@ -67176,13 +67408,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }).filter(Boolean).join(" · ");
   }
   function ReviewMetricPill({ label, value, tone = "default" }) {
-    return html7`<span class="review-metric-pill" data-tone=${tone}>
+    return html8`<span class="review-metric-pill" data-tone=${tone}>
     <span class="review-metric-value">${value}</span>
     <span class="review-metric-label">${label}</span>
   </span>`;
   }
   function SectionHeader({ title, detail, count, onOpenSlice }) {
-    return html7`
+    return html8`
     <div class="review-section-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px">
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
@@ -67200,12 +67432,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
     try {
       const pauseReason = safeDisplayText(getWorkflowPauseReason(item), "This record is waiting for these fields to be checked.");
-      return html7`
+      return html8`
     <div style="display:flex;flex-direction:column;gap:10px;width:100%">
       <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
         ${pauseReason}
       </div>
-      ${blockers.map((blocker) => html7`
+      ${blockers.map((blocker) => html8`
         <div key=${`${item.id}-${blocker.field || "field"}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);width:100%">
           <div class="review-block-layout">
             <div class="review-block-main">
@@ -67213,31 +67445,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 ${blocker.kind === "confidence" ? `Confirm ${safeDisplayText(blocker.field_label, "field").toLowerCase()}` : `Choose the correct ${safeDisplayText(blocker.field_label, "field").toLowerCase()}`}
               </div>
               <div class="review-block-facts">
-                ${blocker.kind === "confidence" && html7`
+                ${blocker.kind === "confidence" && html8`
                   <>
                     <span class="review-block-fact-label">Clearledgr read</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.current_value_display, "Not found")}</span>
                   </>
                 `}
-                ${blocker.kind === "confidence" && blocker.current_source_label && html7`
+                ${blocker.kind === "confidence" && blocker.current_source_label && html8`
                   <>
                     <span class="review-block-fact-label">Read from</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.current_source_label, "Source")}</span>
                   </>
                 `}
-                ${blocker.email_value !== null && blocker.email_value !== undefined && html7`
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html8`
                   <>
                     <span class="review-block-fact-label">Email says</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.email_value_display, "Not found")}</span>
                   </>
                 `}
-                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html7`
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html8`
                   <>
                     <span class="review-block-fact-label">Attachment says</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.attachment_value_display, "Not found")}</span>
                   </>
                 `}
-                ${blocker.kind === "source_conflict" && html7`
+                ${blocker.kind === "source_conflict" && html8`
                   <>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
@@ -67251,9 +67483,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="review-block-side">
               <div class="review-block-heading">Why it stopped</div>
               <div class="review-block-copy">${safeDisplayText(blocker.winner_reason || blocker.reason_label || blocker.paused_reason, "A person needs to review this field before the workflow can continue.")}</div>
-              ${safeDisplayText(blocker.auto_check_note, "") && html7`<div class="review-block-note">${safeDisplayText(blocker.auto_check_note, "")}</div>`}
+              ${safeDisplayText(blocker.auto_check_note, "") && html8`<div class="review-block-note">${safeDisplayText(blocker.auto_check_note, "")}</div>`}
               <div class="review-block-actions">
-                ${blocker.email_value !== null && blocker.email_value !== undefined && html7`
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html8`
                   <button
                     class="btn-secondary btn-sm"
                     onClick=${() => onResolve(item, blocker, "email")}
@@ -67262,7 +67494,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                     ${resolvingField === `${item.id}:${blocker.field}:email` ? "Saving..." : "Use email"}
                   </button>
                 `}
-                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html7`
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html8`
                   <button
                     class="btn-secondary btn-sm"
                     onClick=${() => onResolve(item, blocker, "attachment")}
@@ -67287,7 +67519,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
     } catch (error) {
       console.error("Clearledgr review field card render failed", error, item);
-      return html7`
+      return html8`
       <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
         Clearledgr could not render the full field-review detail for this record, but the item is still available for operator review.
       </div>
@@ -67327,7 +67559,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const documentTypeLabel = safeDisplayText(getDocumentTypeLabel(documentType), "Finance document");
       const executionMode = isInvoiceDocumentType(documentType) ? getAgentExecutionMode(item?.state, item, documentType) : "manual";
       const workflowStatus = executionMode === "agent_monitoring" ? "Waiting on approver" : executionMode === "agent_waiting" ? "Waiting on vendor" : executionMode === "agent_progressing" ? "Clearledgr progressing" : executionMode === "operator_attention" ? "Needs your review" : "";
-      return html7`
+      return html8`
     <div
       class="review-card"
       style="
@@ -67355,7 +67587,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <span class="review-badge info">
               ${documentTypeLabel}
             </span>
-            ${workflowStatus && html7`
+            ${workflowStatus && html8`
               <span class="review-badge ${executionMode === "agent_monitoring" || executionMode === "agent_waiting" ? "info" : ""}">
                 ${workflowStatus}
               </span>
@@ -67376,7 +67608,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         event.stopPropagation();
         onOpenSlice(item);
       }}>Open slice</button>
-          ${(item.thread_id || item.message_id) && html7`
+          ${(item.thread_id || item.message_id) && html8`
             <button class="btn-ghost btn-sm" onClick=${(event) => {
         event.stopPropagation();
         onOpenEmail(item);
@@ -67384,17 +67616,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           `}
         </div>
       </div>
-      ${sectionId === "field_review" ? html7`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>` : html7`<div class="review-card-summary" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
+      ${sectionId === "field_review" ? html8`<div style="margin-top:12px"><${FieldReviewCard} item=${item} blockers=${blockers} onResolve=${onResolve} resolvingField=${resolvingField} /></div>` : html8`<div class="review-card-summary" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:12px;line-height:1.5;color:var(--ink-secondary)">
             ${summary}
           </div>`}
-      ${evidenceSummary && html7`
+      ${evidenceSummary && html8`
         <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.45">
           ${evidenceSummary}
         </div>
       `}
-      ${nonInvoiceActions.length > 0 && html7`
+      ${nonInvoiceActions.length > 0 && html8`
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-          ${nonInvoiceActions.map((action) => html7`
+          ${nonInvoiceActions.map((action) => html8`
             <button
               key=${action.id}
               class="btn-secondary btn-sm"
@@ -67413,7 +67645,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
     } catch (error) {
       console.error("Clearledgr review card render failed", error, item);
-      return html7`
+      return html8`
       <div class="review-card">
         <div class="review-badge-row" style="margin-bottom:6px">
           <strong style="font-size:14px">${safeDisplayText(item?.vendor_name, "Unknown vendor")}</strong>
@@ -67728,9 +67960,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     if (loading) {
-      return html7`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review queue...</p></div>`;
+      return html8`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading review queue...</p></div>`;
     }
-    return html7`
+    return html8`
     <div class="review-shell">
       <div class="panel review-overview-panel">
         <div class="review-overview-head">
@@ -67746,8 +67978,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <${ReviewMetricPill} label="Non-invoice" value=${overallSummary.nonInvoice} tone="success" />
               <${ReviewMetricPill} label="Needs info" value=${overallSummary.needsInfo} />
               <${ReviewMetricPill} label="Posting retries" value=${overallSummary.failedPost} tone="danger" />
-              ${overallSummary.policyException > 0 ? html7`<${ReviewMetricPill} label="Policy blockers" value=${overallSummary.policyException} tone="warning" />` : null}
-              ${hasSearch ? html7`<${ReviewMetricPill} label="Visible" value=${filteredCount} />` : null}
+              ${overallSummary.policyException > 0 ? html8`<${ReviewMetricPill} label="Policy blockers" value=${overallSummary.policyException} tone="warning" />` : null}
+              ${hasSearch ? html8`<${ReviewMetricPill} label="Visible" value=${filteredCount} />` : null}
             </div>
           </div>
           <div class="toolbar-actions">
@@ -67767,7 +67999,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             onInput=${(event) => setSearch(event.target.value)}
           />
         </div>
-          ${hasSearch ? html7`<button class="btn-ghost btn-sm" onClick=${() => setSearch("")}>Clear search</button>` : html7`<span class="muted review-search-helper">Find a record in this queue by vendor, reference, sender, or exception.</span>`}
+          ${hasSearch ? html8`<button class="btn-ghost btn-sm" onClick=${() => setSearch("")}>Clear search</button>` : html8`<span class="muted review-search-helper">Find a record in this queue by vendor, reference, sender, or exception.</span>`}
         </div>
         <div class="review-bulk-bar">
           <div>
@@ -67779,17 +68011,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="toolbar-actions review-bulk-actions">
             <button class="btn-secondary btn-sm" onClick=${selectVisible}>Select visible</button>
             <button class="btn-ghost btn-sm" onClick=${clearSelection} disabled=${selectedIds.length === 0}>Clear selection</button>
-            ${bulkFieldTarget?.canUseEmail && html7`
+            ${bulkFieldTarget?.canUseEmail && html8`
               <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField("email")} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? "Saving..." : "Bulk use email"}
               </button>
             `}
-            ${bulkFieldTarget?.canUseAttachment && html7`
+            ${bulkFieldTarget?.canUseAttachment && html8`
               <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField("attachment")} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? "Saving..." : "Bulk use attachment"}
               </button>
             `}
-            ${bulkFieldTarget && html7`
+            ${bulkFieldTarget && html8`
               <button class="btn-secondary btn-sm" onClick=${() => bulkResolveField("manual")} disabled=${bulkResolvingField}>
                 ${bulkResolvingField ? "Saving..." : "Bulk enter manually"}
               </button>
@@ -67815,7 +68047,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const sectionItems = sections[sectionId] || [];
       if (sectionItems.length === 0)
         return null;
-      return html7`
+      return html8`
           <div class="panel review-section-panel" key=${sectionId}>
             <${SectionHeader}
               title=${config.title}
@@ -67824,7 +68056,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               onOpenSlice=${() => openSlice(null, config.sliceId)}
             />
             <div style="display:flex;flex-direction:column;gap:12px">
-              ${sectionItems.map((item) => html7`
+              ${sectionItems.map((item) => html8`
                 <${ReviewCard}
                   key=${item.id}
                   item=${item}
@@ -67848,14 +68080,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     })}
       </div>
 
-      ${overallSummary.total === 0 && html7`
+      ${overallSummary.total === 0 && html8`
         <div class="panel review-empty-panel">
           <h3 style="margin:0 0 6px">Nothing needs review right now</h3>
           <p class="muted" style="margin:0">Clearledgr will show anything that needs review here as it appears.</p>
         </div>
       `}
 
-      ${overallSummary.total > 0 && filteredCount === 0 && html7`
+      ${overallSummary.total > 0 && filteredCount === 0 && html8`
         <div class="panel review-empty-panel">
           <h3 style="margin:0 0 6px">No review items match this search</h3>
           <p class="muted" style="margin:0">Try a vendor name, reference number, sender, or exception keyword.</p>
@@ -67880,15 +68112,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const openDisputes = disputes.filter((d3) => !["resolved", "closed"].includes(d3.status));
     if (!summary || summary.total === 0)
       return null;
-    return html7`
+    return html8`
     <div class="panel review-section-panel review-disputes-panel">
       <h3 style="margin-top:0">Active disputes (${summary.open_count || 0})</h3>
       <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-        ${Object.entries(summary.by_status || {}).map(([status, count]) => html7`
+        ${Object.entries(summary.by_status || {}).map(([status, count]) => html8`
           <span key=${status} class="secondary-chip">${status.replace(/_/g, " ")} ${count}</span>
         `)}
       </div>
-      ${openDisputes.slice(0, 5).map((d3) => html7`
+      ${openDisputes.slice(0, 5).map((d3) => html8`
         <div key=${d3.id} style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
@@ -67897,7 +68129,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
             <span class="status-badge ${d3.status === "escalated" ? "" : "connected"}">${(d3.status || "").replace(/_/g, " ")}</span>
           </div>
-          ${d3.description && html7`<div class="muted" style="margin-top:2px">${d3.description}</div>`}
+          ${d3.description && html8`<div class="muted" style="margin-top:2px">${d3.description}</div>`}
         </div>
       `)}
     </div>
@@ -67905,7 +68137,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/UpcomingPage.js
-  var html8 = htm_module_default.bind(_);
+  var html9 = htm_module_default.bind(_);
   var STATUS_STYLES = {
     overdue: { bg: "#FEF2F2", text: "#B91C1C", label: "Overdue" },
     today: { bg: "#FEF3C7", text: "#92400E", label: "Today" },
@@ -67930,14 +68162,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function StatusPill({ status }) {
     const tone = STATUS_STYLES[String(status || "").trim().toLowerCase()] || STATUS_STYLES.queued;
-    return html8`<span style="
+    return html9`<span style="
     display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
   function SummaryCard({ label, value, tone = "default" }) {
     const accent = tone === "danger" ? "#B91C1C" : tone === "warning" ? "#92400E" : tone === "success" ? "#047857" : "var(--ink)";
-    return html8`<div class="reports-metric-card">
+    return html9`<div class="reports-metric-card">
     <div class="reports-metric-value" style=${`color:${accent}`}>${Number(value || 0).toLocaleString()}</div>
     <div class="reports-metric-detail" style="margin-top:4px">${label}</div>
   </div>`;
@@ -67998,9 +68230,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const summary = payload?.summary || {};
     const groupedCounts = Object.entries(summary.by_kind || {}).sort((left, right) => right[1] - left[1]);
     if (loading) {
-      return html8`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading upcoming follow-ups…</p></div>`;
+      return html9`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading upcoming follow-ups…</p></div>`;
     }
-    return html8`
+    return html9`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Upcoming follow-ups</h3>
@@ -68025,9 +68257,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <h3 style="margin:0 0 4px">What is due</h3>
           <p class="muted" style="margin:0">Only the follow-ups that can move work forward show up here.</p>
         </div>
-        ${groupedCounts.length > 0 && html8`
+        ${groupedCounts.length > 0 && html9`
           <div class="reports-chip-wrap">
-            ${groupedCounts.map(([kind, count]) => html8`
+            ${groupedCounts.map(([kind, count]) => html9`
               <span key=${kind} class="secondary-chip" style="font-size:12px">
                 ${KIND_LABELS[kind] || kind.replace(/_/g, " ")}
                 <strong style="color:var(--ink)">${count}</strong>
@@ -68037,8 +68269,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         `}
       </div>
 
-      ${tasks.length === 0 ? html8`<p class="muted" style="margin:0">No upcoming follow-ups yet.</p>` : html8`<div class="secondary-card-list">
-            ${tasks.map((task) => html8`
+      ${tasks.length === 0 ? html9`<p class="muted" style="margin:0">No upcoming follow-ups yet.</p>` : html9`<div class="secondary-card-list">
+            ${tasks.map((task) => html9`
               <div key=${task.id} class="secondary-card">
                 <div class="secondary-card-head">
                   <div class="secondary-card-copy">
@@ -68060,7 +68292,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   <div class="secondary-card-actions" style="margin-top:0">
                     <button class="btn-secondary btn-sm" onClick=${() => openRecord(task)}>Open record</button>
                     <button class="btn-ghost btn-sm" onClick=${() => openPipelineTask(task)}>Open slice</button>
-                    ${(task.thread_id || task.message_id) && html8`<button class="btn-ghost btn-sm" onClick=${() => openEmail(task)}>Open email</button>`}
+                    ${(task.thread_id || task.message_id) && html9`<button class="btn-ghost btn-sm" onClick=${() => openEmail(task)}>Open email</button>`}
                   </div>
                 </div>
               </div>
@@ -68071,9 +68303,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ActivityPage.js
-  var html9 = htm_module_default.bind(_);
+  var html10 = htm_module_default.bind(_);
   function SummaryCard2({ label, value }) {
-    return html9`<div class="secondary-stat-card">
+    return html10`<div class="secondary-stat-card">
     <strong>${label}</strong>
     <span style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink)">${Number(value || 0).toLocaleString()}</span>
   </div>`;
@@ -68082,7 +68314,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const dash = bootstrap?.dashboard || {};
     const events = Array.isArray(bootstrap?.recentActivity) ? bootstrap.recentActivity.slice(0, 12) : [];
     const [refresh, refreshing] = useAction2(onRefresh);
-    return html9`
+    return html10`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Recent activity</h3>
@@ -68108,12 +68340,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <p class="muted" style="margin:0">Recent changes across approvals, posting, and exceptions.</p>
         </div>
       </div>
-      ${events.length === 0 ? html9`<p class="muted" style="margin:0">No recent activity yet.</p>` : html9`<div class="secondary-card-list">
+      ${events.length === 0 ? html10`<p class="muted" style="margin:0">No recent activity yet.</p>` : html10`<div class="secondary-card-list">
             ${events.map((event, index) => {
       const badge = eventBadge(event.event_type || event.new_state || "activity");
       const title = String(event.title || event.summary || badge.label || "Activity recorded").trim() || "Activity recorded";
       const subtitle = String(event.detail || event.message || "").trim();
-      return html9`
+      return html10`
                 <div key=${event.id || index} class="secondary-card">
                   <div class="secondary-card-head">
                     <div class="secondary-card-copy">
@@ -68121,7 +68353,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         <span class=${`status-badge ${badge.cls || ""}`}>${badge.label}</span>
                         <strong class="secondary-card-title" style="font-size:13px">${title}</strong>
                       </div>
-                      ${subtitle && html9`<div class="secondary-card-meta" style="margin-top:6px">${subtitle}</div>`}
+                      ${subtitle && html10`<div class="secondary-card-meta" style="margin-top:6px">${subtitle}</div>`}
                     </div>
                     <span class="muted" style="font-size:12px;white-space:nowrap">${fmtDateTime(event.ts || event.timestamp || event.created_at)}</span>
                   </div>
@@ -68134,7 +68366,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ConnectionsPage.js
-  var html10 = htm_module_default.bind(_);
+  var html11 = htm_module_default.bind(_);
   var ERP_OPTIONS = [
     { value: "quickbooks", label: "QuickBooks" },
     { value: "xero", label: "Xero" },
@@ -68147,7 +68379,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function ConnectionRow({ label, status, detail, actionLabel = "", onAction, pending = false, disabled = false }) {
     const connected = String(status || "").trim().toLowerCase() === "connected";
-    return html10`<div class="secondary-row">
+    return html11`<div class="secondary-row">
     <div class="secondary-row-copy">
       <div class="secondary-chip-row" style="margin-bottom:4px">
         <strong style="font-size:14px">${label}</strong>
@@ -68155,11 +68387,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="muted" style="font-size:12px">${detail}</div>
     </div>
-    ${actionLabel ? html10`<button class="btn-secondary btn-sm" onClick=${onAction} disabled=${pending || disabled}>${pending ? "Working…" : actionLabel}</button>` : null}
+    ${actionLabel ? html11`<button class="btn-secondary btn-sm" onClick=${onAction} disabled=${pending || disabled}>${pending ? "Working…" : actionLabel}</button>` : null}
   </div>`;
   }
   function ApprovalSurfaceCard({ title, status, detail, children }) {
-    return html10`<div class="panel" style="margin-bottom:0">
+    return html11`<div class="panel" style="margin-bottom:0">
     <div class="panel-head compact">
       <div>
         <h3 style="margin:0 0 4px">${title}</h3>
@@ -68273,14 +68505,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const [erpType, setErpType] = d2(String(erp.erp_type || "quickbooks").trim().toLowerCase() || "quickbooks");
     const [erpFormSpec, setErpFormSpec2] = d2(null);
     const [erpFormValues, setErpFormValues] = d2({});
-    return html10`
+    return html11`
     <div class=${`secondary-banner ${canEditConnections ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
         <h3>${canEditConnections ? "Setup and reconnects live here" : "Connection status is visible here"}</h3>
         <p class="muted">${canEditConnections ? setupMode : "Admins can change Gmail, approval routing, and ERP setup. Everyone else can still see what is connected."}</p>
       </div>
       <div class="secondary-banner-actions">
-        ${gmail.connected || gmailReconnectRequired ? html10`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : gmailReconnectRequired ? "Reconnect Gmail" : "Refresh Gmail auth"}</button>` : html10`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : "Connect Gmail"}</button>`}
+        ${gmail.connected || gmailReconnectRequired ? html11`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : gmailReconnectRequired ? "Reconnect Gmail" : "Refresh Gmail auth"}</button>` : html11`<button class="btn-primary btn-sm" onClick=${connectGmail} disabled=${gmailPending || !canEditConnections}>${gmailPending ? "Working…" : "Connect Gmail"}</button>`}
         <button class="btn-secondary btn-sm" onClick=${() => navigate?.("clearledgr/health")}>Open system status</button>
       </div>
     </div>
@@ -68457,7 +68689,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       toast?.("Could not finish the ERP connection.", "error");
     });
-    return html10`<div id=${id}>
+    return html11`<div id=${id}>
     <${ApprovalSurfaceCard}
       title="ERP posting connection"
       status=${erp.status || (erp.connected ? "connected" : "disconnected")}
@@ -68465,15 +68697,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     >
       <div class="secondary-inline-actions">
         <select value=${erpType} onChange=${(event) => setErpType(event.target.value)} disabled=${!canManageConnections || erpConnectPending || erpSubmitPending} style="min-width:170px">
-          ${ERP_OPTIONS.map((option) => html10`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+          ${ERP_OPTIONS.map((option) => html11`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
         </select>
         <button class="btn-primary btn-sm" onClick=${startErpConnect} disabled=${erpConnectPending || !canManageConnections}>
           ${erpConnectPending ? "Working…" : `Connect ${getErpOptionLabel(erpType)}`}
         </button>
-        ${erp.connected && html10`<span class="secondary-chip">${getErpOptionLabel(erp.erp_type || erpType)} connected</span>`}
+        ${erp.connected && html11`<span class="secondary-chip">${getErpOptionLabel(erp.erp_type || erpType)} connected</span>`}
       </div>
-      ${erpFormSpec?.help_text && html10`<div class="secondary-note" style="margin-top:12px">${erpFormSpec.help_text}</div>`}
-      ${Array.isArray(erpFormSpec?.fields) && erpFormSpec.fields.length > 0 && html10`
+      ${erpFormSpec?.help_text && html11`<div class="secondary-note" style="margin-top:12px">${erpFormSpec.help_text}</div>`}
+      ${Array.isArray(erpFormSpec?.fields) && erpFormSpec.fields.length > 0 && html11`
         <div class="secondary-card" style="margin-top:14px">
           <div class="secondary-card-head">
             <div class="secondary-card-copy">
@@ -68482,7 +68714,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="secondary-card-body" style="display:grid;gap:12px">
-            ${erpFormSpec.fields.map((field) => html10`
+            ${erpFormSpec.fields.map((field) => html11`
               <label key=${field.name} style="display:grid;gap:6px">
                 <span style="font-size:12px;font-weight:700;color:var(--ink)">${field.label}</span>
                 <input
@@ -68542,7 +68774,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         console.warn("Remove webhook failed:", e3);
       }
     };
-    return html10`
+    return html11`
     <div class="panel">
       <div class="panel-head compact">
         <div>
@@ -68550,23 +68782,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <p class="muted" style="margin:4px 0 0;font-size:12px">Notify external systems when AP events happen like approvals, retries, and posting outcomes.</p>
         </div>
       </div>
-      ${webhooks.length === 0 && html10`<div class="secondary-empty" style="padding:8px 0">No webhooks configured</div>`}
-      ${webhooks.length > 0 && html10`
+      ${webhooks.length === 0 && html11`<div class="secondary-empty" style="padding:8px 0">No webhooks configured</div>`}
+      ${webhooks.length > 0 && html11`
         <div class="secondary-card-list">
-          ${webhooks.map((wh) => html10`
+          ${webhooks.map((wh) => html11`
             <div key=${wh.id} class="secondary-card">
               <div class="secondary-card-head">
                 <div class="secondary-card-copy">
                   <span class="secondary-card-title">${wh.url}</span>
                   <div class="secondary-card-meta">${Array.isArray(wh.event_types) && wh.event_types.length ? wh.event_types.join(", ") : "*"}</div>
                 </div>
-                ${canManage && html10`<div class="secondary-inline-actions"><button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button></div>`}
+                ${canManage && html11`<div class="secondary-inline-actions"><button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button></div>`}
               </div>
             </div>
           `)}
         </div>
       `}
-      ${canManage && html10`
+      ${canManage && html11`
         <div class="secondary-form-stack" style="margin-top:12px">
           <label>
             <span class="templates-field-label">Webhook URL</span>
@@ -68587,7 +68819,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/RulesPage.js
-  var html11 = htm_module_default.bind(_);
+  var html12 = htm_module_default.bind(_);
   function parseThreshold(value, fallback) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
@@ -68715,7 +68947,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }) {
     const draftApproverTargets = Array.isArray(draftRule.approver_targets) ? draftRule.approver_targets : [];
     const selectedApprover = approverDirectory.find((entry) => entry.email === selectedApproverEmail) || null;
-    return html11`
+    return html12`
     <div style="padding:16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg)">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
         <div>
@@ -68784,7 +69016,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 onChange=${(event) => onSelectedApproverChange(event.target.value)}
               >
                 <option value="">Select workspace approver</option>
-                ${approverDirectory.map((entry) => html11`
+                ${approverDirectory.map((entry) => html12`
                   <option key=${entry.email} value=${entry.email}>
                     ${entry.display_name} · ${entry.email} · ${formatApproverStatus(entry.slack_resolution)}
                   </option>
@@ -68803,8 +69035,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="muted" style="margin-top:6px">
             ${slackConnected ? "Approvers come from your workspace team. Only Slack-resolved people can be used for named Slack approval rules." : "Slack is not connected yet, so named approvers cannot be resolved for reminders and direct mentions."}
           </div>
-          ${draftApproverTargets.length ? html11`<div class="secondary-list" style="margin-top:10px">
-                ${draftApproverTargets.map((entry) => html11`
+          ${draftApproverTargets.length ? html12`<div class="secondary-list" style="margin-top:10px">
+                ${draftApproverTargets.map((entry) => html12`
                   <div key=${entry.email || entry.slack_user_id} class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${entry.display_name || entry.email}</strong>
@@ -68820,7 +69052,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                     </div>
                   </div>
                 `)}
-              </div>` : html11`<div class="secondary-empty" style="margin-top:10px">No approvers added yet.</div>`}
+              </div>` : html12`<div class="secondary-empty" style="margin-top:10px">No approvers added yet.</div>`}
         </div>
         <div>
           <label>GL codes</label>
@@ -68857,7 +69089,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const amountLabel = `${formatCurrencyAmount(rule.min_amount || 0)} – ${rule.max_amount ? formatCurrencyAmount(rule.max_amount) : "No limit"}`;
     const approverTargets = mergeRuleApproverTargets(rule, approverDirectoryIndex);
     const unresolvedTargets = approverTargets.filter((entry) => !entry.approval_ready);
-    return html11`
+    return html12`
     <div class="secondary-row">
       <div class="secondary-row-copy">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
@@ -68866,12 +69098,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class="status-badge connected">${rule.approval_type === "all" ? "All must approve" : "Any can approve"}</span>
         </div>
         <p>Approvers: ${approverTargets.length ? approverTargets.map((entry) => entry.display_name || entry.email).join(", ") : "None set"}</p>
-        ${unresolvedTargets.length ? html11`<p>Needs Slack resolution: ${unresolvedTargets.map((entry) => entry.display_name || entry.email).join(", ")}</p>` : null}
-        ${(rule.gl_codes || []).length ? html11`<p>GL codes: ${(rule.gl_codes || []).join(", ")}</p>` : null}
-        ${(rule.departments || []).length ? html11`<p>Departments: ${(rule.departments || []).join(", ")}</p>` : null}
-        ${(rule.vendors || []).length ? html11`<p>Vendors: ${(rule.vendors || []).join(", ")}</p>` : null}
+        ${unresolvedTargets.length ? html12`<p>Needs Slack resolution: ${unresolvedTargets.map((entry) => entry.display_name || entry.email).join(", ")}</p>` : null}
+        ${(rule.gl_codes || []).length ? html12`<p>GL codes: ${(rule.gl_codes || []).join(", ")}</p>` : null}
+        ${(rule.departments || []).length ? html12`<p>Departments: ${(rule.departments || []).join(", ")}</p>` : null}
+        ${(rule.vendors || []).length ? html12`<p>Vendors: ${(rule.vendors || []).join(", ")}</p>` : null}
       </div>
-      ${canManageRules ? html11`<button class="btn-danger btn-sm" onClick=${() => onDelete(index)} disabled=${deleting}>Delete</button>` : null}
+      ${canManageRules ? html12`<button class="btn-danger btn-sm" onClick=${() => onDelete(index)} disabled=${deleting}>Delete</button>` : null}
     </div>
   `;
   }
@@ -68913,7 +69145,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       await api(`/api/workspace/delegation-rules/${id}/deactivate?organization_id=${encodeURIComponent(orgId)}`, { method: "POST" });
       setRules((prev) => prev.filter((entry) => entry.id !== id));
     });
-    return html11`
+    return html12`
     <div>
       <div class="panel-head compact">
         <div>
@@ -68922,19 +69154,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
 
-      ${rules.length > 0 ? html11`<div class="secondary-list" style="margin-bottom:14px">
-            ${rules.map((rule) => html11`
+      ${rules.length > 0 ? html12`<div class="secondary-list" style="margin-bottom:14px">
+            ${rules.map((rule) => html12`
               <div key=${rule.id} class="secondary-row">
                 <div class="secondary-row-copy">
                   <strong>${rule.delegator_email} → ${rule.delegate_email}</strong>
-                  ${rule.reason ? html11`<p>${rule.reason}</p>` : html11`<p>No reason added.</p>`}
+                  ${rule.reason ? html12`<p>${rule.reason}</p>` : html12`<p>No reason added.</p>`}
                 </div>
-                ${canManageRules ? html11`<button class="btn-secondary btn-sm" onClick=${() => deactivateRule(rule.id)} disabled=${removing}>Remove</button>` : null}
+                ${canManageRules ? html12`<button class="btn-secondary btn-sm" onClick=${() => deactivateRule(rule.id)} disabled=${removing}>Remove</button>` : null}
               </div>
             `)}
-          </div>` : html11`<div class="secondary-empty" style="margin-bottom:14px">No active delegation rules.</div>`}
+          </div>` : html12`<div class="secondary-empty" style="margin-bottom:14px">No active delegation rules.</div>`}
 
-      ${canManageRules ? html11`
+      ${canManageRules ? html12`
             <div class="secondary-form-grid" style="gap:10px">
               <div>
                 <label>Approver</label>
@@ -69126,7 +69358,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         approver_targets: mergeRuleApproverTargets(prev, approverDirectoryIndex).filter((entry) => entry.email !== targetKey && entry.slack_user_id !== targetKey)
       }));
     };
-    return html11`
+    return html12`
     <div class=${`secondary-banner rules-hero ${canManageRules ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
         <h3>${canManageRules ? "Control invoice approvals end to end" : "Approval rules are visible here"}</h3>
@@ -69173,10 +69405,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="panel-head compact">
             <div>
               <div class="home-section-label">Routing</div>
-              <h3 style="margin-top:0">Approval routing${!canManageRules ? html11`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+              <h3 style="margin-top:0">Approval routing${!canManageRules ? html12`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
               <p class="muted" style="margin:0">Define who approves invoices by amount, GL code, department, or vendor. The first matching rule wins.</p>
             </div>
-            ${canManageRules ? html11`<button class="btn-primary btn-sm" onClick=${() => setShowAddRule((current) => !current)} disabled=${savingRules || addingRule}>
+            ${canManageRules ? html12`<button class="btn-primary btn-sm" onClick=${() => setShowAddRule((current) => !current)} disabled=${savingRules || addingRule}>
                   ${showAddRule ? "Cancel" : "Add rule"}
                 </button>` : null}
           </div>
@@ -69187,7 +69419,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <span class="secondary-chip">${String(escalationChannel || "").trim() || "Workspace default channel"}</span>
           </div>
 
-          ${showAddRule && canManageRules ? html11`<${DraftRuleForm}
+          ${showAddRule && canManageRules ? html12`<${DraftRuleForm}
                 draftRule=${draftRule}
                 approverDirectory=${approverDirectory}
                 selectedApproverEmail=${selectedApproverEmail}
@@ -69206,8 +69438,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               />` : null}
 
           <div style=${showAddRule ? "margin-top:16px" : ""}>
-            ${approvalRules.length > 0 ? html11`<div class="secondary-list">
-                  ${approvalRules.map((rule, index) => html11`
+            ${approvalRules.length > 0 ? html12`<div class="secondary-list">
+                  ${approvalRules.map((rule, index) => html12`
                     <${RoutingRuleRow}
                       key=${`${rule.approver_channel || "channel"}:${index}`}
                       rule=${rule}
@@ -69218,7 +69450,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       deleting=${deletingRule || savingRules}
                     />
                   `)}
-                </div>` : html11`<div class="secondary-empty">No routing rules yet. Add one so invoices route to the right approver set instead of waiting on defaults.</div>`}
+                </div>` : html12`<div class="secondary-empty">No routing rules yet. Add one so invoices route to the right approver set instead of waiting on defaults.</div>`}
           </div>
 
           <div class="secondary-note" style="margin-top:14px">
@@ -69334,20 +69566,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:0">The built-in approval checks and approver requirements behind the current default policy.</p>
             </div>
           </div>
-          ${effectivePolicies.length ? html11`<div class="secondary-list rules-effective-list" style="margin-top:12px">
-                ${effectivePolicies.slice(0, 6).map((entry, index) => html11`
+          ${effectivePolicies.length ? html12`<div class="secondary-list rules-effective-list" style="margin-top:12px">
+                ${effectivePolicies.slice(0, 6).map((entry, index) => html12`
                   <div key=${entry.policy_id || `effective:${index}`} class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${entry.name || `Rule ${index + 1}`}</strong>
                       <p>${entry.description || "Approval rule is active for this workspace."}</p>
-                      ${formatApproverList(entry.required_approvers) ? html11`<p>Approvers: ${formatApproverList(entry.required_approvers)}</p>` : null}
+                      ${formatApproverList(entry.required_approvers) ? html12`<p>Approvers: ${formatApproverList(entry.required_approvers)}</p>` : null}
                     </div>
                     <div class="secondary-chip-row" style="justify-content:flex-end">
-                      ${entry.action ? html11`<span class="secondary-chip">${formatPolicyActionLabel(entry.action)}</span>` : null}
+                      ${entry.action ? html12`<span class="secondary-chip">${formatPolicyActionLabel(entry.action)}</span>` : null}
                     </div>
                   </div>
                 `)}
-              </div>` : html11`<div class="secondary-note" style="margin-top:12px">No effective rules are configured yet. Add routing rules or policy thresholds to define the approval path.</div>`}
+              </div>` : html12`<div class="secondary-note" style="margin-top:12px">No effective rules are configured yet. Add routing rules or policy thresholds to define the approval path.</div>`}
         </div>
 
         <div class="panel">
@@ -69366,7 +69598,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/SettingsPage.js
-  var html12 = htm_module_default.bind(_);
+  var html13 = htm_module_default.bind(_);
   function formatDisplayDate(value) {
     if (!value)
       return "Not set";
@@ -69418,7 +69650,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
   ];
   function InviteRow({ invite, onRevoke, canManage }) {
-    return html12`<div class="secondary-row">
+    return html13`<div class="secondary-row">
     <div class="secondary-row-copy">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
         <strong style="font-size:14px">${invite.email}</strong>
@@ -69426,7 +69658,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="muted" style="font-size:12px">Role: ${{ ap_clerk: "AP Clerk", ap_manager: "AP Manager", financial_controller: "Financial Controller", cfo: "CFO", read_only: "Read Only", member: "AP Clerk", admin: "Financial Controller", viewer: "Read Only", operator: "AP Manager" }[invite.role] || invite.role || "AP Clerk"}</div>
     </div>
-    ${invite.status === "pending" ? html12`<button class="btn-danger btn-sm" onClick=${() => onRevoke(invite.id)} disabled=${!canManage}>Revoke</button>` : null}
+    ${invite.status === "pending" ? html13`<button class="btn-danger btn-sm" onClick=${() => onRevoke(invite.id)} disabled=${!canManage}>Revoke</button>` : null}
   </div>`;
   }
   function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, routeId, navigate }) {
@@ -69660,7 +69892,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       { label: "AI credits", value: Number(usage.ai_credits_this_month || 0).toLocaleString() },
       { label: "Users", value: Number(usage.users_count || 0).toLocaleString() }
     ];
-    return html12`
+    return html13`
     <div class=${`secondary-banner ${canManageAny ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
         <h3>Settings</h3>
@@ -69753,7 +69985,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               Map Clearledgr's AP categories to the GL codes in your ${erpType || "ERP"}. Bills post to these accounts when approved.
             </p>
           </div>
-          ${erp.connected ? html12`
+          ${erp.connected ? html13`
             <button
               class="segmented-button btn-sm"
               onClick=${() => fetchChart(chartAccounts.length > 0)}
@@ -69764,9 +69996,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           ` : null}
         </div>
 
-        ${!erp.connected ? html12`
+        ${!erp.connected ? html13`
           <div class="muted" style="font-size:12px;padding:8px 0;">Connect your ERP above, then return here to map accounts.</div>
-        ` : html12`
+        ` : html13`
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 12px;">
             ${AP_GL_CATEGORIES.map((cat) => {
       const currentValue = glMap[cat.key] || "";
@@ -69776,12 +70008,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         const t5 = String(a3.type || a3.account_type || "").toLowerCase();
         return t5.includes(cat.accountType);
       });
-      return html12`
+      return html13`
                 <div>
                   <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">
-                    ${cat.label}${cat.required ? html12`<span style="color:#DC2626;margin-left:4px">*</span>` : null}
+                    ${cat.label}${cat.required ? html13`<span style="color:#DC2626;margin-left:4px">*</span>` : null}
                   </label>
-                  ${chartAccounts.length ? html12`
+                  ${chartAccounts.length ? html13`
                     <select
                       value=${currentValue}
                       style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;background:#fff;"
@@ -69791,13 +70023,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       ${matchingAccounts.map((a3) => {
         const code = a3.code || a3.number || a3.id || "";
         const name = a3.name || a3.label || "";
-        return html12`<option value=${code}>${code}${name ? " — " + name : ""}</option>`;
+        return html13`<option value=${code}>${code}${name ? " — " + name : ""}</option>`;
       })}
-                      ${currentValue && !matchingAccounts.some((a3) => (a3.code || a3.number || a3.id) === currentValue) ? html12`
+                      ${currentValue && !matchingAccounts.some((a3) => (a3.code || a3.number || a3.id) === currentValue) ? html13`
                         <option value=${currentValue}>${currentValue} (not in chart)</option>
                       ` : null}
                     </select>
-                  ` : html12`
+                  ` : html13`
                     <input
                       type="text"
                       value=${currentValue}
@@ -69819,7 +70051,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const requiredSet = required.filter((c3) => glMap[c3.key]).length;
       const totalSet = AP_GL_CATEGORIES.filter((c3) => glMap[c3.key]).length;
       if (requiredSet < required.length) {
-        return html12`<span style="color:#DC2626">⚠ ${required.length - requiredSet} required category still unmapped.</span>`;
+        return html13`<span style="color:#DC2626">⚠ ${required.length - requiredSet} required category still unmapped.</span>`;
       }
       return `${totalSet} of ${AP_GL_CATEGORIES.length} categories mapped.`;
     })()}
@@ -69968,7 +70200,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel" ref=${teamRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Team${!canManageTeam ? html12`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <h3 style="margin-top:0">Team${!canManageTeam ? html13`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
             <p class="muted" style="margin:0">Invite the people who need to work or monitor finance operations.</p>
           </div>
         </div>
@@ -69995,16 +70227,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
         <div style="margin-top:18px">
-          ${invites.length ? html12`<div class="secondary-list">
-                ${invites.map((invite) => html12`<${InviteRow} key=${invite.id} invite=${invite} onRevoke=${revokeInvite} canManage=${canManageTeam && !revokingInvite} />`)}
-              </div>` : html12`<div class="secondary-empty">No invites yet. Send one when someone needs access.</div>`}
+          ${invites.length ? html13`<div class="secondary-list">
+                ${invites.map((invite) => html13`<${InviteRow} key=${invite.id} invite=${invite} onRevoke=${revokeInvite} canManage=${canManageTeam && !revokingInvite} />`)}
+              </div>` : html13`<div class="secondary-empty">No invites yet. Send one when someone needs access.</div>`}
         </div>
       </div>
 
       <div class="panel" ref=${billingRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Billing${!canManagePlan ? html12`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <h3 style="margin-top:0">Billing${!canManagePlan ? html13`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
             <p class="muted" style="margin:0">Plan, usage, and subscription — managed here inside Gmail.</p>
           </div>
         </div>
@@ -70013,7 +70245,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         <div class="settings-section-grid">
           <div>
             <div class="settings-summary-grid">
-              ${billingPreview.map((entry) => html12`
+              ${billingPreview.map((entry) => html13`
                 <div class="settings-summary-card" key=${entry.label}>
                   <strong>${entry.label}</strong>
                   <span>${entry.value}</span>
@@ -70035,7 +70267,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 <strong>Agent credits</strong>
                 <span>${billingSummary ? `${billingSummary.ai_credits_used} used · ${billingSummary.ai_credits_remaining} remaining` : `${Number(usage.ai_credits_this_month || 0).toLocaleString()} this month`}</span>
               </div>
-              ${billingSummary ? html12`
+              ${billingSummary ? html13`
                 <div class="settings-summary-card">
                   <strong>Estimated total</strong>
                   <span style="font:600 14px/1 'Geist Mono',monospace;">$${billingSummary.estimated_total?.toLocaleString()}/mo</span>
@@ -70046,7 +70278,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
 
         <!-- §13: Plan comparison + upgrade inside Gmail -->
-        ${canManagePlan ? html12`
+        ${canManagePlan ? html13`
           <div style="margin-top:16px;border-top:1px solid var(--cl-border, #e2e8f0);padding-top:16px;">
             <strong style="font-size:13px;">Change plan</strong>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;">
@@ -70054,13 +70286,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       { id: "starter", name: "Starter", price: "$79/mo", annual: "$65/mo annual", desc: "Up to 500 invoices/mo. One ERP, Slack integration, core AP and Vendor Onboarding. Go live in under 30 minutes." },
       { id: "professional", name: "Professional", price: "$149/mo", annual: "$125/mo annual", desc: "Per seat plus invoice volume. Multi-entity, 3-way match, advanced reporting, API access, priority support." },
       { id: "enterprise", name: "Enterprise", price: "$299/mo", annual: "$249/mo annual", desc: "NetSuite/SAP custom. Unlimited users, custom ERP integrations, SSO, data residency. Contract." }
-    ].map((tier) => html12`
+    ].map((tier) => html13`
                 <div key=${tier.id} style="border:1px solid ${(sub.plan || "").toLowerCase() === tier.id ? "#00D67E" : "#E2E8F0"};border-radius:8px;padding:12px;${(sub.plan || "").toLowerCase() === tier.id ? "background:#ECFDF5;" : ""}">
                   <strong style="font-size:14px;">${tier.name}</strong>
                   <div style="font:600 16px/1.2 'Geist Mono',monospace;color:#0A1628;margin:4px 0;">${tier.price}</div>
                   <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
-                  ${(sub.plan || "").toLowerCase() === tier.id ? html12`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>` : html12`<button class="btn-secondary btn-sm" onClick=${() => {
+                  ${(sub.plan || "").toLowerCase() === tier.id ? html13`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>` : html13`<button class="btn-secondary btn-sm" onClick=${() => {
       api("/api/workspace/subscription/plan", {
         method: "POST",
         body: JSON.stringify({ organization_id: orgId, plan: tier.id })
@@ -70076,7 +70308,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ` : ""}
       </div>
 
-      ${implStatus?.steps ? html12`
+      ${implStatus?.steps ? html13`
         <div class="panel">
           <div class="panel-head compact">
             <div>
@@ -70085,14 +70317,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
-            ${(implStatus.steps || []).map((step) => html12`
+            ${(implStatus.steps || []).map((step) => html13`
               <div key=${step.key} style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:${step.completed ? "#ECFDF5" : "#FBFCFD"};border:1px solid ${step.completed ? "#BBF7D0" : "#E2E8F0"};border-radius:6px;">
                 <span style="font-size:14px;">${step.completed ? "✅" : "⬜"}</span>
                 <div style="flex:1;">
                   <div style="font:500 13px/1.3 'DM Sans',sans-serif;color:#0A1628;">${step.label}</div>
-                  ${step.description ? html12`<div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#5C6B7A;">${step.description}</div>` : ""}
+                  ${step.description ? html13`<div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#5C6B7A;">${step.description}</div>` : ""}
                 </div>
-                ${!step.completed && canManageCompany ? html12`
+                ${!step.completed && canManageCompany ? html13`
                   <button class="btn-outline btn-sm" onClick=${() => {
       api("/api/workspace/implementation/complete-step", {
         method: "POST",
@@ -70116,11 +70348,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="panel" ref=${approvalRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Approval rules${!canManageCompany ? html12`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <h3 style="margin-top:0">Approval rules${!canManageCompany ? html13`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
             <p class="muted" style="margin:0">Define who approves invoices based on amount, GL code, department, or vendor.</p>
           </div>
           <div class="row-actions">
-            ${canManageCompany ? html12`
+            ${canManageCompany ? html13`
               <button class="btn-primary" onClick=${() => setShowAddRule(!showAddRule)} disabled=${savingApprovalRules}>
                 ${showAddRule ? "Cancel" : "Add rule"}
               </button>
@@ -70128,7 +70360,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
 
-        ${showAddRule && canManageCompany ? html12`
+        ${showAddRule && canManageCompany ? html13`
           <div style="padding:16px 0;border-bottom:1px solid var(--cl-border, #e2e8f0)">
             <div class="secondary-form-stack">
               <div class="secondary-form-grid" style="gap:12px">
@@ -70166,8 +70398,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ` : null}
 
         <div style="margin-top:18px">
-          ${approvalRules.length ? html12`<div class="secondary-list">
-                ${approvalRules.map((rule, idx) => html12`
+          ${approvalRules.length ? html13`<div class="secondary-list">
+                ${approvalRules.map((rule, idx) => html13`
                   <div class="secondary-row" key=${idx}>
                     <div class="secondary-row-copy">
                       <div class="secondary-inline-actions" style="margin-bottom:4px">
@@ -70180,16 +70412,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       <div class="muted" style="font-size:12px">
                         Approvers: ${(rule.approvers || []).join(", ") || "None"}
                       </div>
-                      ${(rule.gl_codes || []).length ? html12`<div class="muted" style="font-size:12px">GL codes: ${rule.gl_codes.join(", ")}</div>` : null}
-                      ${(rule.departments || []).length ? html12`<div class="muted" style="font-size:12px">Departments: ${rule.departments.join(", ")}</div>` : null}
-                      ${(rule.vendors || []).length ? html12`<div class="muted" style="font-size:12px">Vendors: ${rule.vendors.join(", ")}</div>` : null}
+                      ${(rule.gl_codes || []).length ? html13`<div class="muted" style="font-size:12px">GL codes: ${rule.gl_codes.join(", ")}</div>` : null}
+                      ${(rule.departments || []).length ? html13`<div class="muted" style="font-size:12px">Departments: ${rule.departments.join(", ")}</div>` : null}
+                      ${(rule.vendors || []).length ? html13`<div class="muted" style="font-size:12px">Vendors: ${rule.vendors.join(", ")}</div>` : null}
                     </div>
-                    ${canManageCompany ? html12`
+                    ${canManageCompany ? html13`
                       <button class="btn-danger btn-sm" onClick=${() => deleteApprovalRule(idx)} disabled=${savingApprovalRules}>Delete</button>
                     ` : null}
                   </div>
                 `)}
-              </div>` : html12`<div class="secondary-empty">No approval rules yet. Add one to route invoices for review based on amount or category.</div>`}
+              </div>` : html13`<div class="secondary-empty">No approval rules yet. Add one to route invoices for review based on amount or category.</div>`}
         </div>
 
         <div class="secondary-note" style="margin-top:14px">
@@ -70201,7 +70433,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/PlanPage.js
-  var html13 = htm_module_default.bind(_);
+  var html14 = htm_module_default.bind(_);
   var PLAN_ORDER = ["free", "starter", "professional", "enterprise"];
   var PLAN_META = {
     free: {
@@ -70354,11 +70586,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function PlanFeatureGroup({ title, keys, features }) {
     const enabledKeys = keys.filter((key) => Boolean(features?.[key]));
-    return html13`<div class="billing-feature-card">
+    return html14`<div class="billing-feature-card">
     <div class="billing-feature-title">${title}</div>
-    ${enabledKeys.length ? html13`<div class="billing-chip-row">
-          ${enabledKeys.map((key) => html13`<span key=${key} class="secondary-chip">${featureLabel(key)}</span>`)}
-        </div>` : html13`<div class="secondary-empty">No additional entitlements in this group on the current plan.</div>`}
+    ${enabledKeys.length ? html14`<div class="billing-chip-row">
+          ${enabledKeys.map((key) => html14`<span key=${key} class="secondary-chip">${featureLabel(key)}</span>`)}
+        </div>` : html14`<div class="secondary-empty">No additional entitlements in this group on the current plan.</div>`}
   </div>`;
   }
   function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navigate }) {
@@ -70381,7 +70613,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       toast?.(nextPlan === "trial" ? "Professional trial started." : `Plan updated to ${formatPlanLabel(nextPlan)}.`, "success");
       onRefresh?.();
     });
-    return html13`
+    return html14`
     <div class=${`secondary-banner billing-hero ${canManagePlan ? "" : "warning"}`}>
       <div class="secondary-banner-copy">
         <div class="billing-eyebrow">Subscription and billing</div>
@@ -70393,12 +70625,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <span class=${`status-badge ${statusTone(status)}`}>${formatStatus(status)}</span>
           <span class="secondary-chip">${formatPrice(plan, sub.billing_cycle)}</span>
           <span class="secondary-chip">${String(sub.billing_cycle || "monthly").toLowerCase() === "yearly" ? "Annual billing" : "Monthly billing"}</span>
-          ${status === "trialing" ? html13`<span class="secondary-chip">${sub.trial_days_remaining || 0} trial day${Number(sub.trial_days_remaining || 0) === 1 ? "" : "s"} left</span>` : null}
+          ${status === "trialing" ? html14`<span class="secondary-chip">${sub.trial_days_remaining || 0} trial day${Number(sub.trial_days_remaining || 0) === 1 ? "" : "s"} left</span>` : null}
         </div>
       </div>
       <div class="secondary-banner-actions">
-        ${navigate ? html13`<button class="btn-secondary" onClick=${() => navigate("clearledgr/settings")}>Open settings</button>` : null}
-        ${canManagePlan && !sub.trial_started_at && status !== "trialing" ? html13`<button class="btn-primary" onClick=${() => changePlan("trial")} disabled=${changingPlan}>
+        ${navigate ? html14`<button class="btn-secondary" onClick=${() => navigate("clearledgr/settings")}>Open settings</button>` : null}
+        ${canManagePlan && !sub.trial_started_at && status !== "trialing" ? html14`<button class="btn-primary" onClick=${() => changePlan("trial")} disabled=${changingPlan}>
               ${changingPlan ? "Working…" : "Start Pro trial"}
             </button>` : null}
       </div>
@@ -70450,7 +70682,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const limitValue = limits[field.limitKey];
       const percent = calculateUsagePercent(usageValue, limitValue);
       const unlimited = !Number.isFinite(Number(limitValue)) || Number(limitValue) < 0;
-      return html13`<div key=${field.key} class="billing-usage-row">
+      return html14`<div key=${field.key} class="billing-usage-row">
                 <div class="billing-usage-copy">
                   <div class="billing-usage-header">
                     <strong>${field.label}</strong>
@@ -70479,7 +70711,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="billing-feature-grid">
-            ${FEATURE_GROUPS.map((group) => html13`
+            ${FEATURE_GROUPS.map((group) => html14`
               <${PlanFeatureGroup}
                 key=${group.title}
                 title=${group.title}
@@ -70504,20 +70736,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const meta = PLAN_META[planId];
       const action = getPlanAction(planId, sub);
       const isCurrent = planId === plan;
-      return html13`<div key=${planId} class=${`billing-plan-option ${isCurrent ? "is-current" : ""}`}>
+      return html14`<div key=${planId} class=${`billing-plan-option ${isCurrent ? "is-current" : ""}`}>
                 <div class="billing-plan-row">
                   <div class="billing-plan-copy">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
                       <strong>${meta.label}</strong>
-                      ${isCurrent ? html13`<span class="status-badge connected">Current</span>` : null}
+                      ${isCurrent ? html14`<span class="status-badge connected">Current</span>` : null}
                     </div>
                     <div class="billing-plan-price">${formatPrice(planId, sub.billing_cycle)}</div>
                     <p>${meta.summary}</p>
                     <div class="billing-chip-row">
-                      ${meta.highlights.map((highlight) => html13`<span key=${highlight} class="secondary-chip">${highlight}</span>`)}
+                      ${meta.highlights.map((highlight) => html14`<span key=${highlight} class="secondary-chip">${highlight}</span>`)}
                     </div>
                   </div>
-                  ${canManagePlan ? html13`<button
+                  ${canManagePlan ? html14`<button
                         class=${isCurrent ? "btn-secondary btn-sm" : "btn-primary btn-sm"}
                         onClick=${() => changePlan(action.value)}
                         disabled=${action.disabled || changingPlan}
@@ -70542,9 +70774,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ReconciliationPage.js
-  var html14 = htm_module_default.bind(_);
+  var html15 = htm_module_default.bind(_);
   function Step({ number, text }) {
-    return html14`<div class="recon-step">
+    return html15`<div class="recon-step">
     <div class="recon-step-index">${number}</div>
     <span class="recon-step-copy">${text}</span>
   </div>`;
@@ -70578,7 +70810,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         setStarting(false);
       }
     }, [sheetUrl, range, orgId, api, toast, onRefresh]);
-    return html14`
+    return html15`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Reconciliation tools</h3>
@@ -70609,7 +70841,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </button>
           </div>
 
-          ${result && html14`
+          ${result && html15`
             <div class="secondary-callout" style="margin-top:16px;background:#ECFDF5;border-color:#A7F3D0;color:#047857">
               <div style="font-weight:600;font-size:13px;color:#059669;margin-bottom:4px">Session started</div>
               <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-secondary)">${result.details?.session_id || "Created"}</div>
@@ -70641,12 +70873,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/HealthPage.js
-  var html15 = htm_module_default.bind(_);
+  var html16 = htm_module_default.bind(_);
   function HealthPage({ bootstrap, api }) {
     const health = bootstrap?.health || {};
     const integrations = health.integrations || {};
     const actions = health.required_actions || [];
-    return html15`
+    return html16`
     <div class=${`secondary-banner ${actions.length ? "warning" : ""}`}>
       <div class="secondary-banner-copy">
         <h3>${actions.length ? "Something needs attention" : "Everything looks healthy"}</h3>
@@ -70658,30 +70890,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="secondary-main">
         <div class="panel">
           <h3 style="margin-top:0">Required actions</h3>
-          ${actions.length > 0 ? html15`<div class="secondary-list" style="margin-top:12px">
-                ${actions.map((a3, i3) => html15`
+          ${actions.length > 0 ? html16`<div class="secondary-list" style="margin-top:12px">
+                ${actions.map((a3, i3) => html16`
                   <div key=${i3} class="secondary-note" style="border-left:3px solid var(--amber)">
                     ${a3.message}
                   </div>
                 `)}
-              </div>` : html15`<div class="secondary-empty">No issues found.</div>`}
+              </div>` : html16`<div class="secondary-empty">No issues found.</div>`}
         </div>
       </div>
 
       <div class="secondary-side">
         <div class="panel">
           <h3 style="margin-top:0">Connection status</h3>
-          ${Object.keys(integrations).length ? html15`<div class="secondary-list" style="margin-top:12px">
+          ${Object.keys(integrations).length ? html16`<div class="secondary-list" style="margin-top:12px">
                 ${Object.entries(integrations).map(([name, status]) => {
       const isOk = status === true || status === "connected" || status?.connected === true;
-      return html15`<div class="secondary-row">
+      return html16`<div class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${name.charAt(0).toUpperCase() + name.slice(1)}</strong>
                     </div>
                     <span class="status-badge ${isOk ? "connected" : ""}">${isOk ? "Connected" : "Not connected"}</span>
                   </div>`;
     })}
-              </div>` : html15`<div class="secondary-empty">No integration data yet.</div>`}
+              </div>` : html16`<div class="secondary-empty">No integration data yet.</div>`}
         </div>
         <${MonitoringPanel} api=${api} />
       </div>
@@ -70697,14 +70929,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, []);
     if (!data)
       return null;
-    return html15`
+    return html16`
     <div class="panel">
       <h3 style="margin-top:0">System monitoring</h3>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <span class="status-badge ${data.healthy ? "connected" : ""}">${data.healthy ? "Healthy" : `${data.alert_count} alert${data.alert_count !== 1 ? "s" : ""}`}</span>
         <span class="muted" style="font-size:11px">${data.check_count} checks run</span>
       </div>
-      ${(data.checks || []).map((check) => html15`
+      ${(data.checks || []).map((check) => html16`
         <div key=${check.check} style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
           <div>
             <div style="font-weight:${check.alert ? "700" : "400"};color:${check.alert ? check.severity === "critical" ? "#B91C1C" : "#A16207" : "inherit"}">
@@ -70726,13 +70958,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         pending_chain_unknown_approver: { label: "Blocking approval", explanation: "A pending invoice is waiting on this unknown approver", blocking: true },
         pending_chain_inactive_approver: { label: "Blocking approval", explanation: "A pending invoice is waiting on this deactivated approver", blocking: true }
       };
-      return html15`
+      return html16`
           <div style="margin-top:14px">
             <div style="font-size:12px;font-weight:700;margin-bottom:8px">Approver issues</div>
             ${problems.map((p3) => {
         const info = issueLabels[p3.issue] || { label: p3.issue, explanation: "", blocking: false };
         const color = info.blocking ? "#B91C1C" : "#A16207";
-        return html15`
+        return html16`
                 <div key=${p3.email + p3.issue} style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
                   <div style="display:flex;justify-content:space-between;align-items:center">
                     <span>${p3.email}</span>
@@ -70750,7 +70982,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ExceptionsPage.js
-  var html16 = htm_module_default.bind(_);
+  var html17 = htm_module_default.bind(_);
   var SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
   var SEVERITY_COLORS = {
     critical: "#B91C1C",
@@ -70814,7 +71046,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return sa - sb;
       return String(a3.raised_at || "").localeCompare(String(b.raised_at || ""));
     });
-    return html16`
+    return html17`
     <div class="secondary-banner ${(stats?.total_unresolved || 0) > 0 ? "warning" : ""}">
       <div class="secondary-banner-copy">
         <h3>${stats?.total_unresolved ? `${stats.total_unresolved} unresolved exception${stats.total_unresolved === 1 ? "" : "s"}` : "No unresolved exceptions"}</h3>
@@ -70822,7 +71054,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     </div>
 
-    ${error ? html16`<div class="secondary-note" style="border-left:3px solid var(--red);margin:12px 0">${error}</div>` : null}
+    ${error ? html17`<div class="secondary-note" style="border-left:3px solid var(--red);margin:12px 0">${error}</div>` : null}
 
     <div class="secondary-shell">
       <div class="secondary-main">
@@ -70843,8 +71075,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <option value="vendor_onboarding_session">vendor_onboarding_session</option>
             </select>
           </div>
-          ${items === null ? html16`<div class="secondary-empty">Loading…</div>` : sorted.length === 0 ? html16`<div class="secondary-empty">No exceptions match the current filters.</div>` : html16`<div class="secondary-list" style="margin-top:4px">
-                  ${sorted.map((row) => html16`
+          ${items === null ? html17`<div class="secondary-empty">Loading…</div>` : sorted.length === 0 ? html17`<div class="secondary-empty">No exceptions match the current filters.</div>` : html17`<div class="secondary-list" style="margin-top:4px">
+                  ${sorted.map((row) => html17`
                     <div key=${row.id} class="secondary-row" style="flex-direction:column;align-items:stretch;gap:6px;border-left:3px solid ${SEVERITY_COLORS[row.severity] || "#6B7280"};padding:10px 12px">
                       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
                         <div>
@@ -70874,26 +71106,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="secondary-side">
         <div class="panel">
           <h3 style="margin-top:0">By severity</h3>
-          ${stats && stats.by_severity ? html16`<div class="secondary-list" style="margin-top:10px">
-                ${["critical", "high", "medium", "low"].map((sev) => html16`
+          ${stats && stats.by_severity ? html17`<div class="secondary-list" style="margin-top:10px">
+                ${["critical", "high", "medium", "low"].map((sev) => html17`
                   <div key=${sev} class="secondary-row" style="justify-content:space-between">
                     <span style="color:${SEVERITY_COLORS[sev]};font-weight:600;text-transform:capitalize">${sev}</span>
                     <strong>${stats.by_severity[sev] || 0}</strong>
                   </div>
                 `)}
-              </div>` : html16`<div class="secondary-empty">No data.</div>`}
+              </div>` : html17`<div class="secondary-empty">No data.</div>`}
         </div>
 
         <div class="panel">
           <h3 style="margin-top:0">By type</h3>
-          ${stats && Object.keys(stats.by_type || {}).length ? html16`<div class="secondary-list" style="margin-top:10px">
-                ${Object.entries(stats.by_type).sort((a3, b) => b[1] - a3[1]).slice(0, 10).map(([t5, n3]) => html16`
+          ${stats && Object.keys(stats.by_type || {}).length ? html17`<div class="secondary-list" style="margin-top:10px">
+                ${Object.entries(stats.by_type).sort((a3, b) => b[1] - a3[1]).slice(0, 10).map(([t5, n3]) => html17`
                   <div key=${t5} class="secondary-row" style="justify-content:space-between">
                     <span>${t5}</span>
                     <strong>${n3}</strong>
                   </div>
                 `)}
-              </div>` : html16`<div class="secondary-empty">No data.</div>`}
+              </div>` : html17`<div class="secondary-empty">No data.</div>`}
         </div>
       </div>
     </div>
@@ -70902,7 +71134,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
   // src/routes/pages/PipelinePage.js
   var _kanbanPerfStarted = false;
-  var html17 = htm_module_default.bind(_);
+  var html18 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY = "clearledgr_active_ap_item_id";
   var STATE_STYLES = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -70943,7 +71175,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function StatePill({ state }) {
     const normalized = normalizePipelineState(state);
     const tone = STATE_STYLES[normalized] || { bg: "#F1F5F9", text: "#64748B", label: normalized.replace(/_/g, " ") };
-    return html17`<span style="
+    return html18`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
@@ -71429,9 +71661,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const currentSliceLabel = PIPELINE_BUILTIN_SLICES.find((slice) => slice.id === viewPrefs.activeSliceId)?.label || "All open";
     const currentViewLabel = activeSavedView ? getSavedViewLabel(activeSavedView) : currentSliceLabel;
     if (loading) {
-      return html17`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
+      return html18`<div class="panel" style="padding:48px;text-align:center"><p class="muted">Loading queue…</p></div>`;
     }
-    return html17`
+    return html18`
     <div class="pipeline-shell">
       <!-- §6.7 header — minimal chrome above the Kanban.
            Title, saved view toggle, search, filters button, refresh.
@@ -71443,7 +71675,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <h3 style="margin:0;font:700 18px/1.2 var(--font-display),'DM Sans',sans-serif;color:#0A1628">
             Live AP queue
           </h3>
-          ${activeSavedView || viewPrefs.activeSliceId !== "all_open" ? html17`<span class="muted" style="font-size:12px">
+          ${activeSavedView || viewPrefs.activeSliceId !== "all_open" ? html18`<span class="muted" style="font-size:12px">
                 ${currentViewLabel}
               </span>` : null}
         </div>
@@ -71467,7 +71699,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             style="display:flex;align-items:center;gap:6px"
           >
             Views
-            ${activeSavedView ? html17`<span style="
+            ${activeSavedView ? html18`<span style="
                   font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
                   background:#ECFDF5;color:#059669;
                 ">●</span>` : null}
@@ -71478,7 +71710,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             style="display:flex;align-items:center;gap:6px"
           >
             Filters
-            ${activeFilterCount > 0 ? html17`<span style="
+            ${activeFilterCount > 0 ? html18`<span style="
                   font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
                   background:#0A1628;color:#fff;min-width:16px;text-align:center;
                 ">${activeFilterCount}</span>` : null}
@@ -71495,7 +71727,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <!-- §7 focus row — keep: if the user opened the Kanban from a thread,
            show that record's location. This is Streak's "context always
            visible" principle, not dashboard sprawl. -->
-      ${focusedItem ? html17`
+      ${focusedItem ? html18`
             <div class="pipeline-focus-row" style="
               margin:4px 14px 8px;padding:10px 12px;border-radius:10px;
               background:#FFFBEB;border:1px solid #FDE68A;
@@ -71512,7 +71744,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 </div>
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
-                ${!focusedItemVisible ? html17`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show</button>` : null}
+                ${!focusedItemVisible ? html18`<button class="btn-primary btn-sm" onClick=${revealFocusedItem}>Show</button>` : null}
                 <button class="btn-secondary btn-sm" onClick=${() => openItemDetail(navigate, pipelineScope, focusedItem)}>Open</button>
                 <button class="btn-ghost btn-sm" onClick=${clearFocus}>×</button>
               </div>
@@ -71521,7 +71753,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       <!-- Views popover: slices + starter/personal saved views + save current.
            Only visible when the user taps Views — no permanent chrome. -->
-      ${viewsOpen ? html17`
+      ${viewsOpen ? html18`
             <div style="
               position:fixed;inset:0;background:rgba(10,22,40,0.3);z-index:9500;
             " onClick=${() => setViewsOpen(false)}>
@@ -71541,7 +71773,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
                 <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Slice</div>
                 <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
-                  ${PIPELINE_BUILTIN_SLICES.map((slice) => html17`
+                  ${PIPELINE_BUILTIN_SLICES.map((slice) => html18`
                     <button
                       key=${slice.id}
                       onClick=${() => {
@@ -71562,10 +71794,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   `)}
                 </div>
 
-                ${starterViews.length > 0 ? html17`
+                ${starterViews.length > 0 ? html18`
                   <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Saved</div>
                   <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
-                    ${[...starterViews, ...personalViews].map((view) => html17`
+                    ${[...starterViews, ...personalViews].map((view) => html18`
                       <div key=${view.id} style="
                         display:flex;align-items:center;gap:4px;
                         padding:6px 8px;border-radius:8px;
@@ -71583,7 +71815,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                           onClick=${() => toggleSavedViewPin(view)}
                           aria-label=${view.pinned ? "Unpin" : "Pin"}
                         >${view.pinned ? "★" : "☆"}</button>
-                        ${view.scope === "user" ? html17`<button class="btn-ghost btn-xs" onClick=${() => removeView(view.id)}>✕</button>` : null}
+                        ${view.scope === "user" ? html18`<button class="btn-ghost btn-xs" onClick=${() => removeView(view.id)}>✕</button>` : null}
                       </div>
                     `)}
                   </div>
@@ -71599,7 +71831,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   />
                   <button class="btn-primary btn-sm" onClick=${saveView} disabled=${savingView}>${savingView ? "…" : "Save"}</button>
                 </div>
-                ${activeSavedView?.scope === "user" ? html17`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView} style="margin-top:6px;width:100%">
+                ${activeSavedView?.scope === "user" ? html18`<button class="btn-secondary btn-sm" onClick=${updateView} disabled=${updatingView} style="margin-top:6px;width:100%">
                       ${updatingView ? "Updating…" : `Update "${activeSavedView.name}"`}
                     </button>` : null}
               </div>
@@ -71608,7 +71840,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 
       <!-- Filters sheet: slides in from the right when Filters is tapped.
            All the filter controls from the old permanent panel live here. -->
-      ${filtersOpen ? html17`
+      ${filtersOpen ? html18`
             <div style="
               position:fixed;inset:0;background:rgba(10,22,40,0.3);z-index:9500;
             " onClick=${() => setFiltersOpen(false)}>
@@ -71747,7 +71979,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     ].map((scope) => {
       const isActive = viewPrefs.activeSliceId === scope.id;
       const count = sliceCounts[scope.id] || 0;
-      return html17`
+      return html18`
             <button
               key=${scope.id}
               onClick=${() => applySlice(scope.id)}
@@ -71790,7 +72022,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       })) : FALLBACK_STAGES.map((s3) => ({ key: s3.slug, label: s3.label, states: s3.source_states, color: s3.color }));
       return KANBAN_STAGES.map((stage) => {
         const stageItems = displayed.filter((item) => stage.states.includes(String(item.state || "").toLowerCase()));
-        return html17`
+        return html18`
               <div key=${stage.key} class="kanban-column" style="
                 min-width:240px;max-width:280px;flex:1;
                 background:#F7F9FB;border-radius:10px;padding:0;
@@ -71807,7 +72039,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   ">${stageItems.length}</span>
                 </div>
                 <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
-                  ${stageItems.length === 0 ? html17`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No invoices</div>` : stageItems.map((item) => {
+                  ${stageItems.length === 0 ? html18`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No invoices</div>` : stageItems.map((item) => {
           const pipelineBlockers = getPipelineBlockers(item);
           const active = String(activeItemId || "") === String(item.id || "");
           const reference = String(item.invoice_number || item.reference || "").trim();
@@ -71835,7 +72067,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           }
           const primaryBlocker = pipelineBlockers[0];
           const extraBlockers = pipelineBlockers.length - 1;
-          return html17`
+          return html18`
                           <div
                             key=${item.id}
                             class="kanban-card"
@@ -71858,21 +72090,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                                 ${getAmountLabel(item)}
                               </span>
                             </div>
-                            ${reference ? html17`<div class="muted" style="font-size:11px;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                            ${reference ? html18`<div class="muted" style="font-size:11px;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                                   ${reference}
                                 </div>` : null}
-                            ${primaryBlocker ? html17`<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                            ${primaryBlocker ? html18`<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
                                   <span style="
                                     font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;
                                     background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;
                                   ">${primaryBlocker.chip_label || primaryBlocker.title || primaryBlocker.label || BLOCKER_LABELS[String(primaryBlocker.kind || "").toLowerCase()] || primaryBlocker.kind || "Blocker"}</span>
-                                  ${extraBlockers > 0 ? html17`<span class="muted" style="font-size:10px;font-weight:600">+${extraBlockers}</span>` : null}
+                                  ${extraBlockers > 0 ? html18`<span class="muted" style="font-size:10px;font-weight:600">+${extraBlockers}</span>` : null}
                                 </div>` : null}
                             <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:2px">
                               <span class="muted" style="font-size:10px">
                                 ${formatDurationMinutes(getQueueAgeMinutes(item))} in queue
                               </span>
-                              ${dueBadge ? html17`<span style="
+                              ${dueBadge ? html18`<span style="
                                     font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;
                                     background:${dueBadge.bg};color:${dueBadge.color};
                                     border:1px solid ${dueBadge.border};
@@ -72160,7 +72392,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/InvoiceDetailPage.js
-  var html18 = htm_module_default.bind(_);
+  var html19 = htm_module_default.bind(_);
   var ACTIVE_AP_ITEM_STORAGE_KEY2 = "clearledgr_active_ap_item_id";
   var STATE_STYLES2 = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
@@ -72191,7 +72423,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text: "#64748B",
       label: String(state || "received").replace(/_/g, " ")
     };
-    return html18`<span style="
+    return html19`<span style="
     font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};text-transform:uppercase;letter-spacing:0.02em;
   ">${tone.label}</span>`;
@@ -72319,16 +72551,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
   function FieldReviewRows({ blockers, pauseReason, onResolve = null, resolvingField = "" }) {
     if ((!Array.isArray(blockers) || blockers.length === 0) && !pauseReason) {
-      return html18`<p class="muted">No field checks are waiting.</p>`;
+      return html19`<p class="muted">No field checks are waiting.</p>`;
     }
-    return html18`
+    return html19`
     <div style="display:flex;flex-direction:column;gap:10px">
-      ${pauseReason && html18`
+      ${pauseReason && html19`
         <div style="padding:10px 12px;border:1px solid #fcd34d;border-radius:var(--radius-sm);background:#FEFCE8;color:#78350f;font-size:13px;line-height:1.45">
           ${pauseReason}
         </div>
       `}
-      ${(blockers || []).map((blocker) => html18`
+      ${(blockers || []).map((blocker) => html19`
         <div key=${`${blocker.field || "field"}-${blocker.kind || "review"}`} style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
           <div class="review-block-layout">
             <div class="review-block-main">
@@ -72336,31 +72568,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 ${blocker.kind === "confidence" ? `Confirm ${(blocker.field_label || "field").toLowerCase()}` : `Choose the correct ${(blocker.field_label || "field").toLowerCase()}`}
               </div>
               <div class="review-block-facts">
-                ${blocker.kind === "confidence" && html18`
+                ${blocker.kind === "confidence" && html19`
                   <>
                     <span class="review-block-fact-label">Clearledgr read</span>
                     <span class="review-block-fact-value">${blocker.current_value_display || "Not found"}</span>
                   </>
                 `}
-                ${blocker.kind === "confidence" && blocker.current_source_label && html18`
+                ${blocker.kind === "confidence" && blocker.current_source_label && html19`
                   <>
                     <span class="review-block-fact-label">Read from</span>
                     <span class="review-block-fact-value">${blocker.current_source_label}</span>
                   </>
                 `}
-                ${blocker.email_value !== null && blocker.email_value !== undefined && html18`
+                ${blocker.email_value !== null && blocker.email_value !== undefined && html19`
                   <>
                     <span class="review-block-fact-label">Email says</span>
                     <span class="review-block-fact-value">${blocker.email_value_display}</span>
                   </>
                 `}
-                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html18`
+                ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html19`
                   <>
                     <span class="review-block-fact-label">Attachment says</span>
                     <span class="review-block-fact-value">${blocker.attachment_value_display}</span>
                   </>
                 `}
-                ${blocker.kind === "source_conflict" && html18`
+                ${blocker.kind === "source_conflict" && html19`
                   <>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
@@ -72374,10 +72606,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             <div class="review-block-side">
               <div class="review-block-heading">Why it stopped</div>
               <div class="review-block-copy">${blocker.winner_reason || blocker.reason_label || blocker.paused_reason}</div>
-              ${blocker.auto_check_note && html18`<div class="review-block-note">${blocker.auto_check_note}</div>`}
-              ${typeof onResolve === "function" && html18`
+              ${blocker.auto_check_note && html19`<div class="review-block-note">${blocker.auto_check_note}</div>`}
+              ${typeof onResolve === "function" && html19`
                 <div class="review-block-actions">
-                  ${blocker.email_value !== null && blocker.email_value !== undefined && html18`
+                  ${blocker.email_value !== null && blocker.email_value !== undefined && html19`
                     <button
                       class="btn-secondary btn-sm"
                       onClick=${() => onResolve(blocker, "email")}
@@ -72386,7 +72618,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       ${resolvingField === `${blocker.field}:email` ? "Saving…" : "Use email"}
                     </button>
                   `}
-                  ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html18`
+                  ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html19`
                     <button
                       class="btn-secondary btn-sm"
                       onClick=${() => onResolve(blocker, "attachment")}
@@ -72434,33 +72666,33 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function AuditCard({ row }) {
     if (!row)
       return null;
-    return html18`
+    return html19`
     <div class="cl-audit-row" data-importance=${row.importance} data-severity=${row.severity}>
       <div class="cl-audit-main">
         <div class="cl-audit-main-copy">
           <div class="cl-audit-type">${row.title}</div>
           <div class="cl-audit-badges">
             <span class="cl-audit-badge" data-importance=${row.importance}>${row.importanceLabel}</span>
-            ${row.category && html18`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
+            ${row.category && html19`<span class="cl-audit-badge" data-kind="category">${row.category.replace(/_/g, " ")}</span>`}
           </div>
         </div>
-        ${row.timestamp && html18`<div class="cl-audit-time">${row.timestamp}</div>`}
+        ${row.timestamp && html19`<div class="cl-audit-time">${row.timestamp}</div>`}
       </div>
       <div class="cl-audit-detail">${row.detail}</div>
-      ${(row.evidenceLabel || row.evidenceDetail) && html18`
+      ${(row.evidenceLabel || row.evidenceDetail) && html19`
         <div class="cl-audit-evidence">
-          ${row.evidenceLabel && html18`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
+          ${row.evidenceLabel && html19`<span class="cl-audit-evidence-label">${row.evidenceLabel}</span>`}
           <span>${row.evidenceDetail || "Saved on the record."}</span>
         </div>
       `}
-      ${row.actionHint && !row.isBackground && html18`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
+      ${row.actionHint && !row.isBackground && html19`<div class="cl-audit-hint">Next: ${row.actionHint}</div>`}
     </div>
   `;
   }
   function RelatedRecordRow({ label, item, onOpen }) {
     if (!item?.id)
       return null;
-    return html18`
+    return html19`
     <div class="secondary-card">
       <div class="secondary-card-head">
         <div class="secondary-card-copy">
@@ -72525,7 +72757,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       meta: "Evidence linked to this record."
     };
     const itemCount = Number(group.count || 0);
-    return html18`
+    return html19`
     <div class="secondary-card">
       <div class="secondary-card-head">
         <div class="secondary-card-copy">
@@ -72538,7 +72770,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
       <div class="secondary-card-list" style="margin-top:10px">
-      ${(group.items || []).slice(0, 2).map((entry, index) => html18`
+      ${(group.items || []).slice(0, 2).map((entry, index) => html19`
         <div key=${`${group.source_type}-${entry?.source_ref || index}`} class="secondary-row">
           <div class="secondary-row-copy">
             <strong>${entry?.subject || entry?.source_ref || "Linked evidence"}</strong>
@@ -72551,7 +72783,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function TemplateActionRow({ template, onDraft }) {
-    return html18`
+    return html19`
     <div class="secondary-card">
       <div class="secondary-card-head">
         <div class="secondary-card-copy">
@@ -73006,10 +73238,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     });
     if (loading) {
-      return html18`<div class="panel"><p class="muted">Loading record…</p></div>`;
+      return html19`<div class="panel"><p class="muted">Loading record…</p></div>`;
     }
     if (!item) {
-      return html18`
+      return html19`
       <div class="panel">
         <p class="muted">Record not found.</p>
         <button class="btn-secondary" onClick=${() => navigate("clearledgr/invoices")}>Back to invoices</button>
@@ -73052,12 +73284,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       entityNeedsReview && primaryAction?.id !== "resolve_entity_route",
       canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver"
     ].filter(Boolean).length;
-    return html18`
+    return html19`
     <div class="record-detail-toolbar">
       <div class="toolbar-actions">
         <button class="btn-secondary btn-sm" onClick=${openInPipeline}>Back to invoices</button>
-        ${canOpenEmail && html18`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
-        ${(item?.vendor_name || item?.vendor) && html18`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
+        ${canOpenEmail && html19`<button class="btn-ghost btn-sm" onClick=${openEmail}>Open email</button>`}
+        ${(item?.vendor_name || item?.vendor) && html19`<button class="btn-ghost btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>
     </div>
 
@@ -73067,8 +73299,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="record-detail-eyebrow">
             <${StatePill2} state=${state} />
             <span class="secondary-chip">${documentLabel}</span>
-            ${entityNeedsReview && html18`<span class="secondary-chip">Entity review</span>`}
-            ${item?.finance_effect_review_required && html18`<span class="secondary-chip">Finance review</span>`}
+            ${entityNeedsReview && html19`<span class="secondary-chip">Entity review</span>`}
+            ${item?.finance_effect_review_required && html19`<span class="secondary-chip">Finance review</span>`}
           </div>
           <h3 style="margin:0 0 6px">${item.vendor_name || item.vendor || "Unknown vendor"}</h3>
           <div class="record-detail-amount">${formatAmount(item.amount, item.currency)}</div>
@@ -73078,7 +73310,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         </div>
       </div>
 
-      ${heroNote && html18`<div class="secondary-note record-detail-hero-note">${heroNote}</div>`}
+      ${heroNote && html19`<div class="secondary-note record-detail-hero-note">${heroNote}</div>`}
 
       <div class="secondary-stat-grid record-detail-summary">
         <div class="secondary-stat-card">
@@ -73100,12 +73332,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
 
       <div class="toolbar-actions record-detail-hero-actions">
-        ${primaryAction?.label && primaryHandler && html18`
+        ${primaryAction?.label && primaryHandler && html19`
           <button class="btn-primary" onClick=${primaryHandler} disabled=${primaryPending}>
             ${primaryPending ? "Processing…" : primaryAction.label}
           </button>
         `}
-        ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html18`
+        ${!readOnlyMode && !isInvoiceDocument && nonInvoiceActions.map((action) => html19`
           <button
             key=${action.id}
             class="btn-secondary btn-sm"
@@ -73116,7 +73348,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </button>
         `)}
       </div>
-      ${secondaryActionCount > 0 && html18`
+      ${secondaryActionCount > 0 && html19`
         <details class="route-operator-overrides">
           <summary class="route-operator-overrides-summary">
             <span>${operatorOverrideCopy.title}</span>
@@ -73124,31 +73356,31 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </summary>
           <div class="route-operator-overrides-copy">${operatorOverrideCopy.detail}</div>
           <div class="toolbar-actions route-operator-overrides-actions">
-            ${canRejectWorkItem(state, actorRole, documentType) && html18`
+            ${canRejectWorkItem(state, actorRole, documentType) && html19`
               <button class="btn-danger btn-sm" onClick=${doReject} disabled=${rejecting}>Reject</button>
             `}
-            ${canReassignApproval(item, state, actorRole, documentType) && html18`
+            ${canReassignApproval(item, state, actorRole, documentType) && html19`
               <button class="btn-secondary btn-sm" onClick=${doReassignApproval} disabled=${reassigningApproval}>
                 ${reassigningApproval ? "Reassigning…" : "Reassign approver"}
               </button>
             `}
-            ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html18`
+            ${canEscalateApproval(item, state, actorRole, documentType) && primaryAction?.id !== "escalate_approval" && html19`
               <button class="btn-secondary btn-sm" onClick=${doEscalateApproval} disabled=${escalatingApproval}>
                 ${escalatingApproval ? "Escalating…" : "Escalate approval"}
               </button>
             `}
-            ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html18`
+            ${entityNeedsReview && primaryAction?.id !== "resolve_entity_route" && html19`
               <button class="btn-secondary btn-sm" onClick=${doResolveEntityRoute} disabled=${resolvingEntityRoute}>
                 ${resolvingEntityRoute ? "Resolving…" : "Resolve entity"}
               </button>
             `}
-            ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html18`
+            ${canNudgeApprover(state, actorRole, documentType) && primaryAction?.id !== "nudge_approver" && html19`
               <button class="btn-secondary btn-sm" onClick=${doNudge} disabled=${nudging}>Nudge approver</button>
             `}
           </div>
         </details>
       `}
-      ${readOnlyMode && html18`
+      ${readOnlyMode && html19`
         <div class="secondary-note record-detail-hero-note">
           Read-only view. You can review this record here, but only operators can take action.
         </div>
@@ -73164,19 +73396,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">What is stopping the record from moving cleanly to the next step.</p>
             </div>
           </div>
-          ${blockers.length ? html18`<div class="secondary-card-list">
-                ${blockers.map((blocker) => html18`
+          ${blockers.length ? html19`<div class="secondary-card-list">
+                ${blockers.map((blocker) => html19`
                   <div key=${blocker.key} class="secondary-card">
                     <div class="secondary-card-copy">
                       <span class="secondary-card-title">${blocker.label}</span>
-                      ${blocker.detail && html18`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                      ${blocker.detail && html19`<div class="secondary-card-meta">${blocker.detail}</div>`}
                     </div>
                   </div>
                 `)}
-              </div>` : html18`<p class="secondary-empty">No active blockers.</p>`}
+              </div>` : html19`<p class="secondary-empty">No active blockers.</p>`}
         </div>
 
-        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html18`
+        ${Array.isArray(item?.line_items) && item.line_items.length > 0 && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73185,7 +73417,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
             </div>
             <div class="secondary-card-list">
-              ${item.line_items.slice(0, 15).map((li, i3) => html18`
+              ${item.line_items.slice(0, 15).map((li, i3) => html19`
                 <div key=${i3} class="secondary-row">
                   <div class="secondary-row-copy">
                     <strong>${li.description || `Line ${i3 + 1}`}</strong>
@@ -73202,7 +73434,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 </div>
               `)}
             </div>
-            ${(item.tax_amount || item.discount_amount) && html18`
+            ${(item.tax_amount || item.discount_amount) && html19`
               <div class="detail-row-list" style="margin-top:12px">
                 ${item.tax_amount ? detailRow("Tax", formatAmount(item.tax_amount, item.currency)) : null}
                 ${item.discount_amount ? detailRow(`Discount${item.discount_terms ? ` (${item.discount_terms})` : ""}`, `-${formatAmount(item.discount_amount, item.currency)}`) : null}
@@ -73211,7 +73443,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         `}
 
-        ${item?.payment_status && item.payment_status !== "none" && html18`
+        ${item?.payment_status && item.payment_status !== "none" && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73227,7 +73459,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         `}
 
-        ${(state === "needs_approval" || entityNeedsReview) && html18`
+        ${(state === "needs_approval" || entityNeedsReview) && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73236,14 +73468,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
             </div>
             <div class="detail-row-list">
-              ${state === "needs_approval" && html18`
+              ${state === "needs_approval" && html19`
                 ${detailRow("Approval wait", approvalFollowup?.wait_minutes ? `${approvalFollowup.wait_minutes} minutes` : "—")}
                 ${detailRow("Pending approvers", pendingApproverSummary)}
                 ${detailRow("Approval SLA", approvalFollowup?.escalation_due ? "Escalation due" : approvalFollowup?.sla_breached ? "Reminder due" : "Within SLA")}
                 ${detailRow("Escalations", String(approvalFollowup?.escalation_count || 0))}
                 ${detailRow("Reassignments", String(approvalFollowup?.reassignment_count || 0))}
               `}
-              ${isInvoiceDocument && html18`
+              ${isInvoiceDocument && html19`
                 ${detailRow("Entity route", entityNeedsReview ? "Needs review" : item?.entity_code || item?.entity_name || "Not set")}
                 ${entityCandidates.length ? detailRow("Entity candidates", entityCandidates.slice(0, 4).map((candidate) => candidate?.label || candidate?.entity_name || candidate?.entity_code).filter(Boolean).join(", ")) : null}
               `}
@@ -73274,11 +73506,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="secondary-card-list">
-            ${evidence.map((entry) => html18`
+            ${evidence.map((entry) => html19`
               <div key=${entry.key} class="secondary-row">
                 <div class="secondary-row-copy">
                   <strong>${entry.label}</strong>
-                  ${entry.detail && html18`<p>${entry.detail}</p>`}
+                  ${entry.detail && html19`<p>${entry.detail}</p>`}
                 </div>
                 <div class="secondary-inline-actions">
                   <span
@@ -73312,7 +73544,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
 
-        ${hasAccountingLinkage && html18`
+        ${hasAccountingLinkage && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73321,8 +73553,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>
             </div>
             <div class="detail-detail-stack">
-              ${financeEffectNotice ? html18`<div class="secondary-note">${financeEffectNotice}</div>` : null}
-              ${Object.keys(financeEffectSummary).length ? html18`
+              ${financeEffectNotice ? html19`<div class="secondary-note">${financeEffectNotice}</div>` : null}
+              ${Object.keys(financeEffectSummary).length ? html19`
                     <div class="detail-row-list">
                     ${detailRow("Original amount", formatAmount(financeEffectSummary.original_amount, financeEffectSummary.currency || item.currency))}
                     ${detailRow("Credits applied", formatAmount(financeEffectSummary.applied_credit_total, financeEffectSummary.currency || item.currency))}
@@ -73334,19 +73566,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                     ${detailRow("Settlement state", String(financeEffectSummary.settlement_state || "open").replace(/_/g, " "))}
                     </div>
                   ` : null}
-              ${financeEffectBlockers.length > 0 ? html18`
+              ${financeEffectBlockers.length > 0 ? html19`
                     <div class="secondary-card-list">
-                      ${financeEffectBlockers.map((blocker) => html18`
+                      ${financeEffectBlockers.map((blocker) => html19`
                         <div key=${blocker.code} class="secondary-card">
                           <div class="secondary-card-copy">
                             <span class="secondary-card-title">${blocker.label}</span>
-                            ${blocker.detail && html18`<div class="secondary-card-meta">${blocker.detail}</div>`}
+                            ${blocker.detail && html19`<div class="secondary-card-meta">${blocker.detail}</div>`}
                           </div>
                         </div>
                       `)}
                     </div>
                   ` : null}
-              ${linkedRecord ? html18`<${RelatedRecordRow}
+              ${linkedRecord ? html19`<${RelatedRecordRow}
                     label="Linked record"
                     item=${linkedRecord}
                     onOpen=${() => openRelatedRecord(linkedRecord)}
@@ -73354,9 +73586,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               ${item?.non_invoice_accounting_treatment ? detailRow("Treatment", String(item.non_invoice_accounting_treatment).replace(/_/g, " ")) : null}
               ${item?.non_invoice_downstream_queue ? detailRow("Downstream queue", String(item.non_invoice_downstream_queue).replace(/_/g, " ")) : null}
               ${reconciliationReference?.session_id ? detailRow("Reconciliation queue", `Session ${reconciliationReference.session_id}${reconciliationReference.item_id ? ` · Item ${reconciliationReference.item_id}` : ""}`) : null}
-              ${linkedFinanceDocuments.length > 0 && html18`
+              ${linkedFinanceDocuments.length > 0 && html19`
                 <div class="secondary-card-list">
-              ${linkedFinanceDocuments.map((linkedDocument) => html18`
+              ${linkedFinanceDocuments.map((linkedDocument) => html19`
                 <${RelatedRecordRow}
                   key=${linkedDocument.source_ap_item_id}
                   label=${`${getDocumentTypeLabel(linkedDocument.document_type || "other")} linked`}
@@ -73383,21 +73615,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <h3 style="margin:0">Linked records</h3>
               <p class="muted" style="margin:0">Related invoices and superseded records linked to this AP item.</p>
             </div>
-            ${(item?.vendor_name || item?.vendor) && html18`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
+            ${(item?.vendor_name || item?.vendor) && html19`<button class="btn-secondary btn-sm" onClick=${openVendorRecord}>Open vendor record</button>`}
           </div>
           <div class="secondary-card-list">
-            ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html18`
-                  ${relatedRecords?.supersession?.previous_item ? html18`<${RelatedRecordRow}
+            ${relatedRecords?.supersession?.previous_item || relatedRecords?.supersession?.next_item || (relatedRecords?.same_invoice_number_items || []).length || (relatedRecords?.vendor_recent_items || []).length ? html19`
+                  ${relatedRecords?.supersession?.previous_item ? html19`<${RelatedRecordRow}
                         label="Supersedes"
                         item=${relatedRecords.supersession.previous_item}
                         onOpen=${() => openRelatedRecord(relatedRecords.supersession.previous_item)}
                       />` : null}
-                  ${relatedRecords?.supersession?.next_item ? html18`<${RelatedRecordRow}
+                  ${relatedRecords?.supersession?.next_item ? html19`<${RelatedRecordRow}
                         label="Superseded by"
                         item=${relatedRecords.supersession.next_item}
                         onOpen=${() => openRelatedRecord(relatedRecords.supersession.next_item)}
                       />` : null}
-                  ${(relatedRecords?.same_invoice_number_items || []).slice(0, 2).map((relatedItem) => html18`
+                  ${(relatedRecords?.same_invoice_number_items || []).slice(0, 2).map((relatedItem) => html19`
                     <${RelatedRecordRow}
                       key=${relatedItem.id}
                       label="Same invoice number"
@@ -73405,7 +73637,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       onOpen=${() => openRelatedRecord(relatedItem)}
                     />
                   `)}
-                  ${(relatedRecords?.vendor_recent_items || []).slice(0, 2).map((relatedItem) => html18`
+                  ${(relatedRecords?.vendor_recent_items || []).slice(0, 2).map((relatedItem) => html19`
                     <${RelatedRecordRow}
                       key=${relatedItem.id}
                       label="Recent vendor item"
@@ -73413,7 +73645,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       onOpen=${() => openRelatedRecord(relatedItem)}
                     />
                   `)}
-                ` : html18`<p class="secondary-empty" style="margin:0">No linked records yet.</p>`}
+                ` : html19`<p class="secondary-empty" style="margin:0">No linked records yet.</p>`}
           </div>
         </div>
 
@@ -73424,21 +73656,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">The key decisions, retries, and background events on this record.</p>
             </div>
           </div>
-          ${auditSections.rows.length === 0 ? html18`<p class="secondary-empty">No audit events yet.</p>` : html18`
+          ${auditSections.rows.length === 0 ? html19`<p class="secondary-empty">No audit events yet.</p>` : html19`
               <div style="display:flex;flex-direction:column;gap:14px">
-                ${auditSections.primaryRows.length > 0 && html18`
+                ${auditSections.primaryRows.length > 0 && html19`
                   <div style="display:flex;flex-direction:column;gap:10px">
                     <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Key history</div>
                     <div class="cl-audit-list">
-                      ${auditSections.primaryRows.map((row, index) => html18`<${AuditCard} key=${row.event?.id || index} row=${row} />`)}
+                      ${auditSections.primaryRows.map((row, index) => html19`<${AuditCard} key=${row.event?.id || index} row=${row} />`)}
                     </div>
                   </div>
                 `}
-                ${auditSections.secondaryRows.length > 0 && html18`
+                ${auditSections.secondaryRows.length > 0 && html19`
                   <div style="display:flex;flex-direction:column;gap:10px">
                     <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:var(--ink-muted)">Background activity</div>
                     <div class="cl-audit-list">
-                      ${auditSections.secondaryRows.map((row, index) => html18`<${AuditCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
+                      ${auditSections.secondaryRows.map((row, index) => html19`<${AuditCard} key=${row.event?.id || `secondary-${index}`} row=${row} />`)}
                     </div>
                   </div>
                 `}
@@ -73460,15 +73692,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             ${detailRow("Next step", agentView.nextActionLabel || "Review this record")}
             ${detailRow("Waiting on", agentView.nextActionActorLabel || agentView.nextActionOwnerLabel || "Clearledgr")}
           </div>
-          ${agentView.beliefReason && html18`
+          ${agentView.beliefReason && html19`
             <div class="secondary-callout" style="margin-top:12px">
               <strong style="display:block;margin-bottom:6px;color:var(--ink)">Why this record is waiting</strong>
               ${agentView.beliefReason}
             </div>
           `}
-          ${agentView.highlights.length > 0 && html18`
+          ${agentView.highlights.length > 0 && html19`
             <div class="secondary-card-list" style="margin-top:12px">
-              ${agentView.highlights.map((entry) => html18`
+              ${agentView.highlights.map((entry) => html19`
                 <div key=${entry} class="secondary-card">
                   <div class="secondary-card-copy">
                     <span class="secondary-card-title">Still needs attention</span>
@@ -73487,8 +73719,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">Draft vendor or approver messages from this record without leaving Gmail.</p>
             </div>
           </div>
-          ${quickReplyTemplates.length === 0 ? html18`<p class="secondary-empty" style="margin:0">No reply templates are available yet.</p>` : html18`<div class="secondary-card-list">
-                ${quickReplyTemplates.map((template) => html18`
+          ${quickReplyTemplates.length === 0 ? html19`<p class="secondary-empty" style="margin:0">No reply templates are available yet.</p>` : html19`<div class="secondary-card-list">
+                ${quickReplyTemplates.map((template) => html19`
                   <${TemplateActionRow}
                     key=${template.id}
                     template=${template}
@@ -73498,11 +73730,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               </div>`}
           <div class="toolbar-actions" style="margin-top:12px">
             <button class="btn-secondary btn-sm" onClick=${() => navigate("clearledgr/templates")}>Manage templates</button>
-            ${draftingReply && html18`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
+            ${draftingReply && html19`<span class="muted" style="font-size:12px;align-self:center">Opening compose…</span>`}
           </div>
         </div>
 
-        ${showContextPanel && html18`
+        ${showContextPanel && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73510,9 +73742,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 <p class="muted" style="margin:4px 0 0">Why Clearledgr paused here and what it will do once this is resolved.</p>
               </div>
             </div>
-            ${contextSummary && contextSummary !== agentView.beliefReason && html18`<div class="secondary-callout">${contextSummary}</div>`}
-            ${contextRisks && html18`<div class="secondary-callout warning" style="margin-top:10px">${contextRisks}</div>`}
-            ${contextNextStep && contextNextStep !== agentView.nextActionLabel && html18`
+            ${contextSummary && contextSummary !== agentView.beliefReason && html19`<div class="secondary-callout">${contextSummary}</div>`}
+            ${contextRisks && html19`<div class="secondary-callout warning" style="margin-top:10px">${contextRisks}</div>`}
+            ${contextNextStep && contextNextStep !== agentView.nextActionLabel && html19`
               <div class="detail-row-list" style="margin-top:10px">
                 ${detailRow("After that", contextNextStep)}
               </div>
@@ -73520,7 +73752,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         `}
 
-        ${context && html18`
+        ${context && html19`
           <div class="panel">
             <div class="panel-head compact">
               <div>
@@ -73528,8 +73760,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 <p class="muted" style="margin:4px 0 0">Messages, files, and linked records Clearledgr is using for this record.</p>
               </div>
             </div>
-            ${sourceGroups.length === 0 ? html18`<p class="secondary-empty" style="margin:0">No linked evidence sources yet.</p>` : html18`<div class="secondary-card-list">
-                  ${sourceGroups.slice(0, 5).map((group) => html18`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
+            ${sourceGroups.length === 0 ? html19`<p class="secondary-empty" style="margin:0">No linked evidence sources yet.</p>` : html19`<div class="secondary-card-list">
+                  ${sourceGroups.slice(0, 5).map((group) => html19`<${SourceGroupRow} key=${group.source_type} group=${group} />`)}
                 </div>`}
           </div>
         `}
@@ -73540,7 +73772,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   `;
   }
   function detailRow(label, value) {
-    return html18`
+    return html19`
     <div class="detail-row">
       <span class="detail-row-label">${label}</span>
       <span class="detail-row-value">${value}</span>
@@ -73549,7 +73781,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/VendorsPage.js
-  var html19 = htm_module_default.bind(_);
+  var html20 = htm_module_default.bind(_);
   function VendorsPage({ api, orgId, userEmail, navigate, toast }) {
     const pipelineScope = T2(() => ({ orgId, userEmail }), [orgId, userEmail]);
     const [vendors, setVendors] = d2([]);
@@ -73613,9 +73845,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       navigate("clearledgr/review");
     };
     if (loading) {
-      return html19`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
+      return html20`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
     }
-    return html19`
+    return html20`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Vendor directory</h3>
@@ -73647,7 +73879,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
 
       <div class="secondary-card-list" style="margin-top:14px">
-        ${filtered.length === 0 ? html19`<div class="muted">${search ? "No vendors match your search." : "No vendors yet. Vendor records appear once invoices are processed."}</div>` : filtered.map((vendor) => html19`
+        ${filtered.length === 0 ? html20`<div class="muted">${search ? "No vendors match your search." : "No vendors yet. Vendor records appear once invoices are processed."}</div>` : filtered.map((vendor) => html20`
               <div key=${vendor.vendor_name} class="secondary-card">
                 <div class="secondary-card-head">
                   <div class="secondary-card-copy">
@@ -73656,18 +73888,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                       ${vendor.primary_email || "No primary sender"} · Last activity ${vendor.last_activity_at ? fmtDateTime(vendor.last_activity_at) : "—"}
                     </div>
                     <div class="secondary-card-tags">
-                      ${(vendor.top_states || []).map((row) => html19`
+                      ${(vendor.top_states || []).map((row) => html20`
                         <span key=${row.state} class="secondary-chip">
                           ${String(row.state || "").replace(/_/g, " ")} ${row.count}
                         </span>
                       `)}
-                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html19`
+                      ${(vendor.top_exception_codes || []).slice(0, 2).map((row) => html20`
                         <span key=${row.exception_code} class="secondary-chip" style="background:#FFF7ED;color:#9A3412;border-color:#FED7AA">
                           ${getExceptionLabel(row.exception_code)} ${row.count}
                         </span>
                       `)}
-                      ${vendor.profile?.requires_po ? html19`<span class="secondary-chip" style="background:#FEF3C7;color:#92400E;border-color:#FDE68A">Requires PO</span>` : null}
-                      ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html19`
+                      ${vendor.profile?.requires_po ? html20`<span class="secondary-chip" style="background:#FEF3C7;color:#92400E;border-color:#FDE68A">Requires PO</span>` : null}
+                      ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html20`
                         <span key=${flag} class="secondary-chip" style="background:#FEF2F2;color:#B91C1C;border-color:#FECACA">${String(flag).replace(/_/g, " ")}</span>
                       `)}
                     </div>
@@ -73713,11 +73945,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setMerging("");
     };
-    return html19`
+    return html20`
     <div class="panel" style="margin-bottom:14px">
       <h3 style="margin-top:0">Possible duplicate vendors (${clusters.length})</h3>
       <p class="muted" style="margin:0 0 8px;font-size:12px">These vendors have similar names and may be the same entity.</p>
-      ${clusters.slice(0, 5).map((c3) => html19`
+      ${clusters.slice(0, 5).map((c3) => html20`
         <div key=${c3.canonical.vendor_name} class="secondary-row">
           <div class="secondary-row-copy">
             <strong>${c3.canonical.vendor_name}</strong> (${c3.canonical.invoice_count} invoices)
@@ -73733,7 +73965,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/VendorDetailPage.js
-  var html20 = htm_module_default.bind(_);
+  var html21 = htm_module_default.bind(_);
   var STATE_STYLES3 = {
     needs_approval: { bg: "#FEFCE8", text: "#A16207", label: "Needs approval" },
     needs_info: { bg: "#FEFCE8", text: "#A16207", label: "Needs info" },
@@ -73752,16 +73984,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       text: "#475569",
       label: String(state || "Unknown").replace(/_/g, " ")
     };
-    return html20`<span style="
+    return html21`<span style="
     display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;
     background:${tone.bg};color:${tone.text};font-size:11px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;
   ">${tone.label}</span>`;
   }
   function MetricCard({ label, value, detail }) {
-    return html20`<div class="secondary-stat-card">
+    return html21`<div class="secondary-stat-card">
     <strong>${label}</strong>
     <span style="font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-0.03em;color:var(--ink);display:block;margin-bottom:4px">${value}</span>
-    ${detail ? html20`<span>${detail}</span>` : null}
+    ${detail ? html21`<span>${detail}</span>` : null}
   </div>`;
   }
   function getRecordId(item) {
@@ -73841,10 +74073,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast?.("Could not open the source email for this issue.", "error");
     };
     if (loading) {
-      return html20`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
+      return html21`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor record…</p></div>`;
     }
     if (!payload) {
-      return html20`
+      return html21`
       <div class="panel">
         <h3 style="margin-top:0">Vendor not found</h3>
         <p class="muted" style="margin:0 0 12px">This vendor does not have a shared AP record yet.</p>
@@ -73852,7 +74084,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
     `;
     }
-    return html20`
+    return html21`
     <div class="panel">
       <div class="panel-head">
         <div>
@@ -73878,7 +74110,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${MetricCard} label="Tracked spend" value=${fmtDollar(summary.total_amount || 0)} detail=${summary.last_activity_at ? `Last activity ${fmtDateTime(summary.last_activity_at)}` : "No recent activity"} />
     </div>
 
-    ${(profile.suggested_gl || profile.override_rate != null || anomalyFlags.length > 0 || profile.last_correction_at) && html20`
+    ${(profile.suggested_gl || profile.override_rate != null || anomalyFlags.length > 0 || profile.last_correction_at) && html21`
       <div class="panel" style="margin-top:0">
         <div class="panel-head compact">
           <div>
@@ -73887,21 +74119,21 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         </div>
         <div class="secondary-stat-grid">
-          ${profile.suggested_gl ? html20`
+          ${profile.suggested_gl ? html21`
             <div class="secondary-stat-card">
               <strong>Suggested GL</strong>
               <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${profile.suggested_gl}</span>
               <span>Most likely GL code based on posting history</span>
             </div>
           ` : null}
-          ${profile.override_rate != null ? html20`
+          ${profile.override_rate != null ? html21`
             <div class="secondary-stat-card">
               <strong>Override rate</strong>
               <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${(Number(profile.override_rate) * 100).toFixed(1)}%</span>
               <span>How often operators override the AI recommendation</span>
             </div>
           ` : null}
-          ${profile.last_correction_at ? html20`
+          ${profile.last_correction_at ? html21`
             <div class="secondary-stat-card">
               <strong>Last GL correction</strong>
               <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)">${fmtDate(profile.last_correction_at)}</span>
@@ -73909,11 +74141,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           ` : null}
         </div>
-        ${anomalyFlags.length > 0 ? html20`
+        ${anomalyFlags.length > 0 ? html21`
           <div style="margin-top:14px">
             <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Risk indicators</div>
             <div class="secondary-chip-row">
-              ${anomalyFlags.map((flag) => html20`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
+              ${anomalyFlags.map((flag) => html21`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
             </div>
           </div>
         ` : null}
@@ -73930,8 +74162,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
             <button class="btn-secondary btn-sm" onClick=${openVendorIssues}>Open in review</button>
           </div>
-          ${openIssues.length === 0 ? html20`<p class="muted" style="margin:0">No open vendor issues right now.</p>` : html20`<div class="secondary-card-list">
-                ${openIssues.map((item) => html20`
+          ${openIssues.length === 0 ? html21`<p class="muted" style="margin:0">No open vendor issues right now.</p>` : html21`<div class="secondary-card-list">
+                ${openIssues.map((item) => html21`
                   <div key=${item.id} class="secondary-card">
                     <div class="secondary-card-head">
                       <div class="secondary-card-copy">
@@ -73948,11 +74180,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         <div class="secondary-card-meta" style="margin-top:6px">
                           ${item.issue_summary || getIssueSummary(item)}
                         </div>
-                        ${item.exception_code ? html20`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}</div>` : null}
+                        ${item.exception_code ? html21`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}</div>` : null}
                       </div>
                       <div class="secondary-inline-actions">
                         <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
-                        ${(item.thread_id || item.message_id) && html20`
+                        ${(item.thread_id || item.message_id) && html21`
                           <button class="btn-ghost btn-sm" onClick=${() => openIssueEmail(item)}>Open email</button>
                         `}
                       </div>
@@ -73969,8 +74201,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">The current invoice context for this vendor, including active blockers and recent outcomes.</p>
             </div>
           </div>
-          ${recentItems.length === 0 ? html20`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html20`<div class="secondary-card-list">
-                ${recentItems.map((item) => html20`
+          ${recentItems.length === 0 ? html21`<p class="muted" style="margin:0">No recent invoices for this vendor yet.</p>` : html21`<div class="secondary-card-list">
+                ${recentItems.map((item) => html21`
                   <div key=${item.id} class="secondary-card">
                     <div class="secondary-card-head">
                       <div class="secondary-card-copy">
@@ -73981,8 +74213,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         <div class="secondary-card-meta">
                           ${formatAmount(item.amount, item.currency)} · Due ${item.due_date ? fmtDate(item.due_date) : "—"} · Updated ${fmtDateTime(item.updated_at)}
                         </div>
-                        ${item.erp_reference ? html20`<div class="secondary-card-meta" style="margin-top:4px">ERP ${item.erp_reference}</div>` : null}
-                        ${item.exception_code ? html20`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ""}</div>` : null}
+                        ${item.erp_reference ? html21`<div class="secondary-card-meta" style="margin-top:4px">ERP ${item.erp_reference}</div>` : null}
+                        ${item.exception_code ? html21`<div class="secondary-card-meta" style="margin-top:4px">${getExceptionLabel(item.exception_code)}${getExceptionReason(item.exception_code) ? ` · ${getExceptionReason(item.exception_code)}` : ""}</div>` : null}
                       </div>
                       <div class="secondary-inline-actions">
                         <button class="btn-secondary btn-sm" onClick=${() => openItemDetail2(item)}>Open record</button>
@@ -74000,8 +74232,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">What recently happened to this vendor’s invoices after review and posting.</p>
             </div>
           </div>
-          ${history.length === 0 ? html20`<p class="muted" style="margin:0">No vendor outcome history yet.</p>` : html20`<div class="secondary-card-list">
-                ${history.map((entry) => html20`
+          ${history.length === 0 ? html21`<p class="muted" style="margin:0">No vendor outcome history yet.</p>` : html21`<div class="secondary-card-list">
+                ${history.map((entry) => html21`
                   <div key=${entry.id || `${entry.ap_item_id}-${entry.created_at}`} class="secondary-card">
                     <div class="secondary-card-head">
                       <div class="secondary-card-copy">
@@ -74052,20 +74284,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
 
-          ${senderEmails.length > 0 && html20`
+          ${senderEmails.length > 0 && html21`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Known sender emails</div>
               <div class="secondary-chip-row">
-                ${senderEmails.map((email) => html20`<span key=${email} class="secondary-chip">${email}</span>`)}
+                ${senderEmails.map((email) => html21`<span key=${email} class="secondary-chip">${email}</span>`)}
               </div>
             </div>
           `}
 
-          ${anomalyFlags.length > 0 && html20`
+          ${anomalyFlags.length > 0 && html21`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Anomaly flags</div>
               <div class="secondary-chip-row">
-                ${anomalyFlags.map((flag) => html20`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
+                ${anomalyFlags.map((flag) => html21`<span key=${flag} class="secondary-chip" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C">${String(flag).replace(/_/g, " ")}</span>`)}
               </div>
             </div>
           `}
@@ -74109,8 +74341,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">Where this vendor’s records most often end up in the AP flow.</p>
             </div>
           </div>
-          ${topStates.length === 0 ? html20`<p class="muted" style="margin:0">No state history yet.</p>` : html20`<div class="secondary-card-list">
-                ${topStates.map((row) => html20`
+          ${topStates.length === 0 ? html21`<p class="muted" style="margin:0">No state history yet.</p>` : html21`<div class="secondary-card-list">
+                ${topStates.map((row) => html21`
                   <div key=${row.state} class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${getStateLabel(String(row.state || "received").trim().toLowerCase())}</strong>
@@ -74130,8 +74362,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <p class="muted" style="margin:4px 0 0">The exception patterns that repeat most often for this vendor.</p>
             </div>
           </div>
-          ${topExceptionCodes.length === 0 ? html20`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>` : html20`<div class="secondary-card-list">
-                ${topExceptionCodes.map((row) => html20`
+          ${topExceptionCodes.length === 0 ? html21`<p class="muted" style="margin:0">No recurring issue patterns yet.</p>` : html21`<div class="secondary-card-list">
+                ${topExceptionCodes.map((row) => html21`
                   <div key=${row.exception_code} class="secondary-row">
                     <div class="secondary-row-copy">
                       <strong>${getExceptionLabel(row.exception_code)}</strong>
@@ -74149,7 +74381,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/TemplatesPage.js
-  var html21 = htm_module_default.bind(_);
+  var html22 = htm_module_default.bind(_);
   var SAMPLE_ITEM = {
     vendor_name: "Northwind Office Supply",
     invoice_number: "INV-1042",
@@ -74194,7 +74426,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
   }
   function TemplateRow({ template, selected, onSelect }) {
-    return html21`<button class=${`templates-row ${selected ? "is-selected" : ""}`} onClick=${onSelect}>
+    return html22`<button class=${`templates-row ${selected ? "is-selected" : ""}`} onClick=${onSelect}>
     <div class="templates-row-top">
       <strong class="templates-row-title">${template.name}</strong>
       <div class="templates-row-tags">
@@ -74308,7 +74540,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         toast?.("Could not open Gmail compose preview.", "error");
       }
     });
-    return html21`
+    return html22`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Reply templates</h3>
@@ -74339,7 +74571,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <span>${starterTemplates.length}</span>
             </div>
             <div class="templates-list">
-              ${starterTemplates.map((template) => html21`
+              ${starterTemplates.map((template) => html22`
                 <${TemplateRow}
                   key=${templateRef(template)}
                   template=${template}
@@ -74357,8 +74589,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
               <span>Personal</span>
               <span>${personalTemplates.length}</span>
             </div>
-            ${personalTemplates.length === 0 ? html21`<div class="templates-empty-copy">No personal templates yet. Save a starter or create one from scratch.</div>` : html21`<div class="templates-list">
-                  ${personalTemplates.map((template) => html21`
+            ${personalTemplates.length === 0 ? html22`<div class="templates-empty-copy">No personal templates yet. Save a starter or create one from scratch.</div>` : html22`<div class="templates-list">
+                  ${personalTemplates.map((template) => html22`
                     <${TemplateRow}
                       key=${templateRef(template)}
                       template=${template}
@@ -74378,7 +74610,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             </div>
           </div>
           <div class="templates-token-cloud">
-            ${["vendor_name", "invoice_number", "amount", "due_date", "po_number", "state_label", "next_action", "issue_summary", "subject"].map((token) => html21`
+            ${["vendor_name", "invoice_number", "amount", "due_date", "po_number", "state_label", "next_action", "issue_summary", "subject"].map((token) => html22`
               <span key=${token} class="templates-token">{{${token}}}</span>
             `)}
           </div>
@@ -74397,7 +74629,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                 ${currentTemplate?.scope === "user" ? "Changes save to your personal template library for this Gmail workspace." : "Starter templates are read-only. Save a personal copy before editing."}
               </p>
             </div>
-            ${currentTemplate?.scope === "user" ? html21`<button class="btn-danger btn-sm" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? "Deleting…" : "Delete"}</button>` : null}
+            ${currentTemplate?.scope === "user" ? html22`<button class="btn-danger btn-sm" onClick=${deleteTemplate} disabled=${deletingTemplate}>${deletingTemplate ? "Deleting…" : "Delete"}</button>` : null}
           </div>
 
           <div class="templates-meta-strip">
@@ -74468,19 +74700,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/ReportsPage.js
-  var html22 = htm_module_default.bind(_);
+  var html23 = htm_module_default.bind(_);
   function MetricCard2({ label, value, detail }) {
-    return html22`<div class="reports-metric-card">
+    return html23`<div class="reports-metric-card">
     <div class="reports-metric-value">${value}</div>
     <div class="reports-metric-label">${label}</div>
-    ${detail ? html22`<div class="reports-metric-detail">${detail}</div>` : null}
+    ${detail ? html23`<div class="reports-metric-detail">${detail}</div>` : null}
   </div>`;
   }
   function ReportRow({ label, value, detail }) {
-    return html22`<div class="reports-row">
+    return html23`<div class="reports-row">
     <div class="reports-row-copy">
       <strong>${label}</strong>
-      ${detail ? html22`<span>${detail}</span>` : null}
+      ${detail ? html23`<span>${detail}</span>` : null}
     </div>
     <div class="reports-row-value">${value}</div>
   </div>`;
@@ -74624,9 +74856,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const operatorSummary = getOperatorPressureSummary(reportData?.kpis || {});
     const proofSummary = getProofScorecardSummary(reportData?.kpis || {}, dashboard);
     if (loading) {
-      return html22`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
+      return html23`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading reports…</p></div>`;
     }
-    return html22`
+    return html23`
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Reports</h3>
@@ -74649,7 +74881,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <div class="reports-main-stack">
         <div class="panel">
           <h3 style="margin-top:0">Top vendors by tracked spend</h3>
-          ${topVendors.length === 0 ? html22`<p class="muted" style="margin:0">No vendor spend data yet.</p>` : html22`${topVendors.map((row) => html22`
+          ${topVendors.length === 0 ? html23`<p class="muted" style="margin:0">No vendor spend data yet.</p>` : html23`${topVendors.map((row) => html23`
                 <${ReportRow}
                   key=${row.vendor_name}
                   label=${row.vendor_name || "Unknown vendor"}
@@ -74667,7 +74899,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="secondary-stat-grid">
             <${MetricCard2}
               label="Touchless completed invoices"
-              value=${html22`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(pilotSummary.touchlessRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(pilotSummary.touchlessRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Average cycle time"
@@ -74675,7 +74907,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
             <${MetricCard2}
               label="On-time approvals"
-              value=${html22`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
+              value=${html23`<span style=${toneForPercent(pilotSummary.onTimeApprovalsPct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(pilotSummary.onTimeApprovalsPct)}</span>`}
             />
             <${MetricCard2}
               label="Average approval wait"
@@ -74683,11 +74915,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
           </div>
 
-          ${pilotSummary.highlights.length > 0 && html22`
+          ${pilotSummary.highlights.length > 0 && html23`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current readout</div>
               <div class="secondary-list">
-                ${pilotSummary.highlights.map((line) => html22`
+                ${pilotSummary.highlights.map((line) => html23`
                   <div key=${line} class="secondary-note">${line}</div>
                 `)}
               </div>
@@ -74703,11 +74935,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div class="secondary-stat-grid">
             <${MetricCard2}
               label="Auto-approved rate"
-              value=${html22`<span style=${toneForPercent(proofSummary.autoApprovedRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(proofSummary.autoApprovedRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(proofSummary.autoApprovedRatePct, { watchBelow: 70, dangerBelow: 50 })}>${metricPercent(proofSummary.autoApprovedRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Human override rate"
-              value=${html22`<span style=${toneForPercent(100 - proofSummary.humanOverrideRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.humanOverrideRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(100 - proofSummary.humanOverrideRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.humanOverrideRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Approval latency"
@@ -74715,15 +74947,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
             <${MetricCard2}
               label="Escalation rate"
-              value=${html22`<span style=${toneForPercent(100 - proofSummary.escalationRatePct, { watchBelow: 88, dangerBelow: 75 })}>${metricPercent(proofSummary.escalationRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(100 - proofSummary.escalationRatePct, { watchBelow: 88, dangerBelow: 75 })}>${metricPercent(proofSummary.escalationRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Posting success rate"
-              value=${html22`<span style=${toneForPercent(proofSummary.postingSuccessRatePct, { watchBelow: 98, dangerBelow: 92 })}>${metricPercent(proofSummary.postingSuccessRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(proofSummary.postingSuccessRatePct, { watchBelow: 98, dangerBelow: 92 })}>${metricPercent(proofSummary.postingSuccessRatePct)}</span>`}
             />
             <${MetricCard2}
               label="Recovery success rate"
-              value=${html22`<span style=${toneForPercent(proofSummary.recoverySuccessRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.recoverySuccessRatePct)}</span>`}
+              value=${html23`<span style=${toneForPercent(proofSummary.recoverySuccessRatePct, { watchBelow: 85, dangerBelow: 70 })}>${metricPercent(proofSummary.recoverySuccessRatePct)}</span>`}
             />
           </div>
 
@@ -74750,11 +74982,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
           </div>
 
-          ${proofSummary.highlights.length > 0 && html22`
+          ${proofSummary.highlights.length > 0 && html23`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Current proof readout</div>
               <div class="secondary-list">
-                ${proofSummary.highlights.map((line) => html22`
+                ${proofSummary.highlights.map((line) => html23`
                   <div key=${line} class="secondary-note">${line}</div>
                 `)}
               </div>
@@ -74839,11 +75071,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             />
           </div>
 
-          ${sourceTypes.length > 0 && html22`
+          ${sourceTypes.length > 0 && html23`
             <div style="margin-top:14px">
               <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:8px">Connected source types</div>
               <div class="reports-chip-wrap">
-                ${sourceTypes.map(([sourceType, count]) => html22`
+                ${sourceTypes.map(([sourceType, count]) => html23`
                   <span key=${sourceType} class="secondary-chip">
                     ${sourceType} ${count}
                   </span>
@@ -74861,17 +75093,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <div style="display:flex;flex-direction:column;gap:8px">
             <${ReportRow}
               label="Shadow action match"
-              value=${html22`<span style=${toneForPercent(agenticSnapshot.shadow_action_match_pct, { watchBelow: 95, dangerBelow: 90 })}>${metricPercent(agenticSnapshot.shadow_action_match_pct)}</span>`}
+              value=${html23`<span style=${toneForPercent(agenticSnapshot.shadow_action_match_pct, { watchBelow: 95, dangerBelow: 90 })}>${metricPercent(agenticSnapshot.shadow_action_match_pct)}</span>`}
               detail=${`${Number(agenticSnapshot.shadow_scored_items || 0).toLocaleString()} scored records · ${Number(agenticSnapshot.shadow_disagreement_count || 0).toLocaleString()} disagreements`}
             />
             <${ReportRow}
               label="Critical field match"
-              value=${html22`<span style=${toneForPercent(agenticSnapshot.shadow_critical_field_match_pct, { watchBelow: 97, dangerBelow: 92 })}>${metricPercent(agenticSnapshot.shadow_critical_field_match_pct)}</span>`}
+              value=${html23`<span style=${toneForPercent(agenticSnapshot.shadow_critical_field_match_pct, { watchBelow: 97, dangerBelow: 92 })}>${metricPercent(agenticSnapshot.shadow_critical_field_match_pct)}</span>`}
               detail="Amount, currency, invoice #, vendor, and document type"
             />
             <${ReportRow}
               label="Post verification rate"
-              value=${html22`<span style=${toneForPercent(agenticSnapshot.post_verification_rate_pct, { watchBelow: 100, dangerBelow: 95 })}>${metricPercent(agenticSnapshot.post_verification_rate_pct)}</span>`}
+              value=${html23`<span style=${toneForPercent(agenticSnapshot.post_verification_rate_pct, { watchBelow: 100, dangerBelow: 95 })}>${metricPercent(agenticSnapshot.post_verification_rate_pct)}</span>`}
               detail=${`${Number(agenticSnapshot.post_verification_attempted_count || 0).toLocaleString()} posted attempts · ${Number(agenticSnapshot.post_verification_mismatch_count || 0).toLocaleString()} mismatches`}
             />
           </div>
@@ -74881,7 +75113,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           <h3 style="margin-top:0">Start from the right view</h3>
           <p class="muted" style="margin:0 0 12px">Use reports to spot a problem, then jump into the matching queue view.</p>
           <div class="secondary-card-list">
-            ${starterViews.slice(0, 4).map((view) => html22`
+            ${starterViews.slice(0, 4).map((view) => html23`
               <div key=${view.id} class="reports-export-row">
                 <div>
                   <strong style="display:block;font-size:13px">${view.name}</strong>
@@ -74920,7 +75152,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setExporting(false);
     };
-    return html22`
+    return html23`
     <div class="secondary-inline-actions" style="margin-top:4px">
       <input type="text" placeholder="Paste Google Sheets URL..." value=${sheetUrl} onInput=${(e3) => setSheetUrl(e3.target.value)}
         style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px" />
@@ -74928,7 +75160,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ${exporting ? "..." : "Push to Sheets"}
       </button>
     </div>
-    ${result && html22`<div class="reports-inline-result">${result}</div>`}
+    ${result && html23`<div class="reports-inline-result">${result}</div>`}
   `;
   }
   function ExportButton({ api, reportType, label, description }) {
@@ -74951,7 +75183,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       setDownloading(false);
     };
-    return html22`
+    return html23`
     <div class="reports-export-row">
       <div>
         <strong style="display:block;font-size:13px">${label}</strong>
@@ -74968,17 +75200,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, []);
     if (!data || !data.top_vendors?.length)
       return null;
-    return html22`
+    return html23`
     <div class="panel">
       <h3 style="margin-top:0">Spend analysis (30 days)</h3>
       <div>
-        ${data.top_vendors.slice(0, 6).map((v3) => html22`
+        ${data.top_vendors.slice(0, 6).map((v3) => html23`
           <${ReportRow} key=${v3.vendor_name} label=${v3.vendor_name} value=${fmtDollar(v3.total_spend)} detail=${`${v3.invoice_count} invoice${v3.invoice_count !== 1 ? "s" : ""}`} />
         `)}
       </div>
-      ${data.anomalies?.length > 0 && html22`
+      ${data.anomalies?.length > 0 && html23`
         <div class="secondary-callout warning" style="margin-top:12px">
-          ${data.anomalies.slice(0, 3).map((a3) => html22`<div key=${a3.vendor}>${a3.message}</div>`)}
+          ${data.anomalies.slice(0, 3).map((a3) => html23`<div key=${a3.vendor}>${a3.message}</div>`)}
         </div>
       `}
     </div>
@@ -74992,14 +75224,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!data || !data.summary)
       return null;
     const s3 = data.summary;
-    return html22`
+    return html23`
     <div class="panel">
       <h3 style="margin-top:0">AP aging</h3>
       <div class="secondary-stat-grid" style="margin-bottom:8px">
         <${MetricCard2} label="Open invoices" value=${s3.total_open_count || 0} />
         <${MetricCard2} label="Overdue" value=${s3.overdue_count || 0} detail=${s3.overdue_pct ? `${s3.overdue_pct}% of open` : ""} />
       </div>
-      ${s3.weighted_avg_days_past_due != null && html22`
+      ${s3.weighted_avg_days_past_due != null && html23`
         <div class="muted" style="font-size:12px;text-align:center">Weighted avg days past due: ${s3.weighted_avg_days_past_due}</div>
       `}
     </div>
@@ -75012,11 +75244,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, []);
     if (!data)
       return null;
-    return html22`
+    return html23`
     <div class="panel">
       <h3 style="margin-top:0">Period close</h3>
       <${ReportRow} label="Current period" value=${data.period} detail=${data.is_locked ? "LOCKED" : `Closes ${data.closes_on}`} />
-      ${data.in_closing_window && html22`
+      ${data.in_closing_window && html23`
         <div class="secondary-callout warning" style="margin-top:6px">
           Closing window — ${data.days_until_close} day${data.days_until_close !== 1 ? "s" : ""} until cutoff
         </div>
@@ -75031,20 +75263,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }, []);
     if (!data || !data.vendor_count)
       return null;
-    return html22`
+    return html23`
     <div class="panel">
       <h3 style="margin-top:0">Tax compliance</h3>
       <${ReportRow} label="Vendors tracked" value=${data.vendor_count} />
-      ${data.missing_tax_id_count > 0 && html22`
+      ${data.missing_tax_id_count > 0 && html23`
         <${ReportRow} label="Missing tax ID" value=${data.missing_tax_id_count} detail="Vendors without a validated tax ID" />
       `}
-      ${data.invalid_tax_id_count > 0 && html22`
+      ${data.invalid_tax_id_count > 0 && html23`
         <${ReportRow} label="Invalid tax ID format" value=${data.invalid_tax_id_count} />
       `}
-      ${data.reverse_charge_applicable?.length > 0 && html22`
+      ${data.reverse_charge_applicable?.length > 0 && html23`
         <${ReportRow} label="Reverse charge applicable" value=${data.reverse_charge_applicable.length} detail="Intra-EU B2B transactions" />
       `}
-      ${data.wht_applicable?.length > 0 && html22`
+      ${data.wht_applicable?.length > 0 && html23`
         <${ReportRow} label="WHT applicable" value=${data.wht_applicable.length} detail="Withholding tax required" />
       `}
     </div>
@@ -75052,7 +75284,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/routes/pages/VendorOnboardingPage.js
-  var html23 = htm_module_default.bind(_);
+  var html24 = htm_module_default.bind(_);
   var ONBOARDING_STAGES = [
     { key: "invited", label: "Invited", states: ["invited"], color: "#9CA3AF" },
     { key: "kyc", label: "KYC", states: ["kyc"], color: "#D97706" },
@@ -75076,7 +75308,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function StateBadge({ state }) {
     const secondary = SECONDARY_STATES[state];
     if (secondary) {
-      return html23`<span style="
+      return html24`<span style="
       font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;
       background:${secondary.color}20;color:${secondary.color};text-transform:uppercase;
     ">${secondary.label}</span>`;
@@ -75123,7 +75355,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       return groups;
     }, [sessions]);
-    return html23`
+    return html24`
     <div class="topbar" style="padding:16px 20px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
       <div>
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#5C6B7A;margin-bottom:4px">Vendor Onboarding</div>
@@ -75136,7 +75368,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         onClick=${() => setInviteOpen(true)}
       >Invite vendor</button>
     </div>
-    ${inviteOpen ? html23`<${InviteVendorModal}
+    ${inviteOpen ? html24`<${InviteVendorModal}
       api=${api}
       orgId=${orgId}
       toast=${toast}
@@ -75146,11 +75378,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }}
     />` : ""}
 
-    ${loading ? html23`<div class="muted" style="text-align:center;padding:48px 0;font-size:13px">Loading onboarding sessions…</div>` : html23`
+    ${loading ? html24`<div class="muted" style="text-align:center;padding:48px 0;font-size:13px">Loading onboarding sessions…</div>` : html24`
         <div style="display:flex;gap:12px;overflow-x:auto;padding:12px 20px 20px;min-height:400px">
           ${ONBOARDING_STAGES.map((stage) => {
       const items = stageGroups[stage.key] || [];
-      return html23`
+      return html24`
               <div key=${stage.key} style="
                 min-width:220px;max-width:260px;flex:1;
                 background:#F7F9FB;border-radius:10px;
@@ -75167,7 +75399,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                   ">${items.length}</span>
                 </div>
                 <div style="padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
-                  ${items.length === 0 ? html23`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No vendors</div>` : items.map((session) => html23`
+                  ${items.length === 0 ? html24`<div class="muted" style="font-size:12px;text-align:center;padding:24px 8px">No vendors</div>` : items.map((session) => html24`
                       <div
                         key=${session.id}
                         style="
@@ -75184,7 +75416,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
                         </div>
                         <div class="muted" style="font-size:11px;display:flex;justify-content:space-between;align-items:center">
                           <span>${daysElapsed(session.invited_at)}d elapsed</span>
-                          ${session.chase_count > 0 ? html23`<span>${session.chase_count} chase${session.chase_count > 1 ? "s" : ""}</span>` : ""}
+                          ${session.chase_count > 0 ? html24`<span>${session.chase_count} chase${session.chase_count > 1 ? "s" : ""}</span>` : ""}
                         </div>
                         <${StateBadge} state=${session.state} />
                       </div>
@@ -75195,13 +75427,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     })}
         </div>
 
-        ${stageGroups._secondary.length > 0 ? html23`
+        ${stageGroups._secondary.length > 0 ? html24`
           <div style="padding:0 20px 20px">
             <div style="font-size:13px;font-weight:600;color:#5C6B7A;margin-bottom:8px">
               Escalated, rejected, and abandoned (${stageGroups._secondary.length})
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              ${stageGroups._secondary.map((session) => html23`
+              ${stageGroups._secondary.map((session) => html24`
                 <div
                   key=${session.id}
                   style="background:#fff;border:1px solid #E5EBF0;border-radius:8px;padding:8px 12px;cursor:pointer;min-width:200px"
@@ -75215,7 +75447,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           </div>
         ` : ""}
 
-        ${sessions.length === 0 ? html23`
+        ${sessions.length === 0 ? html24`
           <div class="muted" style="text-align:center;padding:48px 20px;font-size:13px">
             <div style="margin-bottom:12px">No vendor onboarding sessions yet.</div>
             <button
@@ -75487,7 +75719,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   }
 
   // src/inboxsdk-layer.js
-  var html24 = htm_module_default.bind(_);
+  var html25 = htm_module_default.bind(_);
   var APP_ID = "sdk_Clearledgr2026_dc12c60472";
   var INIT_KEY = "__clearledgr_ap_v1_inboxsdk_initialized";
   var LOGO_PATH2 = "icons/icon48.png";
@@ -75546,7 +75778,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function mountSidebar() {
     if (!sidebarContainer)
       return;
-    J(html24`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
+    J(html25`<${SidebarApp} queueManager=${queueManager} />`, sidebarContainer);
   }
   async function ensureSidebarPanelView() {
     if (sidebarPanelView && !sidebarPanelView.destroyed)
@@ -76773,7 +77005,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       return result;
     };
-    J(html24`<${OnboardingFlow}
+    J(html25`<${OnboardingFlow}
       api=${api}
       onComplete=${onComplete}
       onDismiss=${onDismiss}
@@ -77664,7 +77896,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html24`<${InvoiceDetailPage}
+      J(html25`<${InvoiceDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -77699,7 +77931,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const navigate = (routeId, params2) => sdk.Router.goto(routeId, params2);
       const userEmail = sdk.User?.getEmailAddress?.() || queueManager?.runtimeConfig?.userEmail || "";
       const bootstrap2 = await getBootstrap();
-      J(html24`<${VendorDetailPage}
+      J(html25`<${VendorDetailPage}
       api=${workspaceShellApi.api}
       bootstrap=${bootstrap2}
       toast=${workspaceShellApi.toast}
@@ -77750,7 +77982,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (!canViewRoute(route, routeOptions)) {
-            J(html24`
+            J(html25`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
@@ -77760,7 +77992,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html24`<${PageComponent}
+          J(html25`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}
@@ -77811,7 +78043,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const bootstrap2 = await getBootstrap();
           const routeOptions = { capabilities: getCapabilities(bootstrap2) };
           if (settingsRoute && !canViewRoute(settingsRoute, routeOptions)) {
-            J(html24`
+            J(html25`
             <div class="panel">
               <h3 style="margin:0 0 8px">Access restricted</h3>
               <p class="muted" style="margin:0 0 12px">This page is not enabled for your workspace access.</p>
@@ -77821,7 +78053,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             return;
           }
           const routePreferences = readRoutePreferences(routeOptions);
-          J(html24`<${PageComponent}
+          J(html25`<${PageComponent}
           bootstrap=${bootstrap2}
           api=${workspaceShellApi.api}
           toast=${workspaceShellApi.toast}

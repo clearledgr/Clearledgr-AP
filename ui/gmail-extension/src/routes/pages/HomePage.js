@@ -7,6 +7,8 @@ import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { perfMarkStart, perfMarkDone } from '../../utils/perf-budget.js';
+import store, { useStore } from '../../utils/store.js';
+import BudgetPausedBanner from '../../components/BudgetPausedBanner.js';
 
 // §4.07: module-scoped flag so the "home interactive" clock starts the
 // first time the route renders HomePage, not on every re-render inside
@@ -293,6 +295,58 @@ export default function HomePage({
     _homePerfStarted = true;
     perfMarkStart('home');
   }
+
+  // Subscribe to store so the LLM budget paused-banner re-renders
+  // immediately when SidebarApp's fetch lands or when an override
+  // completes. `s.llmBudgetStatus` is the authoritative source of
+  // truth; this page just re-reads on each update.
+  const s = useStore();
+
+  // Ensure the banner has something to render even if the user's
+  // first interaction is a direct hash-navigation to /home (no
+  // sidebar mount happened yet and SidebarApp's own fetch didn't
+  // run). Fire-and-forget; noop if already populated this session.
+  useEffect(() => {
+    let cancelled = false;
+    if (s.llmBudgetStatus !== null) return;
+    (async () => {
+      try {
+        const status = await api('/api/workspace/llm-budget/status', { silent: true });
+        if (!cancelled) store.update({ llmBudgetStatus: status });
+      } catch (_) { /* silent — banner just stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [s.llmBudgetStatus, api]);
+
+  const onBudgetOverride = async () => {
+    if (s.llmBudgetOverridePending) return;
+    const reason = typeof window !== 'undefined' && typeof window.prompt === 'function'
+      ? window.prompt(
+          'Lift the LLM budget pause for this workspace?\n\nReason (required — logged to the audit trail):',
+        )
+      : null;
+    if (!reason || !String(reason).trim()) return;
+    store.update({ llmBudgetOverridePending: true });
+    try {
+      const result = await api('/api/workspace/llm-budget/override', {
+        method: 'POST',
+        body: JSON.stringify({ reason: String(reason).trim() }),
+      });
+      if (result && result.status === 'cleared') {
+        toast?.('Agent resumed — LLM budget pause lifted.', 'success');
+        try {
+          const fresh = await api('/api/workspace/llm-budget/status', { silent: true });
+          store.update({ llmBudgetStatus: fresh });
+        } catch (_) { /* banner will hide on next fetch */ }
+      } else {
+        toast?.(`Could not lift pause: ${result?.detail || 'unknown'}`, 'error');
+      }
+    } catch (err) {
+      toast?.(`Could not lift pause: ${err?.message || err}`, 'error');
+    } finally {
+      store.update({ llmBudgetOverridePending: false });
+    }
+  };
 
   const gmail = integrationByName(bootstrap, 'gmail');
   const slack = integrationByName(bootstrap, 'slack');
@@ -740,6 +794,11 @@ export default function HomePage({
   }, [recentAudit]);
 
   return html`
+    <${BudgetPausedBanner}
+      status=${s.llmBudgetStatus}
+      onRequestOverride=${onBudgetOverride}
+      pending=${s.llmBudgetOverridePending}
+    />
     <div class="topbar home-header-shell">
       <div class="home-header-copy">
         <div class="home-eyebrow">Clearledgr Home</div>

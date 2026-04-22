@@ -1,6 +1,24 @@
 /** Reactive store — replaces 15+ module-level let variables with a single observable state */
 
+import { useState, useEffect } from 'preact/hooks';
+
 const _listeners = new Set();
+
+/** Preact hook: subscribe a component to store updates.
+ *
+ * Any call to `store.update(...)` after mount will cause every
+ * subscribed component to re-render. Returns the store object so
+ * callers read directly (e.g. `const s = useStore(); s.llmBudgetStatus`).
+ *
+ * Kept here so pages outside the sidebar shell (HomePage, etc.)
+ * can subscribe without having to import the private hook from
+ * SidebarApp.
+ */
+export function useStore() {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => store.subscribe(() => forceUpdate((n) => n + 1)), []);
+  return store;
+}
 
 const store = {
   queueState: [],
@@ -27,6 +45,12 @@ const store = {
   auditState: { itemId: null, loading: false, events: [] },
   rowDecorated: new Set(),
   openComposeWithPrefill: null,
+  // LLM runaway-spend guard status. null = unknown / not loaded yet.
+  // Shape from GET /api/workspace/llm-budget/status:
+  //   { paused, paused_at, cost_usd, cap_usd, period_start, period_end, can_override }
+  // Consumed by BudgetPausedBanner in ThreadSidebar + HomePage.
+  llmBudgetStatus: null,
+  llmBudgetOverridePending: false,
 
   update(patch) {
     Object.assign(this, patch);

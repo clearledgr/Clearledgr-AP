@@ -1443,6 +1443,44 @@ class ClearledgrQueueManager {
     }
   }
 
+  // LLM runaway-spend guard: status + override.
+  //
+  // Status tells the in-product banner whether Claude calls are
+  // currently being refused for this workspace, the month-to-date
+  // spend vs the monthly hard cap, and whether the caller has rank
+  // high enough (CFO or OWNER) to lift the pause from inside Gmail.
+  async fetchLlmBudgetStatus() {
+    if (!this.runtimeConfig?.backendUrl) return null;
+    try {
+      const response = await this.backendFetch(
+        `${this.runtimeConfig.backendUrl}/api/workspace/llm-budget/status`,
+      );
+      if (!response || response.ok === false) return null;
+      return response;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async overrideLlmBudgetPause(reason) {
+    if (!this.runtimeConfig?.backendUrl) return { status: 'error', reason: 'no_backend' };
+    const trimmed = String(reason || '').trim();
+    if (!trimmed) return { status: 'error', reason: 'reason_required' };
+    try {
+      const response = await this.backendFetch(
+        `${this.runtimeConfig.backendUrl}/api/workspace/llm-budget/override`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: trimmed }),
+        },
+      );
+      return response || { status: 'error', reason: 'empty_response' };
+    } catch (err) {
+      return { status: 'error', reason: err?.message || 'network_error' };
+    }
+  }
+
   async getGlSuggestions(item) {
     if (!item || !this.runtimeConfig?.backendUrl) return null;
     try {

@@ -1876,6 +1876,51 @@ export default function SidebarApp({ queueManager }) {
   };
   const openPipeline = useCallback(() => navigateInboxRoute('clearledgr/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
 
+  // Fetch LLM runaway-spend-guard status once per mount and whenever
+  // an override completes. `llmBudgetStatus` lives in the store so
+  // both ThreadSidebar and HomePage read the same source of truth.
+  // Not polled — status only changes when (a) a call trips the cap,
+  // (b) a CFO override clears the pause, or (c) the billing month
+  // rolls over. First two auto-refresh; the third is cheap to miss
+  // for minutes since the next Claude call clears the pause anyway.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (typeof queueManager?.fetchLlmBudgetStatus !== 'function') return;
+      const status = await queueManager.fetchLlmBudgetStatus();
+      if (!cancelled) store.update({ llmBudgetStatus: status });
+    })();
+    return () => { cancelled = true; };
+  }, [queueManager]);
+
+  const onBudgetOverride = useCallback(async () => {
+    if (s.llmBudgetOverridePending) return;
+    let reason = null;
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      reason = window.prompt(
+        'Lift the LLM budget pause for this workspace?\n\nReason (required — logged to the audit trail):',
+      );
+    }
+    if (!reason || !String(reason).trim()) return;
+    store.update({ llmBudgetOverridePending: true });
+    try {
+      const result = await queueManager.overrideLlmBudgetPause(String(reason).trim());
+      if (result && result.status === 'cleared') {
+        showToast('Agent resumed — LLM budget pause lifted.', 'success');
+        // Refresh status so the banner disappears immediately.
+        const fresh = await queueManager.fetchLlmBudgetStatus();
+        store.update({ llmBudgetStatus: fresh });
+      } else {
+        const detail = result?.detail || result?.reason || 'unknown_error';
+        showToast(`Could not lift pause: ${detail}`, 'error');
+      }
+    } catch (err) {
+      showToast(`Could not lift pause: ${err?.message || err}`, 'error');
+    } finally {
+      store.update({ llmBudgetOverridePending: false });
+    }
+  }, [queueManager, s.llmBudgetOverridePending]);
+
   // Stable callbacks for ThreadSidebar's onboarding status fetch +
   // invite POST. These props feed `useEffect` deps inside the sidebar;
   // without useCallback they'd change identity on every SidebarApp
@@ -2162,6 +2207,9 @@ export default function SidebarApp({ queueManager }) {
                 }}
                 fetchOnboardingStatus=${fetchOnboardingStatus}
                 inviteVendorApi=${inviteVendorApi}
+                budgetStatus=${s.llmBudgetStatus}
+                onBudgetOverride=${onBudgetOverride}
+                budgetOverridePending=${s.llmBudgetOverridePending}
                 onSnooze=${async (snoozeItem) => {
                   try {
                     const result = await queueManager.backendFetch(
