@@ -95,7 +95,7 @@ AP_WORKFLOW_STEPS: List[WorkflowStep] = [
         execute="_post_to_erp",
         on_success=APState.POSTED_TO_ERP,
         on_failure=APState.FAILED_POST,
-        description="Post bill to ERP (API-first with browser-agent fallback).",
+        description="Post bill to the configured ERP connector.",
     ),
     WorkflowStep(
         state=APState.POSTED_TO_ERP,
