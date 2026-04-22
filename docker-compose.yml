@@ -47,8 +47,10 @@ services:
       - GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD=${GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD:-false}
       - GMAIL_OAUTH_STATE_MAX_AGE_SECONDS=${GMAIL_OAUTH_STATE_MAX_AGE_SECONDS:-900}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -92,8 +94,10 @@ services:
       - GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD=${GMAIL_PUSH_ALLOW_UNVERIFIED_IN_PROD:-false}
       - GMAIL_OAUTH_STATE_MAX_AGE_SECONDS=${GMAIL_OAUTH_STATE_MAX_AGE_SECONDS:-900}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -123,6 +127,16 @@ services:
     ports:
       - "5432:5432"
     restart: unless-stopped
+    # Healthcheck gates api + worker startup so they don't race the
+    # Postgres warmup. Without this the app hit a transient connection
+    # error on fresh `docker-compose up` and then lazy-init recovered
+    # — noisy logs, and a real problem if migrations run at boot.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clearledgr -d clearledgr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   # Redis for caching and rate limiting
   redis:

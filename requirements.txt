@@ -67,6 +67,10 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 black>=24.1.0
 ruff>=0.2.0
+# Spins up an ephemeral Postgres 15 container for test sessions so
+# tests run against the same engine that prod uses. Opt-out for fast
+# local iteration: `TEST_DB_ENGINE=sqlite pytest`.
+testcontainers[postgresql]>=4.0.0
 
 # Optional: ERP Integrations
 # quickbooks-python>=0.5.0    # QuickBooks (if needed)

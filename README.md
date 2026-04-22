@@ -209,7 +209,28 @@ Clearledgr is now deployment-ready for a split Railway topology:
 
 Use `/Users/mombalam/Desktop/Clearledgr.v1/docs/RAILWAY_DEPLOYMENT.md` for the exact env, Slack/Gmail callback URLs, and Gmail extension build command.
 
-### 5. Run core regression slices
+### 5. Run tests
+
+Tests run against Postgres by default so the prod dialect is exercised in every run. Three ways to provision it, in order of simplicity:
+
+```bash
+# Option A — you already have a local Postgres running (brew services, Postgres.app, etc.)
+createdb -h localhost -p 5432 clearledgr_test
+TEST_DATABASE_URL="postgresql://localhost:5432/clearledgr_test" pytest -q
+
+# Option B — use docker-compose for infra, point tests at it
+docker-compose up -d db
+TEST_DATABASE_URL="postgresql://clearledgr:clearledgr@localhost:5432/clearledgr" pytest -q
+
+# Option C — let the test harness spin a throwaway container per session
+#           (requires Docker daemon; no TEST_DATABASE_URL needed)
+pytest -q
+
+# Escape hatch — fast SQLite iteration, skips Postgres dialect coverage
+TEST_DB_ENGINE=sqlite pytest -q
+```
+
+Core regression slices (same on any engine):
 
 ```bash
 PYTHONPATH=. pytest -q tests/test_finance_contracts.py tests/test_finance_agent_runtime.py tests/test_erp_adapter_contracts.py tests/test_api_endpoints.py::TestAgentIntentEndpoints tests/test_api_endpoints.py::TestExtensionEndpoints tests/test_runtime_surface_scope.py
