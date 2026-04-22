@@ -47,7 +47,7 @@ These three features are what make Clearledgr genuinely better than generic emai
 **Files implementing these:**
 - `clearledgr/workflows/gmail_activities.py` - `generate_audit_id()`, `calculate_match_confidence()`, `update_slack_thread_activity()`
 - `clearledgr/workflows/gmail_workflows.py` - `ApproveAndPostWorkflow` with HITL gate
-- `clearledgr/api/gmail_extension.py` - `/approve-and-post`, `/verify-confidence`, `/escalate` endpoints
+- `clearledgr/api/gmail_extension.py` - `/post-to-erp`, `/verify-confidence`, `/escalate` endpoints
 - `ui/gmail-extension/background.js` - `handleApproveAndPost()`, `handleVerifyConfidence()`, `handleEscalateToManager()`
 - `ui/gmail-extension/sidebar.js` - Confidence-based button rendering, mismatch modal
 
@@ -243,7 +243,7 @@ class TemporalRuntime:
 async function handleApproveAndPost(emailId, extraction, bankMatch, erpMatch, override) {
   // Try backend (Temporal workflow)
   if (!DEMO_MODE) {
-    const result = await api("/extension/approve-and-post", {
+    const result = await api("/extension/post-to-erp", {
       method: "POST",
       body: JSON.stringify({
         email_id: emailId,
@@ -266,7 +266,7 @@ async function handleApproveAndPost(emailId, extraction, bankMatch, erpMatch, ov
 | `POST /extension/triage` | `EmailTriageWorkflow` | Classify + extract single email |
 | `POST /extension/process` | `EmailProcessingWorkflow` | Full processing with matching |
 | `POST /extension/scan` | `BulkEmailScanWorkflow` | Batch inbox scan |
-| `POST /extension/approve-and-post` | `ApproveAndPostWorkflow` | HITL approval + ERP post + Slack |
+| `POST /extension/post-to-erp` | `post_to_erp` handler | Executes post-to-ERP after approval captured elsewhere |
 | `POST /extension/verify-confidence` | - | HITL confidence check |
 | `POST /extension/escalate` | - | Send to Slack for manager review |
 

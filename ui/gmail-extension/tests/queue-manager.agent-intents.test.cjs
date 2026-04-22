@@ -219,14 +219,14 @@ test('rejectInvoice uses canonical reject intent', async () => {
   assert.equal(payload.input.reason, 'Duplicate invoice');
 });
 
-test('approveAndPost uses canonical ERP posting intent', async () => {
+test('postToErp uses canonical ERP posting intent', async () => {
   const calls = [];
   const manager = createManager(async (url, options) => {
     calls.push({ url, options });
     return createResponse(200, { status: 'posted_to_erp', erp_reference: 'ERP-POST-1' });
   });
 
-  const result = await manager.approveAndPost(
+  const result = await manager.postToErp(
     { id: 'ap-post-1', field_confidences: { amount: 0.98 } },
     { override: false, idempotencyKey: 'idem-post-1' }
   );

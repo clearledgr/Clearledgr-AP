@@ -344,7 +344,7 @@ def test_ap_runtime_registers_sidebar_core_intents():
 def test_gmail_extension_mutations_delegate_to_runtime_owned_ap_contract():
     source = (ROOT / "clearledgr/api/gmail_extension.py").read_text(encoding="utf-8")
 
-    assert 'async def approve_and_post(' in source
+    assert 'async def post_to_erp(' in source
     assert 'result = await runtime.execute_intent(' in source
     assert '"post_to_erp",' in source
     assert 'async def submit_for_approval(' in source

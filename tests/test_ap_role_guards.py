@@ -34,7 +34,7 @@ OPS_MUTATION_ROUTES = {
     ("POST", "/api/ap/items/{ap_item_id}/retry-post"),
     ("POST", "/extension/process"),
     ("POST", "/extension/scan"),
-    ("POST", "/extension/approve-and-post"),
+    ("POST", "/extension/post-to-erp"),
     ("POST", "/extension/escalate"),
     ("POST", "/extension/submit-for-approval"),
     ("POST", "/extension/reject-invoice"),

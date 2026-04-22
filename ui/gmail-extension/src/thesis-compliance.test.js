@@ -28,24 +28,25 @@ describe('DESIGN_THESIS §6.3: Gmail = work surface, Slack = decision surface', 
       'approve button CSS class must not exist in the sidebar');
     assert.doesNotMatch(src, /onApprove/,
       'onApprove prop must not be wired into the sidebar');
-    assert.doesNotMatch(src, /approveAndPost/,
-      'sidebar must not call approveAndPost directly');
+    assert.doesNotMatch(src, /postToErp|approveAndPost/,
+      'sidebar must not call the post-to-ERP method directly (old or new name)');
   });
 
   it('Thread toolbar (Toolbars injection point) has no Approve button', () => {
     const src = readFile('./inboxsdk-layer.js');
     // The thesis-violating pattern was a registerThreadButton with
-    // title:'Approve' that called queueManager.approveAndPost. Either
-    // of these in the toolbar registration surface is a regression.
+    // title:'Approve' that called queueManager.postToErp / approveAndPost.
+    // Either form in the toolbar registration surface is a regression.
     const toolbarRegistration = src.match(
       /sdk\.Toolbars\.registerThreadButton\(\{[^}]*?title:\s*['"]Approve['"][\s\S]*?\}\)/
     );
     assert.equal(toolbarRegistration, null,
       'no Gmail thread-toolbar button may be titled "Approve" — approvals route to Slack');
 
-    // Defence-in-depth: approveAndPost must not be called from the
-    // inboxsdk-layer (which is the toolbar registration surface).
-    assert.doesNotMatch(src, /queueManager\.approveAndPost/,
-      'inboxsdk-layer must not invoke approveAndPost — that surface is work, not decision');
+    // Defence-in-depth: the post-to-ERP method must not be called from the
+    // inboxsdk-layer (which is the toolbar registration surface). Check both
+    // the canonical name and the legacy name so drift in either direction fails.
+    assert.doesNotMatch(src, /queueManager\.(postToErp|approveAndPost)/,
+      'inboxsdk-layer must not invoke post-to-ERP from a toolbar button — that surface is work, not decision');
   });
 });

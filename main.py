@@ -323,7 +323,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/worklist",
     "/extension/gmail/register-token",
     "/extension/gmail/exchange-code",
-    "/extension/approve-and-post",
+    "/extension/post-to-erp",
     "/extension/verify-confidence",
     "/extension/match-bank",
     "/extension/match-erp",

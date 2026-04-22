@@ -213,9 +213,9 @@ Internal-facing. What's shippable today, what's shippable with caveats, what isn
 
 Three items. First two are deck-copy calls; third is a code call.
 
-## Gap 1 — Sidebar Approve button contradicts thesis
+## Gap 1 — Sidebar Approve button contradicts thesis — RESOLVED 2026-04-21
 
-**Where:** [ThreadSidebar.js:1336-1339](../ui/gmail-extension/src/components/ThreadSidebar.js#L1336-L1339) renders Approve when `matchPassed`; wires to [SidebarApp.js:2165-2173](../ui/gmail-extension/src/components/SidebarApp.js#L2165-L2173) which calls `queueManager.approveAndPost()` → direct to ERP, bypassing Slack.
+**Where it was:** [ThreadSidebar.js:1336-1339](../ui/gmail-extension/src/components/ThreadSidebar.js#L1336-L1339) renders Approve when `matchPassed`; wires to [SidebarApp.js:2165-2173](../ui/gmail-extension/src/components/SidebarApp.js#L2165-L2173) which called `queueManager.approveAndPost()`. Both the sidebar and thread-toolbar Approve buttons were removed in commit `678a6e0` (2026-04-21); `thesis-compliance.test.js` now guards against reintroduction. The method has since been renamed to `postToErp` (matching the intent it actually dispatches) — see the 2026-04-22 naming-sediment commit.
 
 **Thesis commitment:** "Sidebar does NOT have approve/reject buttons — those route to Slack/Teams."
 

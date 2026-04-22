@@ -255,7 +255,7 @@ Total issues: 43 (12 critical, 13 high, 14 medium)
 **User impact:** Can submit unlimited invoices for approval.
 **Fix:** Add check_limit() before processing.
 
-### D7. [MEDIUM] /extension/approve-and-post not gated
+### D7. [MEDIUM] /extension/post-to-erp not gated
 **File:** `clearledgr/api/gmail_extension.py:1355`
 **What happens:** Posts to ERP without tracking ERP-posting quota.
 **User impact:** Unlimited ERP posts regardless of plan tier.

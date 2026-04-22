@@ -994,22 +994,22 @@ import { ClearledgrQueueManager } from './queue-manager.js';
       emit('clearledgr:confidence-result', { itemId: item.id, result });
     });
 
-    window.addEventListener('clearledgr:approve-and-post', async (e) => {
+    window.addEventListener('clearledgr:post-to-erp', async (e) => {
       const { item, override, justification } = e.detail || {};
       if (!item || !queueManager) return;
-      const result = await queueManager.approveAndPost(item, {
+      const result = await queueManager.postToErp(item, {
         override: !!override,
         overrideJustification: justification || ''
       });
       if (result.status === 'approved' || result.status === 'posted') {
-        toast('Invoice approved and posted', 'success');
+        toast('Invoice posted to ERP', 'success');
       } else if (result.status === 'needs_budget_decision') {
         toast('Budget decision required', 'warning');
       } else if (result.status === 'error') {
-        toast(result.reason || 'Approval failed', 'error');
+        toast(result.reason || 'Post to ERP failed', 'error');
       }
-      emit('clearledgr:approve-result', { itemId: item.id, result });
-      dispatchPipelineData({ source: 'approve_and_post' });
+      emit('clearledgr:post-to-erp-result', { itemId: item.id, result });
+      dispatchPipelineData({ source: 'post_to_erp' });
     });
 
     window.addEventListener('clearledgr:get-gl-suggestions', async (e) => {

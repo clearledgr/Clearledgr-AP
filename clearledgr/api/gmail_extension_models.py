@@ -62,8 +62,13 @@ class GmailLabelCleanupRequest(BaseModel):
     max_messages_per_label: int = Field(default=1000, ge=1, le=5000)
 
 
-class ApproveAndPostRequest(BaseModel):
-    """Request to approve and post an invoice with HITL gate."""
+class PostToErpRequest(BaseModel):
+    """Request to execute post-to-ERP for an already-approved invoice.
+
+    The `override` flag allows forcing a post despite a low-confidence
+    extraction — justified cases only, captured in the override audit
+    trail, not a general-purpose bypass.
+    """
     email_id: str
     ap_item_id: Optional[str] = None
     extraction: Dict[str, Any]

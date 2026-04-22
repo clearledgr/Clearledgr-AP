@@ -1418,7 +1418,7 @@ class ClearledgrQueueManager {
     }
   }
 
-  async approveAndPost(item, { override = false, overrideJustification = '', idempotencyKey = '' } = {}) {
+  async postToErp(item, { override = false, overrideJustification = '', idempotencyKey = '' } = {}) {
     if (!item || !this.runtimeConfig?.backendUrl) return { status: 'error', reason: 'invalid' };
     const locator = this.buildItemLocator(item);
     try {

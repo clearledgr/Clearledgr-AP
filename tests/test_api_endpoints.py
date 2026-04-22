@@ -2080,7 +2080,7 @@ class TestExtensionEndpoints:
         assert payload["labeled"] == 1
         assert triage_mock.await_count == 2
 
-    def test_approve_and_post_uses_runtime_with_canonical_ap_item_reference(self, monkeypatch):
+    def test_post_to_erp_uses_runtime_with_canonical_ap_item_reference(self, monkeypatch):
         captured: dict = {}
 
         async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
@@ -2099,7 +2099,7 @@ class TestExtensionEndpoints:
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
                 response = client.post(
-                    "/extension/approve-and-post",
+                    "/extension/post-to-erp",
                     json={
                         "email_id": "gmail-thread-1",
                         "ap_item_id": "ap-item-1",

@@ -164,8 +164,8 @@ describe('ThreadSidebar contract', () => {
       'approve button CSS class must not exist in the sidebar');
     assert.doesNotMatch(source, /onApprove/,
       'onApprove prop must not be wired into the sidebar');
-    assert.doesNotMatch(source, /approveAndPost/,
-      'sidebar must not call approveAndPost directly');
+    assert.doesNotMatch(source, /postToErp|approveAndPost/,
+      'sidebar must not call the post-to-ERP method directly (old or new name)');
   });
 
   it('renders an awaiting-approval notice when the Box is in needs_approval', () => {

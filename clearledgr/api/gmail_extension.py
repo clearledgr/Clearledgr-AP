@@ -21,7 +21,7 @@ from clearledgr.api.gmail_extension_models import (  # noqa: F401 — re-exporte
     BulkScanRequest,
     HistoricalInvoiceRepairRequest,
     GmailLabelCleanupRequest,
-    ApproveAndPostRequest,
+    PostToErpRequest,
     VerifyConfidenceRequest,
     EscalateRequest,
     MatchBankRequest,
@@ -1125,18 +1125,20 @@ async def exchange_gmail_code(request: ExchangeCodeRequest):
     }
 
 
-@router.post("/approve-and-post", dependencies=[Depends(get_current_user)])
-async def approve_and_post(
-    request: ApproveAndPostRequest,
+@router.post("/post-to-erp", dependencies=[Depends(get_current_user)])
+async def post_to_erp(
+    request: PostToErpRequest,
     audit: Any = Depends(get_audit_service),
     user=Depends(require_ops_user),
 ):
-    """
-    Approve and post an invoice to ERP — inline from Gmail extension.
+    """Execute post-to-ERP for an already-approved invoice.
 
-    Canonical runtime fallback for older route/page surfaces.
-    The canonical AP-first path is ``post_to_erp`` through the finance runtime,
-    which preserves legal state transitions and policy guards.
+    Called from Gmail route pages (Pipeline, Review, InvoiceDetail) after
+    approval has been captured elsewhere — Slack for HITL approvals, or
+    a prior route-page step for auto-matched invoices. Dispatches through
+    ``runtime.execute_intent("post_to_erp", ...)`` — the same canonical
+    path Slack approvals take — so state transitions and policy guards
+    are unified regardless of surface.
     """
     org_id = _resolve_org_id_for_user(user, request.organization_id)
     db = get_db()

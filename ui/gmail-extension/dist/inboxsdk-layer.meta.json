@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-20T12:51:01.744Z",
-  "fingerprint": "b6d40f41b39b16fb00194e66fb2fd48f100e888f63a4b058a5897e3210d76564",
+  "generated_at": "2026-04-22T12:34:46.851Z",
+  "fingerprint": "ec66fa533497ebe37d5a49e43736d2ed77b1bdd70a0507b7a461bb363d2acefb",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -16,6 +16,7 @@
     "src/routes/oauth-bridge.js",
     "src/routes/pages/ActivityPage.js",
     "src/routes/pages/ConnectionsPage.js",
+    "src/routes/pages/ExceptionsPage.js",
     "src/routes/pages/HealthPage.js",
     "src/routes/pages/HomePage.js",
     "src/routes/pages/InvoiceDetailPage.js",

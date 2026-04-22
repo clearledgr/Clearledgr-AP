@@ -26,7 +26,7 @@ The obvious implementation is a dedicated `idempotency_responses` table. We cons
 Helper module: `clearledgr/core/idempotency.py` — `load_idempotent_response`, `save_idempotent_response`, `resolve_idempotency_key`.
 
 Wired into 8 action endpoints:
-- `POST /extension/approve-and-post`
+- `POST /extension/post-to-erp`
 - `POST /extension/submit-for-approval`
 - `POST /extension/reject-invoice`
 - `POST /api/ap/items/{id}/retry-post` (header-only)

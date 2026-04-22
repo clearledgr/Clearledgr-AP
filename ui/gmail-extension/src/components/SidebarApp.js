@@ -1238,7 +1238,7 @@ function WorkPanel({ item, queueManager }) {
       return;
     }
     setOptimisticState('posted_to_erp');
-    const result = await queueManager.approveAndPost(item, { override: false });
+    const result = await queueManager.postToErp(item, { override: false });
     const ok = ['posted', 'approved', 'posted_to_erp'].includes(String(result?.status || '').toLowerCase());
     showToast(ok ? 'Invoice posted to ERP' : (result?.reason || 'ERP posting failed'), ok ? 'success' : 'error');
     if (!ok) setOptimisticState(null);

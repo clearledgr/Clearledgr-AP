@@ -543,6 +543,7 @@ test('invoice detail page stays on the canonical AP action contract', () => {
     'utf8',
   );
 
+  assert.equal(source.includes('/extension/post-to-erp'), false);
   assert.equal(source.includes('/extension/approve-and-post'), false);
   assert.equal(source.includes("getPrimaryActionConfig(state, actorRole, documentType, item)"), true);
   assert.equal(source.includes("auditData?.events"), true);
