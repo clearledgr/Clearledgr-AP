@@ -323,3 +323,37 @@ Maintain continuous confidence in real Gmail extension runtime behavior and coll
 
 _Last updated: 2026-02-28_
 _Owner: Engineering / AP Platform team_
+
+---
+
+## Known gaps — unwritten runbooks
+
+Surfaced by the 2026-04-22 Tier-2 verification sweep (see [TIER2_VERIFICATION_2026_04_22.md](./TIER2_VERIFICATION_2026_04_22.md)). Each scenario below has real operational surface in Clearledgr today but no response runbook. Listed here so on-call knows what to expect when one fires — and so the gap is on the record rather than hidden.
+
+Each needs CS/on-call input to author properly (response steps depend on production infra decisions: hosted Postgres provider, monitoring stack, alert routing).
+
+### Provider adapter failures
+- **Open-banking adapter errors** (Adyen / TrueLayer / Plaid): auth failure, webhook delivery failure, name-match service unavailable, rate limit, partial coverage for a given country/bank.
+- **IBAN verification timeout**: vendor started the three-factor flow but did not complete within the 5-business-day deadline; automatic freeze fires via `vendor_iban_verification_deadline` timer.
+
+### Vendor onboarding surface
+- **Vendor portal outage**: the customer-facing portal where vendors submit KYC + IBAN is unreachable. Different from Clearledgr outage — it's a sub-surface the agent depends on.
+
+### Agent runtime under load
+- **Mass invoice spike**: >100 invoices arrive in <1 minute. Workspace concurrency semaphore saturates, queue depth climbs, back-pressure kicks in. Runbook needed for when to scale workers vs when to intervene at the customer level.
+- **Stuck waiting conditions**: boxes parked in `set_waiting_condition` whose timer never fires (bug, timer storage drift, Celery Beat dead). Detection + manual unblock procedure.
+
+### Infrastructure
+- **Postgres failover / replica lag**: primary down, read replicas behind. What happens to in-flight plans? (Task durability via `task_runs` + `pending_plan` should survive; untested in a real failover drill.)
+- **Redis cache / stream failure**: event queue unreachable. `core/event_queue.py` has an in-process fallback but it's not durable — a production Redis outage is a hard event.
+- **Celery fleet down**: no workers consuming `process_agent_event`. Events pile up in Redis Streams. Detection + worker restart procedure.
+
+### External platform outages
+- **Slack platform-wide outage** (vs the already-documented Slack callback failures): approvers can't see requests at all. Expected behavior: the agent continues to run, just parks on `set_waiting_condition(approval_response)`. Runbook should state this explicitly so on-call doesn't try to "fix" it.
+
+### Billing / subscription
+- **Subscription limit breach operator response**: a customer hits their `invoices_per_month` cap mid-day. Today the endpoint returns 429; there's no documented escalation procedure for "help, the customer is blocked."
+
+### How to add a runbook
+
+Follow the existing pattern: a heading, a short incident description, the detection signal (what triggers the alert), step-by-step response, and a post-incident checklist. Keep each under 40 lines. Owner stays the Engineering / AP Platform team unless explicitly delegated.
