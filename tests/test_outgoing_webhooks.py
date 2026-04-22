@@ -347,3 +347,97 @@ class TestWebhookEndpoints:
     def test_create_without_url_returns_400(self, client, db):
         resp = client.post("/api/workspace/webhooks", json={"event_types": ["*"]})
         assert resp.status_code == 400
+
+
+class TestWebhookCrossOrgIsolation:
+    """Multi-tenant isolation for webhook subscriptions.
+
+    Webhook subscriptions were the one store I could not find an
+    explicit cross-org regression test for during the 2026-04-22
+    audit. Every other major org-scoped resource (AP items, audit
+    events, box exceptions, vendor KYC, vendor domain lock) had
+    isolation tests; webhooks did not. This class closes that gap.
+
+    The guarantees under test, all enforced by
+    ``clearledgr.api.workspace_shell._resolve_org_id`` raising
+    HTTPException(403) when the requested organization_id does not
+    match the caller's token:
+
+    1. Query-param spoofing on LIST returns 403 (not silently
+       filtered empty results).
+    2. Query-param spoofing on CREATE returns 403 (a user from org
+       A cannot create a webhook in org B's namespace).
+    3. DELETE by id on another org's webhook returns 403 (the
+       handler fetches the sub first, then asserts the caller's
+       token owns that sub's organization_id).
+    4. LIST without a query param scopes strictly to the caller's
+       org — a webhook owned by another org never appears.
+    """
+
+    def test_list_with_query_param_spoofing_returns_403(self, client, db):
+        # Pre-seed a webhook owned by a DIFFERENT org.
+        db.create_webhook_subscription(
+            organization_id="other-org",
+            url="https://other-org-internal.example/hook",
+            event_types=["*"],
+        )
+        # Caller's token belongs to 'default' (per the client fixture).
+        # Trying to list 'other-org' webhooks by query param must be rejected.
+        resp = client.get("/api/workspace/webhooks?organization_id=other-org")
+        assert resp.status_code == 403, (
+            f"cross-org LIST must return 403, got {resp.status_code}: {resp.json()}"
+        )
+
+    def test_list_without_param_scopes_to_caller_org_only(self, client, db):
+        # Seed one webhook per org.
+        own = db.create_webhook_subscription(
+            "default", "https://own.example/hook", ["*"]
+        )
+        db.create_webhook_subscription(
+            "other-org", "https://other.example/hook", ["*"]
+        )
+        resp = client.get("/api/workspace/webhooks")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1, (
+            f"LIST must return only caller's org subs; got {data['count']}"
+        )
+        assert data["webhooks"][0]["id"] == own["id"]
+        # Belt and braces: no webhook in the response belongs to another org.
+        assert all(
+            sub["organization_id"] == "default" for sub in data["webhooks"]
+        )
+
+    def test_create_with_query_param_spoofing_returns_403(self, client, db):
+        # Caller is in 'default'; try to create a webhook targeted at 'other-org'.
+        resp = client.post(
+            "/api/workspace/webhooks?organization_id=other-org",
+            json={
+                "url": "https://attempted-cross-org.example/hook",
+                "event_types": ["*"],
+            },
+        )
+        assert resp.status_code == 403, (
+            f"cross-org CREATE must return 403, got {resp.status_code}: {resp.json()}"
+        )
+        # And no row was written against either org.
+        assert db.list_webhook_subscriptions("other-org") == []
+
+    def test_delete_other_orgs_webhook_returns_403(self, client, db):
+        # Seed a webhook owned by 'other-org'.
+        other_sub = db.create_webhook_subscription(
+            organization_id="other-org",
+            url="https://other-org.example/hook",
+            event_types=["*"],
+        )
+        # Caller (in 'default') tries to delete by ID — the handler
+        # looks up the sub first, then applies _resolve_org_id which
+        # must fail for a foreign org.
+        resp = client.delete(f"/api/workspace/webhooks/{other_sub['id']}")
+        assert resp.status_code == 403, (
+            f"cross-org DELETE must return 403, got {resp.status_code}: {resp.json()}"
+        )
+        # The foreign webhook is still intact.
+        still_there = db.get_webhook_subscription(other_sub["id"])
+        assert still_there is not None
+        assert still_there["organization_id"] == "other-org"
