@@ -17,6 +17,13 @@ Vendor lifecycle:
 Payments:
   payment.completed, payment.failed, payment.reversed
 
+Billing:
+  billing.llm_budget_exceeded — workspace crossed its monthly Claude
+      cost hard cap (runaway-spend guard). Payload includes
+      cost_usd, cap_usd, paused_at. Further Claude calls fast-fail
+      until the CFO override endpoint or CS ops reset clears it,
+      or the new billing month rolls over.
+
 Delivery is async with HMAC-SHA256 signing. Failed deliveries are
 enqueued in the existing notification retry queue.
 """

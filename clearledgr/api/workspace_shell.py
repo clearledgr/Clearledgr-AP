@@ -2908,6 +2908,78 @@ def get_billing_summary(
     return _get_subscription_service().get_billing_summary(org_id)
 
 
+class LLMBudgetOverrideRequest(BaseModel):
+    """CFO-authorized override of the LLM runaway-spend guard.
+
+    Clears ``organizations.llm_cost_paused_at`` so Claude calls resume.
+    Requires CFO rank or higher (thesis §8: the CFO role is the
+    financial authority — same role that can modify fraud controls).
+    ``reason`` is required and written to the audit trail — this is
+    an override of a cost ceiling, not a silent nudge.
+    """
+    organization_id: Optional[str] = None
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/llm-budget/override")
+def override_llm_budget_pause(
+    request: LLMBudgetOverrideRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Clear the LLM cost tombstone for this workspace.
+
+    The runaway-spend guard in `llm_gateway.py` pauses Claude calls
+    when a workspace crosses its monthly hard cap. This endpoint lets
+    the customer's CFO (or higher) lift the pause without waiting for
+    CS. Every override is audit-logged with the supplied reason —
+    cost ceilings are load-bearing policy, not casual configuration.
+    """
+    from clearledgr.core.auth import has_cfo
+    if not has_cfo(user.role):
+        raise HTTPException(
+            status_code=403,
+            detail="cfo_role_required — llm budget override is CFO-authorized",
+        )
+
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+
+    # Load + clear the tombstone. If it was never set, the endpoint
+    # is still idempotent — clearing null is a no-op.
+    try:
+        db.update_organization(org_id, llm_cost_paused_at=None)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed_to_clear_pause: {exc}",
+        )
+
+    cleared_at = datetime.now(timezone.utc).isoformat()
+    try:
+        db.append_audit_event({
+            "event_type": "llm_budget_override_applied",
+            "box_id": org_id,
+            "box_type": "organization",
+            "actor_type": "user",
+            "actor_id": user.email or user.user_id or "unknown",
+            "organization_id": org_id,
+            "decision_reason": request.reason,
+            "payload_json": {
+                "cleared_at": cleared_at,
+                "actor_role": user.role,
+                "source": "customer_cfo",
+            },
+        })
+    except Exception:
+        pass  # Audit failure does not block the override.
+
+    return {
+        "status": "cleared",
+        "organization_id": org_id,
+        "cleared_at": cleared_at,
+    }
+
+
 @router.patch("/subscription/plan")
 def patch_subscription_plan(
     request: SubscriptionPlanPatchRequest,

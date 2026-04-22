@@ -424,6 +424,15 @@ class AuthStore:
     _ORGANIZATION_ALLOWED_COLUMNS = frozenset({
         "name", "domain", "settings_json", "settings", "integration_mode",
         "subscription_tier", "is_active", "updated_at",
+        # Lifecycle tombstones — nullable ISO timestamps on the row.
+        # These were being written by org_config.delete_organization
+        # (deleted_at) and the celery hard-purge task (purged_at) but
+        # the whitelist didn't include them, so the updates were being
+        # rejected with ValueError and swallowed by the surrounding
+        # try/except — silent no-op in production. Fixed 2026-04-22.
+        "deleted_at", "purged_at",
+        # LLM cost runaway-spend guard tombstone (migration v44).
+        "llm_cost_paused_at",
     })
 
     def update_organization(

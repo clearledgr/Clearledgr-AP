@@ -1372,3 +1372,58 @@ async def skip_retry_job(
         "status": "skipped",
         "previous_status": str(job.get("status") or "unknown"),
     }
+
+
+@router.post("/llm-budget/reset")
+async def reset_llm_budget_pause(
+    organization_id: str = Query(..., description="Organization whose LLM budget pause to clear"),
+    reason: str = Query(..., min_length=1, max_length=500, description="Audit reason — required"),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """CS / ops endpoint to clear a workspace's LLM budget pause.
+
+    Counterpart to the customer-facing
+    ``/api/workspace/llm-budget/override`` endpoint. Use this during
+    incidents when the customer's CFO isn't available or when the
+    pause fired on a known-good workload that needs immediate
+    continuity (e.g. Cowrywise end-of-quarter spike). Audit'd with
+    ``actor_type='cs_team'`` so the trail distinguishes CS-initiated
+    overrides from customer CFO overrides.
+
+    Requires admin/owner ops role (same gate as other ops mutations).
+    """
+    _require_admin(user)
+
+    db = get_db()
+    try:
+        db.update_organization(organization_id, llm_cost_paused_at=None)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed_to_clear_pause: {exc}",
+        )
+
+    cleared_at = datetime.now(timezone.utc).isoformat()
+    try:
+        db.append_audit_event({
+            "event_type": "llm_budget_override_applied",
+            "box_id": organization_id,
+            "box_type": "organization",
+            "actor_type": "cs_team",
+            "actor_id": user.email or user.user_id or "ops",
+            "organization_id": organization_id,
+            "decision_reason": reason,
+            "payload_json": {
+                "cleared_at": cleared_at,
+                "actor_role": user.role,
+                "source": "cs_ops",
+            },
+        })
+    except Exception:
+        pass  # Audit failure does not block the reset.
+
+    return {
+        "status": "cleared",
+        "organization_id": organization_id,
+        "cleared_at": cleared_at,
+    }

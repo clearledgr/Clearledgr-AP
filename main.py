@@ -313,6 +313,7 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/retry-queue",
     "/api/ops/vendor-onboarding/sessions",
     "/api/ops/llm-cost-summary",
+    "/api/ops/llm-budget/reset",
 }
 
 STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
@@ -389,6 +390,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/erp-vendors",
     "/api/workspace/reports/export",
     "/api/workspace/webhooks",
+    "/api/workspace/llm-budget/override",
     "/api/workspace/vendor-intelligence/duplicates",
     "/api/workspace/vendor-intelligence/merge",
     "/api/workspace/disputes",

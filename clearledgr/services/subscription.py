@@ -50,6 +50,15 @@ class PlanLimits:
     # Enforced at audit-event reaper time so old rows drop off on
     # Starter but are preserved on Pro+.
     agent_activity_retention_days: int = 30
+    # Runaway-spend guard: hard cap on Claude API cost (USD) per
+    # calendar month per workspace. The LLM gateway pauses further
+    # calls once this is exceeded; an override by the customer CFO
+    # or CS ops clears the pause. Unlike the other limits here,
+    # this is NEVER "-1 unlimited" — even Enterprise has a ceiling
+    # so a bug or retry loop can't take the Anthropic bill to the
+    # moon. Per-org overrides land in
+    # ``organizations.settings_json["llm_cost_hard_cap_usd_override"]``.
+    monthly_llm_cost_usd_hard_cap: float = 10.0
 
     @classmethod
     def for_tier(cls, tier: PlanTier) -> "PlanLimits":
@@ -70,6 +79,7 @@ class PlanLimits:
                 ai_credits_per_month=5,
                 saved_views_per_pipeline=0,
                 agent_activity_retention_days=7,
+                monthly_llm_cost_usd_hard_cap=10.0,
             ),
             PlanTier.STARTER: cls(
                 invoices_per_month=500,  # thesis §13: "up to 500 invoices per month"
@@ -81,6 +91,7 @@ class PlanLimits:
                 ai_credits_per_month=500,
                 saved_views_per_pipeline=3,       # §13 explicit cap
                 agent_activity_retention_days=30,  # §13 explicit
+                monthly_llm_cost_usd_hard_cap=50.0,
             ),
             PlanTier.PROFESSIONAL: cls(
                 invoices_per_month=-1,
@@ -92,6 +103,7 @@ class PlanLimits:
                 ai_credits_per_month=3000,
                 saved_views_per_pipeline=-1,            # §13 "Unlimited"
                 agent_activity_retention_days=_SEVEN_YEARS_DAYS,
+                monthly_llm_cost_usd_hard_cap=250.0,
             ),
             PlanTier.ENTERPRISE: cls(
                 invoices_per_month=-1,
@@ -103,6 +115,11 @@ class PlanLimits:
                 ai_credits_per_month=-1,
                 saved_views_per_pipeline=-1,
                 agent_activity_retention_days=_SEVEN_YEARS_DAYS,
+                # Runaway guard only, not a real ceiling for normal use.
+                # Real enterprise usage at ~10k invoices/month is in the
+                # low hundreds of dollars. $5000 catches disasters
+                # (bug/retry loop) without biting legitimate workloads.
+                monthly_llm_cost_usd_hard_cap=5000.0,
             ),
         }
         return limits.get(tier, limits[PlanTier.FREE])
@@ -881,6 +898,55 @@ class SubscriptionService:
             "estimated_total": round(seat_price * active_seats + read_only_cost + volume_cost, 2),
             "annual_savings_pct": 20 if sub.billing_cycle == "yearly" else 0,
         }
+
+    def get_effective_llm_cost_cap(self, organization_id: str) -> float:
+        """Resolve the runaway-spend hard cap (USD) for an organization.
+
+        Precedence:
+          1. ``organizations.settings_json["llm_cost_hard_cap_usd_override"]``
+             — per-org override set by CS to relax or tighten the default
+             without a code change. Useful for Enterprise renegotiations
+             or for pausing a suspicious tenant below tier default.
+          2. ``sub.limits.monthly_llm_cost_usd_hard_cap`` — per-tier
+             default from :class:`PlanLimits`.
+          3. Safe fallback (FREE tier cap: $10) if no subscription row.
+
+        Returns the effective ceiling in USD as a float. Never returns
+        ``-1`` or any sentinel — the hard cap is always a real number
+        because a runaway guard without a ceiling is useless.
+        """
+        try:
+            org = self.db.get_organization(organization_id)
+        except Exception:
+            org = None
+
+        if isinstance(org, dict):
+            settings = org.get("settings_json") or org.get("settings") or {}
+            if isinstance(settings, str):
+                try:
+                    import json as _json
+                    settings = _json.loads(settings)
+                except Exception:
+                    settings = {}
+            if isinstance(settings, dict):
+                override = settings.get("llm_cost_hard_cap_usd_override")
+                if override is not None:
+                    try:
+                        return float(override)
+                    except (TypeError, ValueError):
+                        pass
+
+        try:
+            sub = self.get_subscription(organization_id)
+            if sub and sub.limits:
+                return float(sub.limits.monthly_llm_cost_usd_hard_cap)
+        except Exception as exc:
+            logger.debug(
+                "[Subscription] get_effective_llm_cost_cap fallback for %s: %s",
+                organization_id, exc,
+            )
+
+        return 10.0  # FREE-tier floor; safe runaway guard if subscription is missing
 
     def _get_llm_cost_this_month(self, organization_id: str) -> Dict[str, Any]:
         """§8.2: Aggregate LLM API costs from llm_call_log for current month."""

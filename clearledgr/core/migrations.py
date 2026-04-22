@@ -2027,3 +2027,26 @@ def _v43_box_lifecycle_records(cur, db):
             logger.warning(
                 "[Migration v43] box_outcomes index skipped: %s", exc
             )
+
+
+@migration(44, "Tombstone: llm_cost_paused_at on organizations")
+def _v44_llm_cost_paused_at(cur, db):
+    """Pause marker for the monthly LLM cost hard-cap.
+
+    Runaway spend on Claude (bug, retry loop, prompt injection) is
+    the real cost risk at pilot scale — not a customer going over
+    their billed plan tier. This column is set by the LLM gateway's
+    pre-flight check when a workspace crosses its tier cap, and
+    every subsequent call fast-fails against it without re-querying
+    cost. An override (customer CFO or CS ops) clears it. A new
+    billing month auto-clears it on the next call.
+
+    Follows the same tombstone pattern as ``deleted_at`` (v35) and
+    ``purged_at`` (v36): a nullable ISO timestamp on the
+    ``organizations`` row. Null = not paused. Set = paused at the
+    recorded time.
+    """
+    try:
+        cur.execute("ALTER TABLE organizations ADD COLUMN llm_cost_paused_at TEXT")
+    except Exception:
+        pass  # Already exists on a re-run or older schema

@@ -364,6 +364,20 @@ def _reset_circuit() -> None:
     _rate_limit_cooldown_until = 0.0
 
 
+class LLMBudgetExceededError(RuntimeError):
+    """Raised when a workspace has crossed its monthly LLM cost hard cap.
+
+    The gateway's pre-flight budget check raises this to stop calls
+    that would otherwise push past the tenant's runaway-spend guard.
+    Message is kept deliberately neutral ("cost budget exceeded...")
+    so the coordination engine's substring-based failure classifier
+    (_classify_failure) buckets this as persistent (abort + move Box
+    to exception) rather than transient (retry) or llm (template
+    fallback). Retrying won't help — the cap only resets on a new
+    billing month or an explicit override.
+    """
+
+
 class LLMGateway:
     """Centralized Claude API gateway.
 
@@ -379,6 +393,205 @@ class LLMGateway:
         if config.model_tier == "haiku":
             return os.environ.get("ANTHROPIC_EXTRACTION_MODEL", _MODEL_HAIKU)
         return os.environ.get("ANTHROPIC_MODEL", _MODEL_SONNET)
+
+    def _enforce_budget_cap(self, organization_id: str) -> None:
+        """Runaway-spend guard — pre-flight check against the monthly cap.
+
+        Fast path (already paused this month): raises immediately
+        without querying llm_call_log. The tombstone is the answer.
+
+        Slow path (not paused): queries month-to-date cost, compares
+        to ``get_effective_llm_cost_cap``. If over, stamps
+        ``organizations.llm_cost_paused_at``, alerts CS, emits the
+        ``billing.llm_budget_exceeded`` webhook, writes an audit
+        event, then raises :class:`LLMBudgetExceededError`.
+
+        If the tombstone is set but from a prior calendar month,
+        clears it (new billing cycle) and proceeds.
+
+        Best-effort: any failure to load the org / subscription
+        / cost total falls through to "allow the call" rather than
+        blocking work on a DB hiccup. The runaway guard is a safety
+        net, not a strict business gate — missing a single call
+        because of a transient DB error would be worse than briefly
+        continuing over cap while ops investigates.
+        """
+        # Lazy DB bind — mirrors _log_call's pattern so tests can
+        # inject self._db before the first call.
+        if not self._db:
+            try:
+                from clearledgr.core.database import get_db
+                self._db = get_db()
+            except Exception:
+                return
+
+        # Load the org row once; used for both tombstone check and
+        # (inside get_effective_llm_cost_cap) the settings override.
+        try:
+            self._db.initialize()
+            org = self._db.get_organization(organization_id)
+        except Exception as exc:
+            logger.debug(
+                "[LLMGateway] budget-cap: org load failed for %s: %s "
+                "(allowing call)", organization_id, exc,
+            )
+            return
+
+        if not isinstance(org, dict):
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # --- Fast path: already paused? ---
+        paused_at_raw = org.get("llm_cost_paused_at")
+        if paused_at_raw:
+            try:
+                paused_at = datetime.fromisoformat(
+                    str(paused_at_raw).replace("Z", "+00:00")
+                )
+                if (paused_at.year, paused_at.month) == (now.year, now.month):
+                    # Still the same billing month — stay paused.
+                    raise LLMBudgetExceededError(
+                        f"Cost budget exceeded for organization "
+                        f"{organization_id}: paused at {paused_at_raw}"
+                    )
+                # Different month — cycle rolled over, clear the tombstone
+                # and fall through to the fresh cost check.
+                try:
+                    self._db.update_organization(
+                        organization_id, llm_cost_paused_at=None,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "[LLMGateway] budget-cap: tombstone clear failed for "
+                        "%s: %s", organization_id, exc,
+                    )
+            except LLMBudgetExceededError:
+                raise
+            except Exception:
+                # Malformed timestamp in the column — treat as not paused.
+                pass
+
+        # --- Slow path: query cost, compare to cap ---
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            sub_svc = get_subscription_service()
+            cap_usd = float(sub_svc.get_effective_llm_cost_cap(organization_id))
+            cost_row = sub_svc._get_llm_cost_this_month(organization_id) or {}
+            cost_usd = float(cost_row.get("total_cost_usd") or 0.0)
+        except Exception as exc:
+            logger.debug(
+                "[LLMGateway] budget-cap: cost/cap lookup failed for "
+                "%s: %s (allowing call)", organization_id, exc,
+            )
+            return
+
+        if cost_usd < cap_usd:
+            return  # Within budget — normal path.
+
+        # --- Over cap: pause + alert + webhook + audit, then raise ---
+        self._trip_budget_cap(
+            organization_id=organization_id,
+            cost_usd=cost_usd,
+            cap_usd=cap_usd,
+            now_iso=now.isoformat(),
+        )
+        raise LLMBudgetExceededError(
+            f"Cost budget exceeded for organization {organization_id}: "
+            f"${cost_usd:.2f} >= ${cap_usd:.2f}"
+        )
+
+    def _trip_budget_cap(
+        self,
+        *,
+        organization_id: str,
+        cost_usd: float,
+        cap_usd: float,
+        now_iso: str,
+    ) -> None:
+        """Record the trip: stamp tombstone, alert CS, webhook, audit.
+
+        Every side effect is best-effort — the raise in the caller is
+        what actually stops the bleed. If any of these notifications
+        fail, we still raise so the bad call doesn't complete; the
+        notifications are observability, not correctness.
+        """
+        # 1. Tombstone — the durable signal the fast path reads.
+        try:
+            self._db.update_organization(
+                organization_id, llm_cost_paused_at=now_iso,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[LLMGateway] budget-cap: tombstone stamp failed for %s: %s",
+                organization_id, exc,
+            )
+
+        # 2. CS alert — Slack + log, non-blocking.
+        try:
+            from clearledgr.services.monitoring import alert_cs_team
+            alert_cs_team(
+                severity="error",
+                title="LLM budget exceeded — workspace paused",
+                detail=(
+                    f"org={organization_id} cost=${cost_usd:.2f} "
+                    f"cap=${cap_usd:.2f}. Further Claude calls will fast-fail "
+                    f"until an override or the new billing month begins."
+                ),
+                organization_id=organization_id,
+            )
+        except Exception as exc:
+            logger.debug("[LLMGateway] budget-cap CS alert failed: %s", exc)
+
+        # 3. Webhook to the customer's Backoffice.
+        try:
+            import asyncio
+            from clearledgr.services.webhook_delivery import emit_webhook_event
+
+            payload = {
+                "organization_id": organization_id,
+                "cost_usd": round(cost_usd, 4),
+                "cap_usd": round(cap_usd, 4),
+                "paused_at": now_iso,
+            }
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_webhook_event(
+                    organization_id=organization_id,
+                    event_type="billing.llm_budget_exceeded",
+                    payload=payload,
+                ))
+            except RuntimeError:
+                # No running loop (sync context) — run it.
+                asyncio.run(emit_webhook_event(
+                    organization_id=organization_id,
+                    event_type="billing.llm_budget_exceeded",
+                    payload=payload,
+                ))
+        except Exception as exc:
+            logger.debug("[LLMGateway] budget-cap webhook emit failed: %s", exc)
+
+        # 4. Audit event — durable record on the org timeline.
+        # append_audit_event requires (box_id, box_type). Org-level
+        # events use box_type="organization" + box_id=org_id so the
+        # audit row stays queryable by org-level consumers.
+        try:
+            self._db.append_audit_event({
+                "event_type": "llm_budget_paused",
+                "box_id": organization_id,
+                "box_type": "organization",
+                "actor_type": "system",
+                "actor_id": "llm_gateway",
+                "organization_id": organization_id,
+                "decision_reason": "monthly cost hard cap exceeded",
+                "payload_json": {
+                    "cost_usd": cost_usd,
+                    "cap_usd": cap_usd,
+                    "paused_at": now_iso,
+                },
+            })
+        except Exception as exc:
+            logger.debug("[LLMGateway] budget-cap audit write failed: %s", exc)
 
     def _estimate_cost(self, config: ActionConfig, input_tokens: int, output_tokens: int) -> float:
         tier = config.model_tier
@@ -489,6 +702,8 @@ class LLMGateway:
 
         Raises:
             ValueError: If action is not in ACTION_REGISTRY.
+            LLMBudgetExceededError: If the workspace has crossed its
+                monthly LLM cost hard cap (runaway-spend guard).
             RuntimeError: If all retries exhausted.
         """
         if action not in ACTION_REGISTRY:
@@ -497,6 +712,14 @@ class LLMGateway:
                 f"Only registered LLM actions may call Claude. "
                 f"Valid actions: {sorted(a.value for a in ACTION_REGISTRY)}"
             )
+
+        # Runaway-spend guard: refuse the call if this workspace has
+        # crossed its monthly LLM cost hard cap. See migration v44 +
+        # PlanLimits.monthly_llm_cost_usd_hard_cap. This is a disaster
+        # guard (catches bugs, retry loops, prompt injection), not a
+        # pricing tier. Override via customer CFO endpoint or ops
+        # endpoint clears the tombstone.
+        self._enforce_budget_cap(organization_id)
 
         config = ACTION_REGISTRY[action]
         model = model_override or self._resolve_model(config)
