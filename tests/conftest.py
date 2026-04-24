@@ -79,6 +79,23 @@ def reset_service_singletons():
     (via monkeypatch.setenv("CLEARLEDGR_DB_PATH", ...)) do not leave a stale
     connection for subsequent tests.
     """
+    # Pre-test guard: if a previous test's tmp_db fixture left the
+    # singleton as a SQLite instance (``ClearledgrDB.__init__`` reads
+    # DATABASE_URL once at construction; if the env var was missing at
+    # that moment, use_postgres is pinned to False for the lifetime of
+    # that instance), nuke it here so the current test's ``get_db()``
+    # constructs a fresh PG-backed instance. Without this pre-check,
+    # trust_arc hits sqlite3.IntegrityError on the second
+    # create_organization('org_t') because the SQLite singleton
+    # survived the teardown ordering.
+    try:
+        import clearledgr.core.database as _db_mod
+        if _TEST_DB_ENGINE == "postgres":
+            inst = _db_mod._DB_INSTANCE
+            if inst is not None and not getattr(inst, "use_postgres", True):
+                _db_mod._DB_INSTANCE = None
+    except Exception:
+        pass
     yield
     # Reset DB singleton so each test starts with the correct DB path.
     # Under Postgres, we normally keep the session singleton alive
@@ -248,6 +265,16 @@ def postgres_test_db():
 def _reset_postgres_test_db_between_tests(request, postgres_test_db):
     """Per-test truncation so tests get a clean database without restart.
 
+    Also pre-test: restore ``DATABASE_URL`` from the session-scoped DSN.
+    Some tests in the suite set ``DATABASE_URL`` to a ``sqlite:///...``
+    URL directly (not via monkeypatch) and then ``os.environ.pop()`` it
+    in their finally — permanently removing it. Without this restore,
+    any downstream test that triggers a fresh ``ClearledgrDB()``
+    construction reads ``DATABASE_URL=None`` → locks
+    ``use_postgres=False`` → silently uses SQLite, and hits the
+    ``sqlite3.IntegrityError: UNIQUE constraint failed`` cascade in
+    trust_arc.
+
     On Postgres: after each test, TRUNCATE every row across every
     user table in the public schema (RESTART IDENTITY zeroes
     auto-increment columns; CASCADE handles FKs). Container reuse
@@ -270,6 +297,21 @@ def _reset_postgres_test_db_between_tests(request, postgres_test_db):
     On SQLite: no-op. Tests still rely on per-test temp-file
     instantiation for isolation.
     """
+    # Pre-test: restore DATABASE_URL from the session DSN so a prior
+    # test that mutated (or removed) it can't leak that state forward.
+    # Also nuke a tainted SQLite singleton — constructing ClearledgrDB
+    # against the old DATABASE_URL locked its use_postgres flag, and
+    # ``get_db()`` won't reconstruct unless _DB_INSTANCE is None.
+    if postgres_test_db is not None:
+        import os as _os
+        _os.environ["DATABASE_URL"] = postgres_test_db
+        try:
+            import clearledgr.core.database as _db_mod
+            inst = _db_mod._DB_INSTANCE
+            if inst is not None and not getattr(inst, "use_postgres", True):
+                _db_mod._DB_INSTANCE = None
+        except Exception:
+            pass
     yield
     if postgres_test_db is None:
         return
