@@ -32,9 +32,6 @@ from clearledgr.services.vendor_dedup import VendorDedupService
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "dedup.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     return inst

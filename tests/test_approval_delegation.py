@@ -30,9 +30,6 @@ from clearledgr.services.approval_delegation import DelegationService
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "delegation.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     return inst

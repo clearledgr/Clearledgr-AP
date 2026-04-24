@@ -51,9 +51,6 @@ from clearledgr.services.subscription import (
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "budget.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     # SubscriptionService caches the DB reference at construction —
     # reset its singleton too so the per-test DB wins.
     import clearledgr.services.subscription as _sub_mod

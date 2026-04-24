@@ -163,11 +163,13 @@ class ReconciliationFinanceSkill(FinanceSkill):
         """Provide reconciliation-specific metrics for skill_readiness()."""
         # For now, return basic session counts
         try:
-            conn = runtime.db.connect()
-            row = conn.execute(
-                "SELECT COUNT(*) as total FROM recon_sessions WHERE organization_id = ?",
-                (runtime.organization_id,),
-            ).fetchone()
+            with runtime.db.connect() as conn:
+                row = conn.execute(
+                    runtime.db._prepare_sql(
+                        "SELECT COUNT(*) as total FROM recon_sessions WHERE organization_id = ?"
+                    ),
+                    (runtime.organization_id,),
+                ).fetchone()
             total = row[0] if row else 0
         except Exception:
             total = 0

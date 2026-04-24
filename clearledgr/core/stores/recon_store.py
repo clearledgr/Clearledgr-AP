@@ -68,9 +68,11 @@ class ReconStore:
         session_id = f"RECON-{uuid.uuid4().hex[:24]}"
         with self.connect() as conn:
             conn.execute(
-                """INSERT INTO recon_sessions
-                   (id, organization_id, state, source_type, spreadsheet_id, sheet_range, created_at, updated_at)
-                   VALUES (?, ?, 'created', ?, ?, ?, ?, ?)""",
+                self._prepare_sql(
+                    """INSERT INTO recon_sessions
+                       (id, organization_id, state, source_type, spreadsheet_id, sheet_range, created_at, updated_at)
+                       VALUES (?, ?, 'created', ?, ?, ?, ?, ?)"""
+                ),
                 (session_id, organization_id, source_type, spreadsheet_id, sheet_range, now, now),
             )
             conn.commit()
@@ -91,10 +93,12 @@ class ReconStore:
         item_id = f"RI-{uuid.uuid4().hex[:20]}"
         with self.connect() as conn:
             conn.execute(
-                """INSERT INTO recon_items
-                   (id, session_id, organization_id, state, row_index,
-                    transaction_date, description, amount, reference, created_at, updated_at)
-                   VALUES (?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)""",
+                self._prepare_sql(
+                    """INSERT INTO recon_items
+                       (id, session_id, organization_id, state, row_index,
+                        transaction_date, description, amount, reference, created_at, updated_at)
+                       VALUES (?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?)"""
+                ),
                 (item_id, session_id, organization_id, row_index,
                  transaction_date, description, amount, reference, now, now),
             )
@@ -112,7 +116,9 @@ class ReconStore:
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         with self.connect() as conn:
             cursor = conn.execute(
-                f"UPDATE recon_items SET {set_clause} WHERE id = ?",
+                self._prepare_sql(
+                    f"UPDATE recon_items SET {set_clause} WHERE id = ?"
+                ),
                 (*updates.values(), item_id),
             )
             conn.commit()
@@ -121,7 +127,10 @@ class ReconStore:
     def get_recon_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get a reconciliation session by ID."""
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM recon_sessions WHERE id = ?", (session_id,)).fetchone()
+            row = conn.execute(
+                self._prepare_sql("SELECT * FROM recon_sessions WHERE id = ?"),
+                (session_id,),
+            ).fetchone()
         return dict(row) if row else None
 
     def list_recon_items(self, session_id: str, state: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -129,12 +138,16 @@ class ReconStore:
         with self.connect() as conn:
             if state:
                 rows = conn.execute(
-                    "SELECT * FROM recon_items WHERE session_id = ? AND state = ? ORDER BY row_index",
+                    self._prepare_sql(
+                        "SELECT * FROM recon_items WHERE session_id = ? AND state = ? ORDER BY row_index"
+                    ),
                     (session_id, state),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM recon_items WHERE session_id = ? ORDER BY row_index",
+                    self._prepare_sql(
+                        "SELECT * FROM recon_items WHERE session_id = ? ORDER BY row_index"
+                    ),
                     (session_id,),
                 ).fetchall()
         return [dict(r) for r in rows]
@@ -144,12 +157,14 @@ class ReconStore:
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:
             conn.execute(
-                """UPDATE recon_sessions SET
-                    total_rows = (SELECT COUNT(*) FROM recon_items WHERE session_id = ?),
-                    matched_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('matched', 'resolved', 'posted')),
-                    exception_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('exception', 'review')),
-                    updated_at = ?
-                   WHERE id = ?""",
+                self._prepare_sql(
+                    """UPDATE recon_sessions SET
+                        total_rows = (SELECT COUNT(*) FROM recon_items WHERE session_id = ?),
+                        matched_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('matched', 'resolved', 'posted')),
+                        exception_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = ? AND state IN ('exception', 'review')),
+                        updated_at = ?
+                       WHERE id = ?"""
+                ),
                 (session_id, session_id, session_id, now, session_id),
             )
             conn.commit()

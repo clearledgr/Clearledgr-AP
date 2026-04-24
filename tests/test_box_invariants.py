@@ -22,10 +22,7 @@ class TestVendorOnboardingAtomicTransition:
     """
 
     def _fresh_db_with_session(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "vo.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -251,10 +248,7 @@ class TestBoxKeyedAuditWrites:
     """
 
     def _fresh_db(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "boxkeys.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
         return db

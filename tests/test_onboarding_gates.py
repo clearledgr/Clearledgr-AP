@@ -20,10 +20,7 @@ from clearledgr.api.workspace_shell import _is_ap_policy_configured
 
 class TestAPPolicyGate:
     def test_missing_policy_is_not_configured(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "p.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -31,10 +28,7 @@ class TestAPPolicyGate:
         assert _is_ap_policy_configured("test-org") is False
 
     def test_partial_policy_is_not_configured(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "p2.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -53,10 +47,7 @@ class TestAPPolicyGate:
         assert _is_ap_policy_configured("test-org") is False
 
     def test_complete_policy_is_configured(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "p3.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -75,10 +66,7 @@ class TestAPPolicyGate:
     def test_zero_threshold_is_a_valid_value(self, tmp_path, monkeypatch):
         # auto_approve_threshold=0 means "never auto-approve" — a
         # legitimate setting, not unconfigured.
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "p4.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 

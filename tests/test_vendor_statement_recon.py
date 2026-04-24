@@ -33,9 +33,6 @@ from clearledgr.services.vendor_statement_recon import VendorStatementRecon
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "recon.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     return inst

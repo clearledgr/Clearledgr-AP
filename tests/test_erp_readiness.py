@@ -6,9 +6,6 @@ from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
 
 
 def _db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "erp-readiness.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db

@@ -19,12 +19,7 @@ import pytest
 @pytest.fixture()
 def db_starter(tmp_path, monkeypatch):
     """Fresh DB with a Starter subscription seeded for test-org."""
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "credits.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-
     import clearledgr.core.database as db_module
-    db_module._DB_INSTANCE = None
-
     import clearledgr.services.subscription as sub_mod
     sub_mod._subscription_service = None
 
@@ -39,12 +34,7 @@ def db_starter(tmp_path, monkeypatch):
 @pytest.fixture()
 def db_enterprise(tmp_path, monkeypatch):
     """Fresh DB with an Enterprise subscription (unlimited pool)."""
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ent.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-
     import clearledgr.core.database as db_module
-    db_module._DB_INSTANCE = None
-
     import clearledgr.services.subscription as sub_mod
     sub_mod._subscription_service = None
 

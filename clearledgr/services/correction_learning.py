@@ -600,18 +600,31 @@ class CorrectionLearningService:
     def _persist_normalized_correction_event(self, normalized: Dict[str, Any]):
         """Persist a normalized correction event. Returns event_id on success, False on failure."""
         event_id = str(normalized.get("event_id") or f"cevt_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}")
+        _COLS = ("id, organization_id, ap_item_id, invoice_id, field_name, correction_type, "
+                 "original_value, corrected_value, selected_source, source_channel, event_source, "
+                 "user_id, vendor_name, sender, sender_domain, subject, document_type, layout_key, "
+                 "attachment_names_json, expected_fields_json, input_payload_json, created_at")
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
+                if getattr(self.db, "use_postgres", False):
+                    sql = self.db._prepare_sql(
+                        f"INSERT INTO agent_correction_events ({_COLS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        + ", ".join(
+                            f"{c} = EXCLUDED.{c}"
+                            for c in _COLS.replace(" ", "").split(",")
+                            if c != "id"
+                        )
+                    )
+                else:
+                    sql = (
+                        f"INSERT OR REPLACE INTO agent_correction_events ({_COLS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    )
                 cur.execute(
-                    """
-                    INSERT OR REPLACE INTO agent_correction_events
-                    (id, organization_id, ap_item_id, invoice_id, field_name, correction_type,
-                     original_value, corrected_value, selected_source, source_channel, event_source,
-                     user_id, vendor_name, sender, sender_domain, subject, document_type, layout_key,
-                     attachment_names_json, expected_fields_json, input_payload_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                    sql,
                     (
                         event_id,
                         self.organization_id,
@@ -853,17 +866,30 @@ class CorrectionLearningService:
 
     def _persist_review_outcome_event(self, normalized: Dict[str, Any]) -> str:
         event_id = str(normalized.get("event_id") or f"review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}")
+        _COLS = ("id, organization_id, ap_item_id, field_name, outcome_type, outcome_tags_json, "
+                 "selected_source, user_id, vendor_name, sender, sender_domain, subject, "
+                 "document_type, layout_key, confidence_profile_id, created_at")
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
+                if getattr(self.db, "use_postgres", False):
+                    sql = self.db._prepare_sql(
+                        f"INSERT INTO agent_review_outcomes ({_COLS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        + ", ".join(
+                            f"{c} = EXCLUDED.{c}"
+                            for c in _COLS.replace(" ", "").split(",")
+                            if c != "id"
+                        )
+                    )
+                else:
+                    sql = (
+                        f"INSERT OR REPLACE INTO agent_review_outcomes ({_COLS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    )
                 cur.execute(
-                    """
-                    INSERT OR REPLACE INTO agent_review_outcomes
-                    (id, organization_id, ap_item_id, field_name, outcome_type, outcome_tags_json,
-                     selected_source, user_id, vendor_name, sender, sender_domain, subject,
-                     document_type, layout_key, confidence_profile_id, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                    sql,
                     (
                         event_id,
                         self.organization_id,

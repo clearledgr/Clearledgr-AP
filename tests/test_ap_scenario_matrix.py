@@ -23,9 +23,6 @@ SCENARIO_ORG = "scenario-org"
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ap-scenario-matrix.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     inst.ensure_organization(
@@ -34,7 +31,6 @@ def db(tmp_path, monkeypatch):
         domain="scenario.test",
     )
     yield inst
-    db_module._DB_INSTANCE = None
     db_path = tmp_path / "ap-scenario-matrix.db"
     if db_path.exists():
         os.unlink(db_path)

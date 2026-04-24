@@ -18,10 +18,7 @@ from clearledgr.services import erp_api_first as erp_api_first_module
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "erp_api_first.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("AP_TEMPORAL_ENABLED", "false")
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db

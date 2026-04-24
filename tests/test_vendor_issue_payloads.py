@@ -15,9 +15,6 @@ from clearledgr.services.ap_item_service import _build_vendor_detail_payload, _b
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "vendor-issues.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db

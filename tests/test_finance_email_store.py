@@ -5,9 +5,6 @@ from clearledgr.core.models import FinanceEmail
 
 
 def _db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "finance-email-store.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db

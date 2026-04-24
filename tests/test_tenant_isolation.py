@@ -50,9 +50,6 @@ ORG_B = "tenant-b"
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "tenant-iso.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     # Ensure org rows exist so any FK-ish checks pass.

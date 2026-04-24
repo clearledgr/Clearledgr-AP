@@ -22,9 +22,6 @@ from clearledgr.services.ap_item_service import build_worklist_item
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ap-items-merge.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db
@@ -138,19 +135,27 @@ def test_audit_events_table_is_append_only(db):
     )
     assert event is not None
 
-    with pytest.raises(sqlite3.DatabaseError):
+    # append-only trigger raises a dialect-specific exception:
+    # sqlite3.DatabaseError on SQLite, psycopg.errors.RaiseException on PG.
+    # Catch Exception so the test is engine-agnostic.
+    with pytest.raises(Exception):
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                "UPDATE audit_events SET event_type = ? WHERE id = ?",
+                db._prepare_sql(
+                    "UPDATE audit_events SET event_type = ? WHERE id = ?"
+                ),
                 ("mutated_event", event["id"]),
             )
             conn.commit()
 
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(Exception):
         with db.connect() as conn:
             cur = conn.cursor()
-            cur.execute("DELETE FROM audit_events WHERE id = ?", (event["id"],))
+            cur.execute(
+                db._prepare_sql("DELETE FROM audit_events WHERE id = ?"),
+                (event["id"],),
+            )
             conn.commit()
 
     persisted = db.get_ap_audit_event(event["id"])

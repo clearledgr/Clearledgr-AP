@@ -27,8 +27,6 @@ def _isolate_service_singletons(tmp_path: Path, monkeypatch):
     clear the PO service cache so the next construct picks up the
     fresh DB.
     """
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ap-multi-context.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
     import clearledgr.core.database as _db_mod
     _db_mod._DB_INSTANCE = None
     import clearledgr.services.purchase_orders as _po_mod

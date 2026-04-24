@@ -43,10 +43,7 @@ class TestSavedViewQuotaEnforcement:
     """Integration-level: POST /api/saved-views enforces the per-tier cap."""
 
     def test_starter_fourth_saved_view_rejected_with_402(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "sv.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         # Reset the subscription-service singleton so it binds to the
         # per-test DB rather than carrying the old reference from
         # whatever test ran before this one.
@@ -121,11 +118,7 @@ class TestAuditEventRetentionFilter:
     """
 
     def _seed_events(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ret.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
-
         db = db_module.get_db()
         db.initialize()
 
@@ -207,11 +200,7 @@ class TestAuditEventRetentionFilter:
 
 class TestReadOnlySeatExpiry:
     def test_reap_expired_read_only_seats(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "seats.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
-
         db = db_module.get_db()
         db.initialize()
 

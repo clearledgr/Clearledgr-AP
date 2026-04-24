@@ -37,9 +37,6 @@ from clearledgr.core.auth import require_ops_user
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "bulk-batch-ops.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     instance = db_module.get_db()
     instance.initialize()
     return instance

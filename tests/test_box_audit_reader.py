@@ -8,10 +8,7 @@ from __future__ import annotations
 
 
 def _fresh_db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "br.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
     import clearledgr.core.database as db_module
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
     return db

@@ -36,9 +36,6 @@ from clearledgr.services.report_export import generate_report, rows_to_csv, REPO
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "reports.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     inst = db_module.get_db()
     inst.initialize()
     return inst
@@ -116,7 +113,9 @@ class TestVendorSpendExport:
         created = (now - timedelta(days=10)).isoformat()
         with db.connect() as conn:
             conn.execute(
-                "UPDATE ap_items SET created_at = ? WHERE id = ?",
+                db._prepare_sql(
+                    "UPDATE ap_items SET created_at = ? WHERE id = ?"
+                ),
                 (created, "sp-1"),
             )
             conn.commit()

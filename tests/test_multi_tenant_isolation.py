@@ -37,13 +37,10 @@ from clearledgr.core.auth import TokenData, create_access_token, get_current_use
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "isolation.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("AP_TEMPORAL_ENABLED", "false")
     monkeypatch.setenv("AP_V1_STRICT_SURFACES", "true")
     monkeypatch.delenv("CLEARLEDGR_ENABLE_LEGACY_SURFACES", raising=False)
     _apply_runtime_surface_profile()
-    db_module._DB_INSTANCE = None
     d = db_module.get_db()
     d.initialize()
     return d

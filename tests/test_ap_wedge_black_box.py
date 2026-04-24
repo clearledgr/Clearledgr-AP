@@ -52,9 +52,6 @@ def _create_validated_item(db, item_id: str = "ap-black-box-1") -> dict:
 
 
 def test_request_approval_black_box_route_drives_runtime_workflow_and_audit(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "ap-black-box.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     db = db_module.get_db()
     db.initialize()
 

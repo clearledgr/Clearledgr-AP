@@ -11,10 +11,7 @@ from __future__ import annotations
 
 class TestLLMCallLogLink:
     def test_log_call_persists_box_keys_and_correlation_id(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "llm.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -67,10 +64,7 @@ class TestLLMCallLogLink:
         """Callers can pass (box_id, box_type) directly for non-AP
         Boxes — vendor onboarding, clawback, etc.
         """
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "llm_explicit.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 
@@ -120,10 +114,7 @@ class TestLLMCallLogLink:
         classify_email for an email that hasn't yet become a Box)
         may pass nothing — the row records with null box keys.
         """
-        monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "llm_nolink.db"))
-        monkeypatch.delenv("DATABASE_URL", raising=False)
         import clearledgr.core.database as db_module
-        db_module._DB_INSTANCE = None
         db = db_module.get_db()
         db.initialize()
 

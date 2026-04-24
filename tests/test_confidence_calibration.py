@@ -23,9 +23,6 @@ from clearledgr.services.confidence_calibration import (  # noqa: E402
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLEARLEDGR_DB_PATH", str(tmp_path / "confidence-cal.db"))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    db_module._DB_INSTANCE = None
     _db = db_module.get_db()
     _db.initialize()
     _db.create_organization("default", "Default", settings={})
