@@ -151,6 +151,25 @@ class TestChaseStaleSessionsLogic:
             mock_dispatch,
         )
 
+        # Pin the magic-link rehydration to a known value so this test
+        # stays focused on "chase_24h is dispatched" without a
+        # dependency on the token-issuance happy path. Under full-suite
+        # PG load, the real ``generate_onboarding_token`` occasionally
+        # returns None on pool contention (raw_token is never persisted
+        # to the row, so the chase always falls through to a fresh
+        # issue), and _send_chase then skips dispatch — producing the
+        # infamous "awaited 0 times" flake. Stubbing the bound method
+        # isolates the test from that infrastructure quirk.
+        fake_token_row = {"id": "test-token", "session_id": session["id"]}
+        monkeypatch.setattr(
+            tmp_db,
+            "generate_onboarding_token",
+            lambda session_id, issued_by, purpose="full_onboarding", ttl_days=30: (
+                "fake-raw-token",
+                fake_token_row,
+            ),
+        )
+
         result = asyncio.run(mod.chase_stale_sessions(db=tmp_db))
         assert result.chases_sent == 1
         mock_dispatch.assert_awaited_once()

@@ -103,6 +103,31 @@ _CLEARLEDGR_DB_IMPL = None
 _PG_POOLS_BY_DSN: dict = {}
 
 
+def _close_all_pools_atexit():
+    """Close every shared pool cleanly at interpreter exit.
+
+    Without this, psycopg_pool's ConnectionPool.__del__ runs during
+    finalization and tries to join its worker threads — which can hit
+    PythonFinalizationError("cannot join thread at interpreter
+    shutdown") and leave TCP connections in TIME_WAIT against the
+    server. That state survives across pytest process boundaries (OS-
+    level) and manifests as the mysterious "pytest hangs during
+    collection" behaviour on back-to-back runs. Explicitly closing
+    the pool while the interpreter is still alive avoids the
+    finalizer race entirely.
+    """
+    for pool in list(_PG_POOLS_BY_DSN.values()):
+        try:
+            pool.close()
+        except Exception:
+            pass
+    _PG_POOLS_BY_DSN.clear()
+
+
+import atexit as _atexit
+_atexit.register(_close_all_pools_atexit)
+
+
 def _load_store_symbols() -> None:
     global APStore
     global APRuntimeStore
