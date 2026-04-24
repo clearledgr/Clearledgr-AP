@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.database import ClearledgrDB, get_db
 
 
 def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key-for-approval-followup")
-    db = ClearledgrDB(db_path=str(tmp_path / "approval-followup.db"))
+    db = get_db()
     db.initialize()
 
     db.create_ap_item(
@@ -58,7 +58,7 @@ def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, mo
 
 def test_get_pending_approver_ids_prefers_delivery_targets_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key-for-approval-followup")
-    db = ClearledgrDB(db_path=str(tmp_path / "approval-followup-delivery.db"))
+    db = get_db()
     db.initialize()
 
     db.create_ap_item(

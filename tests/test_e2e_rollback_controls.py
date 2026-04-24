@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.launch_controls import (
     default_rollback_controls,
     get_channel_action_block_reason,
@@ -50,7 +50,7 @@ def db():
     """
     fd, path = tempfile.mkstemp(suffix=".sqlite3")
     os.close(fd)
-    _db = ClearledgrDB(db_path=path)
+    _db = get_db()
     _db.initialize()
     _db.ensure_organization(
         organization_id="rc-org",

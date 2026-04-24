@@ -214,10 +214,10 @@ class TestUnknownEventType:
     def test_unknown_event_with_box_id_records_exception(self, engine, tmp_path, monkeypatch):
         """When the event names a Box, the unhandled-event failure is
         recorded as a box exception so it's auditable."""
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
 
-        db = ClearledgrDB(db_path=str(tmp_path / "unknown_event.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
 

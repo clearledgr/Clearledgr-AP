@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from clearledgr.core.ap_states import APState, IllegalTransitionError
-from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.database import ClearledgrDB, get_db
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ def db():
     """Fresh isolated ClearledgrDB with a test organization."""
     tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
     tmp.close()
-    _db = ClearledgrDB(db_path=tmp.name)
+    _db = get_db()
     _db.initialize()
     _db.ensure_organization(
         organization_id="e2e-org",

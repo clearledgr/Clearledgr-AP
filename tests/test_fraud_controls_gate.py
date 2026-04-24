@@ -34,10 +34,10 @@ from fastapi.testclient import TestClient
 
 def _make_db(tmp_path, name: str = "fc_test.db"):
     """Create a fresh temp-file ClearledgrDB and wire it as the singleton."""
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
     from clearledgr.core import database as db_module
 
-    db = ClearledgrDB(db_path=str(tmp_path / name))
+    db = get_db()
     db.initialize()
     db_module._DB_INSTANCE = db
     return db
@@ -674,12 +674,12 @@ class TestFraudControlsAPI:
 
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         import importlib
         import main
 
-        db = ClearledgrDB(db_path=str(tmp_path / "fc_api.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
 

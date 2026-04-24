@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.services.ap_item_service import _build_context_payload
 from clearledgr.services.purchase_orders import get_purchase_order_service
 

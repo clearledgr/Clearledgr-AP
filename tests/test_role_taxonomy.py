@@ -29,10 +29,10 @@ from fastapi import HTTPException
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
     from clearledgr.core import database as db_module
 
-    db = ClearledgrDB(db_path=str(tmp_path / "role_taxonomy.db"))
+    db = get_db()
     db.initialize()
     monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
     return db
@@ -486,11 +486,11 @@ class TestCFOGatedEndpointsStillEnforce:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         import main
 
-        db = ClearledgrDB(db_path=str(tmp_path / "phase23_api.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
         importlib.reload(main)

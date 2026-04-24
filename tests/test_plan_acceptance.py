@@ -48,11 +48,11 @@ def _get_db():
     connection per ``connect()`` call, and :memory: databases are not shared
     across connections.
     """
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
 
     tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
     tmp.close()
-    db = ClearledgrDB(db_path=tmp.name)
+    db = get_db()
     db.initialize()
     db.ensure_organization(
         organization_id="test-org",

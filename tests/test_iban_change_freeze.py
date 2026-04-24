@@ -38,10 +38,10 @@ SAMPLE_ADVERSARIAL = {
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
     from clearledgr.core import database as db_module
 
-    db = ClearledgrDB(db_path=str(tmp_path / "iban_freeze.db"))
+    db = get_db()
     db.initialize()
     monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
     return db
@@ -566,11 +566,11 @@ class TestIbanVerificationAPI:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         import main
 
-        db = ClearledgrDB(db_path=str(tmp_path / "api.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
         importlib.reload(main)

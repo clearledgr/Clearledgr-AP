@@ -224,14 +224,14 @@ class TestProcessNewInvoiceNarrowWaistEnforcement:
     re-enforce the gate before routing."""
 
     def test_pre_computed_approve_plus_failed_gate_forces_escalate(self, tmp_path, monkeypatch):
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         from clearledgr.services.ap_decision import APDecision
         from clearledgr.services.invoice_workflow import (
             InvoiceData, InvoiceWorkflowService
         )
 
-        db = ClearledgrDB(db_path=str(tmp_path / "gate_waist.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
 

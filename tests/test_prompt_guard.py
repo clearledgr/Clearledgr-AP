@@ -304,11 +304,11 @@ class TestValidationGateBlocksInjection:
 
     def _make_workflow(self, tmp_path):
         """Build an InvoiceWorkflowService over a fresh temp-file DB."""
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
-        db = ClearledgrDB(db_path=str(tmp_path / "pg_gate.db"))
+        db = get_db()
         db.initialize()
         db_module._DB_INSTANCE = db
         return InvoiceWorkflowService(organization_id="org_pg_test"), db

@@ -28,10 +28,10 @@ import pytest
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
     from clearledgr.core import database as db_module
 
-    db = ClearledgrDB(db_path=str(tmp_path / "portal.db"))
+    db = get_db()
     db.initialize()
     monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
     return db

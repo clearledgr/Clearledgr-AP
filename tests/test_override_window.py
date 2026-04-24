@@ -30,10 +30,10 @@ import pytest
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     """Fresh temp-file ClearledgrDB wired as the singleton."""
-    from clearledgr.core.database import ClearledgrDB
+    from clearledgr.core.database import ClearledgrDB, get_db
     from clearledgr.core import database as db_module
 
-    db = ClearledgrDB(db_path=str(tmp_path / "override_window.db"))
+    db = get_db()
     db.initialize()
     monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
     return db
@@ -1097,12 +1097,12 @@ class TestReverseAPItemEndpoint:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB
+        from clearledgr.core.database import ClearledgrDB, get_db
         from clearledgr.core import database as db_module
         import importlib
         import main
 
-        db = ClearledgrDB(db_path=str(tmp_path / "reverse_api.db"))
+        db = get_db()
         db.initialize()
         monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
         importlib.reload(main)
