@@ -269,7 +269,7 @@ def test_gmail_label_observer_skips_without_user_context():
 # ---------------------------------------------------------------------------
 
 
-def test_observer_fires_on_workflow_transition(tmp_path):
+def test_observer_fires_on_workflow_transition(postgres_test_db):
     """InvoiceWorkflowService._transition_invoice_state should dispatch to observers."""
     import os
     os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "test-key-for-observer-test")
@@ -277,53 +277,45 @@ def test_observer_fires_on_workflow_transition(tmp_path):
 
     from clearledgr.core import database as db_mod
 
-    db_path = str(tmp_path / "obs_test.db")
-    old_instance = db_mod._DB_INSTANCE
-    try:
-        db_mod._DB_INSTANCE = None
-        os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
-        db = db_mod.get_db()
-        db.initialize()
+    db = db_mod.get_db()
+    db.initialize()
 
-        # Create org + AP item
-        import uuid
-        org_id = f"obs-org-{uuid.uuid4().hex[:8]}"
-        db.create_organization(org_id, "Observer Test Org", settings="{}")
-        db.create_ap_item({
-            "id": f"ap-obs-{uuid.uuid4().hex[:8]}",
-            "thread_id": "gmail-obs-1",
-            "organization_id": org_id,
-            "state": "validated",
-            "vendor": "TestVendor",
-            "amount": 100.0,
-        })
+    # Create org + AP item
+    import uuid
+    org_id = f"obs-org-{uuid.uuid4().hex[:8]}"
+    db.create_organization(org_id, "Observer Test Org", settings="{}")
+    db.create_ap_item({
+        "id": f"ap-obs-{uuid.uuid4().hex[:8]}",
+        "thread_id": "gmail-obs-1",
+        "organization_id": org_id,
+        "state": "validated",
+        "vendor": "TestVendor",
+        "amount": 100.0,
+    })
 
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
-        svc = InvoiceWorkflowService(org_id)
+    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    svc = InvoiceWorkflowService(org_id)
 
-        # Verify observer registry exists
-        assert svc._observer_registry is not None
-        assert len(svc._observer_registry._observers) >= 1
+    # Verify observer registry exists
+    assert svc._observer_registry is not None
+    assert len(svc._observer_registry._observers) >= 1
 
-        # Patch the audit observer to track calls
-        audit_calls = []
-        original_on_transition = svc._observer_registry._observers[0].on_transition
+    # Patch the audit observer to track calls
+    audit_calls = []
+    original_on_transition = svc._observer_registry._observers[0].on_transition
 
-        async def tracking_on_transition(event):
-            audit_calls.append(event)
-            await original_on_transition(event)
+    async def tracking_on_transition(event):
+        audit_calls.append(event)
+        await original_on_transition(event)
 
-        svc._observer_registry._observers[0].on_transition = tracking_on_transition
+    svc._observer_registry._observers[0].on_transition = tracking_on_transition
 
-        # Trigger transition
-        result = svc._transition_invoice_state(
-            gmail_id="gmail-obs-1",
-            target_state="needs_approval",
-        )
-        assert result is True
-        assert len(audit_calls) == 1
-        assert audit_calls[0].old_state == "validated"
-        assert audit_calls[0].new_state == "needs_approval"
-    finally:
-        db_mod._DB_INSTANCE = old_instance
-        os.environ.pop("DATABASE_URL", None)
+    # Trigger transition
+    result = svc._transition_invoice_state(
+        gmail_id="gmail-obs-1",
+        target_state="needs_approval",
+    )
+    assert result is True
+    assert len(audit_calls) == 1
+    assert audit_calls[0].old_state == "validated"
+    assert audit_calls[0].new_state == "needs_approval"

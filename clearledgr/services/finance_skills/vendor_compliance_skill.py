@@ -147,15 +147,9 @@ class VendorComplianceSkill(FinanceSkill):
             )
             try:
                 with runtime.db.connect() as conn:
-                    if getattr(runtime.db, "use_postgres", False):
-                        cur = conn.cursor()
-                        cur.execute(sql, (runtime.organization_id, int(limit)))
-                        rows = [dict(row) for row in cur.fetchall()]
-                    else:
-                        conn.row_factory = __import__("sqlite3").Row
-                        cur = conn.cursor()
-                        cur.execute(sql, (runtime.organization_id, int(limit)))
-                        rows = [dict(row) for row in cur.fetchall()]
+                    cur = conn.cursor()
+                    cur.execute(sql, (runtime.organization_id, int(limit)))
+                    rows = [dict(row) for row in cur.fetchall()]
                 return rows
             except Exception:
                 return []

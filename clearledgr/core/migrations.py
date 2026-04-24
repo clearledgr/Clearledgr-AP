@@ -59,34 +59,30 @@ def run_migrations(db) -> int:
         """)
         conn.commit()
 
-    # Acquire the cluster-wide advisory lock (Postgres only). SQLite
-    # development runs single-process, so no lock needed. The lock is
-    # released automatically when the connection closes.
+    # Acquire the cluster-wide advisory lock. Released automatically
+    # when the connection closes.
     lock_conn = None
-    if db.use_postgres:
-        try:
-            lock_conn = db.connect().__enter__()
-            lock_conn.cursor().execute(
-                db._prepare_sql("SELECT pg_advisory_lock(?)"),
-                (MIGRATION_LOCK_KEY,),
-            )
-            lock_conn.commit()
-        except Exception as exc:
-            logger.warning(
-                "[Migration] advisory lock not acquired (%s); continuing without cluster serialization",
-                exc,
-            )
-            lock_conn = None
+    try:
+        lock_conn = db.connect().__enter__()
+        lock_conn.cursor().execute(
+            db._prepare_sql("SELECT pg_advisory_lock(?)"),
+            (MIGRATION_LOCK_KEY,),
+        )
+        lock_conn.commit()
+    except Exception as exc:
+        logger.warning(
+            "[Migration] advisory lock not acquired (%s); continuing without cluster serialization",
+            exc,
+        )
+        lock_conn = None
 
     try:
         # Get current version AFTER acquiring the lock so we see any
         # versions that a racing process just applied. The ``AS v`` alias
         # is load-bearing: psycopg's dict_row factory keys fetchone()
         # rows by column label, not position — a bare ``MAX(version)``
-        # would land as ``row["max"]`` on Postgres and break positional
-        # access ``row[0]`` with a KeyError. Aliasing makes this robust
-        # whether the row factory returns dicts (psycopg) or tuples
-        # (sqlite3).
+        # would land as ``row["max"]`` and break the ``row["v"]`` access
+        # below.
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute("SELECT MAX(version) AS v FROM schema_versions")
@@ -107,67 +103,45 @@ def run_migrations(db) -> int:
             logger.info("[Migration] Applying v%d: %s", version, description)
             try:
                 with db.connect() as conn:
-                    # Under Postgres, migrations run in autocommit mode
-                    # so each DDL statement commits on its own. SQLite
-                    # effectively auto-commits per statement already;
-                    # without autocommit on PG a single failing
-                    # statement (e.g. a `CREATE INDEX IF NOT EXISTS`
-                    # guarded by try/except inside the migration body)
-                    # poisons the entire transaction with "current
-                    # transaction is aborted, commands ignored until
-                    # end of transaction block" and every subsequent
-                    # statement fails — which is the real root cause
-                    # of the large PG-under-CI failure cluster.
-                    # All migrations in this file use idempotent DDL
+                    # Migrations run in autocommit mode so each DDL
+                    # statement commits on its own. Without autocommit,
+                    # a single failing statement (e.g. a
+                    # `CREATE INDEX IF NOT EXISTS` guarded by try/except
+                    # inside the migration body) poisons the entire
+                    # transaction with "current transaction is aborted,
+                    # commands ignored until end of transaction block"
+                    # and every subsequent statement fails.
+                    # All migrations here use idempotent DDL
                     # (CREATE ... IF NOT EXISTS, INSERT ... ON CONFLICT
                     # DO NOTHING) so partial-failure semantics on re-run
                     # are safe.
                     autocommit_was_toggled = False
-                    if db.use_postgres:
-                        try:
-                            if not conn.autocommit:
-                                conn.autocommit = True
-                                autocommit_was_toggled = True
-                        except Exception as exc:
-                            logger.debug(
-                                "[Migration] v%d: could not set autocommit (%s); proceeding", version, exc,
-                            )
+                    try:
+                        if not conn.autocommit:
+                            conn.autocommit = True
+                            autocommit_was_toggled = True
+                    except Exception as exc:
+                        logger.debug(
+                            "[Migration] v%d: could not set autocommit (%s); proceeding", version, exc,
+                        )
                     cur = conn.cursor()
                     try:
                         fn(cur, db)
-                        # Belt-and-braces: if another process raced past the
-                        # lock (it shouldn't, but crashes mid-migration can
-                        # leave the lock stuck for us to re-acquire and the
-                        # INSERT still succeeds once), use conflict-tolerant
-                        # SQL. DO NOTHING means "someone beat us to it — we
-                        # already applied the same DDL idempotently via
-                        # IF NOT EXISTS, so dropping the version row is
-                        # harmless.
-                        # Stays inside the autocommit-True block on PG so
-                        # the schema_versions row commits alongside the
-                        # DDL — otherwise flipping autocommit off before
-                        # this INSERT would leave it pending in a txn
-                        # that the pool rolls back on return.
-                        if db.use_postgres:
-                            cur.execute(
-                                db._prepare_sql(
-                                    "INSERT INTO schema_versions (version, description, applied_at) "
-                                    "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
-                                ),
-                                (version, description, datetime.now(timezone.utc).isoformat()),
-                            )
-                        else:
-                            cur.execute(
-                                "INSERT OR IGNORE INTO schema_versions (version, description, applied_at) "
-                                "VALUES (?, ?, ?)",
-                                (version, description, datetime.now(timezone.utc).isoformat()),
-                            )
-                            conn.commit()
+                        # Belt-and-braces: if another process raced past
+                        # the lock, ON CONFLICT DO NOTHING keeps the
+                        # INSERT harmless.
+                        cur.execute(
+                            db._prepare_sql(
+                                "INSERT INTO schema_versions (version, description, applied_at) "
+                                "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
+                            ),
+                            (version, description, datetime.now(timezone.utc).isoformat()),
+                        )
                     finally:
                         # Restore autocommit so the pool's next consumer
-                        # gets a connection with the default
-                        # transactional semantics, not the migration's
-                        # per-statement mode.
+                        # gets a connection with default transactional
+                        # semantics, not the migration's per-statement
+                        # mode.
                         if autocommit_was_toggled:
                             try:
                                 conn.autocommit = False

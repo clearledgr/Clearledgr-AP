@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import base64
 import hashlib
 from contextlib import contextmanager
@@ -30,14 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.utils import safe_float
 
-try:
-    import psycopg
-    from psycopg.rows import dict_row as _psycopg_dict_row
-    HAS_POSTGRES = True
-except ImportError:  # pragma: no cover
-    psycopg = None
-    _psycopg_dict_row = None
-    HAS_POSTGRES = False
+import psycopg
 
 
 class HybridRow(dict):
@@ -81,8 +73,6 @@ class HybridRow(dict):
 
 def dict_row(cursor):
     """Row factory that returns HybridRow instances (dict + positional)."""
-    if _psycopg_dict_row is None:  # pragma: no cover
-        return None
     desc = cursor.description
     if desc is None:
         return lambda values: values
@@ -210,27 +200,24 @@ class _ClearledgrDBBase:
     def __init__(self, db_path: str = "clearledgr.db"):
         self.dsn = os.getenv("DATABASE_URL")
         self.db_path = db_path
-        dsn = (self.dsn or "").strip().lower()
-        # Dev/prod defaults differ intentionally:
-        #   - dev:  CLEARLEDGR_DB_FALLBACK_SQLITE defaults to "true" (SQLite OK)
-        #   - prod: CLEARLEDGR_DB_FALLBACK_SQLITE defaults to "false" (require Postgres)
-        # This ensures prod never silently falls back to SQLite while dev stays
-        # zero-config. Override with the env var if needed.
-        _is_prod = os.getenv("ENV", "dev").lower() in ("production", "prod")
-        _fallback_default = "false" if _is_prod else "true"
-        self.allow_sqlite_fallback = str(
-            os.getenv("CLEARLEDGR_DB_FALLBACK_SQLITE", _fallback_default)
-        ).strip().lower() not in {"0", "false", "no", "off"}
-        self.use_postgres = bool(
-            HAS_POSTGRES
-            and dsn
-            and (dsn.startswith("postgres://") or dsn.startswith("postgresql://"))
-        )
+        # Postgres is the only supported engine post-C.2. The
+        # `use_postgres` attribute is retained as a static True so that
+        # external callers which read it for logging/observability keep
+        # working; removal is scheduled for C.3.
+        if not self.dsn:
+            raise RuntimeError(
+                "DATABASE_URL is required. Clearledgr no longer supports SQLite."
+            )
+        dsn_lower = self.dsn.strip().lower()
+        if not (dsn_lower.startswith("postgres://") or dsn_lower.startswith("postgresql://")):
+            raise RuntimeError(
+                f"DATABASE_URL must point at Postgres, got: {self.dsn!r}"
+            )
+        self.use_postgres = True
         from clearledgr.core.secrets import require_secret
         self._secret_key = require_secret("CLEARLEDGR_SECRET_KEY")
         self._fernet = None
         self._initialized = False
-        self._fallback_warned = False
         self._pg_pool = None
 
     def _postgres_connect_timeout_seconds(self) -> int:
@@ -241,121 +228,73 @@ class _ClearledgrDBBase:
             timeout_seconds = 2
         return max(1, timeout_seconds)
 
-    def _sqlite_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        # WAL mode lets readers and writers coexist without blocking
-        # each other, which matters in dev/test where multiple async
-        # tasks and a pytest process can all hit the same DB at once.
-        # Default rollback-journal mode serializes everything and
-        # causes "database is locked" flakes on otherwise-healthy
-        # tests. synchronous=NORMAL is WAL's recommended pairing —
-        # same durability as FULL on modern filesystems, faster
-        # commits. Both PRAGMAs are per-connection; setting them on
-        # every connection is idempotent.
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-        except Exception:
-            # PRAGMA failure shouldn't take down the connection —
-            # fall back to SQLite defaults silently.
-            pass
-        return conn
-
     @contextmanager
     def connect(self):
-        if self.use_postgres:
-            try:
-                connect_timeout = self._postgres_connect_timeout_seconds()
-                if self._pg_pool is None:
-                    # Share a single pool per DSN across all ClearledgrDB
-                    # instances in the process. Without this, every test
-                    # ``tmp_db`` fixture that constructs ClearledgrDB
-                    # directly would spawn its own pool (min_size=2
-                    # connections each); a full 2400-test suite then
-                    # racks up dozens of pools against a PG with
-                    # max_connections=100 default, and the suite
-                    # silently flipped use_postgres→False via the old
-                    # SQLite fallback path — which is exactly what C.1
-                    # is trying to eliminate.
-                    # Keyed by DSN so prod (single singleton) and tests
-                    # (many instances, same session DSN) both work right.
-                    # max_size bumped to 30 so bursts (multiple async
-                    # tasks in one test + the TRUNCATE fixture's direct
-                    # connect) don't serialize on the pool's semaphore.
-                    pool = _PG_POOLS_BY_DSN.get(self.dsn)
-                    if pool is None:
-                        try:
-                            from psycopg_pool import ConnectionPool
-                            pool = ConnectionPool(
-                                self.dsn,
-                                min_size=2,
-                                max_size=int(os.getenv("DB_POOL_MAX_SIZE", "30")),
-                                kwargs={
-                                    "row_factory": dict_row,
-                                    "connect_timeout": connect_timeout,
-                                },
-                            )
-                            _PG_POOLS_BY_DSN[self.dsn] = pool
-                            logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "30"))
-                        except ImportError:
-                            logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
-                    self._pg_pool = pool
-                if self._pg_pool is not None:
-                    # Pool can hand back a closed/broken connection — in
-                    # particular after migrations where the connection
-                    # pool's idle workers were cancelled. Retry up to 3
-                    # times so a single BAD conn doesn't bubble up as a
-                    # user-visible OperationalError("the connection is
-                    # closed"); psycopg_pool discards bad conns when it
-                    # sees them, so successive getconn() will return a
-                    # fresh one.
-                    conn = None
-                    for _attempt in range(3):
-                        candidate = self._pg_pool.getconn()
-                        if candidate.closed:
-                            # Return the bad conn so the pool can
-                            # discard it and replace with a fresh one
-                            # on the next round-trip.
-                            try:
-                                self._pg_pool.putconn(candidate)
-                            except Exception:
-                                try:
-                                    candidate.close()
-                                except Exception:
-                                    pass
-                            continue
-                        conn = candidate
-                        break
-                    if conn is None:
-                        raise psycopg.OperationalError(
-                            "pool returned closed connections on every attempt",
-                        )
-                else:
-                    conn = psycopg.connect(
+        connect_timeout = self._postgres_connect_timeout_seconds()
+        if self._pg_pool is None:
+            # Share a single pool per DSN across all ClearledgrDB
+            # instances in the process. Without this, every test
+            # fixture that constructs ClearledgrDB directly would
+            # spawn its own pool (min_size=2 connections each); a full
+            # 2400-test suite then racks up dozens of pools against a
+            # PG with max_connections=100 default.
+            # Keyed by DSN so prod (single singleton) and tests
+            # (many instances, same session DSN) both work right.
+            # max_size bumped to 30 so bursts (multiple async tasks +
+            # the TRUNCATE fixture's direct connect) don't serialize.
+            pool = _PG_POOLS_BY_DSN.get(self.dsn)
+            if pool is None:
+                try:
+                    from psycopg_pool import ConnectionPool
+                    pool = ConnectionPool(
                         self.dsn,
-                        row_factory=dict_row,
-                        connect_timeout=connect_timeout,
+                        min_size=2,
+                        max_size=int(os.getenv("DB_POOL_MAX_SIZE", "30")),
+                        kwargs={
+                            "row_factory": dict_row,
+                            "connect_timeout": connect_timeout,
+                        },
                     )
-            except Exception as exc:
-                if not self.allow_sqlite_fallback:
-                    raise
-                if not self._fallback_warned:
-                    logging.getLogger(__name__).warning(
-                        "Postgres unavailable (%s). Falling back to SQLite at %s. "
-                        "Set CLEARLEDGR_DB_FALLBACK_SQLITE=false to disable fallback.",
-                        exc,
-                        self.db_path,
-                    )
-                    self._fallback_warned = True
-                self.use_postgres = False
-                conn = self._sqlite_connection()
+                    _PG_POOLS_BY_DSN[self.dsn] = pool
+                    logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "30"))
+                except ImportError:
+                    logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
+            self._pg_pool = pool
+        if self._pg_pool is not None:
+            # Pool can hand back a closed/broken connection — in
+            # particular after migrations where the pool's idle
+            # workers were cancelled. Retry up to 3 times so a
+            # single BAD conn doesn't bubble up as a user-visible
+            # OperationalError("the connection is closed");
+            # psycopg_pool discards bad conns on putconn.
+            conn = None
+            for _attempt in range(3):
+                candidate = self._pg_pool.getconn()
+                if candidate.closed:
+                    try:
+                        self._pg_pool.putconn(candidate)
+                    except Exception:
+                        try:
+                            candidate.close()
+                        except Exception:
+                            pass
+                    continue
+                conn = candidate
+                break
+            if conn is None:
+                raise psycopg.OperationalError(
+                    "pool returned closed connections on every attempt",
+                )
         else:
-            conn = self._sqlite_connection()
+            conn = psycopg.connect(
+                self.dsn,
+                row_factory=dict_row,
+                connect_timeout=connect_timeout,
+            )
         try:
             yield conn
         finally:
-            if self._pg_pool is not None and self.use_postgres:
+            if self._pg_pool is not None:
                 try:
                     self._pg_pool.putconn(conn)
                 except Exception:
@@ -364,42 +303,29 @@ class _ClearledgrDBBase:
                 conn.close()
 
     def _prepare_sql(self, sql: str) -> str:
-        """Cross-dialect SQL adapter.
-
-        Under PG, rewrites two SQLite-isms that migrations and stores
-        still rely on:
+        """Translate historical SQLite-isms to Postgres. Scheduled for
+        removal in C.3 once all 400+ call sites migrate to plain
+        psycopg placeholders. Kept as a passthrough shim so the stage-4
+        branch deletion doesn't churn every store at once.
 
         - ``?``  → ``%s`` (psycopg uses libpq-style placeholders).
         - ``INSERT OR IGNORE INTO ...`` → ``INSERT INTO ... ON CONFLICT
-          DO NOTHING``. The migrations seed default pipelines /
-          stages / columns with this pattern and rely on it being a
-          no-op on reruns. PG 9.5+ supports the ON CONFLICT form.
-          Appending at the end handles multi-line SQL where the
-          closing paren might be on a later line.
-
-        Under SQLite, returned unchanged — the native dialect is
-        SQLite for the migrations (historical) so no translation needed.
+          DO NOTHING``. Migrations still seed defaults with this form.
         """
-        if self.use_postgres:
-            out = sql.replace("?", "%s")
-            if "INSERT OR IGNORE INTO" in out.upper():
-                # Case-insensitive replace without touching case elsewhere.
-                import re as _re
-                out = _re.sub(
-                    r"INSERT\s+OR\s+IGNORE\s+INTO",
-                    "INSERT INTO",
-                    out,
-                    flags=_re.IGNORECASE,
-                )
-                # Append ON CONFLICT DO NOTHING at end (strip trailing
-                # whitespace + optional semicolon first so we don't
-                # end up with "VALUES (...);  ON CONFLICT ...").
-                stripped = out.rstrip()
-                if stripped.endswith(";"):
-                    stripped = stripped[:-1].rstrip()
-                out = stripped + " ON CONFLICT DO NOTHING"
-            return out
-        return sql
+        out = sql.replace("?", "%s")
+        if "INSERT OR IGNORE INTO" in out.upper():
+            import re as _re
+            out = _re.sub(
+                r"INSERT\s+OR\s+IGNORE\s+INTO",
+                "INSERT INTO",
+                out,
+                flags=_re.IGNORECASE,
+            )
+            stripped = out.rstrip()
+            if stripped.endswith(";"):
+                stripped = stripped[:-1].rstrip()
+            out = stripped + " ON CONFLICT DO NOTHING"
+        return out
 
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
         """Execute a DML/DDL statement and commit. Thin wrapper around connect()."""
@@ -450,16 +376,12 @@ class _ClearledgrDBBase:
             return [dict(zip(cols, r)) for r in rows]
 
     def _table_columns(self, cur, table: str) -> set[str]:
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
-            )
-            cur.execute(sql, (table,))
-            rows = cur.fetchall()
-            return {str(row["column_name"]) for row in rows}
-        cur.execute(f"PRAGMA table_info({table})")
+        sql = self._prepare_sql(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
+        )
+        cur.execute(sql, (table,))
         rows = cur.fetchall()
-        return {str(row["name"]) for row in rows}
+        return {str(row["column_name"]) for row in rows}
 
     def _ensure_column(self, cur, table: str, column: str, definition: str) -> None:
         columns = self._table_columns(cur, table)
@@ -470,67 +392,35 @@ class _ClearledgrDBBase:
     def _install_audit_append_only_guards(self, cur) -> None:
         """Install append-only protections for audit history tables.
 
-        SQLite uses triggers that abort updates/deletes.
-        Postgres uses a shared trigger function applied to the same tables.
+        A shared plpgsql trigger function raises on UPDATE/DELETE against
+        the audit tables, enforcing append-only semantics at the DB level.
         """
-        if self.use_postgres:
+        cur.execute(
+            """
+            CREATE OR REPLACE FUNCTION clearledgr_prevent_append_only_mutation()
+            RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+        triggers = (
+            ("audit_events", "trg_audit_events_no_update", "UPDATE"),
+            ("audit_events", "trg_audit_events_no_delete", "DELETE"),
+            ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_update", "UPDATE"),
+            ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_delete", "DELETE"),
+        )
+        for table, trigger_name, operation in triggers:
+            cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table}")
             cur.execute(
-                """
-                CREATE OR REPLACE FUNCTION clearledgr_prevent_append_only_mutation()
-                RETURNS trigger AS $$
-                BEGIN
-                    RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
-                END;
-                $$ LANGUAGE plpgsql;
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON {table}
+                FOR EACH ROW
+                EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()
                 """
             )
-            postgres_triggers = (
-                ("audit_events", "trg_audit_events_no_update", "UPDATE"),
-                ("audit_events", "trg_audit_events_no_delete", "DELETE"),
-                ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_update", "UPDATE"),
-                ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_delete", "DELETE"),
-            )
-            for table, trigger_name, operation in postgres_triggers:
-                cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table}")
-                cur.execute(
-                    f"""
-                    CREATE TRIGGER {trigger_name}
-                    BEFORE {operation} ON {table}
-                    FOR EACH ROW
-                    EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()
-                    """
-                )
-            return
-
-        # Enforce append-only semantics for core audit history tables in SQLite deployments.
-        cur.execute("""
-            CREATE TRIGGER IF NOT EXISTS trg_audit_events_no_update
-            BEFORE UPDATE ON audit_events
-            BEGIN
-                SELECT RAISE(ABORT, 'audit_events is append-only');
-            END;
-        """)
-        cur.execute("""
-            CREATE TRIGGER IF NOT EXISTS trg_audit_events_no_delete
-            BEFORE DELETE ON audit_events
-            BEGIN
-                SELECT RAISE(ABORT, 'audit_events is append-only');
-            END;
-        """)
-        cur.execute("""
-            CREATE TRIGGER IF NOT EXISTS trg_ap_policy_audit_events_no_update
-            BEFORE UPDATE ON ap_policy_audit_events
-            BEGIN
-                SELECT RAISE(ABORT, 'ap_policy_audit_events is append-only');
-            END;
-        """)
-        cur.execute("""
-            CREATE TRIGGER IF NOT EXISTS trg_ap_policy_audit_events_no_delete
-            BEFORE DELETE ON ap_policy_audit_events
-            BEGIN
-                SELECT RAISE(ABORT, 'ap_policy_audit_events is append-only');
-            END;
-        """)
 
     def _install_ap_state_guard(self, cur) -> None:
         """Enforce valid AP item states at the DB level.
@@ -541,56 +431,31 @@ class _ClearledgrDBBase:
         """
         from clearledgr.core.ap_states import VALID_STATE_VALUES
 
-        if self.use_postgres:
-            states_list = ", ".join(f"'{s}'" for s in sorted(VALID_STATE_VALUES))
-            cur.execute(f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_trigger
-                        WHERE tgname = 'enforce_valid_ap_state'
-                    ) THEN
-                        CREATE OR REPLACE FUNCTION clearledgr_check_ap_state()
-                        RETURNS TRIGGER AS $t$
-                        BEGIN
-                            IF NEW.state NOT IN ({states_list}) THEN
-                                RAISE EXCEPTION 'Invalid AP item state: %', NEW.state;
-                            END IF;
-                            RETURN NEW;
-                        END;
-                        $t$ LANGUAGE plpgsql;
-
-                        CREATE TRIGGER enforce_valid_ap_state
-                        BEFORE INSERT OR UPDATE OF state ON ap_items
-                        FOR EACH ROW
-                        EXECUTE FUNCTION clearledgr_check_ap_state();
-                    END IF;
-                END
-                $$;
-            """)
-            return
-
-        # SQLite: BEFORE INSERT and BEFORE UPDATE triggers
         states_list = ", ".join(f"'{s}'" for s in sorted(VALID_STATE_VALUES))
         cur.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS enforce_valid_ap_state_insert
-            BEFORE INSERT ON ap_items
+            DO $$
             BEGIN
-                SELECT CASE
-                    WHEN NEW.state NOT IN ({states_list})
-                    THEN RAISE(ABORT, 'Invalid AP item state')
-                END;
-            END;
-        """)
-        cur.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS enforce_valid_ap_state_update
-            BEFORE UPDATE OF state ON ap_items
-            BEGIN
-                SELECT CASE
-                    WHEN NEW.state NOT IN ({states_list})
-                    THEN RAISE(ABORT, 'Invalid AP item state')
-                END;
-            END;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger
+                    WHERE tgname = 'enforce_valid_ap_state'
+                ) THEN
+                    CREATE OR REPLACE FUNCTION clearledgr_check_ap_state()
+                    RETURNS TRIGGER AS $t$
+                    BEGIN
+                        IF NEW.state NOT IN ({states_list}) THEN
+                            RAISE EXCEPTION 'Invalid AP item state: %', NEW.state;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $t$ LANGUAGE plpgsql;
+
+                    CREATE TRIGGER enforce_valid_ap_state
+                    BEFORE INSERT OR UPDATE OF state ON ap_items
+                    FOR EACH ROW
+                    EXECUTE FUNCTION clearledgr_check_ap_state();
+                END IF;
+            END
+            $$;
         """)
 
     def _get_fernet(self):

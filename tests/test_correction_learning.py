@@ -12,6 +12,14 @@ from clearledgr.services.correction_learning import CorrectionLearningService
 
 
 class _SQLiteBackedDB:
+    """In-test DB stub that writes to a local SQLite file. Production
+    correction_learning.py no longer branches on engine — both
+    Postgres and SQLite 3.24+ support ``ON CONFLICT (id) DO UPDATE
+    SET``, so the SQL issued by the service works here unchanged as
+    long as we expose a ``_prepare_sql`` passthrough matching
+    ClearledgrDB's protocol.
+    """
+
     def __init__(self, db_path: Path):
         self.db_path = str(db_path)
 
@@ -23,6 +31,11 @@ class _SQLiteBackedDB:
             yield conn
         finally:
             conn.close()
+
+    def _prepare_sql(self, sql: str) -> str:
+        # SQLite uses ? natively; strip the INSERT OR IGNORE rewrite
+        # (ClearledgrDB rewrites to ON CONFLICT DO NOTHING for PG).
+        return sql
 
 
 @pytest.fixture

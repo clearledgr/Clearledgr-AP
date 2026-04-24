@@ -164,17 +164,11 @@ def _ensure_schema(db: Any) -> None:
 
 
 def _persist_meta_value(db: Any, key: str, value: str) -> None:
-    if getattr(db, "use_postgres", False):
-        sql = _prepare_sql(
-            db,
-            "INSERT INTO api_metrics_meta (key, value) VALUES (?, ?) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-        )
-    else:
-        sql = _prepare_sql(
-            db,
-            "INSERT OR REPLACE INTO api_metrics_meta (key, value) VALUES (?, ?)",
-        )
+    sql = _prepare_sql(
+        db,
+        "INSERT INTO api_metrics_meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    )
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(sql, (str(key), str(value)))

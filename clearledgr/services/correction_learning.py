@@ -607,22 +607,16 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                if getattr(self.db, "use_postgres", False):
-                    sql = self.db._prepare_sql(
-                        f"INSERT INTO agent_correction_events ({_COLS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        + ", ".join(
-                            f"{c} = EXCLUDED.{c}"
-                            for c in _COLS.replace(" ", "").split(",")
-                            if c != "id"
-                        )
+                sql = self.db._prepare_sql(
+                    f"INSERT INTO agent_correction_events ({_COLS}) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (id) DO UPDATE SET "
+                    + ", ".join(
+                        f"{c} = EXCLUDED.{c}"
+                        for c in _COLS.replace(" ", "").split(",")
+                        if c != "id"
                     )
-                else:
-                    sql = (
-                        f"INSERT OR REPLACE INTO agent_correction_events ({_COLS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
+                )
                 cur.execute(
                     sql,
                     (
@@ -872,22 +866,16 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                if getattr(self.db, "use_postgres", False):
-                    sql = self.db._prepare_sql(
-                        f"INSERT INTO agent_review_outcomes ({_COLS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        + ", ".join(
-                            f"{c} = EXCLUDED.{c}"
-                            for c in _COLS.replace(" ", "").split(",")
-                            if c != "id"
-                        )
+                sql = self.db._prepare_sql(
+                    f"INSERT INTO agent_review_outcomes ({_COLS}) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (id) DO UPDATE SET "
+                    + ", ".join(
+                        f"{c} = EXCLUDED.{c}"
+                        for c in _COLS.replace(" ", "").split(",")
+                        if c != "id"
                     )
-                else:
-                    sql = (
-                        f"INSERT OR REPLACE INTO agent_review_outcomes ({_COLS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
+                )
                 cur.execute(
                     sql,
                     (
