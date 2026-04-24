@@ -9,6 +9,19 @@ import pytest
 os.environ.setdefault("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", "true")
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
 
+# Under C.1's PG test harness, a silent SQLite fallback from a pool
+# hiccup is exactly the failure mode we're trying to eliminate: tests
+# succeed on SQLite without ever exercising the PG path, and a
+# mid-suite pool exhaustion flips the singleton's use_postgres flag
+# to False, causing 13+ downstream tests to hit a SQLite file the
+# TRUNCATE fixture doesn't clean. Disable fallback so any PG problem
+# surfaces as a real exception — which is the whole point of running
+# tests on PG in the first place. The env var only affects tests
+# because production deploys ENV=production already default to
+# fallback=False.
+if os.environ.get("TEST_DB_ENGINE", "postgres").strip().lower() == "postgres":
+    os.environ.setdefault("CLEARLEDGR_DB_FALLBACK_SQLITE", "false")
+
 
 @pytest.fixture(autouse=True)
 def allow_in_memory_rate_limit_backend_for_tests(monkeypatch):

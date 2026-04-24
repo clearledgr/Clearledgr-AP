@@ -148,13 +148,28 @@ class AuthStore:
     ) -> None:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            """
-            INSERT OR REPLACE INTO google_auth_codes
-            (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """
-        )
+        if self.use_postgres:
+            sql = self._prepare_sql(
+                """
+                INSERT INTO google_auth_codes
+                (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (auth_code) DO UPDATE SET
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    organization_id = EXCLUDED.organization_id,
+                    expires_at = EXCLUDED.expires_at,
+                    created_at = EXCLUDED.created_at
+                """
+            )
+        else:
+            sql = self._prepare_sql(
+                """
+                INSERT OR REPLACE INTO google_auth_codes
+                (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+            )
         encrypted_access = self._encrypt_secret(access_token)
         encrypted_refresh = self._encrypt_secret(refresh_token or "")
         if not organization_id:
