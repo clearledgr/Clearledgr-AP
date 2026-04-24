@@ -44,31 +44,23 @@ class DelegationService:
         now = datetime.now(timezone.utc).isoformat()
         rule_id = f"dlg_{uuid.uuid4().hex[:12]}"
 
-        if self.db.use_postgres:
-            sql = self.db._prepare_sql("""
-                INSERT INTO delegation_rules
-                (id, organization_id, delegator_id, delegator_email, delegate_id,
-                 delegate_email, is_active, reason, starts_at, ends_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    organization_id = EXCLUDED.organization_id,
-                    delegator_id = EXCLUDED.delegator_id,
-                    delegator_email = EXCLUDED.delegator_email,
-                    delegate_id = EXCLUDED.delegate_id,
-                    delegate_email = EXCLUDED.delegate_email,
-                    is_active = EXCLUDED.is_active,
-                    reason = EXCLUDED.reason,
-                    starts_at = EXCLUDED.starts_at,
-                    ends_at = EXCLUDED.ends_at,
-                    updated_at = EXCLUDED.updated_at
-            """)
-        else:
-            sql = self.db._prepare_sql("""
-                INSERT OR REPLACE INTO delegation_rules
-                (id, organization_id, delegator_id, delegator_email, delegate_id,
-                 delegate_email, is_active, reason, starts_at, ends_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-            """)
+        sql = self.db._prepare_sql("""
+            INSERT INTO delegation_rules
+            (id, organization_id, delegator_id, delegator_email, delegate_id,
+             delegate_email, is_active, reason, starts_at, ends_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                organization_id = EXCLUDED.organization_id,
+                delegator_id = EXCLUDED.delegator_id,
+                delegator_email = EXCLUDED.delegator_email,
+                delegate_id = EXCLUDED.delegate_id,
+                delegate_email = EXCLUDED.delegate_email,
+                is_active = EXCLUDED.is_active,
+                reason = EXCLUDED.reason,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                updated_at = EXCLUDED.updated_at
+        """)
         params = (
             rule_id, self.organization_id, delegator_id, delegator_email,
             delegate_id, delegate_email, reason, starts_at, ends_at, now, now,
@@ -121,15 +113,9 @@ class DelegationService:
             )
 
         with self.db.connect() as conn:
-            if self.db.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id,))
-                rows = [dict(r) for r in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id,))
-                rows = [dict(r) for r in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, (self.organization_id,))
+            rows = [dict(r) for r in cur.fetchall()]
 
         for row in rows:
             row["is_active"] = bool(row.get("is_active"))
@@ -139,15 +125,9 @@ class DelegationService:
         self.db.initialize()
         sql = self.db._prepare_sql("SELECT * FROM delegation_rules WHERE id = ?")
         with self.db.connect() as conn:
-            if self.db.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (rule_id,))
-                row = cur.fetchone()
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (rule_id,))
-                row = cur.fetchone()
+            cur = conn.cursor()
+            cur.execute(sql, (rule_id,))
+            row = cur.fetchone()
         if not row:
             return None
         result = dict(row)

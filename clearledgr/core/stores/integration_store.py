@@ -60,28 +60,20 @@ class IntegrationStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO gmail_autopilot_state
-                (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (user_id)
-                DO UPDATE SET email = EXCLUDED.email,
-                              last_history_id = EXCLUDED.last_history_id,
-                              watch_expiration = EXCLUDED.watch_expiration,
-                              last_watch_at = EXCLUDED.last_watch_at,
-                              last_scan_at = EXCLUDED.last_scan_at,
-                              last_error = EXCLUDED.last_error,
-                              updated_at = EXCLUDED.updated_at
-            """)
-            params = (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, now)
-        else:
-            sql = self._prepare_sql("""
-                INSERT OR REPLACE INTO gmail_autopilot_state
-                (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """)
-            params = (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, now)
+        sql = self._prepare_sql("""
+            INSERT INTO gmail_autopilot_state
+            (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id)
+            DO UPDATE SET email = EXCLUDED.email,
+                          last_history_id = EXCLUDED.last_history_id,
+                          watch_expiration = EXCLUDED.watch_expiration,
+                          last_watch_at = EXCLUDED.last_watch_at,
+                          last_scan_at = EXCLUDED.last_scan_at,
+                          last_error = EXCLUDED.last_error,
+                          updated_at = EXCLUDED.updated_at
+        """)
+        params = (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, now)
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -122,25 +114,18 @@ class IntegrationStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO outlook_autopilot_state
-                (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (user_id)
-                DO UPDATE SET email = EXCLUDED.email,
-                              subscription_id = EXCLUDED.subscription_id,
-                              subscription_expiration = EXCLUDED.subscription_expiration,
-                              last_scan_at = EXCLUDED.last_scan_at,
-                              last_error = EXCLUDED.last_error,
-                              updated_at = EXCLUDED.updated_at
-            """)
-        else:
-            sql = self._prepare_sql("""
-                INSERT OR REPLACE INTO outlook_autopilot_state
-                (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """)
+        sql = self._prepare_sql("""
+            INSERT INTO outlook_autopilot_state
+            (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id)
+            DO UPDATE SET email = EXCLUDED.email,
+                          subscription_id = EXCLUDED.subscription_id,
+                          subscription_expiration = EXCLUDED.subscription_expiration,
+                          last_scan_at = EXCLUDED.last_scan_at,
+                          last_error = EXCLUDED.last_error,
+                          updated_at = EXCLUDED.updated_at
+        """)
         params = (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, now)
 
         with self.connect() as conn:
@@ -173,33 +158,23 @@ class IntegrationStore:
         encrypted_refresh = self._encrypt_secret(refresh_token) if refresh_token else None
         encrypted_creds = self._encrypt_secret(credentials_json) if credentials_json else None
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO erp_connections
-                (id, organization_id, erp_type, access_token, refresh_token, realm_id, tenant_id, base_url,
-                 credentials, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                ON CONFLICT (organization_id, erp_type)
-                DO UPDATE SET access_token = EXCLUDED.access_token,
-                              refresh_token = EXCLUDED.refresh_token,
-                              realm_id = EXCLUDED.realm_id,
-                              tenant_id = EXCLUDED.tenant_id,
-                              base_url = EXCLUDED.base_url,
-                              credentials = EXCLUDED.credentials,
-                              is_active = 1,
-                              updated_at = EXCLUDED.updated_at
-            """)
-            params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
-                      tenant_id, base_url, encrypted_creds, now, now)
-        else:
-            sql = self._prepare_sql("""
-                INSERT OR REPLACE INTO erp_connections
-                (id, organization_id, erp_type, access_token, refresh_token, realm_id, tenant_id, base_url,
-                 credentials, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-            """)
-            params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
-                      tenant_id, base_url, encrypted_creds, now, now)
+        sql = self._prepare_sql("""
+            INSERT INTO erp_connections
+            (id, organization_id, erp_type, access_token, refresh_token, realm_id, tenant_id, base_url,
+             credentials, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT (organization_id, erp_type)
+            DO UPDATE SET access_token = EXCLUDED.access_token,
+                          refresh_token = EXCLUDED.refresh_token,
+                          realm_id = EXCLUDED.realm_id,
+                          tenant_id = EXCLUDED.tenant_id,
+                          base_url = EXCLUDED.base_url,
+                          credentials = EXCLUDED.credentials,
+                          is_active = 1,
+                          updated_at = EXCLUDED.updated_at
+        """)
+        params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
+                  tenant_id, base_url, encrypted_creds, now, now)
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -374,33 +349,23 @@ class IntegrationStore:
         if user_token:
             metadata_payload["user_token_encrypted"] = self._encrypt_secret(user_token)
 
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO slack_installations
-                (id, organization_id, team_id, team_name, bot_user_id, bot_token_encrypted, scope_csv, mode,
-                 is_active, metadata_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (organization_id, team_id)
-                DO UPDATE SET team_name = EXCLUDED.team_name,
-                              bot_user_id = EXCLUDED.bot_user_id,
-                              bot_token_encrypted = EXCLUDED.bot_token_encrypted,
-                              scope_csv = EXCLUDED.scope_csv,
-                              mode = EXCLUDED.mode,
-                              is_active = EXCLUDED.is_active,
-                              metadata_json = EXCLUDED.metadata_json,
-                              updated_at = EXCLUDED.updated_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR REPLACE INTO slack_installations
-                (id, organization_id, team_id, team_name, bot_user_id, bot_token_encrypted, scope_csv, mode,
-                 is_active, metadata_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO slack_installations
+            (id, organization_id, team_id, team_name, bot_user_id, bot_token_encrypted, scope_csv, mode,
+             is_active, metadata_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (organization_id, team_id)
+            DO UPDATE SET team_name = EXCLUDED.team_name,
+                          bot_user_id = EXCLUDED.bot_user_id,
+                          bot_token_encrypted = EXCLUDED.bot_token_encrypted,
+                          scope_csv = EXCLUDED.scope_csv,
+                          mode = EXCLUDED.mode,
+                          is_active = EXCLUDED.is_active,
+                          metadata_json = EXCLUDED.metadata_json,
+                          updated_at = EXCLUDED.updated_at
+            """
+        )
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -547,28 +512,19 @@ class IntegrationStore:
         existing = self.get_organization_integration(organization_id, integration_type)
         row_id = (existing or {}).get("id") or f"INT-{uuid.uuid4().hex}"
 
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO organization_integrations
-                (id, organization_id, integration_type, status, mode, last_sync_at, metadata_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (organization_id, integration_type)
-                DO UPDATE SET status = EXCLUDED.status,
-                              mode = EXCLUDED.mode,
-                              last_sync_at = EXCLUDED.last_sync_at,
-                              metadata_json = EXCLUDED.metadata_json,
-                              updated_at = EXCLUDED.updated_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR REPLACE INTO organization_integrations
-                (id, organization_id, integration_type, status, mode, last_sync_at, metadata_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO organization_integrations
+            (id, organization_id, integration_type, status, mode, last_sync_at, metadata_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (organization_id, integration_type)
+            DO UPDATE SET status = EXCLUDED.status,
+                          mode = EXCLUDED.mode,
+                          last_sync_at = EXCLUDED.last_sync_at,
+                          metadata_json = EXCLUDED.metadata_json,
+                          updated_at = EXCLUDED.updated_at
+            """
+        )
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -688,43 +644,32 @@ class IntegrationStore:
         if isinstance(usage_json, dict):
             usage_json = json.dumps(usage_json)
 
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO subscriptions
-                (id, organization_id, plan, status, trial_started_at, trial_ends_at, trial_days_remaining,
-                 billing_cycle, current_period_start, current_period_end, stripe_customer_id, stripe_subscription_id,
-                 limits_json, features_json, usage_json, onboarding_completed, onboarding_step, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (organization_id)
-                DO UPDATE SET plan = EXCLUDED.plan,
-                              status = EXCLUDED.status,
-                              trial_started_at = EXCLUDED.trial_started_at,
-                              trial_ends_at = EXCLUDED.trial_ends_at,
-                              trial_days_remaining = EXCLUDED.trial_days_remaining,
-                              billing_cycle = EXCLUDED.billing_cycle,
-                              current_period_start = EXCLUDED.current_period_start,
-                              current_period_end = EXCLUDED.current_period_end,
-                              stripe_customer_id = EXCLUDED.stripe_customer_id,
-                              stripe_subscription_id = EXCLUDED.stripe_subscription_id,
-                              limits_json = EXCLUDED.limits_json,
-                              features_json = EXCLUDED.features_json,
-                              usage_json = EXCLUDED.usage_json,
-                              onboarding_completed = EXCLUDED.onboarding_completed,
-                              onboarding_step = EXCLUDED.onboarding_step,
-                              updated_at = EXCLUDED.updated_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR REPLACE INTO subscriptions
-                (id, organization_id, plan, status, trial_started_at, trial_ends_at, trial_days_remaining,
-                 billing_cycle, current_period_start, current_period_end, stripe_customer_id, stripe_subscription_id,
-                 limits_json, features_json, usage_json, onboarding_completed, onboarding_step, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO subscriptions
+            (id, organization_id, plan, status, trial_started_at, trial_ends_at, trial_days_remaining,
+             billing_cycle, current_period_start, current_period_end, stripe_customer_id, stripe_subscription_id,
+             limits_json, features_json, usage_json, onboarding_completed, onboarding_step, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (organization_id)
+            DO UPDATE SET plan = EXCLUDED.plan,
+                          status = EXCLUDED.status,
+                          trial_started_at = EXCLUDED.trial_started_at,
+                          trial_ends_at = EXCLUDED.trial_ends_at,
+                          trial_days_remaining = EXCLUDED.trial_days_remaining,
+                          billing_cycle = EXCLUDED.billing_cycle,
+                          current_period_start = EXCLUDED.current_period_start,
+                          current_period_end = EXCLUDED.current_period_end,
+                          stripe_customer_id = EXCLUDED.stripe_customer_id,
+                          stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+                          limits_json = EXCLUDED.limits_json,
+                          features_json = EXCLUDED.features_json,
+                          usage_json = EXCLUDED.usage_json,
+                          onboarding_completed = EXCLUDED.onboarding_completed,
+                          onboarding_step = EXCLUDED.onboarding_step,
+                          updated_at = EXCLUDED.updated_at
+            """
+        )
 
         with self.connect() as conn:
             cur = conn.cursor()

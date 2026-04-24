@@ -191,43 +191,23 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name))
-                    row = cur.fetchone()
-                    if row is None:
-                        return None
-                    parsed = dict(row)
-                    for key, default in (
-                        ("vendor_aliases", []),
-                        ("sender_domains", []),
-                        ("anomaly_flags", []),
-                        ("metadata", {}),
-                        ("iban_change_verification_state", None),
-                        ("director_names", []),
-                    ):
-                        decoded = _loads(parsed.get(key))
-                        parsed[key] = decoded if decoded is not None else default
-                    return parsed
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name))
-                    row = cur.fetchone()
-                    if row is None:
-                        return None
-                    parsed = dict(row)
-                    for key, default in (
-                        ("vendor_aliases", []),
-                        ("sender_domains", []),
-                        ("anomaly_flags", []),
-                        ("metadata", {}),
-                        ("iban_change_verification_state", None),
-                        ("director_names", []),
-                    ):
-                        decoded = _loads(parsed.get(key))
-                        parsed[key] = decoded if decoded is not None else default
-                    return parsed
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name))
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                parsed = dict(row)
+                for key, default in (
+                    ("vendor_aliases", []),
+                    ("sender_domains", []),
+                    ("anomaly_flags", []),
+                    ("metadata", {}),
+                    ("iban_change_verification_state", None),
+                    ("director_names", []),
+                ):
+                    decoded = _loads(parsed.get(key))
+                    parsed[key] = decoded if decoded is not None else default
+                return parsed
         except Exception as exc:
             logger.warning("[VendorStore] get_vendor_profile failed: %s", exc)
             return None
@@ -1100,15 +1080,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, limit))
-                    return [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, limit))
-                    return [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name, limit))
+                return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[VendorStore] get_vendor_invoice_history failed: %s", exc)
             return []
@@ -1223,15 +1197,9 @@ class VendorStore:
         rows: List[Dict[str, Any]] = []
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
-                    rows = [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
-                    rows = [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
+                rows = [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[VendorStore] get_vendor_decision_feedback_summary failed: %s", exc)
             rows = []
@@ -1415,15 +1383,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, limit))
-                    rows = [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, limit))
-                    rows = [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name, limit))
+                rows = [dict(r) for r in cur.fetchall()]
 
             # Compute was_late: invoice_date (proxy for due) < created_at (proxy for pay)
             for row in rows:
@@ -1469,15 +1431,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, limit))
-                    rows = cur.fetchall()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, limit))
-                    rows = cur.fetchall()
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, limit))
+                rows = cur.fetchall()
         except Exception as exc:
             logger.warning("[VendorStore] list_vendor_profiles failed: %s", exc)
             return []
@@ -1624,15 +1580,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (session_id,))
-                    row = cur.fetchone()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (session_id,))
-                    row = cur.fetchone()
+                cur = conn.cursor()
+                cur.execute(sql, (session_id,))
+                row = cur.fetchone()
                 if row is None:
                     return None
                 return self._decode_onboarding_session_row(row)
@@ -1651,15 +1601,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name))
-                    row = cur.fetchone()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name))
-                    row = cur.fetchone()
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name))
+                row = cur.fetchone()
                 if row is None:
                     return None
                 return self._decode_onboarding_session_row(row)
@@ -1707,15 +1651,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                rows = cur.fetchall()
         except Exception as exc:
             logger.warning(
                 "[VendorStore] list_pending_onboarding_sessions failed: %s", exc
@@ -1765,15 +1703,9 @@ class VendorStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                rows = cur.fetchall()
         except Exception as exc:
             logger.warning(
                 "[VendorStore] list_completed_onboarding_sessions failed: %s", exc

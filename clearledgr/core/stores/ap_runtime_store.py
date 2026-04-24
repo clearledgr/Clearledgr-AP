@@ -677,26 +677,14 @@ class APRuntimeStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (question_id,))
-                    row = cur.fetchone()
-                    if row:
-                        result = dict(row)
-                        if isinstance(result.get("options_json"), str):
-                            result["options"] = json.loads(result["options_json"])
-                        return result
-                else:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (question_id,))
-                    row = cur.fetchone()
-                    if row:
-                        result = dict(row)
-                        if isinstance(result.get("options_json"), str):
-                            result["options"] = json.loads(result["options_json"])
-                        return result
+                cur = conn.cursor()
+                cur.execute(sql, (question_id,))
+                row = cur.fetchone()
+                if row:
+                    result = dict(row)
+                    if isinstance(result.get("options_json"), str):
+                        result["options"] = json.loads(result["options_json"])
+                    return result
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning(

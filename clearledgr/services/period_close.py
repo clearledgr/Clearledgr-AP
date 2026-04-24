@@ -179,15 +179,9 @@ class PeriodCloseService:
         try:
             self.db.initialize()
             with self.db.connect() as conn:
-                if self.db.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (self.organization_id, period_start, period_end, cutoff.isoformat()))
-                    return [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (self.organization_id, period_start, period_end, cutoff.isoformat()))
-                    return [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (self.organization_id, period_start, period_end, cutoff.isoformat()))
+                return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[PeriodClose] detect_backdated_invoices failed: %s", exc)
             return []
@@ -228,15 +222,9 @@ class PeriodCloseService:
         try:
             self.db.initialize()
             with self.db.connect() as conn:
-                if self.db.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    items = [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    items = [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                items = [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[PeriodClose] generate_accrual_report failed: %s", exc)
             items = []

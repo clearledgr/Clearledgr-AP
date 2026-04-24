@@ -62,15 +62,9 @@ class WebhookStore:
             )
 
         with self.connect() as conn:
-            if self.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (organization_id,))
-                rows = [dict(r) for r in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (organization_id,))
-                rows = [dict(r) for r in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id,))
+            rows = [dict(r) for r in cur.fetchall()]
 
         for row in rows:
             try:
@@ -85,15 +79,9 @@ class WebhookStore:
         self.initialize()
         sql = self._prepare_sql("SELECT * FROM webhook_subscriptions WHERE id = ?")
         with self.connect() as conn:
-            if self.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (subscription_id,))
-                row = cur.fetchone()
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (subscription_id,))
-                row = cur.fetchone()
+            cur = conn.cursor()
+            cur.execute(sql, (subscription_id,))
+            row = cur.fetchone()
 
         if not row:
             return None

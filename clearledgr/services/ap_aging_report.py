@@ -119,15 +119,9 @@ class APAgingReport:
         try:
             self.db.initialize()
             with self.db.connect() as conn:
-                if self.db.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    return [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    return [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[APAgingReport] _fetch_open_items failed: %s", exc)
             return []

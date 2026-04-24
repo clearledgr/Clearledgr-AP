@@ -295,15 +295,9 @@ class VendorDedupService:
         try:
             self.db.initialize()
             with self.db.connect() as conn:
-                if self.db.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (self.organization_id,))
-                    rows = [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (self.organization_id,))
-                    rows = [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (self.organization_id,))
+                rows = [dict(r) for r in cur.fetchall()]
 
             for row in rows:
                 for field in ("vendor_aliases", "sender_domains", "anomaly_flags"):

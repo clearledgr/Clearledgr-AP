@@ -131,51 +131,39 @@ class PurchaseOrderStore:
             str(po.get("created_at") or now),
             now,  # updated_at
         )
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO purchase_orders (
-                    po_id, organization_id, po_number, vendor_id, vendor_name,
-                    order_date, expected_delivery, line_items_json,
-                    subtotal, tax_amount, total_amount, currency, status,
-                    requested_by, approved_by, approved_at,
-                    notes, department, project, ship_to_address,
-                    erp_po_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (po_id) DO UPDATE SET
-                    po_number = EXCLUDED.po_number,
-                    vendor_id = EXCLUDED.vendor_id,
-                    vendor_name = EXCLUDED.vendor_name,
-                    order_date = EXCLUDED.order_date,
-                    expected_delivery = EXCLUDED.expected_delivery,
-                    line_items_json = EXCLUDED.line_items_json,
-                    subtotal = EXCLUDED.subtotal,
-                    tax_amount = EXCLUDED.tax_amount,
-                    total_amount = EXCLUDED.total_amount,
-                    currency = EXCLUDED.currency,
-                    status = EXCLUDED.status,
-                    requested_by = EXCLUDED.requested_by,
-                    approved_by = EXCLUDED.approved_by,
-                    approved_at = EXCLUDED.approved_at,
-                    notes = EXCLUDED.notes,
-                    department = EXCLUDED.department,
-                    project = EXCLUDED.project,
-                    ship_to_address = EXCLUDED.ship_to_address,
-                    erp_po_id = EXCLUDED.erp_po_id,
-                    updated_at = EXCLUDED.updated_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                "INSERT OR REPLACE INTO purchase_orders ("
-                "po_id, organization_id, po_number, vendor_id, vendor_name, "
-                "order_date, expected_delivery, line_items_json, "
-                "subtotal, tax_amount, total_amount, currency, status, "
-                "requested_by, approved_by, approved_at, "
-                "notes, department, project, ship_to_address, "
-                "erp_po_id, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO purchase_orders (
+                po_id, organization_id, po_number, vendor_id, vendor_name,
+                order_date, expected_delivery, line_items_json,
+                subtotal, tax_amount, total_amount, currency, status,
+                requested_by, approved_by, approved_at,
+                notes, department, project, ship_to_address,
+                erp_po_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (po_id) DO UPDATE SET
+                po_number = EXCLUDED.po_number,
+                vendor_id = EXCLUDED.vendor_id,
+                vendor_name = EXCLUDED.vendor_name,
+                order_date = EXCLUDED.order_date,
+                expected_delivery = EXCLUDED.expected_delivery,
+                line_items_json = EXCLUDED.line_items_json,
+                subtotal = EXCLUDED.subtotal,
+                tax_amount = EXCLUDED.tax_amount,
+                total_amount = EXCLUDED.total_amount,
+                currency = EXCLUDED.currency,
+                status = EXCLUDED.status,
+                requested_by = EXCLUDED.requested_by,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                notes = EXCLUDED.notes,
+                department = EXCLUDED.department,
+                project = EXCLUDED.project,
+                ship_to_address = EXCLUDED.ship_to_address,
+                erp_po_id = EXCLUDED.erp_po_id,
+                updated_at = EXCLUDED.updated_at
+            """
+        )
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -304,39 +292,29 @@ class PurchaseOrderStore:
             str(gr.get("notes") or ""),
             str(gr.get("created_at") or now),
         )
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO goods_receipts (
-                    gr_id, organization_id, gr_number, po_id, po_number,
-                    vendor_id, vendor_name, receipt_date, received_by,
-                    delivery_note, carrier, line_items_json,
-                    status, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (gr_id) DO UPDATE SET
-                    gr_number = EXCLUDED.gr_number,
-                    po_id = EXCLUDED.po_id,
-                    po_number = EXCLUDED.po_number,
-                    vendor_id = EXCLUDED.vendor_id,
-                    vendor_name = EXCLUDED.vendor_name,
-                    receipt_date = EXCLUDED.receipt_date,
-                    received_by = EXCLUDED.received_by,
-                    delivery_note = EXCLUDED.delivery_note,
-                    carrier = EXCLUDED.carrier,
-                    line_items_json = EXCLUDED.line_items_json,
-                    status = EXCLUDED.status,
-                    notes = EXCLUDED.notes
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                "INSERT OR REPLACE INTO goods_receipts ("
-                "gr_id, organization_id, gr_number, po_id, po_number, "
-                "vendor_id, vendor_name, receipt_date, received_by, "
-                "delivery_note, carrier, line_items_json, "
-                "status, notes, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO goods_receipts (
+                gr_id, organization_id, gr_number, po_id, po_number,
+                vendor_id, vendor_name, receipt_date, received_by,
+                delivery_note, carrier, line_items_json,
+                status, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (gr_id) DO UPDATE SET
+                gr_number = EXCLUDED.gr_number,
+                po_id = EXCLUDED.po_id,
+                po_number = EXCLUDED.po_number,
+                vendor_id = EXCLUDED.vendor_id,
+                vendor_name = EXCLUDED.vendor_name,
+                receipt_date = EXCLUDED.receipt_date,
+                received_by = EXCLUDED.received_by,
+                delivery_note = EXCLUDED.delivery_note,
+                carrier = EXCLUDED.carrier,
+                line_items_json = EXCLUDED.line_items_json,
+                status = EXCLUDED.status,
+                notes = EXCLUDED.notes
+            """
+        )
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -401,44 +379,32 @@ class PurchaseOrderStore:
             str(match.get("matched_at") or now),
             str(match.get("created_at") or now),
         )
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO three_way_matches (
-                    match_id, organization_id, invoice_id, po_id, gr_id,
-                    status, exceptions_json,
-                    po_amount, gr_amount, invoice_amount,
-                    price_variance, quantity_variance,
-                    override_by, override_reason,
-                    matched_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (match_id) DO UPDATE SET
-                    invoice_id = EXCLUDED.invoice_id,
-                    po_id = EXCLUDED.po_id,
-                    gr_id = EXCLUDED.gr_id,
-                    status = EXCLUDED.status,
-                    exceptions_json = EXCLUDED.exceptions_json,
-                    po_amount = EXCLUDED.po_amount,
-                    gr_amount = EXCLUDED.gr_amount,
-                    invoice_amount = EXCLUDED.invoice_amount,
-                    price_variance = EXCLUDED.price_variance,
-                    quantity_variance = EXCLUDED.quantity_variance,
-                    override_by = EXCLUDED.override_by,
-                    override_reason = EXCLUDED.override_reason,
-                    matched_at = EXCLUDED.matched_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                "INSERT OR REPLACE INTO three_way_matches ("
-                "match_id, organization_id, invoice_id, po_id, gr_id, "
-                "status, exceptions_json, "
-                "po_amount, gr_amount, invoice_amount, "
-                "price_variance, quantity_variance, "
-                "override_by, override_reason, "
-                "matched_at, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO three_way_matches (
+                match_id, organization_id, invoice_id, po_id, gr_id,
+                status, exceptions_json,
+                po_amount, gr_amount, invoice_amount,
+                price_variance, quantity_variance,
+                override_by, override_reason,
+                matched_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (match_id) DO UPDATE SET
+                invoice_id = EXCLUDED.invoice_id,
+                po_id = EXCLUDED.po_id,
+                gr_id = EXCLUDED.gr_id,
+                status = EXCLUDED.status,
+                exceptions_json = EXCLUDED.exceptions_json,
+                po_amount = EXCLUDED.po_amount,
+                gr_amount = EXCLUDED.gr_amount,
+                invoice_amount = EXCLUDED.invoice_amount,
+                price_variance = EXCLUDED.price_variance,
+                quantity_variance = EXCLUDED.quantity_variance,
+                override_by = EXCLUDED.override_by,
+                override_reason = EXCLUDED.override_reason,
+                matched_at = EXCLUDED.matched_at
+            """
+        )
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)

@@ -130,9 +130,6 @@ class TaskStore:
         sql = self._prepare_sql("SELECT * FROM task_runs WHERE id = ?")
         try:
             with self.connect() as conn:
-                if not self.use_postgres:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute(sql, (task_run_id,))
                 row = cur.fetchone()
@@ -147,9 +144,6 @@ class TaskStore:
         sql = self._prepare_sql("SELECT * FROM task_runs WHERE idempotency_key = ?")
         try:
             with self.connect() as conn:
-                if not self.use_postgres:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute(sql, (key,))
                 row = cur.fetchone()
@@ -179,9 +173,6 @@ class TaskStore:
             params = statuses
         try:
             with self.connect() as conn:
-                if not self.use_postgres:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute(sql, params)
                 rows = cur.fetchall()
@@ -210,9 +201,6 @@ class TaskStore:
             params = (max(1, int(limit or 50)),)
         try:
             with self.connect() as conn:
-                if not self.use_postgres:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute(sql, params)
                 rows = cur.fetchall() or []

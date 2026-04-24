@@ -274,15 +274,9 @@ class OnboardingTokenStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (token_hash,))
-                    row = cur.fetchone()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (token_hash,))
-                    row = cur.fetchone()
+                cur = conn.cursor()
+                cur.execute(sql, (token_hash,))
+                row = cur.fetchone()
                 if row is None:
                     return None
                 token_row = _decode_token_row(row)
@@ -324,15 +318,9 @@ class OnboardingTokenStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (token_id,))
-                    row = cur.fetchone()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (token_id,))
-                    row = cur.fetchone()
+                cur = conn.cursor()
+                cur.execute(sql, (token_id,))
+                row = cur.fetchone()
                 if row is None:
                     return None
                 return _decode_token_row(row)
@@ -357,15 +345,9 @@ class OnboardingTokenStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
+                cur = conn.cursor()
+                cur.execute(sql, params)
+                rows = cur.fetchall()
         except Exception as exc:
             logger.warning(
                 "[OnboardingTokenStore] list_session_tokens failed: %s", exc

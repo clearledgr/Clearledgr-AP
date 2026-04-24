@@ -68,15 +68,9 @@ class LearningCalibrationService:
             "ORDER BY created_at DESC LIMIT ?"
         )
         with self.db.connect() as conn:
-            if self.db.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id, cutoff, int(max(1, limit))))
-                rows = [dict(row) for row in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id, cutoff, int(max(1, limit))))
-                rows = [dict(row) for row in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, (self.organization_id, cutoff, int(max(1, limit))))
+            rows = [dict(row) for row in cur.fetchall()]
         return rows
 
     @staticmethod
@@ -374,17 +368,10 @@ class LearningCalibrationService:
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.db.connect() as conn:
-            if self.db.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id,))
-                row = cur.fetchone()
-                payload = dict(row) if row else None
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (self.organization_id,))
-                row = cur.fetchone()
-                payload = dict(row) if row else None
+            cur = conn.cursor()
+            cur.execute(sql, (self.organization_id,))
+            row = cur.fetchone()
+            payload = dict(row) if row else None
 
         if not payload:
             return self._empty_snapshot(

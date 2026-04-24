@@ -56,26 +56,18 @@ class AuthStore:
         encrypted_access = self._encrypt_secret(access_token)
         encrypted_refresh = self._encrypt_secret(refresh_token)
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO oauth_tokens
-                (id, user_id, provider, access_token, refresh_token, expires_at, email, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (user_id, provider)
-                DO UPDATE SET access_token = EXCLUDED.access_token,
-                              refresh_token = EXCLUDED.refresh_token,
-                              expires_at = EXCLUDED.expires_at,
-                              email = EXCLUDED.email,
-                              updated_at = EXCLUDED.updated_at
-            """)
-            params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
-        else:
-            sql = self._prepare_sql("""
-                INSERT OR REPLACE INTO oauth_tokens
-                (id, user_id, provider, access_token, refresh_token, expires_at, email, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """)
-            params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
+        sql = self._prepare_sql("""
+            INSERT INTO oauth_tokens
+            (id, user_id, provider, access_token, refresh_token, expires_at, email, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id, provider)
+            DO UPDATE SET access_token = EXCLUDED.access_token,
+                          refresh_token = EXCLUDED.refresh_token,
+                          expires_at = EXCLUDED.expires_at,
+                          email = EXCLUDED.email,
+                          updated_at = EXCLUDED.updated_at
+        """)
+        params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -148,28 +140,19 @@ class AuthStore:
     ) -> None:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO google_auth_codes
-                (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (auth_code) DO UPDATE SET
-                    access_token = EXCLUDED.access_token,
-                    refresh_token = EXCLUDED.refresh_token,
-                    organization_id = EXCLUDED.organization_id,
-                    expires_at = EXCLUDED.expires_at,
-                    created_at = EXCLUDED.created_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR REPLACE INTO google_auth_codes
-                (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO google_auth_codes
+            (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (auth_code) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                organization_id = EXCLUDED.organization_id,
+                expires_at = EXCLUDED.expires_at,
+                created_at = EXCLUDED.created_at
+            """
+        )
         encrypted_access = self._encrypt_secret(access_token)
         encrypted_refresh = self._encrypt_secret(refresh_token or "")
         if not organization_id:
@@ -275,8 +258,7 @@ class AuthStore:
     def list_org_scoped_tables(self) -> List[str]:
         """Discover tables with an ``organization_id`` column.
 
-        Cross-dialect: uses information_schema on Postgres and the
-        sqlite_master catalog on SQLite. Discovery is intentional —
+        Uses ``information_schema`` on Postgres. Discovery is intentional —
         if a developer adds a new org-scoped table tomorrow, the
         purge picks it up without a code change to this mixin.
         """
@@ -284,27 +266,15 @@ class AuthStore:
         org_tables: List[str] = []
         with self.connect() as conn:
             cur = conn.cursor()
-            if self.use_postgres:
-                cur.execute(
-                    """
-                    SELECT table_name FROM information_schema.columns
-                     WHERE column_name = 'organization_id'
-                       AND table_schema = 'public'
-                    """
-                )
-                rows = cur.fetchall()
-                org_tables = sorted({str(r["table_name"]) for r in rows})
-            else:
-                cur.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-                )
-                tables = [str(r["name"]) for r in cur.fetchall()]
-                for t in tables:
-                    cols = self._table_columns(cur, t)
-                    if "organization_id" in cols:
-                        org_tables.append(t)
-                org_tables.sort()
+            cur.execute(
+                """
+                SELECT table_name FROM information_schema.columns
+                 WHERE column_name = 'organization_id'
+                   AND table_schema = 'public'
+                """
+            )
+            rows = cur.fetchall()
+            org_tables = sorted({str(r["table_name"]) for r in rows})
         return [t for t in org_tables if t not in self.PURGE_EXCLUDED_TABLES]
 
     def purge_organization_data(
@@ -888,15 +858,9 @@ class AuthStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (now_iso,))
-                    rows = cur.fetchall()
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (now_iso,))
-                    rows = cur.fetchall()
+                cur = conn.cursor()
+                cur.execute(sql, (now_iso,))
+                rows = cur.fetchall()
         except Exception as exc:
             logger.debug("[auth_store] reap_expired_seats query failed: %s", exc)
             return 0

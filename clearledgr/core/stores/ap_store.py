@@ -522,13 +522,9 @@ class APStore:
         )
         with self.connect() as conn:
             cur = conn.cursor()
-            # BEGIN EXCLUSIVE serialises concurrent read-modify-write on SQLite
-            if not self.use_postgres:
-                cur.execute("BEGIN EXCLUSIVE")
             cur.execute(sql_select, (ap_item_id,))
             row = cur.fetchone()
             if not row:
-                conn.rollback() if not self.use_postgres else None
                 return False
             try:
                 existing: Dict[str, Any] = json.loads(row[0] or "{}")
@@ -1259,30 +1255,20 @@ class APStore:
         metadata and fall back to ``updated_at`` for legacy rows.
         """
         self.initialize()
-        if self.use_postgres:
-            # metadata is stored as TEXT (for SQLite parity) so we must
-            # cast to jsonb before the ->> operator or psycopg raises
-            # "operator does not exist: text ->> unknown". The COALESCE
-            # result is TEXT (both branches are text), so cast the
-            # result to timestamptz before comparing against NOW() —
-            # otherwise PG errors with "text < timestamp with time zone".
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items "
-                "WHERE organization_id = ? AND state = 'needs_approval' "
-                "AND COALESCE(NULLIF(metadata::jsonb->>'approval_requested_at', ''), updated_at)::timestamptz "
-                "< (NOW() - (? * INTERVAL '1 hour')) "
-                "ORDER BY updated_at ASC LIMIT 50"
-            )
-            params: tuple = (organization_id, min_hours)
-        else:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items "
-                "WHERE organization_id = ? AND state = 'needs_approval' "
-                "AND datetime(COALESCE(json_extract(metadata, '$.approval_requested_at'), updated_at)) "
-                "< datetime('now', ? || ' hours') "
-                "ORDER BY updated_at ASC LIMIT 50"
-            )
-            params = (organization_id, f"-{min_hours}")
+        # metadata is stored as TEXT (for SQLite parity) so we must
+        # cast to jsonb before the ->> operator or psycopg raises
+        # "operator does not exist: text ->> unknown". The COALESCE
+        # result is TEXT (both branches are text), so cast the
+        # result to timestamptz before comparing against NOW() —
+        # otherwise PG errors with "text < timestamp with time zone".
+        sql = self._prepare_sql(
+            "SELECT * FROM ap_items "
+            "WHERE organization_id = ? AND state = 'needs_approval' "
+            "AND COALESCE(NULLIF(metadata::jsonb->>'approval_requested_at', ''), updated_at)::timestamptz "
+            "< (NOW() - (? * INTERVAL '1 hour')) "
+            "ORDER BY updated_at ASC LIMIT 50"
+        )
+        params: tuple = (organization_id, min_hours)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -1372,23 +1358,14 @@ class APStore:
         if not source_type or not source_ref:
             raise ValueError("source_type_and_source_ref_required")
 
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO ap_item_sources
-                (id, ap_item_id, source_type, source_ref, subject, sender, detected_at, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (ap_item_id, source_type, source_ref) DO NOTHING
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR IGNORE INTO ap_item_sources
-                (id, ap_item_id, source_type, source_ref, subject, sender, detected_at, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO ap_item_sources
+            (id, ap_item_id, source_type, source_ref, subject, sender, detected_at, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ap_item_id, source_type, source_ref) DO NOTHING
+            """
+        )
 
         detected_at = payload.get("detected_at") or now
         metadata_json = json.dumps(payload.get("metadata") or {})
@@ -1575,22 +1552,14 @@ class APStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        if self.use_postgres:
-            sql = self._prepare_sql(
-                """
-                INSERT INTO ap_item_context_cache (ap_item_id, context_json, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT (ap_item_id)
-                DO UPDATE SET context_json = EXCLUDED.context_json, updated_at = EXCLUDED.updated_at
-                """
-            )
-        else:
-            sql = self._prepare_sql(
-                """
-                INSERT OR REPLACE INTO ap_item_context_cache (ap_item_id, context_json, updated_at)
-                VALUES (?, ?, ?)
-                """
-            )
+        sql = self._prepare_sql(
+            """
+            INSERT INTO ap_item_context_cache (ap_item_id, context_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT (ap_item_id)
+            DO UPDATE SET context_json = EXCLUDED.context_json, updated_at = EXCLUDED.updated_at
+            """
+        )
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1667,42 +1636,23 @@ class APStore:
         now = datetime.now(timezone.utc).isoformat()
         thread_id = f"CT-{_uuid.uuid4().hex}"
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO channel_threads
-                (id, ap_item_id, channel, conversation_id, message_id, activity_id,
-                 service_url, state, last_action, updated_by, reason, organization_id,
-                 created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (ap_item_id, channel, conversation_id)
-                DO UPDATE SET
-                    message_id = EXCLUDED.message_id,
-                    activity_id = EXCLUDED.activity_id,
-                    service_url = EXCLUDED.service_url,
-                    state = EXCLUDED.state,
-                    last_action = EXCLUDED.last_action,
-                    updated_by = EXCLUDED.updated_by,
-                    reason = EXCLUDED.reason,
-                    updated_at = EXCLUDED.updated_at
-            """)
-        else:
-            sql = self._prepare_sql("""
-                INSERT INTO channel_threads
-                (id, ap_item_id, channel, conversation_id, message_id, activity_id,
-                 service_url, state, last_action, updated_by, reason, organization_id,
-                 created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (ap_item_id, channel, conversation_id)
-                DO UPDATE SET
-                    message_id = excluded.message_id,
-                    activity_id = excluded.activity_id,
-                    service_url = excluded.service_url,
-                    state = excluded.state,
-                    last_action = excluded.last_action,
-                    updated_by = excluded.updated_by,
-                    reason = excluded.reason,
-                    updated_at = excluded.updated_at
-            """)
+        sql = self._prepare_sql("""
+            INSERT INTO channel_threads
+            (id, ap_item_id, channel, conversation_id, message_id, activity_id,
+             service_url, state, last_action, updated_by, reason, organization_id,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ap_item_id, channel, conversation_id)
+            DO UPDATE SET
+                message_id = EXCLUDED.message_id,
+                activity_id = EXCLUDED.activity_id,
+                service_url = EXCLUDED.service_url,
+                state = EXCLUDED.state,
+                last_action = EXCLUDED.last_action,
+                updated_by = EXCLUDED.updated_by,
+                reason = EXCLUDED.reason,
+                updated_at = EXCLUDED.updated_at
+        """)
 
         try:
             with self.connect() as conn:
@@ -2321,33 +2271,24 @@ class APStore:
         now = datetime.now(timezone.utc).isoformat()
         approval_id = payload.get("id") or f"APR-{uuid.uuid4().hex}"
 
-        if self.use_postgres:
-            sql = self._prepare_sql("""
-                INSERT INTO approvals
-                (id, ap_item_id, channel_id, message_ts, source_channel, source_message_ref,
-                 decision_idempotency_key, decision_payload, status, approved_by, approved_at,
-                 rejected_by, rejected_at, rejection_reason, organization_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (ap_item_id, channel_id, message_ts)
-                DO UPDATE SET status = EXCLUDED.status,
-                              source_channel = EXCLUDED.source_channel,
-                              source_message_ref = EXCLUDED.source_message_ref,
-                              decision_idempotency_key = EXCLUDED.decision_idempotency_key,
-                              decision_payload = EXCLUDED.decision_payload,
-                              approved_by = EXCLUDED.approved_by,
-                              approved_at = EXCLUDED.approved_at,
-                              rejected_by = EXCLUDED.rejected_by,
-                              rejected_at = EXCLUDED.rejected_at,
-                              rejection_reason = EXCLUDED.rejection_reason
-            """)
-        else:
-            sql = self._prepare_sql("""
-                INSERT OR REPLACE INTO approvals
-                (id, ap_item_id, channel_id, message_ts, source_channel, source_message_ref,
-                 decision_idempotency_key, decision_payload, status, approved_by, approved_at,
-                 rejected_by, rejected_at, rejection_reason, organization_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """)
+        sql = self._prepare_sql("""
+            INSERT INTO approvals
+            (id, ap_item_id, channel_id, message_ts, source_channel, source_message_ref,
+             decision_idempotency_key, decision_payload, status, approved_by, approved_at,
+             rejected_by, rejected_at, rejection_reason, organization_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ap_item_id, channel_id, message_ts)
+            DO UPDATE SET status = EXCLUDED.status,
+                          source_channel = EXCLUDED.source_channel,
+                          source_message_ref = EXCLUDED.source_message_ref,
+                          decision_idempotency_key = EXCLUDED.decision_idempotency_key,
+                          decision_payload = EXCLUDED.decision_payload,
+                          approved_by = EXCLUDED.approved_by,
+                          approved_at = EXCLUDED.approved_at,
+                          rejected_by = EXCLUDED.rejected_by,
+                          rejected_at = EXCLUDED.rejected_at,
+                          rejection_reason = EXCLUDED.rejection_reason
+        """)
 
         with self.connect() as conn:
             cur = conn.cursor()
@@ -2510,15 +2451,9 @@ class APStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
-                    return [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
-                    return [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, vendor_name, cutoff, limit))
+                return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[APStore] get_ap_items_by_vendor failed: %s", exc)
             return []
@@ -2580,15 +2515,9 @@ class APStore:
         )
         try:
             with self.connect() as conn:
-                if self.use_postgres:
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, today, horizon))
-                    return [dict(r) for r in cur.fetchall()]
-                else:
-                    conn.row_factory = __import__("sqlite3").Row
-                    cur = conn.cursor()
-                    cur.execute(sql, (organization_id, today, horizon))
-                    return [dict(r) for r in cur.fetchall()]
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, today, horizon))
+                return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             logger.warning("[APStore] get_upcoming_due failed: %s", exc)
             return []

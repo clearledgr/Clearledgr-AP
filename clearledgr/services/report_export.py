@@ -210,15 +210,9 @@ def _generate_posting_status(
 
     try:
         with db.connect() as conn:
-            if db.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, params)
-                items = [dict(r) for r in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, params)
-                items = [dict(r) for r in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            items = [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         logger.error("[ReportExport] posting_status query failed: %s", exc)
         return [], _POSTING_STATUS_COLUMNS

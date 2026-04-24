@@ -68,15 +68,9 @@ class DisputeStore:
         self.initialize()
         sql = self._prepare_sql("SELECT * FROM disputes WHERE id = ?")
         with self.connect() as conn:
-            if self.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (dispute_id,))
-                row = cur.fetchone()
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (dispute_id,))
-                row = cur.fetchone()
+            cur = conn.cursor()
+            cur.execute(sql, (dispute_id,))
+            row = cur.fetchone()
         return dict(row) if row else None
 
     def get_disputes_for_item(self, ap_item_id: str) -> List[Dict[str, Any]]:
@@ -85,15 +79,9 @@ class DisputeStore:
             "SELECT * FROM disputes WHERE ap_item_id = ? ORDER BY opened_at DESC"
         )
         with self.connect() as conn:
-            if self.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, (ap_item_id,))
-                return [dict(r) for r in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, (ap_item_id,))
-                return [dict(r) for r in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, (ap_item_id,))
+            return [dict(r) for r in cur.fetchall()]
 
     def list_disputes(
         self,
@@ -116,15 +104,9 @@ class DisputeStore:
             params = (organization_id, limit)
 
         with self.connect() as conn:
-            if self.use_postgres:
-                cur = conn.cursor()
-                cur.execute(sql, params)
-                return [dict(r) for r in cur.fetchall()]
-            else:
-                conn.row_factory = __import__("sqlite3").Row
-                cur = conn.cursor()
-                cur.execute(sql, params)
-                return [dict(r) for r in cur.fetchall()]
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
 
     def update_dispute(self, dispute_id: str, **kwargs) -> bool:
         self.initialize()
