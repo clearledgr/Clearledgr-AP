@@ -395,7 +395,10 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
         },
     )
     with db.connect() as conn:
-        conn.execute("UPDATE ap_items SET updated_at = ? WHERE id = ?", (requested_at, created["id"]))
+        conn.execute(
+            db._prepare_sql("UPDATE ap_items SET updated_at = ? WHERE id = ?"),
+            (requested_at, created["id"]),
+        )
         conn.commit()
 
     calls = []

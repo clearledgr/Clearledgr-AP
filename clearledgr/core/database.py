@@ -32,12 +32,64 @@ from clearledgr.core.utils import safe_float
 
 try:
     import psycopg
-    from psycopg.rows import dict_row
+    from psycopg.rows import dict_row as _psycopg_dict_row
     HAS_POSTGRES = True
 except ImportError:  # pragma: no cover
     psycopg = None
-    dict_row = None
+    _psycopg_dict_row = None
     HAS_POSTGRES = False
+
+
+class HybridRow(dict):
+    """Row that supports BOTH column-name access (``row["col"]``) and
+    positional access (``row[0]``).
+
+    sqlite3.Row supports both styles natively, and the codebase mixes
+    them freely (~60 ``row[0]`` sites vs. ~600 ``row["col"]`` sites).
+    psycopg's stock ``dict_row`` returns plain dicts, which raise
+    ``KeyError(0)`` on positional access — that was the
+    widest-reaching dialect bug under C.1.
+
+    Rather than audit every call site, we install this one row factory
+    and let both styles keep working. ``__getitem__`` dispatches on
+    the key type: ``int`` → positional, anything else → dict-style.
+    Slice access (``row[:2]``) uses the stored values list so e.g.
+    3-tuple unpacking (``a, b, c = row``) preserves the column order
+    instead of silently unpacking dict *keys*.
+    """
+    __slots__ = ("_values",)
+
+    def __init__(self, items):
+        # items is an iterable of (key, value) pairs from dict_row
+        # (we feed it the zipped names-values).
+        super().__init__(items)
+        self._values = list(self.values())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        if isinstance(key, slice):
+            return self._values[key]
+        return super().__getitem__(key)
+
+    def __iter__(self):
+        # dict's default __iter__ yields keys; for unpacking
+        # (``a, b, c = row``) we want values so tuple-style unpacking
+        # matches the positional contract.
+        return iter(self._values)
+
+
+def dict_row(cursor):
+    """Row factory that returns HybridRow instances (dict + positional)."""
+    if _psycopg_dict_row is None:  # pragma: no cover
+        return None
+    desc = cursor.description
+    if desc is None:
+        return lambda values: values
+    names = [c.name for c in desc]
+    def make_row(values):
+        return HybridRow(zip(names, values))
+    return make_row
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +253,35 @@ class _ClearledgrDBBase:
                     except ImportError:
                         logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
                 if self._pg_pool is not None:
-                    conn = self._pg_pool.getconn()
+                    # Pool can hand back a closed/broken connection — in
+                    # particular after migrations where the connection
+                    # pool's idle workers were cancelled. Retry up to 3
+                    # times so a single BAD conn doesn't bubble up as a
+                    # user-visible OperationalError("the connection is
+                    # closed"); psycopg_pool discards bad conns when it
+                    # sees them, so successive getconn() will return a
+                    # fresh one.
+                    conn = None
+                    for _attempt in range(3):
+                        candidate = self._pg_pool.getconn()
+                        if candidate.closed:
+                            # Return the bad conn so the pool can
+                            # discard it and replace with a fresh one
+                            # on the next round-trip.
+                            try:
+                                self._pg_pool.putconn(candidate)
+                            except Exception:
+                                try:
+                                    candidate.close()
+                                except Exception:
+                                    pass
+                            continue
+                        conn = candidate
+                        break
+                    if conn is None:
+                        raise psycopg.OperationalError(
+                            "pool returned closed connections on every attempt",
+                        )
                 else:
                     conn = psycopg.connect(
                         self.dsn,
@@ -235,8 +315,41 @@ class _ClearledgrDBBase:
                 conn.close()
 
     def _prepare_sql(self, sql: str) -> str:
+        """Cross-dialect SQL adapter.
+
+        Under PG, rewrites two SQLite-isms that migrations and stores
+        still rely on:
+
+        - ``?``  → ``%s`` (psycopg uses libpq-style placeholders).
+        - ``INSERT OR IGNORE INTO ...`` → ``INSERT INTO ... ON CONFLICT
+          DO NOTHING``. The migrations seed default pipelines /
+          stages / columns with this pattern and rely on it being a
+          no-op on reruns. PG 9.5+ supports the ON CONFLICT form.
+          Appending at the end handles multi-line SQL where the
+          closing paren might be on a later line.
+
+        Under SQLite, returned unchanged — the native dialect is
+        SQLite for the migrations (historical) so no translation needed.
+        """
         if self.use_postgres:
-            return sql.replace("?", "%s")
+            out = sql.replace("?", "%s")
+            if "INSERT OR IGNORE INTO" in out.upper():
+                # Case-insensitive replace without touching case elsewhere.
+                import re as _re
+                out = _re.sub(
+                    r"INSERT\s+OR\s+IGNORE\s+INTO",
+                    "INSERT INTO",
+                    out,
+                    flags=_re.IGNORECASE,
+                )
+                # Append ON CONFLICT DO NOTHING at end (strip trailing
+                # whitespace + optional semicolon first so we don't
+                # end up with "VALUES (...);  ON CONFLICT ...").
+                stripped = out.rstrip()
+                if stripped.endswith(";"):
+                    stripped = stripped[:-1].rstrip()
+                out = stripped + " ON CONFLICT DO NOTHING"
+            return out
         return sql
 
     def _table_columns(self, cur, table: str) -> set[str]:

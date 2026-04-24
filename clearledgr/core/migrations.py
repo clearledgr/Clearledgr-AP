@@ -80,12 +80,22 @@ def run_migrations(db) -> int:
 
     try:
         # Get current version AFTER acquiring the lock so we see any
-        # versions that a racing process just applied.
+        # versions that a racing process just applied. The ``AS v`` alias
+        # is load-bearing: psycopg's dict_row factory keys fetchone()
+        # rows by column label, not position — a bare ``MAX(version)``
+        # would land as ``row["max"]`` on Postgres and break positional
+        # access ``row[0]`` with a KeyError. Aliasing makes this robust
+        # whether the row factory returns dicts (psycopg) or tuples
+        # (sqlite3).
         with db.connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT MAX(version) FROM schema_versions")
+            cur.execute("SELECT MAX(version) AS v FROM schema_versions")
             row = cur.fetchone()
-            current_version = row[0] if row and row[0] is not None else 0
+            if row is None:
+                current_version = 0
+            else:
+                val = row["v"] if isinstance(row, dict) else row[0]
+                current_version = val if val is not None else 0
 
         sorted_migrations = sorted(_MIGRATIONS, key=lambda m: m[0])
         applied = 0
@@ -97,31 +107,72 @@ def run_migrations(db) -> int:
             logger.info("[Migration] Applying v%d: %s", version, description)
             try:
                 with db.connect() as conn:
-                    cur = conn.cursor()
-                    fn(cur, db)
-                    # Belt-and-braces: if another process raced past the
-                    # lock (it shouldn't, but crashes mid-migration can
-                    # leave the lock stuck for us to re-acquire and the
-                    # INSERT still succeeds once), use conflict-tolerant
-                    # SQL. DO NOTHING means "someone beat us to it — we
-                    # already applied the same DDL idempotently via
-                    # IF NOT EXISTS, so dropping the version row is
-                    # harmless."
+                    # Under Postgres, migrations run in autocommit mode
+                    # so each DDL statement commits on its own. SQLite
+                    # effectively auto-commits per statement already;
+                    # without autocommit on PG a single failing
+                    # statement (e.g. a `CREATE INDEX IF NOT EXISTS`
+                    # guarded by try/except inside the migration body)
+                    # poisons the entire transaction with "current
+                    # transaction is aborted, commands ignored until
+                    # end of transaction block" and every subsequent
+                    # statement fails — which is the real root cause
+                    # of the large PG-under-CI failure cluster.
+                    # All migrations in this file use idempotent DDL
+                    # (CREATE ... IF NOT EXISTS, INSERT ... ON CONFLICT
+                    # DO NOTHING) so partial-failure semantics on re-run
+                    # are safe.
+                    autocommit_was_toggled = False
                     if db.use_postgres:
-                        cur.execute(
-                            db._prepare_sql(
-                                "INSERT INTO schema_versions (version, description, applied_at) "
-                                "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
-                            ),
-                            (version, description, datetime.now(timezone.utc).isoformat()),
-                        )
-                    else:
-                        cur.execute(
-                            "INSERT OR IGNORE INTO schema_versions (version, description, applied_at) "
-                            "VALUES (?, ?, ?)",
-                            (version, description, datetime.now(timezone.utc).isoformat()),
-                        )
-                    conn.commit()
+                        try:
+                            if not conn.autocommit:
+                                conn.autocommit = True
+                                autocommit_was_toggled = True
+                        except Exception as exc:
+                            logger.debug(
+                                "[Migration] v%d: could not set autocommit (%s); proceeding", version, exc,
+                            )
+                    cur = conn.cursor()
+                    try:
+                        fn(cur, db)
+                        # Belt-and-braces: if another process raced past the
+                        # lock (it shouldn't, but crashes mid-migration can
+                        # leave the lock stuck for us to re-acquire and the
+                        # INSERT still succeeds once), use conflict-tolerant
+                        # SQL. DO NOTHING means "someone beat us to it — we
+                        # already applied the same DDL idempotently via
+                        # IF NOT EXISTS, so dropping the version row is
+                        # harmless.
+                        # Stays inside the autocommit-True block on PG so
+                        # the schema_versions row commits alongside the
+                        # DDL — otherwise flipping autocommit off before
+                        # this INSERT would leave it pending in a txn
+                        # that the pool rolls back on return.
+                        if db.use_postgres:
+                            cur.execute(
+                                db._prepare_sql(
+                                    "INSERT INTO schema_versions (version, description, applied_at) "
+                                    "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
+                                ),
+                                (version, description, datetime.now(timezone.utc).isoformat()),
+                            )
+                        else:
+                            cur.execute(
+                                "INSERT OR IGNORE INTO schema_versions (version, description, applied_at) "
+                                "VALUES (?, ?, ?)",
+                                (version, description, datetime.now(timezone.utc).isoformat()),
+                            )
+                            conn.commit()
+                    finally:
+                        # Restore autocommit so the pool's next consumer
+                        # gets a connection with the default
+                        # transactional semantics, not the migration's
+                        # per-statement mode.
+                        if autocommit_was_toggled:
+                            try:
+                                conn.autocommit = False
+                            except Exception:
+                                pass
                 applied += 1
                 logger.info("[Migration] v%d applied successfully", version)
             except Exception as exc:
@@ -153,9 +204,15 @@ def get_schema_version(db) -> int:
     try:
         with db.connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT MAX(version) FROM schema_versions")
+            # AS alias is load-bearing: psycopg's dict_row factory keys
+            # rows by column label; positional `row[0]` raises KeyError
+            # on dicts. See run_migrations() ~L86 for the same pattern.
+            cur.execute("SELECT MAX(version) AS v FROM schema_versions")
             row = cur.fetchone()
-            return row[0] if row and row[0] is not None else 0
+            if row is None:
+                return 0
+            val = row["v"] if isinstance(row, dict) else row[0]
+            return val if val is not None else 0
     except Exception:
         return 0
 
@@ -482,8 +539,10 @@ def _m013_bank_details_encryption(cur, db):
             new_metadata = _json.dumps(metadata)
             try:
                 cur.execute(
-                    f"UPDATE {table_name} SET bank_details_encrypted = ?, metadata = ? "
-                    "WHERE id = ?",
+                    db._prepare_sql(
+                        f"UPDATE {table_name} SET bank_details_encrypted = ?, metadata = ? "
+                        "WHERE id = ?"
+                    ),
                     (ciphertext, new_metadata, row_id),
                 )
                 backfilled += 1
@@ -616,7 +675,7 @@ def _m015_role_taxonomy_cutover(cur, db):
     for legacy, canonical in mapping.items():
         try:
             cur.execute(
-                "UPDATE users SET role = ? WHERE role = ?",
+                db._prepare_sql("UPDATE users SET role = ? WHERE role = ?"),
                 (canonical, legacy),
             )
             rows = cur.rowcount or 0
@@ -969,8 +1028,10 @@ def _v25_object_model(cur, db):
     # --- Seed: AP Invoices pipeline (thesis §6.7) ---
     ap_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
-        "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-        "VALUES (?, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', ?)",
+        db._prepare_sql(
+            "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+            "VALUES (?, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', ?)"
+        ),
         (ap_pipeline_id, now),
     )
 
@@ -991,8 +1052,10 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, color, states, order in ap_stages:
         cur.execute(
-            "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ),
             (f"STG-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
 
@@ -1012,16 +1075,20 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, source_field, computed_fn, order in ap_columns:
         cur.execute(
-            "INSERT OR IGNORE INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, source_field, computed_fn, order),
         )
 
     # --- Seed: Vendor Onboarding pipeline (thesis §9) ---
     vo_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
-        "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-        "VALUES (?, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', ?)",
+        db._prepare_sql(
+            "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+            "VALUES (?, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', ?)"
+        ),
         (vo_pipeline_id, now),
     )
 
@@ -1041,8 +1108,10 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, color, states, order in vo_stages:
         cur.execute(
-            "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ),
             (f"STG-{_uuid.uuid4().hex[:12]}", vo_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
 
@@ -1053,8 +1122,10 @@ def _v25_object_model(cur, db):
         ("Due This Week", _json.dumps({"days_to_due_lte": 5}), 1),
     ]:
         cur.execute(
-            "INSERT OR IGNORE INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
-            "VALUES (?, '__default__', ?, ?, ?, ?, 1, ?)",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
+                "VALUES (?, '__default__', ?, ?, ?, ?, 1, ?)"
+            ),
             (f"SV-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, name, filter_json, is_default, now),
         )
 
@@ -1411,7 +1482,7 @@ def _v38_rename_vendor_onboarding_states(cur, db):
     for old, new in renames:
         try:
             cur.execute(
-                "UPDATE vendor_onboarding_sessions SET state = ? WHERE state = ?",
+                db._prepare_sql("UPDATE vendor_onboarding_sessions SET state = ? WHERE state = ?"),
                 (new, old),
             )
         except Exception as exc:
@@ -1452,7 +1523,7 @@ def _v38_rename_vendor_onboarding_states(cur, db):
                     seen.add(s)
                     deduped.append(s)
             cur.execute(
-                "UPDATE pipeline_stages SET source_states = ? WHERE id = ?",
+                db._prepare_sql("UPDATE pipeline_stages SET source_states = ? WHERE id = ?"),
                 (_json.dumps(deduped), stage_id),
             )
         except Exception as exc:
@@ -1487,7 +1558,7 @@ def _v39_backfill_grn_reference_column(cur, db):
 
     try:
         cur.execute(
-            "SELECT slug FROM pipeline_columns WHERE pipeline_id = ?",
+            db._prepare_sql("SELECT slug FROM pipeline_columns WHERE pipeline_id = ?"),
             (ap_pipeline_id,),
         )
         existing_slugs = {r[0] for r in cur.fetchall()}
@@ -1504,8 +1575,10 @@ def _v39_backfill_grn_reference_column(cur, db):
     try:
         for slug in columns_after_grn:
             cur.execute(
-                "UPDATE pipeline_columns SET display_order = display_order + 1 "
-                "WHERE pipeline_id = ? AND slug = ?",
+                db._prepare_sql(
+                    "UPDATE pipeline_columns SET display_order = display_order + 1 "
+                    "WHERE pipeline_id = ? AND slug = ?"
+                ),
                 (ap_pipeline_id, slug),
             )
     except Exception as exc:
@@ -1513,9 +1586,11 @@ def _v39_backfill_grn_reference_column(cur, db):
 
     try:
         cur.execute(
-            "INSERT OR IGNORE INTO pipeline_columns "
-            "(id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO pipeline_columns "
+                "(id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id,
              "grn_reference", "GRN Reference", "grn_number", None, 2),
         )
@@ -1847,8 +1922,10 @@ def _v37_split_ap_posted_and_paid(cur, db):
 
     for pl_id in ap_pipeline_ids:
         cur.execute(
-            "SELECT id, source_states, stage_order FROM pipeline_stages "
-            "WHERE pipeline_id = ? AND slug = 'paid'",
+            db._prepare_sql(
+                "SELECT id, source_states, stage_order FROM pipeline_stages "
+                "WHERE pipeline_id = ? AND slug = 'paid'"
+            ),
             (pl_id,),
         )
         row = cur.fetchone()
@@ -1867,17 +1944,21 @@ def _v37_split_ap_posted_and_paid(cur, db):
         # Rewrite the existing "paid" row to be the new, stricter
         # Paid stage: state=closed only, order 5.
         cur.execute(
-            "UPDATE pipeline_stages "
-            "SET source_states = ?, stage_order = 5 "
-            "WHERE id = ?",
+            db._prepare_sql(
+                "UPDATE pipeline_stages "
+                "SET source_states = ?, stage_order = 5 "
+                "WHERE id = ?"
+            ),
             (_json.dumps(["closed"]), paid_id),
         )
 
         # Insert the new Posted stage at order 4.
         cur.execute(
-            "INSERT OR IGNORE INTO pipeline_stages "
-            "(id, pipeline_id, slug, label, color, source_states, stage_order, source_filter_json) "
-            "VALUES (?, ?, 'posted', 'Posted', '#8B5CF6', ?, 4, '{}')",
+            db._prepare_sql(
+                "INSERT OR IGNORE INTO pipeline_stages "
+                "(id, pipeline_id, slug, label, color, source_states, stage_order, source_filter_json) "
+                "VALUES (?, ?, 'posted', 'Posted', '#8B5CF6', ?, 4, '{}')"
+            ),
             (
                 f"STG-{_uuid.uuid4().hex[:12]}",
                 pl_id,

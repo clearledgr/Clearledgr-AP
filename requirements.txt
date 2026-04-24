@@ -72,6 +72,18 @@ ruff>=0.2.0
 # local iteration: `TEST_DB_ENGINE=sqlite pytest`.
 testcontainers[postgresql]>=4.0.0
 
+# Postgres driver — ClearledgrDB's `use_postgres=True` path only
+# activates when `psycopg` is importable. Production uses it; tests
+# (post C.1) use it. Without this pin, ClearledgrDB silently falls
+# back to SQLite — which is what happened when C.1 first shipped
+# and C.2 audit caught.
+psycopg[binary]>=3.1
+# Connection pooling for the Postgres path. Without it, each
+# `connect()` call opens a fresh TCP connection, which is slow and
+# leaks file descriptors under concurrent load. ClearledgrDB uses
+# this at database.py:198-230 to build the pool lazily.
+psycopg_pool>=3.2
+
 # Optional: ERP Integrations
 # quickbooks-python>=0.5.0    # QuickBooks (if needed)
 # xero-python>=4.0.0          # Xero (if needed)

@@ -67,10 +67,31 @@ def reset_service_singletons():
     connection for subsequent tests.
     """
     yield
-    # Reset DB singleton so each test starts with the correct DB path
+    # Reset DB singleton so each test starts with the correct DB path.
+    # Under Postgres, we normally keep the session singleton alive
+    # (dropping it would trigger psycopg_pool thread-join teardown and
+    # deadlock mid-session). BUT — some tests flip to SQLite with
+    # `db_module._DB_INSTANCE = None; monkeypatch.delenv("DATABASE_URL")`
+    # and leave a dangling SQLite singleton behind. Subsequent tests
+    # calling `get_db()` then silently get that SQLite DB instead of
+    # the session PG, and trip a ``sqlite3.IntegrityError`` on the
+    # second ``create_organization("org_t")`` — because the SQLite
+    # instance is not part of the per-test TRUNCATE cycle.
+    #
+    # Detection: under PG mode, if the current singleton has
+    # ``use_postgres=False`` it was tainted by one of those flips —
+    # nuke it so the next ``get_db()`` re-constructs from env (which
+    # by now has DATABASE_URL restored by monkeypatch). When the
+    # singleton is healthy (use_postgres=True) we still preserve it
+    # to keep the shared pool alive.
     try:
         import clearledgr.core.database as _db_mod
-        _db_mod._DB_INSTANCE = None
+        if _TEST_DB_ENGINE != "postgres":
+            _db_mod._DB_INSTANCE = None
+        else:
+            inst = _db_mod._DB_INSTANCE
+            if inst is not None and not getattr(inst, "use_postgres", True):
+                _db_mod._DB_INSTANCE = None
     except Exception:
         pass
     try:
@@ -221,29 +242,57 @@ def _reset_postgres_test_db_between_tests(request, postgres_test_db):
     state isolation at roughly the same blast radius as the existing
     SQLite per-test temp-file pattern.
 
+    Uses a direct ``psycopg.connect()`` rather than ``get_db().connect()``
+    on purpose. Many tests (``tmp_db`` fixtures in
+    ``test_iban_change_freeze``, ``test_override_window``, etc.)
+    monkeypatch ``_DB_INSTANCE`` to a fresh ``ClearledgrDB`` that
+    opens its OWN psycopg_pool against the same session PG DB.
+    Going through ``get_db()`` here could land on an exhausted or
+    monkeypatch-reverted pool depending on fixture teardown order,
+    and a swallowed truncate failure shows up downstream as
+    ``UniqueViolation`` in the next test. A direct connect sidesteps
+    every pool-ownership question — same PG DB, new FD each call,
+    guaranteed to succeed if PG is up at all.
+
     On SQLite: no-op. Tests still rely on per-test temp-file
     instantiation for isolation.
     """
     yield
     if postgres_test_db is None:
         return
+    import psycopg
+    url = postgres_test_db  # session fixture yields the DSN string
     try:
-        import clearledgr.core.database as _db_mod
-        db = _db_mod.get_db()
-        db.initialize()
-        with db.connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') "
-                "FROM pg_tables WHERE schemaname = 'public'"
-            )
-            row = cur.fetchone()
+        conn = psycopg.connect(url, connect_timeout=5)
+    except Exception as exc:
+        import sys as _sys
+        print(f"[conftest] truncate: could not connect to PG ({exc})", file=_sys.stderr)
+        return
+    try:
+        conn.autocommit = False
+        cur = conn.cursor()
+        # Truncate every user table EXCEPT schema_versions. If
+        # schema_versions were included, the next test's first
+        # get_db().initialize() call would re-run every migration
+        # from v1 — some migrations are not idempotent on re-run.
+        cur.execute(
+            "SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') "
+            "FROM pg_tables "
+            "WHERE schemaname = 'public' AND tablename != 'schema_versions'"
+        )
+        row = cur.fetchone()
+        if row is not None:
             table_list = row[0] if row else None
             if table_list:
-                cur.execute(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE")
+                cur.execute(
+                    f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE"
+                )
                 conn.commit()
-    except Exception:
-        # If truncation fails, the next test will likely fail loudly —
-        # which is better than silently swallowing a stale-state bug.
-        # Intentional pass for the fixture contract.
-        pass
+    except Exception as exc:
+        import sys as _sys
+        print(f"[conftest] per-test truncate failed: {exc}", file=_sys.stderr)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass

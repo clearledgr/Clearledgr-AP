@@ -26,13 +26,15 @@ import pytest
 
 
 @pytest.fixture
-def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB
-    from clearledgr.core import database as db_module
+def tmp_db(postgres_test_db):
+    # C.2: SQLite path deleted; tests share the session-scoped Postgres
+    # (postgres_test_db fixture in conftest.py) and rely on per-test
+    # TRUNCATE for isolation. Behaviour is equivalent to the prior
+    # per-test temp-file pattern, just with one engine instead of two.
+    from clearledgr.core.database import get_db
 
-    db = ClearledgrDB(db_path=str(tmp_path / "trustarc.db"))
+    db = get_db()
     db.initialize()
-    monkeypatch.setattr(db_module, "_DB_INSTANCE", db)
     return db
 
 

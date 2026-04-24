@@ -397,11 +397,13 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO ap_items "
-                "(id, organization_id, vendor_name, amount, currency, state, "
-                "thread_id, invoice_number, created_at, updated_at, metadata, "
-                "bank_details_encrypted) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tmp_db._prepare_sql(
+                    "INSERT INTO ap_items "
+                    "(id, organization_id, vendor_name, amount, currency, state, "
+                    "thread_id, invoice_number, created_at, updated_at, metadata, "
+                    "bank_details_encrypted) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
                 (
                     "AP-LEGACY-MIG",
                     "org_t",
@@ -431,7 +433,9 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT metadata, bank_details_encrypted FROM ap_items WHERE id = ?",
+                tmp_db._prepare_sql(
+                    "SELECT metadata, bank_details_encrypted FROM ap_items WHERE id = ?"
+                ),
                 ("AP-LEGACY-MIG",),
             )
             row = cur.fetchone()
@@ -449,10 +453,12 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO ap_items "
-                "(id, organization_id, vendor_name, amount, currency, state, "
-                "thread_id, invoice_number, created_at, updated_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tmp_db._prepare_sql(
+                    "INSERT INTO ap_items "
+                    "(id, organization_id, vendor_name, amount, currency, state, "
+                    "thread_id, invoice_number, created_at, updated_at, metadata) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
                 (
                     "AP-CLEAN",
                     "org_t",
