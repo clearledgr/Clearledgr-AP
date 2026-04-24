@@ -244,16 +244,20 @@ class _ClearledgrDBBase:
                 connect_timeout = self._postgres_connect_timeout_seconds()
                 if self._pg_pool is None:
                     # Share a single pool per DSN across all ClearledgrDB
-                    # instances in the process. Without this, each test's
-                    # `ClearledgrDB(db_path=...)` (with DATABASE_URL set)
-                    # spawns its own pool: a full suite racks up 100+
-                    # pools × min_size connections and blows past PG's
-                    # default max_connections=100. This is the proximate
-                    # cause of the mid-suite pool exhaustion that flipped
-                    # use_postgres→False under the old fallback path and
-                    # surfaces as connection errors under fallback=false.
+                    # instances in the process. Without this, every test
+                    # ``tmp_db`` fixture that constructs ClearledgrDB
+                    # directly would spawn its own pool (min_size=2
+                    # connections each); a full 2400-test suite then
+                    # racks up dozens of pools against a PG with
+                    # max_connections=100 default, and the suite
+                    # silently flipped use_postgres→False via the old
+                    # SQLite fallback path — which is exactly what C.1
+                    # is trying to eliminate.
                     # Keyed by DSN so prod (single singleton) and tests
                     # (many instances, same session DSN) both work right.
+                    # max_size bumped to 30 so bursts (multiple async
+                    # tasks in one test + the TRUNCATE fixture's direct
+                    # connect) don't serialize on the pool's semaphore.
                     pool = _PG_POOLS_BY_DSN.get(self.dsn)
                     if pool is None:
                         try:
@@ -261,14 +265,14 @@ class _ClearledgrDBBase:
                             pool = ConnectionPool(
                                 self.dsn,
                                 min_size=2,
-                                max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
+                                max_size=int(os.getenv("DB_POOL_MAX_SIZE", "30")),
                                 kwargs={
                                     "row_factory": dict_row,
                                     "connect_timeout": connect_timeout,
                                 },
                             )
                             _PG_POOLS_BY_DSN[self.dsn] = pool
-                            logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "10"))
+                            logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "30"))
                         except ImportError:
                             logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
                     self._pg_pool = pool
