@@ -96,6 +96,11 @@ logger = logging.getLogger(__name__)
 
 AP_RUNTIME_COMPAT_TABLES: tuple[str, ...] = ()
 _CLEARLEDGR_DB_IMPL = None
+# Process-global pool registry keyed by DSN. See ClearledgrDB.connect()
+# for rationale: multiple ClearledgrDB instances targeting the same
+# DSN share one pool, instead of each spawning min_size=2 fresh
+# connections on first .connect().
+_PG_POOLS_BY_DSN: dict = {}
 
 
 def _load_store_symbols() -> None:
@@ -238,20 +243,35 @@ class _ClearledgrDBBase:
             try:
                 connect_timeout = self._postgres_connect_timeout_seconds()
                 if self._pg_pool is None:
-                    try:
-                        from psycopg_pool import ConnectionPool
-                        self._pg_pool = ConnectionPool(
-                            self.dsn,
-                            min_size=2,
-                            max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
-                            kwargs={
-                                "row_factory": dict_row,
-                                "connect_timeout": connect_timeout,
-                            },
-                        )
-                        logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "10"))
-                    except ImportError:
-                        logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
+                    # Share a single pool per DSN across all ClearledgrDB
+                    # instances in the process. Without this, each test's
+                    # `ClearledgrDB(db_path=...)` (with DATABASE_URL set)
+                    # spawns its own pool: a full suite racks up 100+
+                    # pools × min_size connections and blows past PG's
+                    # default max_connections=100. This is the proximate
+                    # cause of the mid-suite pool exhaustion that flipped
+                    # use_postgres→False under the old fallback path and
+                    # surfaces as connection errors under fallback=false.
+                    # Keyed by DSN so prod (single singleton) and tests
+                    # (many instances, same session DSN) both work right.
+                    pool = _PG_POOLS_BY_DSN.get(self.dsn)
+                    if pool is None:
+                        try:
+                            from psycopg_pool import ConnectionPool
+                            pool = ConnectionPool(
+                                self.dsn,
+                                min_size=2,
+                                max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
+                                kwargs={
+                                    "row_factory": dict_row,
+                                    "connect_timeout": connect_timeout,
+                                },
+                            )
+                            _PG_POOLS_BY_DSN[self.dsn] = pool
+                            logger.info("Postgres connection pool initialized (max_size=%s)", os.getenv("DB_POOL_MAX_SIZE", "10"))
+                        except ImportError:
+                            logger.warning("psycopg_pool not installed — using unpooled Postgres connections")
+                    self._pg_pool = pool
                 if self._pg_pool is not None:
                     # Pool can hand back a closed/broken connection — in
                     # particular after migrations where the connection

@@ -1260,11 +1260,17 @@ class APStore:
         """
         self.initialize()
         if self.use_postgres:
+            # metadata is stored as TEXT (for SQLite parity) so we must
+            # cast to jsonb before the ->> operator or psycopg raises
+            # "operator does not exist: text ->> unknown". The COALESCE
+            # result is TEXT (both branches are text), so cast the
+            # result to timestamptz before comparing against NOW() —
+            # otherwise PG errors with "text < timestamp with time zone".
             sql = self._prepare_sql(
                 "SELECT * FROM ap_items "
                 "WHERE organization_id = ? AND state = 'needs_approval' "
-                "AND COALESCE(NULLIF(metadata->>'approval_requested_at', ''), updated_at) < "
-                "(NOW() - (? * INTERVAL '1 hour')) "
+                "AND COALESCE(NULLIF(metadata::jsonb->>'approval_requested_at', ''), updated_at)::timestamptz "
+                "< (NOW() - (? * INTERVAL '1 hour')) "
                 "ORDER BY updated_at ASC LIMIT 50"
             )
             params: tuple = (organization_id, min_hours)
