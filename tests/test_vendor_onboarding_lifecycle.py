@@ -301,10 +301,12 @@ class TestActivationAudit:
 
         asyncio.run(mod.activate_vendor_in_erp(session["id"], db=tmp_db))
 
-        # Check audit events.
-        import sqlite3
+        # Check audit events. psycopg uses HybridRow (dict + positional)
+        # so no row_factory override is needed on PG.
         with tmp_db.connect() as conn:
-            conn.row_factory = sqlite3.Row
+            if not tmp_db.use_postgres:
+                import sqlite3
+                conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             cur.execute(
                 "SELECT * FROM audit_events WHERE event_type = 'vendor_onboarding_activated'"
