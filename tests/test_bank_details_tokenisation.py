@@ -421,13 +421,24 @@ class TestMigrationV13Backfill:
             )
             conn.commit()
 
-        # Run migration v13 directly against the DB
+        # Run migration v13 directly against the DB. Under PG, the
+        # migration body has try/except around idempotent DDL (e.g.
+        # ALTER TABLE ADD COLUMN whose column already exists on reruns)
+        # which works in the normal migration path because
+        # run_migrations() sets autocommit=True for that duration —
+        # failed statements don't poison subsequent ones. Here we call
+        # the migration function outside that path, so we need to
+        # replicate the autocommit toggle or we get
+        # ``current transaction is aborted, commands ignored ...``.
         from clearledgr.core.migrations import _MIGRATIONS
         m13 = next(m for m in _MIGRATIONS if m[0] == 13)
         with tmp_db.connect() as conn:
+            if tmp_db.use_postgres:
+                conn.autocommit = True
             cur = conn.cursor()
             m13[2](cur, tmp_db)
-            conn.commit()
+            if not tmp_db.use_postgres:
+                conn.commit()
 
         # After migration: encrypted column populated, metadata stripped
         with tmp_db.connect() as conn:
@@ -478,9 +489,14 @@ class TestMigrationV13Backfill:
         from clearledgr.core.migrations import _MIGRATIONS
         m13 = next(m for m in _MIGRATIONS if m[0] == 13)
         with tmp_db.connect() as conn:
+            # Same autocommit dance as the sibling test above — see
+            # test_backfill_strips_plaintext_from_metadata for why.
+            if tmp_db.use_postgres:
+                conn.autocommit = True
             cur = conn.cursor()
             m13[2](cur, tmp_db)
-            conn.commit()
+            if not tmp_db.use_postgres:
+                conn.commit()
 
         assert tmp_db.get_ap_item_bank_details("AP-CLEAN") is None
 
