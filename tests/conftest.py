@@ -326,14 +326,21 @@ def _reset_postgres_test_db_between_tests(request, postgres_test_db):
     try:
         conn.autocommit = False
         cur = conn.cursor()
-        # Truncate every user table EXCEPT schema_versions. If
-        # schema_versions were included, the next test's first
-        # get_db().initialize() call would re-run every migration
-        # from v1 — some migrations are not idempotent on re-run.
+        # Truncate every user table EXCEPT:
+        #  - schema_versions: re-running every migration from v1 is
+        #    expensive and some are not idempotent on re-run.
+        #  - pipelines / pipeline_stages / pipeline_columns: seeded
+        #    once by migration v36 with organization_id='__default__'.
+        #    Tests that look up the AP-invoices pipeline rely on this
+        #    seed; truncating it leaves the suite empty for the rest
+        #    of the session because the migration won't re-seed.
         cur.execute(
             "SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') "
             "FROM pg_tables "
-            "WHERE schemaname = 'public' AND tablename != 'schema_versions'"
+            "WHERE schemaname = 'public' "
+            "AND tablename NOT IN ("
+            "'schema_versions', 'pipelines', 'pipeline_stages', 'pipeline_columns'"
+            ")"
         )
         row = cur.fetchone()
         if row is not None:

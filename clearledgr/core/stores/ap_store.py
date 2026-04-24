@@ -516,7 +516,12 @@ class APStore:
         """
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql_select = self._prepare_sql("SELECT metadata FROM ap_items WHERE id = ?")
+        # FOR UPDATE locks the row for the duration of the txn so
+        # concurrent patch_ap_item_metadata() calls serialize on the
+        # row read instead of racing on the read-modify-write window.
+        sql_select = self._prepare_sql(
+            "SELECT metadata FROM ap_items WHERE id = ? FOR UPDATE"
+        )
         sql_update = self._prepare_sql(
             "UPDATE ap_items SET metadata = ?, updated_at = ? WHERE id = ?"
         )
@@ -525,6 +530,7 @@ class APStore:
             cur.execute(sql_select, (ap_item_id,))
             row = cur.fetchone()
             if not row:
+                conn.rollback()
                 return False
             try:
                 existing: Dict[str, Any] = json.loads(row[0] or "{}")

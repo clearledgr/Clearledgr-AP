@@ -309,6 +309,13 @@ class VendorStore:
             if key in safe_fields and isinstance(safe_fields[key], (list, dict)):
                 safe_fields[key] = json.dumps(safe_fields[key])
 
+        # Several boolean-semantic columns are typed INTEGER (legacy
+        # SQLite-era schema). Postgres rejects bool→int implicit
+        # coercion ("integer ... is of type boolean"), so coerce here.
+        for key, value in list(safe_fields.items()):
+            if isinstance(value, bool):
+                safe_fields[key] = int(value)
+
         now = _now()
         existing = self.get_vendor_profile(organization_id, vendor_name)
 
