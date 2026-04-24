@@ -26,7 +26,7 @@ import base64
 import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.utils import safe_float
 
@@ -400,6 +400,54 @@ class _ClearledgrDBBase:
                 out = stripped + " ON CONFLICT DO NOTHING"
             return out
         return sql
+
+    def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
+        """Execute a DML/DDL statement and commit. Thin wrapper around connect()."""
+        sql = self._prepare_sql(sql)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            conn.commit()
+
+    def fetchone(self, sql: str, params: Tuple[Any, ...] = ()):
+        sql = self._prepare_sql(sql)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchone()
+
+    def fetchall(self, sql: str, params: Tuple[Any, ...] = ()):
+        sql = self._prepare_sql(sql)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def fetchone_dict(self, sql: str, params: Tuple[Any, ...] = ()):
+        sql = self._prepare_sql(sql)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            if row is None:
+                return None
+            if isinstance(row, dict):
+                return dict(row)
+            cols = [c[0] for c in cur.description]
+            return dict(zip(cols, row))
+
+    def fetchall_dict(self, sql: str, params: Tuple[Any, ...] = ()):
+        sql = self._prepare_sql(sql)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            if not rows:
+                return []
+            if isinstance(rows[0], dict):
+                return [dict(r) for r in rows]
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, r)) for r in rows]
 
     def _table_columns(self, cur, table: str) -> set[str]:
         if self.use_postgres:

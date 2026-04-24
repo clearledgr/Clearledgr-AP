@@ -7,9 +7,8 @@ Autonomous task follow-ups and reminders:
 - Escalation for stale tasks
 """
 
-import os
 import uuid
-from clearledgr.services.db import DB
+from clearledgr.core.database import get_db
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from clearledgr.services.email_tasks import get_overdue_tasks, get_tasks, get_task
@@ -18,9 +17,7 @@ from clearledgr.services.task_notifications import (
 )
 
 
-# Database for scheduler state
-SCHEDULER_DB_PATH = os.environ.get("SCHEDULER_DB_PATH", "task_scheduler.sqlite3")
-db = DB(sqlite_path=SCHEDULER_DB_PATH)
+db = get_db()
 
 
 def init_scheduler_db():

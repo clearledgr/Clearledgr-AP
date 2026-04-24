@@ -1,20 +1,19 @@
 """Simple pattern store for learned reconciliation patterns."""
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
+from clearledgr.core.database import get_db
 from clearledgr.models.patterns import MatchPattern
-from clearledgr.services.db import DB
-
-
-DB_PATH = os.getenv("CLEARLEDGR_STATE_DB", os.path.join(os.getcwd(), "state.sqlite3"))
 
 
 class PatternStore:
-    def __init__(self, db_path: str = DB_PATH) -> None:
-        self.db = DB(sqlite_path=db_path)
+    # db_path arg kept for back-compat with callers that pass it; now
+    # ignored — the store uses the process-wide ClearledgrDB singleton.
+    def __init__(self, db_path: Optional[str] = None) -> None:
+        self.db = get_db()
+        self.db.initialize()
         self._ensure_table()
 
     def _ensure_table(self) -> None:
@@ -64,7 +63,9 @@ class PatternStore:
         patterns: List[MatchPattern] = []
         for row in rows:
             last_used = datetime.fromisoformat(row[5]) if row[5] else None
-            last_updated = datetime.fromisoformat(row[6]) if len(row) > 6 and row[6] else None
+            last_updated = (
+                datetime.fromisoformat(row[6]) if len(row) > 6 and row[6] else None
+            )
             patterns.append(
                 MatchPattern(
                     pattern_id=row[0],
