@@ -208,7 +208,7 @@ class PeriodCloseService:
             return {"period": period, "accruals": [], "total_by_currency": {}}
 
         accrual_states = ("approved", "ready_to_post", "posted_to_erp")
-        placeholders = ", ".join("?" for _ in accrual_states)
+        placeholders = ", ".join("%s" for _ in accrual_states)
         sql = self.db._prepare_sql(
             f"SELECT id, vendor_name, amount, currency, invoice_number, "
             f"invoice_date, state "

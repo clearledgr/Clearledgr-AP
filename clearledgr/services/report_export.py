@@ -187,17 +187,17 @@ def _generate_posting_status(
     db.initialize()
 
     # Build query with optional filters
-    conditions = ["organization_id = ?"]
+    conditions = ["organization_id = %s"]
     params: list = [organization_id]
 
     if start_date:
-        conditions.append("created_at >= ?")
+        conditions.append("created_at >= %s")
         params.append(start_date)
     if end_date:
-        conditions.append("created_at <= ?")
+        conditions.append("created_at <= %s")
         params.append(end_date)
     if vendor:
-        conditions.append("vendor_name LIKE ?")
+        conditions.append("vendor_name LIKE %s")
         params.append(f"%{vendor}%")
 
     where = " AND ".join(conditions)

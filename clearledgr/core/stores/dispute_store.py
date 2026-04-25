@@ -120,7 +120,7 @@ class DisputeStore:
             return False
 
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
         sql = self._prepare_sql(
             f"UPDATE disputes SET {set_clause} WHERE id = ?"
         )

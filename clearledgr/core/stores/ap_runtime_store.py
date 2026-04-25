@@ -177,13 +177,13 @@ class APRuntimeStore:
     ) -> List[Any]:
         from clearledgr.core.models import Transaction, TransactionSource, TransactionStatus
 
-        conditions = ["organization_id = ?"]
+        conditions = ["organization_id = %s"]
         params: List[Any] = [organization_id]
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
         if source:
-            conditions.append("source = ?")
+            conditions.append("source = %s")
             params.append(source)
         where = " AND ".join(conditions)
         sql = self._prepare_sql(
@@ -298,10 +298,10 @@ class APRuntimeStore:
     ) -> List[Any]:
         from clearledgr.core.models import FinanceEmail
 
-        conditions = ["organization_id = ?"]
+        conditions = ["organization_id = %s"]
         params: List[Any] = [organization_id]
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
         where = " AND ".join(conditions)
         sql = self._prepare_sql(
@@ -353,22 +353,22 @@ class APRuntimeStore:
     ) -> List[Any]:
         from clearledgr.core.models import FinanceEmail
 
-        conditions = ["organization_id = ?"]
+        conditions = ["organization_id = %s"]
         params: List[Any] = [organization_id]
 
         normalized_email_type = str(email_type or "").strip().lower()
         if normalized_email_type:
-            conditions.append("LOWER(email_type) = ?")
+            conditions.append("LOWER(email_type) = %s")
             params.append(normalized_email_type)
 
         normalized_user_id = str(user_id or "").strip()
         if normalized_user_id:
-            conditions.append("user_id = ?")
+            conditions.append("user_id = %s")
             params.append(normalized_user_id)
 
         normalized_before = str(before_created_at or "").strip()
         if normalized_before:
-            conditions.append("created_at < ?")
+            conditions.append("created_at < %s")
             params.append(normalized_before)
 
         normalized_gmail_ids = [
@@ -377,7 +377,7 @@ class APRuntimeStore:
             if str(value or "").strip()
         ]
         if normalized_gmail_ids:
-            placeholders = ",".join("?" for _ in normalized_gmail_ids)
+            placeholders = ",".join("%s" for _ in normalized_gmail_ids)
             conditions.append(f"gmail_id IN ({placeholders})")
             params.extend(normalized_gmail_ids)
 

@@ -329,7 +329,7 @@ class APStore:
             # Normalize to canonical state name
             kwargs["state"] = normalize_state(new_state)
 
-        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        set_clause = ", ".join(f"{k} = %s" for k in kwargs.keys())
         if expected_updated_at:
             # §11.2.5: Optimistic locking — only update if updated_at hasn't changed
             sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ? AND updated_at = ?")
@@ -1192,13 +1192,13 @@ class APStore:
         safe_limit = max(1, min(int(limit or 200), 10000))
 
         # Build WHERE clause dynamically — entity_id filter is optional (§3 multi-entity)
-        where_parts = ["organization_id = ?"]
+        where_parts = ["organization_id = %s"]
         params_list: list = [organization_id]
         if state:
-            where_parts.append("state = ?")
+            where_parts.append("state = %s")
             params_list.append(state)
         if entity_id:
-            where_parts.append("entity_id = ?")
+            where_parts.append("entity_id = %s")
             params_list.append(entity_id)
         where_clause = " AND ".join(where_parts)
 
@@ -1466,7 +1466,7 @@ class APStore:
         if not normalized_ids:
             return {}
 
-        placeholders = ", ".join("?" for _ in normalized_ids)
+        placeholders = ", ".join("%s" for _ in normalized_ids)
         sql = self._prepare_sql(
             "SELECT * FROM ap_item_sources "
             f"WHERE ap_item_id IN ({placeholders}) "
@@ -1829,12 +1829,12 @@ class APStore:
         direction = "DESC" if str(order).lower() == "desc" else "ASC"
         sql = (
             "SELECT * FROM audit_events "
-            "WHERE box_id = ? AND box_type = ? "
+            "WHERE box_id = %s AND box_type = %s "
             f"ORDER BY ts {direction}"
         )
         params: Tuple[Any, ...] = (box_id, box_type)
         if limit is not None:
-            sql += " LIMIT ?"
+            sql += " LIMIT %s"
             params = (box_id, box_type, int(limit))
         sql = self._prepare_sql(sql)
         with self.connect() as conn:

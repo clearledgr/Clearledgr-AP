@@ -141,7 +141,7 @@ class PaymentStore:
         terminal_statuses = ("completed", "closed_by_credit", "failed", "reversed")
         sql = self._prepare_sql(
             "SELECT * FROM payments WHERE ap_item_id = ? AND status NOT IN ("
-            + ",".join("?" for _ in terminal_statuses)
+            + ",".join("%s" for _ in terminal_statuses)
             + ") ORDER BY created_at DESC LIMIT 1"
         )
         try:
@@ -194,7 +194,7 @@ class PaymentStore:
         if not safe_cols:
             return self.get_payment(payment_id)
 
-        set_clause = ", ".join(f"{col} = ?" for col in safe_cols)
+        set_clause = ", ".join(f"{col} = %s" for col in safe_cols)
         values = list(safe_cols.values()) + [payment_id]
         sql = self._prepare_sql(f"UPDATE payments SET {set_clause} WHERE id = ?")
         with self.connect() as conn:
@@ -213,14 +213,14 @@ class PaymentStore:
     ) -> List[Dict[str, Any]]:
         """List payment records for an organization with optional filters."""
         self.initialize()
-        clauses = ["organization_id = ?"]
+        clauses = ["organization_id = %s"]
         params: list = [organization_id]
 
         if status:
-            clauses.append("status = ?")
+            clauses.append("status = %s")
             params.append(status)
         if vendor:
-            clauses.append("vendor_name = ?")
+            clauses.append("vendor_name = %s")
             params.append(vendor)
 
         where = " AND ".join(clauses)

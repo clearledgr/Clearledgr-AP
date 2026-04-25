@@ -473,17 +473,17 @@ class AgentMemoryService:
     ) -> Dict[str, Any]:
         if not self.enabled:
             return {}
-        clauses = ["organization_id = ?", "skill_id = ?", "scope = ?"]
+        clauses = ["organization_id = %s", "skill_id = %s", "scope = %s"]
         params: List[Any] = [
             self.organization_id,
             str(skill_id or "ap_v1").strip() or "ap_v1",
             str(scope or "organization").strip() or "organization",
         ]
         if scope_id:
-            clauses.append("scope_id = ?")
+            clauses.append("scope_id = %s")
             params.append(str(scope_id).strip())
         if snapshot_type:
-            clauses.append("snapshot_type = ?")
+            clauses.append("snapshot_type = %s")
             params.append(str(snapshot_type).strip())
         sql = self.db._prepare_sql(
             f"""
@@ -993,13 +993,13 @@ class AgentMemoryService:
     ) -> List[Dict[str, Any]]:
         if not self.enabled:
             return []
-        clauses = ["organization_id = ?", "skill_id = ?"]
+        clauses = ["organization_id = %s", "skill_id = %s"]
         params: List[Any] = [self.organization_id, str(skill_id or "ap_v1").strip() or "ap_v1"]
         if pattern_type:
-            clauses.append("pattern_type = ?")
+            clauses.append("pattern_type = %s")
             params.append(str(pattern_type).strip().lower())
         if pattern_key_prefix:
-            clauses.append("pattern_key LIKE ?")
+            clauses.append("pattern_key LIKE %s")
             params.append(f"{str(pattern_key_prefix).strip().lower()}%")
         sql = self.db._prepare_sql(
             f"""

@@ -1,47 +1,22 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-import clearledgr.services.correction_learning as correction_learning_module
 from clearledgr.services.correction_learning import CorrectionLearningService
 
 
-class _SQLiteBackedDB:
-    """In-test DB stub that writes to a local SQLite file. Production
-    correction_learning.py no longer branches on engine — both
-    Postgres and SQLite 3.24+ support ``ON CONFLICT (id) DO UPDATE
-    SET``, so the SQL issued by the service works here unchanged as
-    long as we expose a ``_prepare_sql`` passthrough matching
-    ClearledgrDB's protocol.
-    """
-
-    def __init__(self, db_path: Path):
-        self.db_path = str(db_path)
-
-    @contextmanager
-    def connect(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-
-    def _prepare_sql(self, sql: str) -> str:
-        # SQLite uses ? natively; strip the INSERT OR IGNORE rewrite
-        # (ClearledgrDB rewrites to ON CONFLICT DO NOTHING for PG).
-        return sql
-
-
 @pytest.fixture
-def learning_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CorrectionLearningService:
-    fake_db = _SQLiteBackedDB(tmp_path / "correction-learning.db")
-    monkeypatch.setattr(correction_learning_module, "get_db", lambda: fake_db)
+def learning_service(postgres_test_db) -> CorrectionLearningService:
+    """Run CorrectionLearningService against the session PG. The
+    autouse TRUNCATE fixture in conftest.py cleans state between tests,
+    and ``org-test`` keeps each instance scoped to this suite's data.
+    Previously this used a per-tmp-path SQLite stub; that died with
+    C.3 since the service's SQL is now PG-native (``%s`` placeholders,
+    ON CONFLICT DO UPDATE SET).
+    """
     return CorrectionLearningService("org-test")
 
 

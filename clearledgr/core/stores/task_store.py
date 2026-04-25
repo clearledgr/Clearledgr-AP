@@ -159,7 +159,7 @@ class TaskStore:
     ) -> List[Dict[str, Any]]:
         """List task runs by status (used by resume_pending_tasks on startup)."""
         self.initialize()
-        placeholders = ",".join("?" * len(statuses))
+        placeholders = ",".join(["%s"] * len(statuses))
         if organization_id:
             sql = self._prepare_sql(
                 f"SELECT * FROM task_runs WHERE organization_id = ? AND status IN ({placeholders}) "

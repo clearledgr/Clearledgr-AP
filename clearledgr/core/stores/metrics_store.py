@@ -996,12 +996,12 @@ class MetricsStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         params: List[Any] = [organization_id]
-        sql = "SELECT * FROM audit_events WHERE organization_id = ?"
+        sql = "SELECT * FROM audit_events WHERE organization_id = %s"
         if event_types:
-            placeholders = ",".join("?" for _ in event_types)
+            placeholders = ",".join("%s" for _ in event_types)
             sql += f" AND event_type IN ({placeholders})"
             params.extend(event_types)
-        sql += " ORDER BY ts DESC LIMIT ?"
+        sql += " ORDER BY ts DESC LIMIT %s"
         params.append(limit)
         sql = self._prepare_sql(sql)
         with self.connect() as conn:

@@ -108,7 +108,7 @@ class WebhookStore:
             updates["is_active"] = 1 if updates["is_active"] else 0
 
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
         sql = self._prepare_sql(
             f"UPDATE webhook_subscriptions SET {set_clause} WHERE id = ?"
         )

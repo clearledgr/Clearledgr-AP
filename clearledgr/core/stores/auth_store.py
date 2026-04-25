@@ -454,7 +454,7 @@ class AuthStore:
         if "integration_mode" in payload and not payload["integration_mode"]:
             payload.pop("integration_mode")
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in payload.keys())
+        set_clause = ", ".join(f"{k} = %s" for k in payload.keys())
         if expected_updated_at is not None:
             sql = self._prepare_sql(
                 f"UPDATE organizations SET {set_clause} "
@@ -728,7 +728,7 @@ class AuthStore:
         if "preferences_json" in payload and isinstance(payload["preferences_json"], dict):
             payload["preferences_json"] = json.dumps(payload["preferences_json"])
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in payload.keys())
+        set_clause = ", ".join(f"{k} = %s" for k in payload.keys())
         sql = self._prepare_sql(f"UPDATE users SET {set_clause} WHERE id = ?")
         with self.connect() as conn:
             cur = conn.cursor()

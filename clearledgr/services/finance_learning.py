@@ -216,10 +216,10 @@ class FinanceLearningService:
     def list_learning_events(self, *, ap_item_id: Optional[str] = None, limit: int = 20) -> list[Dict[str, Any]]:
         if not self.enabled:
             return []
-        clauses = ["organization_id = ?"]
+        clauses = ["organization_id = %s"]
         params: list[Any] = [self.organization_id]
         if ap_item_id:
-            clauses.append("ap_item_id = ?")
+            clauses.append("ap_item_id = %s")
             params.append(str(ap_item_id).strip())
         sql = self.db._prepare_sql(
             f"""
@@ -338,15 +338,15 @@ class FinanceLearningService:
     ) -> Dict[str, Any]:
         if not self.enabled:
             return {}
-        clauses = ["organization_id = ?"]
+        clauses = ["organization_id = %s"]
         params: List[Any] = [self.organization_id]
         if vendor_name is None:
             clauses.append("vendor_name IS NULL")
         else:
-            clauses.append("vendor_name = ?")
+            clauses.append("vendor_name = %s")
             params.append(str(vendor_name).strip())
         if action_key:
-            clauses.append("action_key = ?")
+            clauses.append("action_key = %s")
             params.append(str(action_key).strip().lower())
         sql = self.db._prepare_sql(
             f"""

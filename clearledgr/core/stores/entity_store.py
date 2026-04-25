@@ -157,7 +157,7 @@ class EntityStore:
         if not safe:
             return False
         safe["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{col} = ?" for col in safe)
+        set_clause = ", ".join(f"{col} = %s" for col in safe)
         sql = self._prepare_sql(f"UPDATE entities SET {set_clause} WHERE id = ?")
         params = list(safe.values()) + [entity_id]
         with self.connect() as conn:

@@ -226,7 +226,7 @@ class VendorStore:
         if not normalized_names:
             return {}
 
-        placeholders = ", ".join("?" for _ in normalized_names)
+        placeholders = ", ".join("%s" for _ in normalized_names)
         sql = self._prepare_sql(
             "SELECT * FROM vendor_profiles "
             f"WHERE organization_id = ? AND vendor_name IN ({placeholders})"
@@ -323,7 +323,7 @@ class VendorStore:
             row_id = str(uuid.uuid4())
             cols = ["id", "organization_id", "vendor_name", "created_at", "updated_at"] + list(safe_fields.keys())
             vals = [row_id, organization_id, vendor_name, now, now] + list(safe_fields.values())
-            placeholders = ", ".join(["?"] * len(cols))
+            placeholders = ", ".join(["%s"] * len(cols))
             sql = self._prepare_sql(
                 f"INSERT INTO vendor_profiles ({', '.join(cols)}) VALUES ({placeholders})"
             )
@@ -336,7 +336,7 @@ class VendorStore:
         else:
             if not safe_fields:
                 return existing
-            set_clause = ", ".join(f"{k} = ?" for k in safe_fields)
+            set_clause = ", ".join(f"{k} = %s" for k in safe_fields)
             vals = list(safe_fields.values()) + [now, organization_id, vendor_name]
             sql = self._prepare_sql(
                 f"UPDATE vendor_profiles SET {set_clause}, updated_at = ? "
@@ -1643,11 +1643,11 @@ class VendorStore:
         if not target_states:
             return []
 
-        placeholders = ", ".join("?" for _ in target_states)
+        placeholders = ", ".join("%s" for _ in target_states)
         clauses = ["is_active = 1", f"state IN ({placeholders})"]
         params: List[Any] = list(target_states)
         if organization_id:
-            clauses.append("organization_id = ?")
+            clauses.append("organization_id = %s")
             params.append(organization_id)
         params.append(limit)
 
@@ -1693,13 +1693,13 @@ class VendorStore:
         from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
 
         clauses = [
-            "organization_id = ?",
-            "state = ?",
+            "organization_id = %s",
+            "state = %s",
             "erp_activated_at IS NOT NULL",
         ]
         params: List[Any] = [organization_id, VendorOnboardingState.ACTIVE.value]
         if since_iso:
-            clauses.append("erp_activated_at >= ?")
+            clauses.append("erp_activated_at >= %s")
             params.append(since_iso)
         params.append(limit)
 
@@ -1816,7 +1816,7 @@ class VendorStore:
             current_meta.update(metadata_patch)
             updates["metadata"] = json.dumps(current_meta)
 
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
         params = list(updates.values()) + [session_id]
         sql = self._prepare_sql(
             f"UPDATE vendor_onboarding_sessions SET {set_clause} WHERE id = ?"
@@ -2069,7 +2069,7 @@ class VendorStore:
         if existing:
             if not safe:
                 return existing
-            set_clause = ", ".join(f"{k} = ?" for k in safe)
+            set_clause = ", ".join(f"{k} = %s" for k in safe)
             sql = self._prepare_sql(
                 f"UPDATE vendor_entity_overrides SET {set_clause}, updated_at = ? WHERE vendor_profile_id = ? AND entity_id = ?"
             )
@@ -2085,7 +2085,7 @@ class VendorStore:
         for k, v in safe.items():
             cols.append(k)
             vals.append(v)
-        placeholders = ", ".join("?" for _ in cols)
+        placeholders = ", ".join("%s" for _ in cols)
         sql = self._prepare_sql(
             f"INSERT INTO vendor_entity_overrides ({', '.join(cols)}) VALUES ({placeholders})"
         )

@@ -113,7 +113,7 @@ class ReconStore:
         if not updates:
             return False
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
         with self.connect() as conn:
             cursor = conn.execute(
                 self._prepare_sql(

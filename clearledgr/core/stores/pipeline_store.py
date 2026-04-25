@@ -178,14 +178,14 @@ class PipelineStore:
             source_filter = {}
 
         # Query the source table for items in the mapped states
-        placeholders = ", ".join("?" for _ in source_states)
+        placeholders = ", ".join("%s" for _ in source_states)
         state_col = "state"
 
-        where_parts = [f"organization_id = ?", f"{state_col} IN ({placeholders})"]
+        where_parts = [f"organization_id = %s", f"{state_col} IN ({placeholders})"]
         params: list = [organization_id, *source_states]
 
         if entity_id and source_table == "ap_items":
-            where_parts.append("entity_id = ?")
+            where_parts.append("entity_id = %s")
             params.append(entity_id)
 
         # Apply source_filter_json predicates (from v37). Keys must be
@@ -206,13 +206,13 @@ class PipelineStore:
             if isinstance(value, (list, tuple)):
                 if not value:
                     continue
-                fph = ", ".join("?" for _ in value)
+                fph = ", ".join("%s" for _ in value)
                 where_parts.append(f"{key} IN ({fph})")
                 params.extend(value)
             elif value is None:
                 where_parts.append(f"{key} IS NULL")
             else:
-                where_parts.append(f"{key} = ?")
+                where_parts.append(f"{key} = %s")
                 params.append(value)
 
         where_clause = " AND ".join(where_parts)

@@ -1074,16 +1074,16 @@ class CorrectionLearningService:
             "SELECT field_name, SUM(review_count) AS review_count, SUM(corrected_count) AS corrected_count, "
             "SUM(confirmed_count) AS confirmed_count, SUM(email_selected_count) AS email_selected_count, "
             "SUM(attachment_selected_count) AS attachment_selected_count, SUM(manual_selected_count) AS manual_selected_count "
-            "FROM vendor_layout_review_stats WHERE organization_id = ? AND vendor_name = ? "
+            "FROM vendor_layout_review_stats WHERE organization_id = %s AND vendor_name = %s "
         )
         if normalized_document_type:
-            sql += "AND document_type = ? "
+            sql += "AND document_type = %s "
             params.append(normalized_document_type)
         if normalized_sender_domain:
-            sql += "AND (sender_domain = ? OR sender_domain = '' OR sender_domain IS NULL) "
+            sql += "AND (sender_domain = %s OR sender_domain = '' OR sender_domain IS NULL) "
             params.append(normalized_sender_domain)
         if normalized_profile:
-            sql += "AND (confidence_profile_id = ? OR confidence_profile_id IS NULL) "
+            sql += "AND (confidence_profile_id = %s OR confidence_profile_id IS NULL) "
             params.append(normalized_profile)
         sql += "GROUP BY field_name"
 
@@ -1215,13 +1215,13 @@ class CorrectionLearningService:
             sql = (
                 "SELECT field_name, SUM(correction_count) AS correction_count "
                 "FROM vendor_layout_error_stats "
-                "WHERE organization_id = ? AND vendor_name = ? "
+                "WHERE organization_id = %s AND vendor_name = %s "
             )
             if normalized_document_type:
-                sql += "AND document_type = ? "
+                sql += "AND document_type = %s "
                 params.append(normalized_document_type)
             if normalized_sender_domain:
-                sql += "AND (sender_domain = ? OR sender_domain = '' OR sender_domain IS NULL) "
+                sql += "AND (sender_domain = %s OR sender_domain = '' OR sender_domain IS NULL) "
                 params.append(normalized_sender_domain)
             sql += "GROUP BY field_name"
 

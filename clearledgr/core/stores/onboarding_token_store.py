@@ -334,7 +334,7 @@ class OnboardingTokenStore:
         self, session_id: str, include_revoked: bool = False
     ) -> List[Dict[str, Any]]:
         """List every token issued for a session, newest first."""
-        clauses = ["session_id = ?"]
+        clauses = ["session_id = %s"]
         params: List[Any] = [session_id]
         if not include_revoked:
             clauses.append("revoked_at IS NULL")

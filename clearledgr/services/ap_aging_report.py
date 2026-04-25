@@ -105,7 +105,7 @@ class APAgingReport:
 
     def _fetch_open_items(self) -> List[Dict[str, Any]]:
         """Fetch all open AP items with a due_date for this org."""
-        placeholders = ", ".join("?" for _ in self.OPEN_STATES)
+        placeholders = ", ".join("%s" for _ in self.OPEN_STATES)
         sql = self.db._prepare_sql(
             f"SELECT id, vendor_name, amount, due_date, state, currency, "
             f"invoice_number, created_at "
@@ -128,7 +128,7 @@ class APAgingReport:
 
     def _count_no_due_date(self) -> int:
         """Count open AP items with no due_date (excluded from aging)."""
-        placeholders = ", ".join("?" for _ in self.OPEN_STATES)
+        placeholders = ", ".join("%s" for _ in self.OPEN_STATES)
         sql = self.db._prepare_sql(
             f"SELECT COUNT(*) FROM ap_items "
             f"WHERE organization_id = ? "
