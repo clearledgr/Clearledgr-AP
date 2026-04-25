@@ -29,10 +29,10 @@ import http.server
 import json
 import secrets as _secrets
 import socket
+import subprocess
 import sys
 import threading
 import urllib.parse
-import urllib.request
 import webbrowser
 from typing import Optional
 
@@ -45,37 +45,53 @@ def _free_port() -> int:
 
 
 def _exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
-    body = urllib.parse.urlencode({
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "code": code,
-        "grant_type": "authorization_code",
-        "redirect_uri": redirect_uri,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+    """POST the authorization code to Google's token endpoint.
+
+    Uses ``curl`` instead of ``urllib`` because Python.org's macOS
+    builds don't link to the system keychain — ``urllib.urlopen``
+    against https URLs raises ``CERTIFICATE_VERIFY_FAILED`` until the
+    user runs Python's ``Install Certificates.command``. ``curl``
+    uses the system trust store directly so the exchange works
+    without per-machine setup.
+    """
+    completed = subprocess.run(
+        [
+            "curl",
+            "-sS",
+            "-X", "POST",
+            "https://oauth2.googleapis.com/token",
+            "--data-urlencode", f"client_id={client_id}",
+            "--data-urlencode", f"client_secret={client_secret}",
+            "--data-urlencode", f"code={code}",
+            "--data-urlencode", "grant_type=authorization_code",
+            "--data-urlencode", f"redirect_uri={redirect_uri}",
+            "--max-time", "30",
+            "-w", "\n__HTTP_STATUS__=%{http_code}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"curl exited {completed.returncode}: {completed.stderr.strip() or completed.stdout!r}"
+        )
+    output = completed.stdout
+    body, _, status_line = output.rpartition("\n__HTTP_STATUS__=")
+    status = int(status_line.strip()) if status_line.strip() else 0
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        # Surface Google's actual error description so failures are
-        # debuggable instead of "HTTP 400" with no detail.
-        body_bytes = exc.read()
-        try:
-            body_json = json.loads(body_bytes)
-            print(
-                f"\nGoogle rejected the code exchange ({exc.code}):\n"
-                f"  error: {body_json.get('error')}\n"
-                f"  description: {body_json.get('error_description')}\n",
-                file=sys.stderr,
-            )
-        except Exception:
-            print(f"\nGoogle returned {exc.code}: {body_bytes!r}\n", file=sys.stderr)
-        raise
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"non-JSON response from Google ({status}): {body!r}")
+    if status >= 400:
+        print(
+            f"\nGoogle rejected the code exchange ({status}):\n"
+            f"  error: {parsed.get('error')}\n"
+            f"  description: {parsed.get('error_description')}\n",
+            file=sys.stderr,
+        )
+        raise RuntimeError(f"google_token_exchange_{status}: {parsed}")
+    return parsed
 
 
 def main() -> int:
@@ -160,7 +176,12 @@ def main() -> int:
         print(f"No code in redirect: {captured}", file=sys.stderr)
         return 1
 
-    print("Exchanging the authorization code for tokens...\n")
+    # Print the code so a transient exchange failure (SSL, network,
+    # rate-limit, whatever) doesn't lose it — the operator can paste
+    # it into a manual curl within the ~10-minute code lifetime.
+    print(f"Captured authorization code: {code}")
+    print(f"Redirect URI used: {redirect_uri}")
+    print("Exchanging for tokens...\n")
     tokens = _exchange_code(args.client_id, args.client_secret, code, redirect_uri)
     refresh_token = tokens.get("refresh_token")
     if not refresh_token:
