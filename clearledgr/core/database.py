@@ -294,6 +294,23 @@ class _ClearledgrDBBase:
         try:
             yield conn
         finally:
+            # Defensive autocommit reset before the pool reclaims the
+            # connection. The migration runner (and a handful of tests
+            # that exec migration bodies directly) flip autocommit=True
+            # to avoid the "current transaction is aborted" cascade on
+            # idempotent DDL. If a caller forgets to flip it back — or
+            # raises mid-block — psycopg_pool happily returns the
+            # poisoned conn to the pool. The next consumer's read-
+            # modify-write then auto-commits per statement, defeating
+            # the rollback semantics that tests like
+            # test_audit_insert_failure_rolls_back_state_update assert.
+            # The pool's own putconn() rolls back INTRANS connections
+            # but does NOT reset autocommit, so we have to do it here.
+            try:
+                if conn.autocommit:
+                    conn.autocommit = False
+            except Exception:
+                pass
             if self._pg_pool is not None:
                 try:
                     self._pg_pool.putconn(conn)
