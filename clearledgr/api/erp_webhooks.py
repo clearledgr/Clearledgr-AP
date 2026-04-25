@@ -374,7 +374,7 @@ async def sap_webhook(
         except (ValueError, UnicodeDecodeError):
             payload_obj = {}
         if payload_obj:
-            dispatch_result = dispatch_sap_event(organization_id, payload_obj)
+            dispatch_result = await dispatch_sap_event(organization_id, payload_obj)
             logger.info(
                 "sap webhook dispatch: org=%s event=%s result=%s",
                 organization_id,

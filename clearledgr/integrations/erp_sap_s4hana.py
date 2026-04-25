@@ -16,6 +16,7 @@ AP item's ``metadata.source == "sap_native"``.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -111,6 +112,216 @@ async def cancel_supplier_invoice(
 
 
 # ─── OData primitives ───────────────────────────────────────────────
+
+
+async def _odata_get(
+    *,
+    organization_id: str,
+    service_path: str,
+    entity_path: str,
+    op_label: str,
+) -> Dict[str, Any]:
+    """Shared OData v2 GET path for read-direction enrichment.
+
+    Returns ``{"ok": True, "data": <parsed_json>}`` on success or the
+    standard error-shape dict on failure. ``entity_path`` is the URL
+    suffix after ``base_url + service_path`` — e.g.
+    ``"/A_SupplierInvoice(CompanyCode='1010',SupplierInvoice='5135',FiscalYear='2026')?$expand=to_SupplierInvoiceItem"``.
+    """
+    connection, base_url, configured_path, error = _resolve_connection(organization_id)
+    if error:
+        return {"ok": False, "op": op_label, **error}
+    # If caller passed an absolute service path use that, otherwise fall
+    # back to the connection's configured one.
+    resolved_service_path = service_path or configured_path
+    full_url = f"{base_url}{resolved_service_path}{entity_path}"
+    headers = await _build_auth_headers(connection)
+    if "error" in headers:
+        return {"ok": False, "op": op_label, "reason": headers["error"]}
+    headers["Accept"] = "application/json"
+
+    client = get_http_client()
+    try:
+        response = await client.get(full_url, headers=headers, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "op": op_label, "reason": "request_failed", "error": str(exc)}
+    if response.status_code == 404:
+        return {"ok": False, "op": op_label, "reason": "not_found", "status_code": 404}
+    if response.status_code >= 400:
+        snippet = ""
+        try:
+            snippet = response.text[:500]
+        except Exception:
+            snippet = ""
+        return {
+            "ok": False, "op": op_label, "reason": "s4hana_error",
+            "status_code": response.status_code, "body": snippet,
+        }
+    try:
+        return {"ok": True, "op": op_label, "data": response.json()}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "op": op_label, "reason": "json_parse_failed", "error": str(exc)}
+
+
+# ─── Read primitives — supplier invoice + PO + supplier ────────────
+
+
+async def get_supplier_invoice_with_items(
+    *, organization_id: str, company_code: str,
+    supplier_invoice: str, fiscal_year: str,
+) -> Dict[str, Any]:
+    """GET A_SupplierInvoice(...)?$expand=to_SupplierInvoiceItem.
+
+    Returns the bill header + nested item lines. Each item carries
+    the inline ``PurchaseOrder`` + ``PurchaseOrderItem`` linkage —
+    that's the S/4HANA Cloud schema (the older
+    ``A_SupplierInvoiceItemPurOrdRef`` entity exists only on legacy
+    on-prem ECC migrations). For multi-PO-per-item edge cases (rare,
+    mostly on-prem), we'd fall back to ``A_PurchaseOrderHistory``;
+    the code path handles single-PO inline first, which covers
+    Cloud + the vast majority of on-prem.
+    """
+    entity_path = (
+        f"/A_SupplierInvoice("
+        f"CompanyCode='{_escape_odata(company_code)}',"
+        f"SupplierInvoice='{_escape_odata(supplier_invoice)}',"
+        f"FiscalYear='{_escape_odata(fiscal_year)}'"
+        f")?$expand=to_SupplierInvoiceItem"
+    )
+    return await _odata_get(
+        organization_id=organization_id,
+        service_path="",  # use the connection's configured path
+        entity_path=entity_path,
+        op_label="get_supplier_invoice",
+    )
+
+
+async def get_purchase_order_s4hana(
+    *, organization_id: str, purchase_order: str,
+) -> Dict[str, Any]:
+    """GET A_PurchaseOrder('<po>')?$expand=to_PurchaseOrderItem.
+
+    Different OData service from the supplier-invoice service —
+    ``API_PURCHASEORDER_PROCESS_SRV``. Customers who've remapped can
+    override via ``credentials.s4hana_purchase_order_path``.
+    """
+    from clearledgr.core.database import get_db
+    db = get_db()
+    creds = {}
+    if hasattr(db, "get_erp_connections"):
+        try:
+            for row in db.get_erp_connections(organization_id):
+                if str(row.get("erp_type") or "").lower() in {"sap_s4hana", "s4hana", "sap_s4"}:
+                    raw = row.get("credentials") or {}
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except Exception:
+                            raw = {}
+                    creds = raw if isinstance(raw, dict) else {}
+                    break
+        except Exception:
+            creds = {}
+    po_service_path = str(
+        creds.get("s4hana_purchase_order_path")
+        or "/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV"
+    ).strip()
+    if not po_service_path.startswith("/"):
+        po_service_path = "/" + po_service_path
+    entity_path = (
+        f"/A_PurchaseOrder('{_escape_odata(purchase_order)}')?$expand=to_PurchaseOrderItem"
+    )
+    return await _odata_get(
+        organization_id=organization_id,
+        service_path=po_service_path,
+        entity_path=entity_path,
+        op_label="get_purchase_order",
+    )
+
+
+async def get_supplier(*, organization_id: str, supplier_id: str) -> Dict[str, Any]:
+    """GET A_Supplier('<id>')?$expand=to_SupplierBank.
+
+    Vendor master record + bank history. Service path
+    ``API_SUPPLIER_SRV`` (Cloud) or
+    ``API_BUSINESS_PARTNER`` (on-prem variant). Override via
+    ``credentials.s4hana_supplier_path``.
+    """
+    from clearledgr.core.database import get_db
+    db = get_db()
+    creds = {}
+    if hasattr(db, "get_erp_connections"):
+        try:
+            for row in db.get_erp_connections(organization_id):
+                if str(row.get("erp_type") or "").lower() in {"sap_s4hana", "s4hana", "sap_s4"}:
+                    raw = row.get("credentials") or {}
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except Exception:
+                            raw = {}
+                    creds = raw if isinstance(raw, dict) else {}
+                    break
+        except Exception:
+            creds = {}
+    supplier_path = str(
+        creds.get("s4hana_supplier_path")
+        or "/sap/opu/odata/sap/API_SUPPLIER_SRV"
+    ).strip()
+    if not supplier_path.startswith("/"):
+        supplier_path = "/" + supplier_path
+    entity_path = (
+        f"/A_Supplier('{_escape_odata(supplier_id)}')?$expand=to_SupplierBank"
+    )
+    return await _odata_get(
+        organization_id=organization_id,
+        service_path=supplier_path,
+        entity_path=entity_path,
+        op_label="get_supplier",
+    )
+
+
+async def get_material_documents_for_po(
+    *, organization_id: str, purchase_order: str,
+) -> Dict[str, Any]:
+    """GET A_MaterialDocumentItem?$filter=PurchaseOrder eq '<po>'.
+
+    SAP S/4HANA's GRN equivalent — material-document items linked
+    to the PO. Used by the 3-way-match path to verify quantity
+    received before the bill is approved.
+    """
+    from clearledgr.core.database import get_db
+    db = get_db()
+    creds = {}
+    if hasattr(db, "get_erp_connections"):
+        try:
+            for row in db.get_erp_connections(organization_id):
+                if str(row.get("erp_type") or "").lower() in {"sap_s4hana", "s4hana", "sap_s4"}:
+                    raw = row.get("credentials") or {}
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except Exception:
+                            raw = {}
+                    creds = raw if isinstance(raw, dict) else {}
+                    break
+        except Exception:
+            creds = {}
+    md_path = str(
+        creds.get("s4hana_material_document_path")
+        or "/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV"
+    ).strip()
+    if not md_path.startswith("/"):
+        md_path = "/" + md_path
+    # OData $filter with single quote escaping
+    escaped_po = _escape_odata(purchase_order)
+    entity_path = f"/A_MaterialDocumentItem?$filter=PurchaseOrder%20eq%20'{escaped_po}'"
+    return await _odata_get(
+        organization_id=organization_id,
+        service_path=md_path,
+        entity_path=entity_path,
+        op_label="get_material_documents",
+    )
 
 
 async def _odata_patch(
