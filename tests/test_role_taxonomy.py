@@ -350,9 +350,9 @@ class TestMigrationV15:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "INSERT INTO users (id, email, name, organization_id, role, "
-                    "is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+                    "is_active, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
                 ),
                 (
                     user_id,

@@ -155,7 +155,7 @@ def create_task_from_email(
             source_email_sender, source_thread_id, due_date,
             related_entity_type, related_entity_id, related_amount, related_vendor,
             tags, organization_id, created_at
-        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         task_id, title, description, task_type, priority,
         assignee_email, created_by, email_id, email_subject,
@@ -167,7 +167,7 @@ def create_task_from_email(
     # Record initial status
     db.execute("""
         INSERT INTO task_status_history (history_id, task_id, to_status, changed_by, notes)
-        VALUES (?, ?, 'open', ?, ?)
+        VALUES (%s, %s, 'open', %s, %s)
     """, (_make_id("history"), task_id, created_by, None))
     
     return get_task(task_id) or {
@@ -203,7 +203,7 @@ def update_task_status(
         Updated task
     """
     # Get current status
-    row = db.fetchone_dict("SELECT status FROM email_tasks WHERE task_id = ?", (task_id,))
+    row = db.fetchone_dict("SELECT status FROM email_tasks WHERE task_id = %s", (task_id,))
     
     if not row:
         return {"error": "Task not found"}
@@ -212,11 +212,11 @@ def update_task_status(
     timestamp = datetime.now(timezone.utc).isoformat()
     
     # Update task
-    update_fields = ["status = ?", "updated_at = ?"]
+    update_fields = ["status = %s", "updated_at = %s"]
     params = [new_status, timestamp]
     
     if new_status == "completed":
-        update_fields.append("completed_at = ?")
+        update_fields.append("completed_at = %s")
         params.append(timestamp)
     
     params.append(task_id)
@@ -224,13 +224,13 @@ def update_task_status(
     db.execute(f"""
         UPDATE email_tasks 
         SET {', '.join(update_fields)}
-        WHERE task_id = ?
+        WHERE task_id = %s
     """, tuple(params))
     
     # Record history
     db.execute("""
         INSERT INTO task_status_history (history_id, task_id, from_status, to_status, changed_by, notes)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """, (_make_id("history"), task_id, old_status, new_status, changed_by, notes))
     
     return get_task(task_id)
@@ -246,8 +246,8 @@ def assign_task(
     
     db.execute("""
         UPDATE email_tasks 
-        SET assignee_email = ?, updated_at = ?
-        WHERE task_id = ?
+        SET assignee_email = %s, updated_at = %s
+        WHERE task_id = %s
     """, (assignee_email, timestamp, task_id))
     
     return get_task(task_id)
@@ -264,12 +264,12 @@ def add_comment(
     
     db.execute("""
         INSERT INTO task_comments (comment_id, task_id, user_email, comment, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
     """, (comment_id, task_id, user_email, comment, timestamp))
     
     # Update task timestamp
     db.execute("""
-        UPDATE email_tasks SET updated_at = ? WHERE task_id = ?
+        UPDATE email_tasks SET updated_at = %s WHERE task_id = %s
     """, (timestamp, task_id))
     
     return {
@@ -283,7 +283,7 @@ def add_comment(
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     """Get task by ID."""
-    row = db.fetchone_dict("SELECT * FROM email_tasks WHERE task_id = ?", (task_id,))
+    row = db.fetchone_dict("SELECT * FROM email_tasks WHERE task_id = %s", (task_id,))
     
     if not row:
         return None
@@ -297,14 +297,14 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     # Get comments
     task['comments'] = db.fetchall_dict("""
         SELECT * FROM task_comments 
-        WHERE task_id = ? 
+        WHERE task_id = %s 
         ORDER BY created_at DESC
     """, (task_id,))
     
     # Get history
     task['status_history'] = db.fetchall_dict("""
         SELECT * FROM task_status_history 
-        WHERE task_id = ? 
+        WHERE task_id = %s 
         ORDER BY changed_at DESC
     """, (task_id,))
     
@@ -324,24 +324,24 @@ def get_tasks(
     params = []
     
     if status:
-        query += " AND status = ?"
+        query += " AND status = %s"
         params.append(status)
     elif not include_completed:
         query += " AND status NOT IN ('completed', 'cancelled')"
     
     if assignee_email:
-        query += " AND assignee_email = ?"
+        query += " AND assignee_email = %s"
         params.append(assignee_email)
     
     if task_type:
-        query += " AND task_type = ?"
+        query += " AND task_type = %s"
         params.append(task_type)
     
     if organization_id:
-        query += " AND organization_id = ?"
+        query += " AND organization_id = %s"
         params.append(organization_id)
     
-    query += " ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, due_date ASC LIMIT ?"
+    query += " ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, due_date ASC LIMIT %s"
     params.append(limit)
     
     rows = db.fetchall_dict(query, tuple(params))
@@ -360,7 +360,7 @@ def get_tasks_for_email(email_id: str) -> List[Dict[str, Any]]:
     """Get all tasks created from an email."""
     return db.fetchall_dict("""
         SELECT * FROM email_tasks 
-        WHERE source_email_id = ?
+        WHERE source_email_id = %s
         ORDER BY created_at DESC
     """, (email_id,))
 
@@ -377,14 +377,14 @@ def get_tasks_for_ap_item(
     query = """
         SELECT * FROM email_tasks
         WHERE (
-            related_entity_id = ?
-            OR (? != '' AND source_thread_id = ?)
+            related_entity_id = %s
+            OR (%s != '' AND source_thread_id = %s)
         )
     """
     params: List[Any] = [ap_item_id, str(thread_id or ""), str(thread_id or "")]
 
     if organization_id:
-        query += " AND organization_id = ?"
+        query += " AND organization_id = %s"
         params.append(organization_id)
 
     if not include_completed:
@@ -395,7 +395,7 @@ def get_tasks_for_ap_item(
             CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
             due_date ASC,
             created_at DESC
-        LIMIT ?
+        LIMIT %s
     """
     params.append(limit)
 
@@ -415,12 +415,12 @@ def get_overdue_tasks(organization_id: str = None) -> List[Dict[str, Any]]:
     query = """
         SELECT * FROM email_tasks 
         WHERE status NOT IN ('completed', 'cancelled')
-        AND due_date < ?
+        AND due_date < %s
     """
     params = [today]
     
     if organization_id:
-        query += " AND organization_id = ?"
+        query += " AND organization_id = %s"
         params.append(organization_id)
     
     query += " ORDER BY due_date ASC"

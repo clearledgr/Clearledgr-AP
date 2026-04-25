@@ -50,7 +50,7 @@ def _set_item_timestamps(db, item_id: str, ts: datetime) -> None:
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(
-            db._prepare_sql("UPDATE ap_items SET created_at = ?, updated_at = ? WHERE id = ?"),
+            "UPDATE ap_items SET created_at = %s, updated_at = %s WHERE id = %s",
             (iso_ts, iso_ts, item_id),
         )
         conn.commit()

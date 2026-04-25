@@ -1003,8 +1003,9 @@ def _v25_object_model(cur, db):
     ap_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
         (
-            "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-            "VALUES (%s, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', %s)"
+            "INSERT INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+            "VALUES (%s, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', %s) "
+            "ON CONFLICT DO NOTHING"
         ),
         (ap_pipeline_id, now),
     )
@@ -1027,8 +1028,9 @@ def _v25_object_model(cur, db):
     for slug, label, color, states, order in ap_stages:
         cur.execute(
             (
-                "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                "INSERT INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING"
             ),
             (f"STG-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
@@ -1050,8 +1052,9 @@ def _v25_object_model(cur, db):
     for slug, label, source_field, computed_fn, order in ap_columns:
         cur.execute(
             (
-                "INSERT OR IGNORE INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                "INSERT INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING"
             ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, source_field, computed_fn, order),
         )
@@ -1060,8 +1063,9 @@ def _v25_object_model(cur, db):
     vo_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
         (
-            "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-            "VALUES (%s, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', %s)"
+            "INSERT INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
+            "VALUES (%s, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', %s) "
+            "ON CONFLICT DO NOTHING"
         ),
         (vo_pipeline_id, now),
     )
@@ -1083,8 +1087,9 @@ def _v25_object_model(cur, db):
     for slug, label, color, states, order in vo_stages:
         cur.execute(
             (
-                "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                "INSERT INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING"
             ),
             (f"STG-{_uuid.uuid4().hex[:12]}", vo_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
@@ -1097,8 +1102,9 @@ def _v25_object_model(cur, db):
     ]:
         cur.execute(
             (
-                "INSERT OR IGNORE INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
-                "VALUES (%s, '__default__', %s, %s, %s, %s, 1, %s)"
+                "INSERT INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
+                "VALUES (%s, '__default__', %s, %s, %s, %s, 1, %s) "
+                "ON CONFLICT DO NOTHING"
             ),
             (f"SV-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, name, filter_json, is_default, now),
         )
@@ -1561,9 +1567,10 @@ def _v39_backfill_grn_reference_column(cur, db):
     try:
         cur.execute(
             (
-                "INSERT OR IGNORE INTO pipeline_columns "
+                "INSERT INTO pipeline_columns "
                 "(id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING"
             ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id,
              "grn_reference", "GRN Reference", "grn_number", None, 2),
@@ -1929,9 +1936,10 @@ def _v37_split_ap_posted_and_paid(cur, db):
         # Insert the new Posted stage at order 4.
         cur.execute(
             (
-                "INSERT OR IGNORE INTO pipeline_stages "
+                "INSERT INTO pipeline_stages "
                 "(id, pipeline_id, slug, label, color, source_states, stage_order, source_filter_json) "
-                "VALUES (%s, %s, 'posted', 'Posted', '#8B5CF6', %s, 4, '{}')"
+                "VALUES (%s, %s, 'posted', 'Posted', '#8B5CF6', %s, 4, '{}') "
+                "ON CONFLICT DO NOTHING"
             ),
             (
                 f"STG-{_uuid.uuid4().hex[:12]}",

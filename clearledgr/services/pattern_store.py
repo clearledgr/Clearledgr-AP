@@ -35,7 +35,7 @@ class PatternStore:
         self.db.execute(
             """
             INSERT INTO cl_match_patterns (pattern_id, gateway_pattern, bank_pattern, confidence, match_count, last_used, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(pattern_id) DO UPDATE SET
                 gateway_pattern=excluded.gateway_pattern,
                 bank_pattern=excluded.bank_pattern,
@@ -84,8 +84,8 @@ class PatternStore:
             """
             UPDATE cl_match_patterns
             SET match_count = match_count + 1,
-                last_used = ?
-            WHERE pattern_id = ?
+                last_used = %s
+            WHERE pattern_id = %s
             """,
             (datetime.now(timezone.utc).isoformat(), pattern_id),
         )

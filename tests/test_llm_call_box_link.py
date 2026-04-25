@@ -39,11 +39,11 @@ class TestLLMCallLogLink:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT id, action, box_id, box_type, correlation_id, "
                     "       input_tokens, output_tokens, cost_estimate_usd "
                     "FROM llm_call_log "
-                    "WHERE box_id = ? AND box_type = 'ap_item'"
+                    "WHERE box_id = %s AND box_type = 'ap_item'"
                 ),
                 ("ap-12345",),
             )
@@ -91,9 +91,9 @@ class TestLLMCallLogLink:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT box_id, box_type, correlation_id "
-                    "FROM llm_call_log WHERE id = ?"
+                    "FROM llm_call_log WHERE id = %s"
                 ),
                 (call_id,),
             )
@@ -138,8 +138,8 @@ class TestLLMCallLogLink:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
-                    "SELECT box_id, box_type FROM llm_call_log WHERE id = ?"
+                (
+                    "SELECT box_id, box_type FROM llm_call_log WHERE id = %s"
                 ),
                 (call_id,),
             )

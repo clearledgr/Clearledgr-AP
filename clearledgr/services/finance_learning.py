@@ -39,10 +39,7 @@ class FinanceLearningService:
     ) -> None:
         self.organization_id = str(organization_id or "default").strip() or "default"
         self.db = db
-        self.enabled = bool(
-            self.db is not None
-            and all(hasattr(self.db, attr) for attr in ("connect", "_prepare_sql"))
-        )
+        self.enabled = bool(self.db is not None and hasattr(self.db, "connect"))
         self._correction_learning = None
         self._pattern_learning = None
         self._compounding_learning = None

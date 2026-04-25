@@ -46,12 +46,6 @@ _metrics: Dict[str, Any] = {
 }
 
 
-def _prepare_sql(db: Any, sql: str) -> str:
-    if hasattr(db, "_prepare_sql"):
-        return db._prepare_sql(sql)
-    return sql
-
-
 def _decode_row(row: Any) -> Dict[str, Any]:
     if row is None:
         return {}
@@ -83,8 +77,7 @@ def _ensure_schema(db: Any) -> None:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     CREATE TABLE IF NOT EXISTS api_request_metrics (
                         id TEXT PRIMARY KEY,
@@ -94,12 +87,10 @@ def _ensure_schema(db: Any) -> None:
                         status_code INTEGER NOT NULL,
                         duration_ms REAL NOT NULL
                     )
-                    """,
-                )
+                    """)
             )
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     CREATE TABLE IF NOT EXISTS api_error_metrics (
                         id TEXT PRIMARY KEY,
@@ -107,12 +98,10 @@ def _ensure_schema(db: Any) -> None:
                         error_type TEXT NOT NULL,
                         path TEXT
                     )
-                    """,
-                )
+                    """)
             )
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     CREATE TABLE IF NOT EXISTS api_reconciliation_metrics (
                         id TEXT PRIMARY KEY,
@@ -121,54 +110,41 @@ def _ensure_schema(db: Any) -> None:
                         status TEXT NOT NULL,
                         duration_ms REAL NOT NULL
                     )
-                    """,
-                )
+                    """)
             )
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     CREATE TABLE IF NOT EXISTS api_metrics_meta (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL
                     )
-                    """,
-                )
+                    """)
             )
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "CREATE INDEX IF NOT EXISTS idx_api_request_metrics_ts ON api_request_metrics(ts)",
-                )
+                (
+                    "CREATE INDEX IF NOT EXISTS idx_api_request_metrics_ts ON api_request_metrics(ts)")
             )
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "CREATE INDEX IF NOT EXISTS idx_api_request_metrics_path ON api_request_metrics(path)",
-                )
+                (
+                    "CREATE INDEX IF NOT EXISTS idx_api_request_metrics_path ON api_request_metrics(path)")
             )
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "CREATE INDEX IF NOT EXISTS idx_api_error_metrics_ts ON api_error_metrics(ts)",
-                )
+                (
+                    "CREATE INDEX IF NOT EXISTS idx_api_error_metrics_ts ON api_error_metrics(ts)")
             )
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "CREATE INDEX IF NOT EXISTS idx_api_recon_metrics_ts ON api_reconciliation_metrics(ts)",
-                )
+                (
+                    "CREATE INDEX IF NOT EXISTS idx_api_recon_metrics_ts ON api_reconciliation_metrics(ts)")
             )
             conn.commit()
         _SCHEMA_READY = True
 
 
 def _persist_meta_value(db: Any, key: str, value: str) -> None:
-    sql = _prepare_sql(
-        db,
-        "INSERT INTO api_metrics_meta (key, value) VALUES (?, ?) "
-        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-    )
+    sql = (
+        "INSERT INTO api_metrics_meta (key, value) VALUES (%s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(sql, (str(key), str(value)))
@@ -190,15 +166,15 @@ def _maybe_prune_old_metrics(db: Any) -> None:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                _prepare_sql(db, "DELETE FROM api_request_metrics WHERE ts < ?"),
+                "DELETE FROM api_request_metrics WHERE ts < %s",
                 (cutoff,),
             )
             cur.execute(
-                _prepare_sql(db, "DELETE FROM api_error_metrics WHERE ts < ?"),
+                "DELETE FROM api_error_metrics WHERE ts < %s",
                 (cutoff,),
             )
             cur.execute(
-                _prepare_sql(db, "DELETE FROM api_reconciliation_metrics WHERE ts < ?"),
+                "DELETE FROM api_reconciliation_metrics WHERE ts < %s",
                 (cutoff,),
             )
             conn.commit()
@@ -241,14 +217,12 @@ def record_request(method: str, path: str, status_code: int, duration_ms: float)
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     INSERT INTO api_request_metrics
                     (id, ts, method, path, status_code, duration_ms)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                ),
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """),
                 (
                     f"req_{uuid.uuid4().hex}",
                     datetime.now(timezone.utc).isoformat(),
@@ -280,14 +254,12 @@ def record_error(error_type: str, path: str = "") -> None:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     INSERT INTO api_error_metrics
                     (id, ts, error_type, path)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                ),
+                    VALUES (%s, %s, %s, %s)
+                    """),
                 (
                     f"err_{uuid.uuid4().hex}",
                     datetime.now(timezone.utc).isoformat(),
@@ -317,14 +289,12 @@ def record_reconciliation_run(source_type: str, status: str, duration_ms: float)
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                _prepare_sql(
-                    db,
+                (
                     """
                     INSERT INTO api_reconciliation_metrics
                     (id, ts, source_type, status, duration_ms)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                ),
+                    VALUES (%s, %s, %s, %s, %s)
+                    """),
                 (
                     f"rec_{uuid.uuid4().hex}",
                     datetime.now(timezone.utc).isoformat(),
@@ -425,37 +395,33 @@ def get_metrics() -> Dict[str, Any]:
         with db.connect() as conn:
             cur = conn.cursor()
 
-            cur.execute(_prepare_sql(db, "SELECT method, path, COUNT(*) AS cnt FROM api_request_metrics GROUP BY method, path"))
+            cur.execute("SELECT method, path, COUNT(*) AS cnt FROM api_request_metrics GROUP BY method, path")
             request_rows = [_decode_row(row) for row in cur.fetchall()]
 
-            cur.execute(_prepare_sql(db, "SELECT status_code, COUNT(*) AS cnt FROM api_request_metrics GROUP BY status_code"))
+            cur.execute("SELECT status_code, COUNT(*) AS cnt FROM api_request_metrics GROUP BY status_code")
             status_rows = [_decode_row(row) for row in cur.fetchall()]
 
-            cur.execute(_prepare_sql(db, "SELECT duration_ms FROM api_request_metrics ORDER BY ts DESC LIMIT 1000"))
+            cur.execute("SELECT duration_ms FROM api_request_metrics ORDER BY ts DESC LIMIT 1000")
             response_rows = [_decode_row(row) for row in cur.fetchall()]
 
-            cur.execute(_prepare_sql(db, "SELECT error_type, path, COUNT(*) AS cnt FROM api_error_metrics GROUP BY error_type, path"))
+            cur.execute("SELECT error_type, path, COUNT(*) AS cnt FROM api_error_metrics GROUP BY error_type, path")
             error_rows = [_decode_row(row) for row in cur.fetchall()]
 
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "SELECT source_type, status, COUNT(*) AS cnt FROM api_reconciliation_metrics GROUP BY source_type, status",
-                )
+                (
+                    "SELECT source_type, status, COUNT(*) AS cnt FROM api_reconciliation_metrics GROUP BY source_type, status")
             )
             run_rows = [_decode_row(row) for row in cur.fetchall()]
 
-            cur.execute(_prepare_sql(db, "SELECT MIN(ts) AS min_ts FROM api_request_metrics"))
+            cur.execute("SELECT MIN(ts) AS min_ts FROM api_request_metrics")
             req_min = _decode_row(cur.fetchone()).get("min_ts")
-            cur.execute(_prepare_sql(db, "SELECT MIN(ts) AS min_ts FROM api_error_metrics"))
+            cur.execute("SELECT MIN(ts) AS min_ts FROM api_error_metrics")
             err_min = _decode_row(cur.fetchone()).get("min_ts")
-            cur.execute(_prepare_sql(db, "SELECT MIN(ts) AS min_ts FROM api_reconciliation_metrics"))
+            cur.execute("SELECT MIN(ts) AS min_ts FROM api_reconciliation_metrics")
             run_min = _decode_row(cur.fetchone()).get("min_ts")
             cur.execute(
-                _prepare_sql(
-                    db,
-                    "SELECT value FROM api_metrics_meta WHERE key = 'last_prune_at'",
-                )
+                (
+                    "SELECT value FROM api_metrics_meta WHERE key = 'last_prune_at'")
             )
             prune_row = _decode_row(cur.fetchone())
             last_prune_at = prune_row.get("value")
@@ -571,10 +537,10 @@ def reset_metrics() -> None:
         _ensure_schema(db)
         with db.connect() as conn:
             cur = conn.cursor()
-            cur.execute(_prepare_sql(db, "DELETE FROM api_request_metrics"))
-            cur.execute(_prepare_sql(db, "DELETE FROM api_error_metrics"))
-            cur.execute(_prepare_sql(db, "DELETE FROM api_reconciliation_metrics"))
-            cur.execute(_prepare_sql(db, "DELETE FROM api_metrics_meta"))
+            cur.execute("DELETE FROM api_request_metrics")
+            cur.execute("DELETE FROM api_error_metrics")
+            cur.execute("DELETE FROM api_reconciliation_metrics")
+            cur.execute("DELETE FROM api_metrics_meta")
             conn.commit()
     except Exception:
         # Keep reset best-effort for tests and local diagnostics.

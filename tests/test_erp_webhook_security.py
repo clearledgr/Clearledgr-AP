@@ -246,9 +246,9 @@ class TestQuickBooksWebhookEndpoint:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT event_type, box_type, organization_id "
-                    "FROM audit_events WHERE box_type = ?"
+                    "FROM audit_events WHERE box_type = %s"
                 ),
                 ("erp_webhook",),
             )
@@ -287,8 +287,8 @@ class TestXeroWebhookEndpoint:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
-                    "SELECT event_type FROM audit_events WHERE box_type = ?"
+                (
+                    "SELECT event_type FROM audit_events WHERE box_type = %s"
                 ),
                 ("erp_webhook",),
             )
@@ -311,8 +311,8 @@ class TestXeroWebhookEndpoint:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
-                    "SELECT event_type FROM audit_events WHERE box_type = ?"
+                (
+                    "SELECT event_type FROM audit_events WHERE box_type = %s"
                 ),
                 ("erp_webhook",),
             )

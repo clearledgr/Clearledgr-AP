@@ -319,55 +319,26 @@ class _ClearledgrDBBase:
             else:
                 conn.close()
 
-    def _prepare_sql(self, sql: str) -> str:
-        """Translate historical SQLite-isms to Postgres. Scheduled for
-        removal in C.3 once all 400+ call sites migrate to plain
-        psycopg placeholders. Kept as a passthrough shim so the stage-4
-        branch deletion doesn't churn every store at once.
-
-        - ``?``  → ``%s`` (psycopg uses libpq-style placeholders).
-        - ``INSERT OR IGNORE INTO ...`` → ``INSERT INTO ... ON CONFLICT
-          DO NOTHING``. Migrations still seed defaults with this form.
-        """
-        out = sql.replace("?", "%s")
-        if "INSERT OR IGNORE INTO" in out.upper():
-            import re as _re
-            out = _re.sub(
-                r"INSERT\s+OR\s+IGNORE\s+INTO",
-                "INSERT INTO",
-                out,
-                flags=_re.IGNORECASE,
-            )
-            stripped = out.rstrip()
-            if stripped.endswith(";"):
-                stripped = stripped[:-1].rstrip()
-            out = stripped + " ON CONFLICT DO NOTHING"
-        return out
-
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
         """Execute a DML/DDL statement and commit. Thin wrapper around connect()."""
-        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
             conn.commit()
 
     def fetchone(self, sql: str, params: Tuple[Any, ...] = ()):
-        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
             return cur.fetchone()
 
     def fetchall(self, sql: str, params: Tuple[Any, ...] = ()):
-        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
             return cur.fetchall()
 
     def fetchone_dict(self, sql: str, params: Tuple[Any, ...] = ()):
-        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -380,7 +351,6 @@ class _ClearledgrDBBase:
             return dict(zip(cols, row))
 
     def fetchall_dict(self, sql: str, params: Tuple[Any, ...] = ()):
-        sql = self._prepare_sql(sql)
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)

@@ -137,7 +137,7 @@ class VendorComplianceSkill(FinanceSkill):
             return None
 
     def _load_vendor_profiles(self, runtime, *, limit: int) -> List[Dict[str, Any]]:
-        if hasattr(runtime.db, "connect") and hasattr(runtime.db, "_prepare_sql"):
+        if hasattr(runtime.db, "connect"):
             sql = (
                 "SELECT vendor_name, requires_po, contract_amount, payment_terms, "
                 "bank_details_changed_at, approval_override_rate, anomaly_flags, invoice_count "

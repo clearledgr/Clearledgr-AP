@@ -208,9 +208,9 @@ class TestMigrationV17:
             cur = conn.cursor()
             if tmp_db.use_postgres:
                 cur.execute(
-                    tmp_db._prepare_sql(
+                    (
                         "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = ?"
+                        "WHERE table_name = %s"
                     ),
                     ("vendor_onboarding_sessions",),
                 )
@@ -587,8 +587,8 @@ class TestAuditEmission:
                 cur = conn.cursor()
                 if event_type:
                     cur.execute(
-                        db._prepare_sql(
-                            "SELECT * FROM audit_events WHERE event_type = ? "
+                        (
+                            "SELECT * FROM audit_events WHERE event_type = %s "
                             "ORDER BY ts ASC"
                         ),
                         (event_type,),

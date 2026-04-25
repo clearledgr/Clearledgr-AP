@@ -50,10 +50,10 @@ class TestVendorOnboardingAtomicTransition:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT COUNT(*) FROM audit_events "
-                    "WHERE event_type = ? "
-                    "  AND payload_json LIKE ?"
+                    "WHERE event_type = %s "
+                    "  AND payload_json LIKE %s"
                 ),
                 ("vendor_onboarding_state_transition", f'%"session_id": "{session_id}"%'),
             )
@@ -107,10 +107,10 @@ class TestVendorOnboardingAtomicTransition:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT COUNT(*) FROM audit_events "
-                    "WHERE event_type = ? "
-                    "  AND payload_json LIKE ?"
+                    "WHERE event_type = %s "
+                    "  AND payload_json LIKE %s"
                 ),
                 ("vendor_onboarding_state_transition", f'%"session_id": "{session_id}"%'),
             )
@@ -270,9 +270,9 @@ class TestBoxKeyedAuditWrites:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT box_id, box_type FROM audit_events "
-                    "WHERE box_id = ? AND box_type = 'ap_item' "
+                    "WHERE box_id = %s AND box_type = 'ap_item' "
                     "  AND event_type = 'state_transition'"
                 ),
                 ("ap-box-1",),
@@ -300,9 +300,9 @@ class TestBoxKeyedAuditWrites:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT box_id, box_type FROM audit_events "
-                    "WHERE event_type = ? AND new_state = 'kyc'"
+                    "WHERE event_type = %s AND new_state = 'kyc'"
                 ),
                 ("vendor_onboarding_state_transition",),
             )
@@ -335,9 +335,9 @@ class TestBoxKeyedAuditWrites:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT box_id, box_type FROM audit_events "
-                    "WHERE box_id = ? AND box_type = 'ap_item'"
+                    "WHERE box_id = %s AND box_type = 'ap_item'"
                 ),
                 ("ap-funnel-99",),
             )
@@ -385,8 +385,8 @@ class TestBoxKeyedAuditWrites:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
-                    "SELECT box_id, box_type FROM llm_call_log WHERE id = ?"
+                (
+                    "SELECT box_id, box_type FROM llm_call_log WHERE id = %s"
                 ),
                 (call_id,),
             )

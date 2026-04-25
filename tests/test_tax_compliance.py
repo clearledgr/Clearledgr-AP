@@ -62,7 +62,7 @@ def _create_posted_item(db, item_id, vendor, amount, currency="USD"):
         "organization_id": "default",
     })
     # Backdate to this year
-    sql = db._prepare_sql("UPDATE ap_items SET created_at = ? WHERE id = ?")
+    sql = "UPDATE ap_items SET created_at = %s WHERE id = %s"
     with db.connect() as conn:
         conn.cursor().execute(sql, (created, item_id))
         conn.commit()

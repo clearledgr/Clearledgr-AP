@@ -267,11 +267,11 @@ class TestBudgetCapSideEffects:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT event_type, actor_type, actor_id, organization_id, "
                     "       box_id, box_type "
                     "FROM audit_events "
-                    "WHERE organization_id = ? AND event_type = ? "
+                    "WHERE organization_id = %s AND event_type = %s "
                     "ORDER BY ts DESC LIMIT 1"
                 ),
                 ("budget-test-org", "llm_budget_paused"),
@@ -392,10 +392,10 @@ class TestCustomerOverrideEndpoint:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT event_type, actor_type, decision_reason "
                     "FROM audit_events "
-                    "WHERE organization_id = ? AND event_type = ? "
+                    "WHERE organization_id = %s AND event_type = %s "
                     "ORDER BY ts DESC LIMIT 1"
                 ),
                 ("budget-test-org", "llm_budget_override_applied"),
@@ -564,9 +564,9 @@ class TestOpsResetEndpoint:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT actor_type FROM audit_events "
-                    "WHERE organization_id = ? AND event_type = ? "
+                    "WHERE organization_id = %s AND event_type = %s "
                     "ORDER BY ts DESC LIMIT 1"
                 ),
                 ("budget-test-org", "llm_budget_override_applied"),

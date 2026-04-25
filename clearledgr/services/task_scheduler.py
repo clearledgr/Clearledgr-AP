@@ -52,7 +52,7 @@ def should_send_reminder(task_id: str, reminder_type: str, min_hours: int = 24) 
     row = db.fetchone(
         """
         SELECT COUNT(*) FROM reminder_log 
-        WHERE task_id = ? AND reminder_type = ? AND sent_at > ?
+        WHERE task_id = %s AND reminder_type = %s AND sent_at > %s
         """,
         (task_id, reminder_type, cutoff),
     )
@@ -65,7 +65,7 @@ def log_reminder(task_id: str, reminder_type: str, next_reminder: str = None):
     db.execute(
         """
         INSERT INTO reminder_log (id, task_id, reminder_type, sent_at, next_reminder)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (
             str(uuid.uuid4()),
@@ -82,7 +82,7 @@ def log_scheduler_run(run_type: str, tasks_processed: int, reminders_sent: int):
     db.execute(
         """
         INSERT INTO scheduler_runs (id, run_type, run_at, tasks_processed, reminders_sent)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (
             str(uuid.uuid4()),

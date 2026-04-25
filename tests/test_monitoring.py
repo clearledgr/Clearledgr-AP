@@ -55,7 +55,7 @@ class TestDeadLetterCheck:
         for i in range(6):
             notif_id = db.enqueue_notification("default", "slack", {"text": f"test-{i}"})
             # Manually mark as dead_letter
-            sql = db._prepare_sql("UPDATE pending_notifications SET status = 'dead_letter' WHERE id = ?")
+            sql = "UPDATE pending_notifications SET status = 'dead_letter' WHERE id = %s"
             with db.connect() as conn:
                 conn.cursor().execute(sql, (notif_id,))
                 conn.commit()
@@ -74,8 +74,8 @@ class TestDeadLetterCheck:
         for channel, n in channel_plan:
             for _ in range(n):
                 nid = db.enqueue_notification("default", channel, {"x": "y"})
-                sql = db._prepare_sql(
-                    "UPDATE pending_notifications SET status = 'dead_letter' WHERE id = ?"
+                sql = (
+                    "UPDATE pending_notifications SET status = 'dead_letter' WHERE id = %s"
                 )
                 with db.connect() as conn:
                     conn.cursor().execute(sql, (nid,))
@@ -392,7 +392,7 @@ class TestThresholdOverride:
         # Create 10 dead letters — under the overridden threshold of 100
         for i in range(10):
             nid = db.enqueue_notification("default", "slack", {"text": f"t-{i}"})
-            sql = db._prepare_sql("UPDATE pending_notifications SET status = 'dead_letter' WHERE id = ?")
+            sql = "UPDATE pending_notifications SET status = 'dead_letter' WHERE id = %s"
             with db.connect() as conn:
                 conn.cursor().execute(sql, (nid,))
                 conn.commit()

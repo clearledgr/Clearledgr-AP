@@ -142,8 +142,8 @@ def test_audit_events_table_is_append_only(db):
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
-                    "UPDATE audit_events SET event_type = ? WHERE id = ?"
+                (
+                    "UPDATE audit_events SET event_type = %s WHERE id = %s"
                 ),
                 ("mutated_event", event["id"]),
             )
@@ -153,7 +153,7 @@ def test_audit_events_table_is_append_only(db):
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql("DELETE FROM audit_events WHERE id = ?"),
+                "DELETE FROM audit_events WHERE id = %s",
                 (event["id"],),
             )
             conn.commit()

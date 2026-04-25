@@ -397,12 +397,12 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                tmp_db._prepare_sql(
+                (
                     "INSERT INTO ap_items "
                     "(id, organization_id, vendor_name, amount, currency, state, "
                     "thread_id, invoice_number, created_at, updated_at, metadata, "
                     "bank_details_encrypted) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 ),
                 (
                     "AP-LEGACY-MIG",
@@ -444,8 +444,8 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                tmp_db._prepare_sql(
-                    "SELECT metadata, bank_details_encrypted FROM ap_items WHERE id = ?"
+                (
+                    "SELECT metadata, bank_details_encrypted FROM ap_items WHERE id = %s"
                 ),
                 ("AP-LEGACY-MIG",),
             )
@@ -464,11 +464,11 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                tmp_db._prepare_sql(
+                (
                     "INSERT INTO ap_items "
                     "(id, organization_id, vendor_name, amount, currency, state, "
                     "thread_id, invoice_number, created_at, updated_at, metadata) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 ),
                 (
                     "AP-CLEAN",

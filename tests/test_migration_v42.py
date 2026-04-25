@@ -40,9 +40,9 @@ def _column_names(db, table):
         cur = conn.cursor()
         if db.use_postgres:
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = ? ORDER BY ordinal_position"
+                    "WHERE table_name = %s ORDER BY ordinal_position"
                 ),
                 (table,),
             )
@@ -100,12 +100,12 @@ class TestBackfillOnPreV42DB:
         return db
 
     def _seed_ap_row(self, db, ap_item_id):
-        sql = db._prepare_sql(
+        sql = (
             """INSERT INTO audit_events
             (id, ap_item_id, event_type, prev_state, new_state,
              actor_type, actor_id, payload_json, source, correlation_id,
              workflow_id, run_id, decision_reason, organization_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
         )
         with db.connect() as conn:
             cur = conn.cursor()
@@ -119,12 +119,12 @@ class TestBackfillOnPreV42DB:
 
     def _seed_vendor_row(self, db, session_id):
         payload = json.dumps({"session_id": session_id, "reason": "test"})
-        sql = db._prepare_sql(
+        sql = (
             """INSERT INTO audit_events
             (id, ap_item_id, event_type, prev_state, new_state,
              actor_type, actor_id, payload_json, source, correlation_id,
              workflow_id, run_id, decision_reason, organization_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
         )
         with db.connect() as conn:
             cur = conn.cursor()

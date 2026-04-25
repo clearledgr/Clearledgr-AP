@@ -390,11 +390,12 @@ class CorrectionLearningService:
             with self.db.connect() as conn:
                 cur = conn.cursor()
                 cur.execute((
-                    """INSERT OR IGNORE INTO agent_corrections
+                    """INSERT INTO agent_corrections
                     (id, organization_id, correction_type, original_value,
                      corrected_value, context, user_id, invoice_id, vendor,
                      feedback, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""),
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING"""),
                     (
                         correction.correction_id,
                         self.organization_id,

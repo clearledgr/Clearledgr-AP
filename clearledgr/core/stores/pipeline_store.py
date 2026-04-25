@@ -335,8 +335,9 @@ class PipelineStore:
         link_id = f"BL-{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
         sql = (
-            "INSERT OR IGNORE INTO box_links (id, source_box_id, source_box_type, target_box_id, target_box_type, link_type, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            "INSERT INTO box_links (id, source_box_id, source_box_type, target_box_id, target_box_type, link_type, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT DO NOTHING"
         )
         with self.connect() as conn:
             conn.execute(sql, (link_id, source_box_id, source_box_type, target_box_id, target_box_type, link_type, now))

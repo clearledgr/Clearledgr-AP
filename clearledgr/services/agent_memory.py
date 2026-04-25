@@ -69,10 +69,7 @@ class AgentMemoryService:
     ) -> None:
         self.organization_id = str(organization_id or "default").strip() or "default"
         self.db = db or get_db()
-        self.enabled = all(
-            hasattr(self.db, attr)
-            for attr in ("connect", "_prepare_sql")
-        )
+        self.enabled = hasattr(self.db, "connect")
         if self.enabled:
             self._init_tables()
 

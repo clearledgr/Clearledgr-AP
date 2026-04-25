@@ -56,7 +56,7 @@ def _create_ap_item(db, item_id, vendor, amount, state="approved", invoice_date=
         "organization_id": "default",
     })
     if created_at:
-        sql = db._prepare_sql("UPDATE ap_items SET created_at = ? WHERE id = ?")
+        sql = "UPDATE ap_items SET created_at = %s WHERE id = %s"
         with db.connect() as conn:
             conn.cursor().execute(sql, (created_at, item_id))
             conn.commit()

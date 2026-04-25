@@ -134,11 +134,11 @@ class TestAuditEventRetentionFilter:
             with db.connect() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    db._prepare_sql(
+                    (
                         "INSERT INTO audit_events "
                         "(id, box_id, box_type, event_type, actor_type, actor_id, "
                         " organization_id, decision_reason, ts) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ),
                     (
                         f"evt-{uuid.uuid4().hex[:8]}",

@@ -113,8 +113,8 @@ class TestVendorSpendExport:
         created = (now - timedelta(days=10)).isoformat()
         with db.connect() as conn:
             conn.execute(
-                db._prepare_sql(
-                    "UPDATE ap_items SET created_at = ? WHERE id = ?"
+                (
+                    "UPDATE ap_items SET created_at = %s WHERE id = %s"
                 ),
                 (created, "sp-1"),
             )

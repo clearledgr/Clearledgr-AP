@@ -120,8 +120,8 @@ class TestTokenValidation:
         )
         # Force-expire by updating expires_at to the past.
         past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        sql = tmp_db._prepare_sql(
-            "UPDATE vendor_onboarding_tokens SET expires_at = ? WHERE id = ?"
+        sql = (
+            "UPDATE vendor_onboarding_tokens SET expires_at = %s WHERE id = %s"
         )
         with tmp_db.connect() as conn:
             conn.execute(sql, (past, token_row["id"]))
@@ -179,9 +179,9 @@ class TestMigrationV18:
             cur = conn.cursor()
             if tmp_db.use_postgres:
                 cur.execute(
-                    tmp_db._prepare_sql(
+                    (
                         "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = ?"
+                        "WHERE table_name = %s"
                     ),
                     ("vendor_onboarding_tokens",),
                 )

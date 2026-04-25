@@ -36,8 +36,8 @@ def _seed_session(db, org="org_t", vendor="Acme Ltd", invited_hours_ago=0):
     # Backdate invited_at to simulate passage of time.
     if invited_hours_ago > 0:
         past = (datetime.now(timezone.utc) - timedelta(hours=invited_hours_ago)).isoformat()
-        sql = db._prepare_sql(
-            "UPDATE vendor_onboarding_sessions SET invited_at = ?, last_activity_at = ? WHERE id = ?"
+        sql = (
+            "UPDATE vendor_onboarding_sessions SET invited_at = %s, last_activity_at = %s WHERE id = %s"
         )
         with db.connect() as conn:
             conn.execute(sql, (past, past, session["id"]))
@@ -60,8 +60,8 @@ def _seed_session(db, org="org_t", vendor="Acme Ltd", invited_hours_ago=0):
         "contact_name": "Alice",
         "customer_name": "Customer Inc",
     })
-    update_sql = db._prepare_sql(
-        "UPDATE vendor_onboarding_sessions SET metadata = ? WHERE id = ?"
+    update_sql = (
+        "UPDATE vendor_onboarding_sessions SET metadata = %s WHERE id = %s"
     )
     with db.connect() as conn:
         conn.execute(update_sql, (json.dumps(meta), session["id"]))
@@ -84,8 +84,8 @@ def _seed_to_bank_verified(db, org="org_t", vendor="Acme Ltd"):
         "contact_name": "Alice",
         "customer_name": "Customer Inc",
     })
-    update_sql = db._prepare_sql(
-        "UPDATE vendor_onboarding_sessions SET metadata = ? WHERE id = ?"
+    update_sql = (
+        "UPDATE vendor_onboarding_sessions SET metadata = %s WHERE id = %s"
     )
     with db.connect() as conn:
         conn.execute(update_sql, (json.dumps(meta), session["id"]))

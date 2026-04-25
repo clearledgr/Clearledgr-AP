@@ -55,9 +55,9 @@ class TestMigrationV16:
             cur = conn.cursor()
             if tmp_db.use_postgres:
                 cur.execute(
-                    tmp_db._prepare_sql(
+                    (
                         "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = ?"
+                        "WHERE table_name = %s"
                     ),
                     ("vendor_profiles",),
                 )

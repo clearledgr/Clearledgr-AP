@@ -75,8 +75,8 @@ def _create_posted_item(db, item_id, vendor, amount, days_ago=5, gl_code=None):
         "organization_id": "default",
     })
     # Backdate via raw SQL so it appears in the right period
-    sql = db._prepare_sql(
-        "UPDATE ap_items SET created_at = ?, erp_posted_at = ? WHERE id = ?"
+    sql = (
+        "UPDATE ap_items SET created_at = %s, erp_posted_at = %s WHERE id = %s"
     )
     with db.connect() as conn:
         conn.execute(sql, (created, posted, item_id))

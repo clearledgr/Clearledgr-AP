@@ -23,9 +23,9 @@ def test_metrics_use_durable_store_in_staging(monkeypatch, tmp_path: Path):
 
     with db.connect() as conn:
         cur = conn.cursor()
-        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_request_metrics"))
+        cur.execute("SELECT COUNT(*) AS cnt FROM api_request_metrics")
         request_count = int(dict(cur.fetchone())["cnt"])
-        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_error_metrics"))
+        cur.execute("SELECT COUNT(*) AS cnt FROM api_error_metrics")
         error_count = int(dict(cur.fetchone())["cnt"])
 
     payload = metrics.get_metrics()
@@ -55,11 +55,11 @@ def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(
-            db._prepare_sql(
+            (
                 """
                 INSERT INTO api_request_metrics
                 (id, ts, method, path, status_code, duration_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """
             ),
             ("req_stale", stale_ts, "GET", "/stale", 200, 1.0),
@@ -72,7 +72,7 @@ def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
 
     with db.connect() as conn:
         cur = conn.cursor()
-        cur.execute(db._prepare_sql("SELECT COUNT(*) AS cnt FROM api_request_metrics WHERE path = ?"), ("/stale",))
+        cur.execute("SELECT COUNT(*) AS cnt FROM api_request_metrics WHERE path = %s", ("/stale",))
         stale_count = int(dict(cur.fetchone())["cnt"])
 
     assert stale_count == 0

@@ -44,12 +44,12 @@ def _seed_state_entry(db, ap_id, new_state, minutes_ago, org_id="test-org",
     ``get_box_health`` sees the Box entered ``new_state`` that long ago.
     """
     ts = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
-    sql = db._prepare_sql(
+    sql = (
         """INSERT INTO audit_events
         (id, box_id, box_type, event_type, prev_state, new_state,
          actor_type, actor_id, payload_json, source, correlation_id,
          workflow_id, run_id, decision_reason, organization_id, ts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
     )
     with db.connect() as conn:
         cur = conn.cursor()
@@ -224,9 +224,9 @@ class TestBoxHealthAcrossBoxTypes:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "UPDATE vendor_onboarding_sessions "
-                    "SET updated_at = ?, created_at = ? WHERE id = ?"
+                    "SET updated_at = %s, created_at = %s WHERE id = %s"
                 ),
                 (past, past, session_id),
             )
