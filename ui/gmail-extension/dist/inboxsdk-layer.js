@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:6409d8297b71ec44a94742265664d5ceab225b61dc80875a62f5e0fef029f130 */
+/* clearledgr-source-fingerprint:fa65e3652ccb2bb95172520ed36be8e60db62a53d640b5e6adc16741786b2081 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76535,19 +76535,75 @@ Reason (required — logged to the audit trail):`) : null;
     }
     el.appendChild(left);
     if (item?.id) {
+      const btnGroup = document.createElement("div");
+      btnGroup.style.cssText = "display:flex; align-items:center; gap:8px;";
+      const replyBtn = document.createElement("button");
+      replyBtn.textContent = "Suggest reply";
+      replyBtn.style.cssText = `
+      border:none; border-radius:6px;
+      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
+      background:${cfg.border}; color:#fff; font-family:inherit;
+    `;
+      replyBtn.addEventListener("click", () => {
+        replyBtn.disabled = true;
+        const originalText = replyBtn.textContent;
+        replyBtn.textContent = "Drafting…";
+        Promise.resolve().then(() => suggestReplyForItem(item)).catch((err) => {
+          console.warn("[Clearledgr] Suggest reply failed:", err);
+          if (typeof showToast === "function") {
+            showToast("Could not generate draft. Try again from the sidebar.", "error");
+          }
+        }).finally(() => {
+          replyBtn.disabled = false;
+          replyBtn.textContent = originalText;
+        });
+      });
+      btnGroup.appendChild(replyBtn);
       const detailsBtn = document.createElement("button");
       detailsBtn.textContent = "View details";
       detailsBtn.style.cssText = `
-      align-self:center; border:1px solid ${cfg.border}; border-radius:6px;
+      border:1px solid ${cfg.border}; border-radius:6px;
       padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
       background:transparent; color:${cfg.text}; font-family:inherit;
     `;
       detailsBtn.addEventListener("click", () => {
         openItemInPipeline(item, "thread_exception_banner");
       });
-      el.appendChild(detailsBtn);
+      btnGroup.appendChild(detailsBtn);
+      el.appendChild(btnGroup);
     }
     threadView.addNoticeBar({ el });
+  }
+  async function suggestReplyForItem(item) {
+    if (!item?.id)
+      return;
+    if (!queueManager)
+      throw new Error("queue_manager_unavailable");
+    const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || "").replace(/\/+$/, "");
+    if (!backendUrl)
+      throw new Error("backend_url_unavailable");
+    const response = await queueManager.backendFetch(`${backendUrl}/extension/draft-reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ap_item_id: String(item.id),
+        thread_id: String(item.thread_id || store_default.currentThreadId || ""),
+        organization_id: queueManager?.runtimeConfig?.organizationId || "default"
+      })
+    });
+    if (!response?.ok) {
+      throw new Error(`draft_reply_http_${response?.status || "unknown"}`);
+    }
+    const draft = await response.json();
+    if (!draft || !draft.subject && !draft.body) {
+      throw new Error("draft_reply_empty");
+    }
+    await openComposeWithPrefill({
+      to: draft.to || "",
+      subject: draft.subject || "",
+      body: draft.body || "",
+      recordContext: buildComposeRecordContext(item)
+    });
   }
   function _itemAwaitsApproval(item) {
     if (!item)

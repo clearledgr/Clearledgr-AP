@@ -887,6 +887,68 @@ async def recover_ap_item_by_thread(
     }
 
 
+class DraftReplyRequest(BaseModel):
+    """Phase 3.3 — synthesize a vendor-reply draft for an AP item.
+
+    The extension's "Suggest reply" button on the exception banner
+    POSTs an `ap_item_id` (and optionally `thread_id`); the server
+    resolves the item, picks a template based on its exception state,
+    renders it with the org's company name + invoice context, and
+    returns a payload the extension feeds straight into InboxSDK
+    Compose pre-fill.
+    """
+
+    ap_item_id: Optional[str] = Field(default=None)
+    thread_id: Optional[str] = Field(default=None)
+    organization_id: Optional[str] = None
+
+
+@router.post("/draft-reply")
+async def draft_reply(
+    request: DraftReplyRequest,
+    user=Depends(get_current_user),
+):
+    """Return a `{subject, body, to, template_id, source}` draft for an
+    AP item. Either `ap_item_id` or `thread_id` is required; both are
+    accepted so the extension can call this from any surface that
+    knows one of the two. Org isolation goes through
+    `_resolve_org_id_for_user` like every other extension route.
+    """
+    org_id = _resolve_org_id_for_user(user, request.organization_id)
+    db = get_db()
+
+    item = None
+    if request.ap_item_id:
+        item = db.get_ap_item(request.ap_item_id)
+        if item and str(item.get("organization_id")) not in {org_id, "default"}:
+            # Org-isolation guard. The thread-resolution path below already
+            # passes org_id directly so it's implicit there; the explicit
+            # ap_item_id path needs an explicit cross-org check.
+            raise HTTPException(status_code=404, detail="ap_item_not_found")
+    if not item and request.thread_id:
+        item = db.get_ap_item_by_thread(org_id, request.thread_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    org = db.get_organization(org_id) or {}
+    settings = org.get("settings") if isinstance(org.get("settings"), dict) else {}
+    company_name = (
+        str(settings.get("company_name") or "").strip()
+        or str(org.get("name") or "").strip()
+        or "Accounts Payable"
+    )
+
+    enriched = build_worklist_item(db, item)
+
+    from clearledgr.services.draft_reply import synthesize_reply_for_item
+
+    return synthesize_reply_for_item(
+        enriched,
+        company_name=company_name,
+        original_subject=str(enriched.get("subject") or item.get("subject") or ""),
+    )
+
+
 @router.post("/gmail/register-token")
 async def register_gmail_token(request: RegisterGmailTokenRequest):
     """Register Gmail OAuth access token obtained by the browser extension.

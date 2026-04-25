@@ -348,6 +348,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/sidebar/query/stream",
     "/extension/sidebar/query/suggestions",
     "/extension/feedback",
+    "/extension/draft-reply",
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
