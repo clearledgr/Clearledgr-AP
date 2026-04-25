@@ -1,0 +1,15 @@
+{
+    "name": "clearledgr-boxpanel-approuter",
+    "version": "0.1.0",
+    "description": "Approuter wrapper for the Clearledgr SAP Fiori extension. Handles XSUAA auth + proxies /clearledgr-api/* to api.clearledgr.com via the BTP Destination service.",
+    "private": true,
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "scripts": {
+        "start": "node node_modules/@sap/approuter/approuter.js"
+    },
+    "dependencies": {
+        "@sap/approuter": "^16.0.0"
+    }
+}

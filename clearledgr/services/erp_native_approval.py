@@ -197,37 +197,58 @@ async def _handle_approve(
         except Exception:
             metadata = {}
     source = str(metadata.get("source") or "").strip().lower()
-    if source != "netsuite_native":
+
+    # 1. ERP-side write-back — release the payment hold/block. Each
+    # supported ERP gets its own write-back module; we dispatch by
+    # source so the Slack handler is ERP-agnostic.
+    if source == "netsuite_native":
+        ns_internal_id = str(item.get("erp_reference") or "").strip()
+        if not ns_internal_id:
+            return {"ok": False, "reason": "missing_ns_internal_id", "ap_item_id": ap_item_id}
+        release = await release_netsuite_payment_hold(
+            organization_id=organization_id,
+            ns_internal_id=ns_internal_id,
+        )
+    elif source == "sap_native":
+        from clearledgr.integrations.erp_sap_s4hana import release_payment_block as release_sap_block
+        cc = str(metadata.get("sap_company_code") or "").strip()
+        doc = str(metadata.get("sap_supplier_invoice") or "").strip()
+        fy = str(metadata.get("sap_fiscal_year") or "").strip()
+        if not (cc and doc and fy):
+            return {
+                "ok": False,
+                "reason": "missing_sap_composite_key",
+                "ap_item_id": ap_item_id,
+                "have": {"cc": cc, "doc": doc, "fy": fy},
+            }
+        release = await release_sap_block(
+            organization_id=organization_id,
+            company_code=cc,
+            supplier_invoice=doc,
+            fiscal_year=fy,
+        )
+    else:
         return {
             "ok": False,
-            "reason": "not_erp_native",
+            "reason": "unsupported_source",
             "ap_item_id": ap_item_id,
             "source": source,
         }
 
-    ns_internal_id = str(item.get("erp_reference") or "").strip()
-    if not ns_internal_id:
-        return {"ok": False, "reason": "missing_ns_internal_id", "ap_item_id": ap_item_id}
-
-    # 1. Release the NetSuite payment hold
-    release = await release_netsuite_payment_hold(
-        organization_id=organization_id,
-        ns_internal_id=ns_internal_id,
-    )
     if not release.get("ok"):
-        # NetSuite rejected the hold release — leave the Box in
+        # ERP rejected the hold release — leave the Box in
         # needs_approval and surface the reason. We don't transition to
         # needs_info because the operator's decision was valid; the
         # failure is on the ERP side and is retryable.
         _record_audit(
             organization_id=organization_id,
             ap_item_id=ap_item_id,
-            action="approve_failed_at_netsuite",
-            metadata={"reason": release.get("reason"), "ns_internal_id": ns_internal_id},
+            action=f"approve_failed_at_{source.replace('_native', '')}",
+            metadata={"reason": release.get("reason"), "source": source, "detail": {k: v for k, v in release.items() if k != "ok"}},
         )
         return {
             "ok": False,
-            "reason": "netsuite_hold_release_failed",
+            "reason": f"{source}_release_failed",
             "ap_item_id": ap_item_id,
             "detail": release,
         }
@@ -282,16 +303,18 @@ async def _handle_approve(
         metadata={
             "actor_id": actor_id,
             "actor_email": actor_email,
-            "ns_internal_id": ns_internal_id,
+            "erp_reference": item.get("erp_reference"),
             "final_state": last_state,
-            "source": "slack_erp_native",
+            "source": source,
+            "release_op": release.get("op"),
         },
     )
     return {
         "ok": True,
         "ap_item_id": ap_item_id,
         "state": last_state,
-        "ns_payment_hold_released": True,
+        "erp_payment_block_released": True,
+        "source": source,
     }
 
 
@@ -313,41 +336,60 @@ async def _handle_reject(
         except Exception:
             metadata = {}
     source = str(metadata.get("source") or "").strip().lower()
-    if source != "netsuite_native":
-        return {"ok": False, "reason": "not_erp_native", "ap_item_id": ap_item_id, "source": source}
-
-    ns_internal_id = str(item.get("erp_reference") or "").strip()
-    if not ns_internal_id:
-        return {"ok": False, "reason": "missing_ns_internal_id", "ap_item_id": ap_item_id}
 
     actor_id = str(actor.get("actor_id") or actor.get("user_id") or "slack_user").strip()
     actor_email = str(actor.get("actor_email") or actor.get("email") or "").strip() or None
-
-    # 1. Void the bill in NetSuite. We do this BEFORE the Box state
-    # transition so an operator who sees "rejected" in Clearledgr can
-    # trust that NetSuite reflects the same thing — Clearledgr's state
-    # never gets ahead of the ERP's.
     void_memo = f"Voided via Clearledgr — rejected by {actor_email or actor_id}"
-    void_result = await void_netsuite_bill(
-        organization_id=organization_id,
-        ns_internal_id=ns_internal_id,
-        memo=void_memo,
-    )
+
+    # 1. Void/cancel in the ERP. Dispatch by source — same pattern as
+    # _handle_approve.
+    if source == "netsuite_native":
+        ns_internal_id = str(item.get("erp_reference") or "").strip()
+        if not ns_internal_id:
+            return {"ok": False, "reason": "missing_ns_internal_id", "ap_item_id": ap_item_id}
+        void_result = await void_netsuite_bill(
+            organization_id=organization_id,
+            ns_internal_id=ns_internal_id,
+            memo=void_memo,
+        )
+    elif source == "sap_native":
+        from clearledgr.integrations.erp_sap_s4hana import cancel_supplier_invoice as cancel_sap_invoice
+        cc = str(metadata.get("sap_company_code") or "").strip()
+        doc = str(metadata.get("sap_supplier_invoice") or "").strip()
+        fy = str(metadata.get("sap_fiscal_year") or "").strip()
+        if not (cc and doc and fy):
+            return {
+                "ok": False,
+                "reason": "missing_sap_composite_key",
+                "ap_item_id": ap_item_id,
+                "have": {"cc": cc, "doc": doc, "fy": fy},
+            }
+        void_result = await cancel_sap_invoice(
+            organization_id=organization_id,
+            company_code=cc,
+            supplier_invoice=doc,
+            fiscal_year=fy,
+            reason_text=void_memo,
+        )
+    else:
+        return {"ok": False, "reason": "unsupported_source", "ap_item_id": ap_item_id, "source": source}
+
     if not void_result.get("ok"):
         _record_audit(
             organization_id=organization_id,
             ap_item_id=ap_item_id,
-            action="reject_failed_at_netsuite",
+            action=f"reject_failed_at_{source.replace('_native', '')}",
             metadata={
                 "reason": void_result.get("reason"),
                 "status_code": void_result.get("status_code"),
-                "ns_internal_id": ns_internal_id,
+                "source": source,
                 "actor_id": actor_id,
+                "erp_reference": item.get("erp_reference"),
             },
         )
         return {
             "ok": False,
-            "reason": "netsuite_void_failed",
+            "reason": f"{source}_void_failed",
             "ap_item_id": ap_item_id,
             "detail": void_result,
         }
@@ -390,7 +432,8 @@ async def _handle_reject(
                 "from": last_state,
                 "to": target,
                 "error": str(exc),
-                "netsuite_voided": True,
+                "erp_voided": True,
+                "source": source,
             }
         last_state = target
 
@@ -401,9 +444,9 @@ async def _handle_reject(
         metadata={
             "actor_id": actor_id,
             "actor_email": actor_email,
-            "source": "slack_erp_native",
-            "netsuite_voided": True,
-            "ns_internal_id": ns_internal_id,
+            "source": source,
+            "erp_voided": True,
+            "erp_reference": item.get("erp_reference"),
             "void_op": void_result.get("op"),
         },
     )
@@ -411,7 +454,8 @@ async def _handle_reject(
         "ok": True,
         "ap_item_id": ap_item_id,
         "state": last_state,
-        "ns_voided": True,
+        "erp_voided": True,
+        "source": source,
     }
 
 
@@ -729,13 +773,28 @@ def _build_approval_blocks(ap_item: Dict[str, Any], *, mentions: Optional[list] 
     except (TypeError, ValueError):
         amount = f"{currency} {amount_raw}"
     due_date = str(ap_item.get("due_date") or "—")
-    ns_internal_id = str(ap_item.get("erp_reference") or "")
+    erp_reference = str(ap_item.get("erp_reference") or "")
+    metadata = ap_item.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    source = str((metadata or {}).get("source") or "").strip().lower()
+    if source == "sap_native":
+        erp_label = "SAP supplier invoice"
+        ref_label = "Doc"
+        block_label = "payment block"
+    else:
+        erp_label = "NetSuite bill"
+        ref_label = "NetSuite ID"
+        block_label = "payment hold"
     mentions = mentions or []
 
     blocks: list = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "NetSuite bill awaiting approval"},
+            "text": {"type": "plain_text", "text": f"{erp_label} awaiting approval"},
         }
     ]
 
@@ -768,8 +827,8 @@ def _build_approval_blocks(ap_item: Dict[str, Any], *, mentions: Optional[list] 
                 {
                     "type": "mrkdwn",
                     "text": (
-                        f"_NetSuite ID `{ns_internal_id}` · payment hold set in NetSuite. "
-                        "Approve here to release the hold; reject here to void the bill in NetSuite._"
+                        f"_{ref_label} `{erp_reference}` · {block_label} set in {erp_label.split()[0]}. "
+                        f"Approve here to release the {block_label}; reject here to cancel the document._"
                     ),
                 }
             ],

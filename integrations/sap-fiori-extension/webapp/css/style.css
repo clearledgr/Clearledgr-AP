@@ -1,0 +1,100 @@
+/* Clearledgr — Fiori panel custom styling.
+   Brand: mint #00D67E + navy #0A1628. We lean on the Horizon theme for
+   most chrome and only override to surface the brand tokens — too much
+   custom CSS in a Fiori app smells like "this isn't really UI5". */
+
+.cl-page {
+    background: transparent;
+}
+
+.cl-header {
+    padding: 0.5rem 1rem 0.5rem 1rem;
+    border-bottom: 1px solid var(--sapList_BorderColor, #E5E7EB);
+    background: var(--sapBackgroundColor, #FFFFFF);
+}
+
+.cl-state-badge {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.cl-section {
+    margin: 0.75rem 1rem;
+}
+
+.cl-summary {
+    padding-top: 0.5rem;
+}
+.cl-summary-cell {
+    padding: 0.25rem 0.5rem;
+}
+.cl-summary-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sapContent_LabelColor, #6B7280);
+    font-weight: 500;
+}
+.cl-summary-value {
+    font-weight: 500;
+    color: var(--sapTextColor, #0A1628);
+}
+
+.cl-exception-list {
+    background: transparent;
+}
+.cl-exception-item {
+    padding: 0.5rem 0.75rem;
+    background: #FEF2F2;
+    border-left: 3px solid #DC2626;
+    border-radius: 0.25rem;
+    margin: 0.25rem 0;
+    width: 100%;
+}
+.cl-exception-code {
+    font-weight: 600;
+    color: #991B1B;
+    font-size: 0.8rem;
+}
+.cl-exception-detail {
+    color: #991B1B;
+    font-size: 0.75rem;
+}
+
+.cl-timeline-row {
+    padding: 0.4rem 0;
+    width: 100%;
+}
+.cl-timeline-time {
+    flex: 0 0 11rem;
+    color: var(--sapContent_LabelColor, #6B7280);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
+}
+.cl-timeline-event {
+    color: var(--sapTextColor, #0A1628);
+    font-weight: 500;
+    font-size: 0.8rem;
+}
+.cl-timeline-summary {
+    color: var(--sapContent_LabelColor, #6B7280);
+    font-size: 0.8rem;
+}
+
+.cl-actions {
+    border-top: 1px solid var(--sapList_BorderColor, #E5E7EB);
+    padding-top: 0.75rem;
+}
+
+.cl-empty {
+    color: var(--sapContent_LabelColor, #6B7280);
+}
+
+.cl-footer {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--sapList_BorderColor, #E5E7EB);
+    margin: 1rem;
+    font-size: 0.75rem;
+}

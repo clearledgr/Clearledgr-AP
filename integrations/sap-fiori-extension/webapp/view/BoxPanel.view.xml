@@ -1,0 +1,131 @@
+<mvc:View
+    controllerName="com.clearledgr.s4hana.boxpanel.controller.BoxPanel"
+    xmlns="sap.m"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns:core="sap.ui.core"
+    xmlns:f="sap.f"
+    xmlns:l="sap.ui.layout"
+    displayBlock="true">
+    <Page id="boxPage" showHeader="false" backgroundDesign="Transparent" class="cl-page">
+
+        <!-- Header — brand + state badge -->
+        <HBox justifyContent="SpaceBetween" alignItems="Center" class="cl-header">
+            <HBox alignItems="Center">
+                <core:Icon src="sap-icon://workflow-tasks" color="#00D67E" size="1.25rem" class="sapUiTinyMarginEnd"/>
+                <Title text="Clearledgr" level="H3"/>
+            </HBox>
+            <ObjectStatus
+                text="{= ${box>/state} ? ${box>/state}.replace(/_/g, ' ') : 'loading…'}"
+                state="{= ${box>/state} === 'closed' || ${box>/state} === 'posted_to_erp' ? 'Success'
+                        : ${box>/state} === 'rejected' || ${box>/state} === 'failed_post' ? 'Error'
+                        : ${box>/state} === 'needs_approval' || ${box>/state} === 'needs_info' ? 'Warning'
+                        : 'None' }"
+                class="cl-state-badge"/>
+        </HBox>
+
+        <!-- Loading skeleton -->
+        <Panel headerText="" expandable="false" visible="{box>/_loading}" class="cl-section">
+            <BusyIndicator size="1rem" class="sapUiTinyMargin"/>
+            <Text text="Loading…" class="sapUiTinyMarginBegin"/>
+        </Panel>
+
+        <!-- Error -->
+        <MessageStrip
+            visible="{= !!${box>/_error}}"
+            text="{box>/_error}"
+            type="Error"
+            showIcon="true"
+            class="cl-section"/>
+
+        <!-- Empty state -->
+        <Panel visible="{box>/_empty}" expandable="false" class="cl-section cl-empty">
+            <VBox alignItems="Center" class="sapUiMediumMargin">
+                <core:Icon src="sap-icon://document" size="2rem" color="#6B7280"/>
+                <Text text="This supplier invoice was not processed through Clearledgr." class="sapUiSmallMarginTop"/>
+            </VBox>
+        </Panel>
+
+        <!-- Summary -->
+        <f:GridContainer visible="{= !${box>/_loading} &amp;&amp; !${box>/_empty} &amp;&amp; !${box>/_error}}" class="cl-section cl-summary">
+            <f:layout>
+                <f:GridContainerSettings rowSize="3rem" columnSize="11rem" gap="0.75rem"/>
+            </f:layout>
+            <VBox class="cl-summary-cell">
+                <Label text="Vendor" class="cl-summary-label"/>
+                <Text text="{box>/summary/vendor_name}" class="cl-summary-value"/>
+            </VBox>
+            <VBox class="cl-summary-cell">
+                <Label text="Amount" class="cl-summary-label"/>
+                <Text text="{box>/summary/_amountFormatted}" class="cl-summary-value"/>
+            </VBox>
+            <VBox class="cl-summary-cell">
+                <Label text="Invoice #" class="cl-summary-label"/>
+                <Text text="{box>/summary/invoice_number}" class="cl-summary-value"/>
+            </VBox>
+            <VBox class="cl-summary-cell">
+                <Label text="Due" class="cl-summary-label"/>
+                <Text text="{box>/summary/due_date}" class="cl-summary-value"/>
+            </VBox>
+        </f:GridContainer>
+
+        <!-- Exceptions -->
+        <Panel
+            visible="{= !${box>/_loading} &amp;&amp; ${box>/exceptions}.length > 0}"
+            headerText="Exceptions"
+            expandable="false"
+            class="cl-section">
+            <List items="{box>/exceptions}" showSeparators="None" class="cl-exception-list">
+                <CustomListItem>
+                    <HBox class="cl-exception-item" alignItems="Center">
+                        <core:Icon src="sap-icon://alert" color="#DC2626" class="sapUiTinyMarginEnd"/>
+                        <VBox>
+                            <Text text="{= ${code} || ${exception_code} || 'exception' }" class="cl-exception-code"/>
+                            <Text text="{= ${detail} || ${message} || ${description} || '' }" class="cl-exception-detail"/>
+                        </VBox>
+                    </HBox>
+                </CustomListItem>
+            </List>
+        </Panel>
+
+        <!-- Timeline -->
+        <Panel
+            visible="{= !${box>/_loading} &amp;&amp; ${box>/timeline}.length > 0}"
+            headerText="Timeline"
+            expandable="false"
+            class="cl-section">
+            <List items="{box>/timeline}" showSeparators="Inner" class="cl-timeline">
+                <CustomListItem>
+                    <HBox class="cl-timeline-row" alignItems="Center">
+                        <Text text="{= ${created_at} ? new Date(${created_at}).toLocaleString() : '' }" class="cl-timeline-time"/>
+                        <Text text="{= (${event_type} || ${type} || 'event').replace(/_/g, ' ') }" class="cl-timeline-event"/>
+                        <Text text="{= ${summary} || ${message} ? ' — ' + (${summary} || ${message}) : '' }" class="cl-timeline-summary"/>
+                    </HBox>
+                </CustomListItem>
+            </List>
+        </Panel>
+
+        <!-- Action bar — only when actionable -->
+        <HBox
+            visible="{= ${box>/state} === 'needs_approval' || ${box>/state} === 'needs_info' }"
+            justifyContent="End"
+            class="cl-section cl-actions">
+            <Button
+                type="Emphasized"
+                icon="sap-icon://accept"
+                text="Approve"
+                press=".onApprovePress"
+                class="sapUiTinyMarginEnd"/>
+            <Button
+                type="Reject"
+                icon="sap-icon://decline"
+                text="Reject &amp; cancel"
+                press=".onRejectPress"/>
+        </HBox>
+
+        <!-- Footer — deep link to Clearledgr app -->
+        <HBox justifyContent="Center" class="cl-footer">
+            <Link text="Open in Clearledgr →" press=".onOpenInClearledgrPress"/>
+        </HBox>
+
+    </Page>
+</mvc:View>

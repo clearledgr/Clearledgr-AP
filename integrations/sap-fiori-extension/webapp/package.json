@@ -1,0 +1,21 @@
+{
+    "name": "clearledgr-boxpanel-app",
+    "version": "0.1.0",
+    "description": "SAPUI5 application — embedded Clearledgr Box panel for the S/4HANA Manage Supplier Invoices Fiori app.",
+    "private": true,
+    "scripts": {
+        "start": "ui5 serve --open index.html",
+        "test": "echo 'no tests yet — UI5 OPA tests come with Phase 2'",
+        "build": "ui5 build --clean-dest --dest dist",
+        "build:cf": "ui5 build self-contained --clean-dest --dest dist --all && cd dist && zip -r ../boxpanel-content.zip . && cd .."
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "ui5": {
+        "dependencies": []
+    },
+    "devDependencies": {
+        "@ui5/cli": "^3.7.0"
+    }
+}

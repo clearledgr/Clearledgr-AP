@@ -1,0 +1,6 @@
+{
+    "name": "clearledgr-boxpanel-deployer",
+    "version": "0.1.0",
+    "description": "HTML5 Apps Repo deployer scaffold — content uploaded to BTP at MTA deploy time.",
+    "private": true
+}

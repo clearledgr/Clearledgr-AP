@@ -360,4 +360,30 @@ async def sap_webhook(
         event_type="erp_webhook_received",
         payload_preview=_preview_json(raw),
     )
+
+    # Dispatch the SAP S/4HANA payload (BTP Event Mesh CloudEvent or
+    # ABAP-BAdI HTTP push) into Clearledgr's coordination layer. Same
+    # best-effort posture as the NetSuite handler — failures log + audit
+    # but never sink the 200 ACK.
+    try:
+        import json as _json
+        from clearledgr.services.sap_webhook_dispatch import dispatch_sap_event
+        try:
+            payload_obj = _json.loads(raw.decode("utf-8")) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            payload_obj = {}
+        if payload_obj:
+            dispatch_result = dispatch_sap_event(organization_id, payload_obj)
+            logger.info(
+                "sap webhook dispatch: org=%s event=%s result=%s",
+                organization_id,
+                payload_obj.get("type") or payload_obj.get("event_type"),
+                dispatch_result,
+            )
+    except Exception as dispatch_exc:  # noqa: BLE001
+        logger.warning(
+            "sap webhook dispatch raised for org=%s — %s",
+            organization_id, dispatch_exc,
+        )
+
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})

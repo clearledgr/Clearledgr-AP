@@ -1,0 +1,55 @@
+{
+    "xsappname": "clearledgr-boxpanel",
+    "tenant-mode": "dedicated",
+    "description": "Clearledgr Box panel — XSUAA scopes for read + action on AP items inside the SAP Fiori extension",
+    "scopes": [
+        {
+            "name": "$XSAPPNAME.User",
+            "description": "Read access to the Box panel (state, timeline, exceptions)"
+        },
+        {
+            "name": "$XSAPPNAME.Approver",
+            "description": "Approve / reject ERP-native AP items from inside the Fiori panel"
+        }
+    ],
+    "role-templates": [
+        {
+            "name": "BoxPanelUser",
+            "description": "View the Clearledgr Box for any supplier invoice in the user's company codes",
+            "scope-references": [
+                "$XSAPPNAME.User"
+            ]
+        },
+        {
+            "name": "BoxPanelApprover",
+            "description": "Approve or reject ERP-native bills from the Box panel",
+            "scope-references": [
+                "$XSAPPNAME.User",
+                "$XSAPPNAME.Approver"
+            ]
+        }
+    ],
+    "role-collections": [
+        {
+            "name": "Clearledgr Box Panel — Reader",
+            "description": "Assign to AP team members who need read access to the panel",
+            "role-template-references": [
+                "$XSAPPNAME.BoxPanelUser"
+            ]
+        },
+        {
+            "name": "Clearledgr Box Panel — Approver",
+            "description": "Assign to designated approvers (per-amount routing also applies in Slack)",
+            "role-template-references": [
+                "$XSAPPNAME.BoxPanelApprover"
+            ]
+        }
+    ],
+    "oauth2-configuration": {
+        "redirect-uris": [
+            "https://*.hana.ondemand.com/login/callback",
+            "https://*.cfapps.*.hana.ondemand.com/login/callback"
+        ],
+        "token-validity": 900
+    }
+}

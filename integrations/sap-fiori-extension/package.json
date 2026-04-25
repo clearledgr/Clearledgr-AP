@@ -1,0 +1,24 @@
+{
+    "name": "clearledgr-sap-fiori-extension",
+    "version": "0.1.0",
+    "description": "Clearledgr Fiori extension for SAP S/4HANA — Manage Supplier Invoices Box panel + BTP Approuter.",
+    "private": true,
+    "workspaces": [
+        "webapp",
+        "approuter"
+    ],
+    "scripts": {
+        "build": "mbt build --target=mta_archives",
+        "deploy": "cf deploy mta_archives/com.clearledgr.s4hana.boxpanel_0.1.0.mtar",
+        "build:webapp": "npm run build --workspace=webapp",
+        "build:webapp:cf": "npm run build:cf --workspace=webapp",
+        "start:webapp": "npm run start --workspace=webapp",
+        "lint": "echo 'no linter wired yet'"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "devDependencies": {
+        "mbt": "^1.2.0"
+    }
+}

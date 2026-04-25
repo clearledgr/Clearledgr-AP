@@ -1,0 +1,106 @@
+# Multi-Target Application descriptor for Clearledgr's SAP Fiori extension.
+#
+# Two CF apps (approuter + html5-deployer) and three BTP services
+# (xsuaa, destination, html5-apps-repo). Built with `mbt build` and
+# deployed with `cf deploy mta_archives/*.mtar`.
+#
+# Phase 1-3 deploys against a BTP trial subaccount; Phase 4 ships the
+# same descriptor against the customer's BTP subaccount with their own
+# destination pointing at api.clearledgr.com.
+
+ID: com.clearledgr.s4hana.boxpanel
+_schema-version: "3.3"
+version: 0.1.0
+description: Clearledgr Box panel — embedded inside SAP S/4HANA Manage Supplier Invoices
+
+parameters:
+  enable-parallel-deployments: true
+
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm install --prefix webapp
+        - npm install --prefix approuter
+
+modules:
+
+  # ─── HTML5 deployer — uploads the Fiori app to BTP HTML5 Apps Repo ──
+  - name: clearledgr-boxpanel-deployer
+    type: com.sap.application.content
+    path: deployer
+    requires:
+      - name: clearledgr-html5-repo-host
+        parameters:
+          content-target: true
+    build-parameters:
+      build-result: resources
+      requires:
+        - artifacts:
+            - boxpanel-content.zip
+          name: clearledgr-boxpanel-app
+          target-path: resources/
+
+  # ─── The Fiori app itself, packaged as a ZIP for the deployer ───────
+  - name: clearledgr-boxpanel-app
+    type: html5
+    path: webapp
+    build-parameters:
+      build-result: dist
+      builder: custom
+      commands:
+        - npm run build:cf
+      supported-platforms: []
+
+  # ─── Approuter — auth + API proxy in front of the static app ────────
+  - name: clearledgr-boxpanel-approuter
+    type: nodejs
+    path: approuter
+    parameters:
+      memory: 256M
+      disk-quota: 512M
+    requires:
+      - name: clearledgr-html5-repo-runtime
+      - name: clearledgr-uaa
+      - name: clearledgr-destination
+    provides:
+      - name: clearledgr-boxpanel-app-url
+        properties:
+          url: ${default-url}
+
+resources:
+
+  - name: clearledgr-html5-repo-host
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: html5-apps-repo
+      service-plan: app-host
+
+  - name: clearledgr-html5-repo-runtime
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: html5-apps-repo
+      service-plan: app-runtime
+
+  - name: clearledgr-uaa
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+      config:
+        xsappname: clearledgr-boxpanel-${space}
+
+  - name: clearledgr-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+      config:
+        # The actual `clearledgr-api` destination (URL, auth) is
+        # configured per-subaccount in BTP cockpit — not in MTA, since
+        # the URL differs between dev/staging/prod and the customer's
+        # subaccount in Phase 4. This service binding only mounts the
+        # Destination service so the Approuter can resolve the
+        # destination by name.
+        HTML5Runtime_enabled: true

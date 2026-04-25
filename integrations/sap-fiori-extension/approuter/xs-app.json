@@ -1,0 +1,36 @@
+{
+    "welcomeFile": "/clearledgr-boxpanel/index.html",
+    "authenticationMethod": "route",
+    "sessionTimeout": 30,
+    "logout": {
+        "logoutEndpoint": "/do/logout",
+        "logoutPage": "/clearledgr-boxpanel/index.html"
+    },
+    "routes": [
+        {
+            "source": "^/clearledgr-api/(.*)$",
+            "target": "$1",
+            "destination": "clearledgr-api",
+            "authenticationType": "xsuaa",
+            "csrfProtection": false
+        },
+        {
+            "source": "^/user-api/(.*)$",
+            "target": "/$1",
+            "service": "sap-approuter-userapi",
+            "authenticationType": "xsuaa"
+        },
+        {
+            "source": "^/clearledgr-boxpanel/(.*)$",
+            "target": "$1",
+            "service": "html5-apps-repo-rt",
+            "authenticationType": "xsuaa"
+        },
+        {
+            "source": "^(.*)$",
+            "target": "/clearledgr-boxpanel/index.html",
+            "service": "html5-apps-repo-rt",
+            "authenticationType": "xsuaa"
+        }
+    ]
+}

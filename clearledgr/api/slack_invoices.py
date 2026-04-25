@@ -708,24 +708,27 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             actor=actor_payload,
         )
         if result.get("ok"):
+            source = str(result.get("source") or "").strip()
+            erp_label = "SAP" if source == "sap_native" else "NetSuite"
             verb = "approved" if decision == "approve" else "rejected"
             extra = (
-                " · payment hold released in NetSuite"
+                f" · payment block released in {erp_label}"
                 if decision == "approve"
-                else " · bill voided in NetSuite"
+                else f" · bill cancelled in {erp_label}"
             )
             return {"response_type": "ephemeral", "text": f"Bill {verb}.{extra}"}
-        # On failure, surface whether NetSuite was already mutated so
-        # the operator knows whether to retry or whether they need a
-        # manual reconciliation. The reject path can leave NetSuite
-        # voided but the Clearledgr Box stuck (rare; only on DB write
-        # failure between void and state transition).
+        # On failure, surface whether the ERP was already mutated so the
+        # operator knows whether to retry or whether they need a manual
+        # reconciliation. The reject path can leave the ERP voided but
+        # the Clearledgr Box stuck (rare; only on DB write failure
+        # between void and state transition).
         reason = str(result.get("reason") or "action_failed")
-        if result.get("netsuite_voided") and decision == "reject":
+        if result.get("erp_voided") and decision == "reject":
+            erp_label = "SAP" if str(result.get("source") or "") == "sap_native" else "NetSuite"
             return {
                 "response_type": "ephemeral",
                 "text": (
-                    f"Bill voided in NetSuite but Clearledgr state update failed ({reason}). "
+                    f"Bill voided in {erp_label} but Clearledgr state update failed ({reason}). "
                     "Engineering should reconcile."
                 ),
             }

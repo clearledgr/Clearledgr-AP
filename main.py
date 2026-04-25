@@ -355,6 +355,8 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
     "/extension/sidebar/query/suggestions",
     "/extension/feedback",
     "/extension/draft-reply",
+    "/extension/sap/exchange",
+    "/extension/ap-items/by-sap-invoice",
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
@@ -683,6 +685,7 @@ STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective")
 from clearledgr.api.v1 import router as v1_router
 from clearledgr.api.gmail_extension import router as gmail_extension_router
 from clearledgr.api.netsuite_panel import router as netsuite_panel_router
+from clearledgr.api.sap_extension import router as sap_extension_router
 from clearledgr.api.slack_invoices import (
     legacy_router as slack_legacy_router,
     router as slack_invoices_router,
@@ -692,6 +695,7 @@ from clearledgr.api.teams_invoices import router as teams_invoices_router
 app.include_router(v1_router)
 app.include_router(gmail_extension_router)
 app.include_router(netsuite_panel_router)
+app.include_router(sap_extension_router)
 app.include_router(slack_invoices_router)
 app.include_router(slack_legacy_router)
 app.include_router(teams_invoices_router)
@@ -1040,8 +1044,18 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
     #   - Gmail extension (chrome-extension://<32-char-id>) — original Streak-style integration
     #   - NetSuite-hosted Suitelets (https://<account>.app.netsuite.com) — embedded panel iframe
     #     served by the Clearledgr SuiteApp under integrations/netsuite-suiteapp/
+    #   - SAP BTP-hosted Approuter (https://<approuter>-<account>.<region>.hana.ondemand.com)
+    #     — the SAP Fiori extension under integrations/sap-fiori-extension/
+    #   - SAP S/4HANA Fiori Launchpad (https://<host>.s4hana.cloud.sap or *.fiori.cloud.sap)
+    #     when the Fiori app is consumed via the customer's launchpad rather than standalone
     default_regex = configured_regex or (
-        r"^(chrome-extension://[a-z]{32}|https://[a-z0-9_-]+\.app\.netsuite\.com)$"
+        r"^("
+        r"chrome-extension://[a-z]{32}"
+        r"|https://[a-z0-9_-]+\.app\.netsuite\.com"
+        r"|https://[a-z0-9_.-]+\.hana\.ondemand\.com"
+        r"|https://[a-z0-9_.-]+\.s4hana\.cloud\.sap"
+        r"|https://[a-z0-9_.-]+\.fiori\.cloud\.sap"
+        r")$"
     )
     return _default_cors_origins, default_regex
 

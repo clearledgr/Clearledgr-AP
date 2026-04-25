@@ -1,0 +1,7 @@
+node_modules/
+mta_archives/
+deployer/resources/
+webapp/dist/
+webapp/boxpanel-content.zip
+*.log
+.DS_Store
