@@ -16,6 +16,86 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Source-aware deeplink builder
+# ---------------------------------------------------------------------------
+
+
+def _build_source_link(invoice: Any) -> str:
+    """Return the right "open this invoice in its native UI" URL based
+    on the intake channel.
+
+    * Gmail → ``https://mail.google.com/mail/u/0/#search/<gmail_id>``
+    * NetSuite (ERP-native) → NetSuite Vendor Bill record URL using
+      the account_id + ns_internal_id captured in ``erp_metadata``
+    * SAP S/4HANA (ERP-native) → Fiori Launchpad cross-nav intent
+      ``#SupplierInvoice-display?CompanyCode=...&SupplierInvoice=...&FiscalYear=...``
+      against the customer's Fiori host (read from ``erp_metadata``;
+      falls back to a Clearledgr deeplink if the Fiori host isn't
+      known)
+    * Anything else → Clearledgr web app deeplink
+
+    Each ERP-native branch falls through to the Clearledgr deeplink
+    when the metadata it needs is missing — so a Slack card never has
+    a dead "Open" button.
+    """
+    source_type = str(getattr(invoice, "source_type", "gmail") or "gmail").lower()
+    erp_metadata = getattr(invoice, "erp_metadata", None) or {}
+    ap_item_id = (
+        getattr(invoice, "ap_item_id", None)
+        or getattr(invoice, "source_id", None)
+        or getattr(invoice, "gmail_id", "")
+    )
+    clearledgr_fallback = f"https://app.clearledgr.com/ap-items/{ap_item_id}" if ap_item_id else "https://app.clearledgr.com"
+
+    if source_type == "gmail":
+        gid = str(getattr(invoice, "gmail_id", "") or "").strip()
+        if gid:
+            return f"https://mail.google.com/mail/u/0/#search/{gid}"
+        return clearledgr_fallback
+
+    if source_type == "netsuite":
+        account_id = str(erp_metadata.get("ns_account_id") or "").strip()
+        ns_internal_id = str(erp_metadata.get("ns_internal_id") or "").strip()
+        if account_id and ns_internal_id:
+            account_segment = account_id.replace("_", "-").lower()
+            return (
+                f"https://{account_segment}.app.netsuite.com"
+                f"/app/accounting/transactions/vendbill.nl?id={ns_internal_id}"
+            )
+        return clearledgr_fallback
+
+    if source_type == "sap_s4hana":
+        fiori_host = str(erp_metadata.get("sap_fiori_host") or "").strip()
+        cc = str(erp_metadata.get("company_code") or "").strip()
+        doc = str(erp_metadata.get("supplier_invoice") or "").strip()
+        fy = str(erp_metadata.get("fiscal_year") or "").strip()
+        if fiori_host and cc and doc and fy:
+            return (
+                f"https://{fiori_host}/sap/bc/ui2/flp"
+                f"#SupplierInvoice-display"
+                f"?CompanyCode={cc}&SupplierInvoice={doc}&FiscalYear={fy}"
+            )
+        return clearledgr_fallback
+
+    return clearledgr_fallback
+
+
+def _source_link_label(invoice: Any) -> str:
+    """The button text for the deeplink built by ``_build_source_link``.
+    Matches the destination so operators see "Open in NetSuite" /
+    "Open in SAP" / "Open in Gmail" / "Open in Clearledgr"."""
+    source_type = str(getattr(invoice, "source_type", "gmail") or "gmail").lower()
+    erp_metadata = getattr(invoice, "erp_metadata", None) or {}
+    if source_type == "gmail" and getattr(invoice, "gmail_id", ""):
+        return "Open in Gmail"
+    if source_type == "netsuite" and erp_metadata.get("ns_internal_id") and erp_metadata.get("ns_account_id"):
+        return "Open in NetSuite"
+    if source_type == "sap_s4hana" and erp_metadata.get("sap_fiori_host") and erp_metadata.get("supplier_invoice"):
+        return "Open in SAP"
+    return "Open in Clearledgr"
+
+
+# ---------------------------------------------------------------------------
 # Budget helpers (pure data transforms)
 # ---------------------------------------------------------------------------
 
@@ -118,7 +198,7 @@ def build_approval_surface_copy(
     """Build parity copy for Slack/Teams approval cards (AX7)."""
     extra_context = extra_context or {}
     budget_summary = budget_summary or {}
-    gmail_url = f"https://mail.google.com/mail/u/0/#search/{invoice.gmail_id}"
+    gmail_url = _build_source_link(invoice)
 
     why_scored: List[tuple] = []
     budget_status = str((budget_summary or {}).get("status") or "").strip().lower()
@@ -663,7 +743,8 @@ def build_approval_blocks(
         "decision": "approve_override",
     })
 
-    gmail_link = f"https://mail.google.com/mail/u/0/#search/{invoice.gmail_id}"
+    gmail_link = _build_source_link(invoice)
+    gmail_link_label = _source_link_label(invoice)
 
     blocks.append({"type": "divider"})
     blocks.append({
@@ -692,7 +773,7 @@ def build_approval_blocks(
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "View in Gmail"},
+                    "text": {"type": "plain_text", "text": gmail_link_label},
                     "action_id": f"view_invoice_{invoice.gmail_id}",
                     "url": gmail_link,
                 },
@@ -721,7 +802,7 @@ def build_approval_blocks(
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "View in Gmail"},
+                    "text": {"type": "plain_text", "text": gmail_link_label},
                     "action_id": f"view_invoice_{invoice.gmail_id}",
                     "url": gmail_link,
                 },

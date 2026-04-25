@@ -707,14 +707,15 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 "Box created but flagged for onboarding context.",
                 invoice.vendor_name,
             )
-            # Apply onboarding label
-            try:
-                from clearledgr.services.gmail_labels import apply_label
-                from clearledgr.services.gmail_api import GmailAPIClient
-                client = GmailAPIClient(organization_id=self.organization_id)
-                await apply_label(client, invoice.gmail_id, "vendor_onboarding")
-            except Exception:
-                pass
+            # Apply onboarding label — Gmail-only side effect.
+            if getattr(invoice, "source_type", "gmail") == "gmail" and not getattr(invoice, "erp_native", False):
+                try:
+                    from clearledgr.services.gmail_labels import apply_label
+                    from clearledgr.services.gmail_api import GmailAPIClient
+                    client = GmailAPIClient(organization_id=self.organization_id)
+                    await apply_label(client, invoice.gmail_id, "vendor_onboarding")
+                except Exception:
+                    pass
 
         if not vendor_is_active and not vendor_onboarding_active:
             # Unknown vendor — do NOT create a Box. Apply Review Required
@@ -724,13 +725,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 "Applying Review Required label.",
                 invoice.vendor_name,
             )
-            try:
-                from clearledgr.services.gmail_labels import apply_label
-                from clearledgr.services.gmail_api import GmailAPIClient
-                client = GmailAPIClient(organization_id=self.organization_id)
-                await apply_label(client, invoice.gmail_id, "review_required")
-            except Exception:
-                pass
+            if getattr(invoice, "source_type", "gmail") == "gmail" and not getattr(invoice, "erp_native", False):
+                try:
+                    from clearledgr.services.gmail_labels import apply_label
+                    from clearledgr.services.gmail_api import GmailAPIClient
+                    client = GmailAPIClient(organization_id=self.organization_id)
+                    await apply_label(client, invoice.gmail_id, "review_required")
+                except Exception:
+                    pass
 
             # Notify AP Manager via Slack
             try:

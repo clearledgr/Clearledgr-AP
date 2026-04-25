@@ -42,6 +42,11 @@ class StateTransitionEvent:
     source: str = "invoice_workflow"
     gmail_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Channel of origin — drives observer-side gating so Gmail-only
+    # observers (label sync, email-fetch) short-circuit cleanly when
+    # the AP item entered via NetSuite/SAP/portal/etc.
+    source_type: str = "gmail"
+    erp_native: bool = False
 
 
 class StateObserver(ABC):
@@ -203,6 +208,12 @@ class GmailLabelObserver(StateObserver):
         return getattr(record, key, None)
 
     async def on_transition(self, event: StateTransitionEvent) -> None:
+        # ERP-native intake (NetSuite SuiteScript, SAP Event Mesh /
+        # BAdI) doesn't have a Gmail message — the synthetic gmail_id
+        # is `f"<source>-bill:<id>"`. Calling the Gmail labels API
+        # against that would 404 every time. Short-circuit early.
+        if event.source_type != "gmail" or event.erp_native:
+            return
         if not event.gmail_id or not hasattr(self._db, "get_invoice_status"):
             return
 
@@ -379,6 +390,14 @@ class VendorDomainTrackingObserver(StateObserver):
         if event.new_state != "posted_to_erp":
             return
         if not event.ap_item_id:
+            return
+        # Skip for ERP-native bills — the synthetic sender
+        # `<netsuite@erp-native>` / `<sap-s4hana@erp-native>` is
+        # not a real vendor domain to learn against. Phase B/C will
+        # populate the real vendor email on the AP item from the
+        # ERP-side vendor record; until then a domain match here
+        # would poison the trusted-domain TOFU set.
+        if event.source_type != "gmail" or event.erp_native:
             return
 
         try:
