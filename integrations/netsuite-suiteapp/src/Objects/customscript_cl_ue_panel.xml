@@ -1,0 +1,26 @@
+<usereventscript scriptid="customscript_cl_ue_panel">
+    <description>Renders Clearledgr panel subtab on Vendor Bill records (Phase 1-3 scaffold).</description>
+    <isinactive>F</isinactive>
+    <name>Clearledgr — Vendor Bill Panel</name>
+    <notifyadmins>F</notifyadmins>
+    <notifyemails></notifyemails>
+    <notifygroup></notifygroup>
+    <notifyowner>T</notifyowner>
+    <notifyuser>F</notifyuser>
+    <scriptfile>[/SuiteApps/com.clearledgr.suiteapp/ue_clearledgr_panel.js]</scriptfile>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_cl_ue_panel">
+            <allemployees>T</allemployees>
+            <allroles>T</allroles>
+            <allpartners>F</allpartners>
+            <isdeployed>T</isdeployed>
+            <loglevel>DEBUG</loglevel>
+            <recordtype>VENDORBILL</recordtype>
+            <runasrole>ADMINISTRATOR</runasrole>
+            <status>RELEASED</status>
+            <title>Clearledgr — Vendor Bill Panel · Deployment</title>
+            <eventtype></eventtype>
+            <executioncontext>USERINTERFACE</executioncontext>
+        </scriptdeployment>
+    </scriptdeployments>
+</usereventscript>

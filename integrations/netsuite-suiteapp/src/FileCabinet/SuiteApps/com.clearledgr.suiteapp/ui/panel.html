@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Clearledgr</title>
+    <!--CL_META-->
+    <!--CL_CSS-->
+</head>
+<body>
+    <div id="cl-root">
+        <header class="cl-header">
+            <div class="cl-brand">
+                <span class="cl-mark"></span>
+                <span class="cl-wordmark">clearledgr</span>
+            </div>
+            <span id="cl-state-badge" class="cl-badge cl-badge-loading">Loading…</span>
+        </header>
+
+        <main id="cl-body">
+            <section id="cl-summary" class="cl-section cl-hidden">
+                <dl class="cl-grid">
+                    <div><dt>Vendor</dt><dd id="cl-vendor">—</dd></div>
+                    <div><dt>Amount</dt><dd id="cl-amount">—</dd></div>
+                    <div><dt>Invoice #</dt><dd id="cl-invoice-number">—</dd></div>
+                    <div><dt>Due</dt><dd id="cl-due-date">—</dd></div>
+                </dl>
+            </section>
+
+            <section id="cl-exceptions-section" class="cl-section cl-hidden">
+                <h3 class="cl-h3">Exceptions</h3>
+                <ul id="cl-exceptions" class="cl-list"></ul>
+            </section>
+
+            <section id="cl-timeline-section" class="cl-section cl-hidden">
+                <h3 class="cl-h3">Timeline</h3>
+                <ol id="cl-timeline" class="cl-timeline"></ol>
+            </section>
+
+            <section id="cl-actions" class="cl-section cl-actions cl-hidden">
+                <button class="cl-btn cl-btn-primary" data-action="approve">Approve</button>
+                <button class="cl-btn cl-btn-ghost" data-action="reject">Reject</button>
+                <button class="cl-btn cl-btn-ghost" data-action="needs_info">Request info</button>
+            </section>
+
+            <section id="cl-empty" class="cl-section cl-empty cl-hidden">
+                <p class="cl-muted">This bill was not processed through Clearledgr.</p>
+            </section>
+
+            <section id="cl-error" class="cl-section cl-error cl-hidden">
+                <p class="cl-error-text" id="cl-error-text">Something went wrong.</p>
+                <button class="cl-btn cl-btn-ghost" data-action="retry">Retry</button>
+            </section>
+        </main>
+
+        <footer class="cl-footer">
+            <span class="cl-muted" id="cl-deeplink-host">
+                <a id="cl-deeplink" href="#" target="_blank" rel="noopener">Open in Clearledgr →</a>
+            </span>
+        </footer>
+    </div>
+    <!--CL_JS-->
+</body>
+</html>

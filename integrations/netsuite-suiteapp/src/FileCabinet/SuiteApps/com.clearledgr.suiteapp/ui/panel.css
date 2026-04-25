@@ -1,0 +1,156 @@
+/* Clearledgr panel — embedded inside NetSuite Vendor Bill UI.
+   Brand: mint #00D67E, navy #0A1628. Typography sized to NetSuite's
+   default 13px so we visually nest in their chrome rather than stand out. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #0A1628;
+}
+
+#cl-root {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px 20px 24px;
+}
+
+.cl-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #E5E7EB;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+}
+.cl-brand { display: flex; align-items: center; gap: 8px; }
+.cl-mark {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    background: #00D67E;
+    border-radius: 4px;
+}
+.cl-wordmark {
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.01em;
+    color: #0A1628;
+}
+
+.cl-badge {
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.cl-badge-loading { background: #F3F4F6; color: #6B7280; }
+.cl-badge-state-received,
+.cl-badge-state-validated,
+.cl-badge-state-needs_approval { background: #FEF3C7; color: #92400E; }
+.cl-badge-state-approved,
+.cl-badge-state-ready_to_post,
+.cl-badge-state-posted_to_erp,
+.cl-badge-state-closed { background: #DCFCE7; color: #166534; }
+.cl-badge-state-needs_info,
+.cl-badge-state-failed_post { background: #FEE2E2; color: #991B1B; }
+.cl-badge-state-rejected,
+.cl-badge-state-reversed { background: #E5E7EB; color: #374151; }
+
+.cl-section { margin-bottom: 18px; }
+.cl-hidden { display: none; }
+
+.cl-h3 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6B7280;
+    margin: 0 0 8px;
+}
+
+.cl-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 24px;
+    margin: 0;
+}
+.cl-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.cl-grid dt {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6B7280;
+    font-weight: 500;
+}
+.cl-grid dd { margin: 0; font-weight: 500; color: #0A1628; }
+
+.cl-list { list-style: none; padding: 0; margin: 0; }
+.cl-list li {
+    padding: 8px 12px;
+    background: #FEF2F2;
+    border-left: 3px solid #DC2626;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    color: #991B1B;
+    font-size: 12px;
+}
+.cl-list li.cl-warn {
+    background: #FEF3C7;
+    border-left-color: #D97706;
+    color: #92400E;
+}
+
+.cl-timeline { list-style: none; padding: 0; margin: 0; }
+.cl-timeline li {
+    display: flex;
+    gap: 10px;
+    padding: 6px 0;
+    align-items: baseline;
+    border-bottom: 1px solid #F3F4F6;
+    font-size: 12px;
+}
+.cl-timeline li:last-child { border-bottom: 0; }
+.cl-timeline .cl-time {
+    flex: 0 0 auto;
+    color: #6B7280;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+.cl-timeline .cl-event { flex: 1 1 auto; color: #0A1628; }
+
+.cl-actions { display: flex; gap: 8px; }
+.cl-btn {
+    font: inherit;
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+}
+.cl-btn-primary { background: #00D67E; color: #0A1628; }
+.cl-btn-primary:hover { background: #00C272; }
+.cl-btn-ghost {
+    background: transparent;
+    color: #0A1628;
+    border: 1px solid #D1D5DB;
+}
+.cl-btn-ghost:hover { background: #F9FAFB; }
+.cl-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.cl-footer {
+    border-top: 1px solid #E5E7EB;
+    padding-top: 10px;
+    font-size: 11px;
+}
+.cl-footer a { color: #0A1628; text-decoration: none; font-weight: 500; }
+.cl-footer a:hover { color: #00D67E; }
+
+.cl-empty { text-align: center; padding: 24px 0; }
+.cl-error .cl-error-text { color: #991B1B; font-size: 12px; margin: 0 0 10px; }
+.cl-muted { color: #6B7280; font-size: 11px; }

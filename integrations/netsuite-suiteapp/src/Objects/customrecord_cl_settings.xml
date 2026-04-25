@@ -1,0 +1,55 @@
+<customrecordtype scriptid="customrecord_cl_settings">
+    <accesstype>NORESTRICTION</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlinedeletion>F</allowinlinedeletion>
+    <allowinlineediting>T</allowinlineediting>
+    <allowinlinenewrecords>F</allowinlinenewrecords>
+    <allowmobileaccess>F</allowmobileaccess>
+    <allownumberingoverride>F</allownumberingoverride>
+    <allowquickadd>F</allowquickadd>
+    <allowquicksearch>F</allowquicksearch>
+    <description>Single-row tenant config for the Clearledgr SuiteApp: API base URL + bundle secret used to mint short-lived JWTs for the panel iframe.</description>
+    <enabledle>F</enabledle>
+    <enableemailmerge>F</enableemailmerge>
+    <enablekeywords>F</enablekeywords>
+    <enablemailmerge>F</enablemailmerge>
+    <enablenametranslation>F</enablenametranslation>
+    <enablenumbering>F</enablenumbering>
+    <enableoptimisticlocking>T</enableoptimisticlocking>
+    <enablesystemnotes>T</enablesystemnotes>
+    <hierarchical>F</hierarchical>
+    <iconbuiltin>T</iconbuiltin>
+    <includeinsearchmenu>F</includeinsearchmenu>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <isordered>F</isordered>
+    <recordname>Clearledgr Settings</recordname>
+    <showcreationdate>F</showcreationdate>
+    <showcreationdateonlist>F</showcreationdateonlist>
+    <showid>T</showid>
+    <showlastmodified>F</showlastmodified>
+    <showlastmodifiedonlist>F</showlastmodifiedonlist>
+    <shownotes>F</shownotes>
+    <showowner>F</showowner>
+    <showownerallowchange>F</showownerallowchange>
+    <showowneronlist>F</showowneronlist>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_cl_api_base">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Clearledgr API Base URL</label>
+            <defaultvalue>https://api.clearledgr.com</defaultvalue>
+            <displaytype>NORMAL</displaytype>
+            <ismandatory>T</ismandatory>
+            <maxlength>255</maxlength>
+            <description>Base URL for Clearledgr API. Defaults to api.clearledgr.com; override only for staging or self-hosted deployments.</description>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_cl_bundle_secret">
+            <fieldtype>PASSWORD</fieldtype>
+            <label>Clearledgr Bundle Secret</label>
+            <displaytype>NORMAL</displaytype>
+            <ismandatory>T</ismandatory>
+            <maxlength>255</maxlength>
+            <description>Shared HMAC secret provisioned during onboarding. Used by the Suitelet to sign short-lived JWTs that the panel sends to Clearledgr. Treat as sensitive.</description>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

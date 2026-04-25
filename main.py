@@ -536,6 +536,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/auth/users/[^/]+$",
         r"^/auth/users/[^/]+/role$",
         r"^/extension/ap/[^/]+/explain$",
+        r"^/extension/ap-items/by-netsuite-bill/[^/]+$",
         r"^/extension/by-thread/[^/]+/recover$",
         r"^/extension/invoice-pipeline/[^/]+$",
         r"^/extension/invoice-status/[^/]+$",
@@ -681,6 +682,7 @@ STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective")
 
 from clearledgr.api.v1 import router as v1_router
 from clearledgr.api.gmail_extension import router as gmail_extension_router
+from clearledgr.api.netsuite_panel import router as netsuite_panel_router
 from clearledgr.api.slack_invoices import (
     legacy_router as slack_legacy_router,
     router as slack_invoices_router,
@@ -689,6 +691,7 @@ from clearledgr.api.teams_invoices import router as teams_invoices_router
 
 app.include_router(v1_router)
 app.include_router(gmail_extension_router)
+app.include_router(netsuite_panel_router)
 app.include_router(slack_invoices_router)
 app.include_router(slack_legacy_router)
 app.include_router(teams_invoices_router)
@@ -1033,7 +1036,13 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
             configured_regex,
         )
         configured_regex = ""
-    default_regex = configured_regex or r"^chrome-extension://[a-z]{32}$"
+    # Default origin pattern matches:
+    #   - Gmail extension (chrome-extension://<32-char-id>) — original Streak-style integration
+    #   - NetSuite-hosted Suitelets (https://<account>.app.netsuite.com) — embedded panel iframe
+    #     served by the Clearledgr SuiteApp under integrations/netsuite-suiteapp/
+    default_regex = configured_regex or (
+        r"^(chrome-extension://[a-z]{32}|https://[a-z0-9_-]+\.app\.netsuite\.com)$"
+    )
     return _default_cors_origins, default_regex
 
 

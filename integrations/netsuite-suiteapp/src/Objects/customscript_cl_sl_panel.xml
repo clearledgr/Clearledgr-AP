@@ -1,0 +1,23 @@
+<suitelet scriptid="customscript_cl_sl_panel">
+    <description>Serves the Clearledgr panel HTML to the iframe embedded by the Vendor Bill UE script.</description>
+    <isinactive>F</isinactive>
+    <name>Clearledgr — Panel Suitelet</name>
+    <notifyadmins>F</notifyadmins>
+    <notifyemails></notifyemails>
+    <notifygroup></notifygroup>
+    <notifyowner>T</notifyowner>
+    <notifyuser>F</notifyuser>
+    <scriptfile>[/SuiteApps/com.clearledgr.suiteapp/sl_clearledgr_panel.js]</scriptfile>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_cl_sl_panel">
+            <allemployees>T</allemployees>
+            <allroles>T</allroles>
+            <allpartners>F</allpartners>
+            <isdeployed>T</isdeployed>
+            <loglevel>DEBUG</loglevel>
+            <runasrole>ADMINISTRATOR</runasrole>
+            <status>RELEASED</status>
+            <title>Clearledgr — Panel Suitelet · Deployment</title>
+        </scriptdeployment>
+    </scriptdeployments>
+</suitelet>

@@ -1,0 +1,11 @@
+<manifest projecttype="ACCOUNTCUSTOMIZATIONPROJECT">
+    <projectname>clearledgr-netsuite-suiteapp</projectname>
+    <frameworkversion>1.0</frameworkversion>
+    <dependencies>
+        <features>
+            <feature required="true">SERVERSIDESCRIPTING</feature>
+            <feature required="true">CLIENTSIDESCRIPTING</feature>
+            <feature required="true">CUSTOMRECORDS</feature>
+        </features>
+    </dependencies>
+</manifest>
