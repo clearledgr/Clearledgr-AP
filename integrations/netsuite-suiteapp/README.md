@@ -169,7 +169,11 @@ For each tenant:
 - **Existing endpoint reused:** `POST /erp/webhooks/netsuite/{org_id}` in [`clearledgr/api/erp_webhooks.py`](../../clearledgr/api/erp_webhooks.py). Verifies HMAC signature against `erp_connections.credentials.webhook_secret`, records audit, then calls the dispatcher.
 - **New dispatcher:** [`clearledgr/services/erp_webhook_dispatch.py`](../../clearledgr/services/erp_webhook_dispatch.py) — routes `vendorbill.create / .update / .paid / .delete` to handlers that create or advance the AP item Box. Idempotent on `erp_reference == ns_internal_id`.
 - **State machine bypass:** ERP-native bills enter the Box state machine at `posted_to_erp` (the bill is already in the ERP — Clearledgr is tracking, not creating) or `needs_approval` (if NetSuite has a payment hold). `closed` on payment events.
-- **Slack approval routing:** [`clearledgr/services/erp_native_approval.py`](../../clearledgr/services/erp_native_approval.py). When a bill enters at `needs_approval`, posts a Slack card with Approve/Reject buttons. Approve calls NetSuite REST API to clear the `paymentHold` flag, then walks the Box through `approved → ready_to_post → posted_to_erp`. Buttons use action IDs prefixed `cl_erp_approve_` / `cl_erp_reject_` so the existing Gmail-bound approve handler in `slack_invoices.py` is untouched.
+- **Slack approval routing:** [`clearledgr/services/erp_native_approval.py`](../../clearledgr/services/erp_native_approval.py). When a bill enters at `needs_approval`, posts a Slack card with Approve / Reject & void buttons.
+  - **Approve** calls NetSuite REST API to clear `paymentHold`, then walks the Box `approved → ready_to_post → posted_to_erp`.
+  - **Reject & void** calls NetSuite's `!transform/void` action (with PATCH `{voided: true}` fallback for accounts that don't expose the transform), then walks the Box `rejected → closed`. Bill stays visible in NetSuite for audit, GL impact reverses cleanly, no manual cleanup.
+  - **Per-amount routing:** reads `settings_json.approval_thresholds` (same shape the email-arrival path uses). Each threshold can specify a `channel`, a list of `approver_targets[].slack_user_id`, and optional `vendors` / `entities` filters. The bill's amount picks the right threshold; matched approvers are mentioned at the top of the card so Slack pings them directly.
+  - Buttons use action IDs prefixed `cl_erp_approve_` / `cl_erp_reject_` so the existing Gmail-bound approve handler in `slack_invoices.py` is untouched.
 
 ---
 
