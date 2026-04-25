@@ -283,10 +283,11 @@ async def netsuite_webhook(
     )
 
     # Dispatch the NetSuite payload into Clearledgr's coordination layer
-    # (create/update/close the corresponding AP item Box). Best-effort —
-    # any failure is logged + audited but does not change the 200 we
-    # return: NetSuite retries on non-2xx, and the "received" audit
-    # event above is enough to reconstruct what happened from logs.
+    # (full pipeline path: enrichment + 3-way match + AP Decision +
+    # Slack routing). Best-effort — any failure is logged + audited but
+    # does not change the 200 we return: NetSuite retries on non-2xx,
+    # and the "received" audit event above is enough to reconstruct
+    # what happened from logs.
     try:
         import json as _json
         from clearledgr.services.erp_webhook_dispatch import dispatch_netsuite_event
@@ -295,7 +296,7 @@ async def netsuite_webhook(
         except (ValueError, UnicodeDecodeError):
             payload_obj = {}
         if payload_obj:
-            dispatch_result = dispatch_netsuite_event(organization_id, payload_obj)
+            dispatch_result = await dispatch_netsuite_event(organization_id, payload_obj)
             logger.info(
                 "netsuite webhook dispatch: org=%s event=%s result=%s",
                 organization_id,

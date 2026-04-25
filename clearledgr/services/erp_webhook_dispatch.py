@@ -1,33 +1,37 @@
-"""Dispatch handlers for ERP-native bill events (NetSuite, SAP, …).
+"""Dispatch handlers for ERP-native bill events (NetSuite).
 
-The webhook endpoints in :mod:`clearledgr.api.erp_webhooks` verify the
-signature and record an audit event. This module is what they call
-*after* verification: parse the payload, extract bill data, and create
-or update a Clearledgr AP item ("Box") so the ERP-arrived bill is
-visible to the rest of the coordination layer (Slack approvals,
-exception queue, vendor profile, etc.).
+The webhook endpoint in :mod:`clearledgr.api.erp_webhooks` verifies
+the HMAC signature and records an audit event, then awaits this
+module's :func:`dispatch_netsuite_event` to do the real work:
 
-This closes the loop on the deck's "ONE TRUTH · MANY WINDOWS" claim:
-a bill that arrives via EDI, vendor portal, or AP-clerk-typed entry
-in NetSuite/SAP — never touching Gmail — still becomes a Box and
-flows through the same coordination pipeline as Gmail-arrived bills.
+1. **On `vendorbill.create`**: fetch enrichment context from NetSuite
+   (vendor record, full bill with line items + GL distribution,
+   linked PO + lines, item-receipts as GRN equivalents, vendor bank
+   history). Upsert PO + GRs into Clearledgr's own stores. Build an
+   :class:`InvoiceData` with ``erp_native=True`` and the channel
+   fields populated. Call ``InvoiceWorkflowService.process_new_invoice``
+   — the bill runs through the same vendor master gate, confidence
+   gate, 3-way match, vendor fraud checks, AP Decision, and Slack
+   approval routing as a Gmail-arrived bill. The ``erp_native`` flag
+   makes ``InvoicePostingMixin._post_to_erp`` short-circuit to
+   "already posted by ERP" — no duplicate writes back into NetSuite.
 
-Phase 1 of ERP-native intake (this module):
+2. **On `vendorbill.update`**: the bill changed in NetSuite. Re-fetch
+   enrichment, re-derive state from the payment-block / status, apply
+   any valid transition. We do NOT re-run the full pipeline — that
+   would re-route the same bill through approval every time the AP
+   clerk edits the memo field. Instead we update fields and apply
+   state transitions only.
 
-* ``vendorbill.create`` → INSERT new AP item; state derived from the
-  bill's payment status. No Slack routing yet — that's Phase 2.
-* ``vendorbill.update`` → re-derive state from the new payment status,
-  apply any valid transition.
-* ``vendorbill.paid`` → transition to ``closed`` (terminal for the
-  successful path).
-* ``vendorbill.delete`` → transition to ``closed`` with a metadata
-  note; we don't drop the row.
+3. **On `vendorbill.paid`**: transition Box to ``closed``.
 
-Idempotency: each handler keys off ``erp_reference == ns_internal_id``.
-Replays of the same event are no-ops.
+4. **On `vendorbill.delete`**: transition Box to ``closed`` with a
+   metadata note.
 
-Failures: handlers log + raise. The webhook route catches and returns
-2xx anyway — ERPs retry, and the audit event is already written.
+Idempotency: the AP-item lookup keys off
+``erp_reference == ns_internal_id``. Replays of the same event are
+no-ops. Out-of-order delivery (paid before created) synthesizes a
+create from the paid payload.
 """
 from __future__ import annotations
 
@@ -38,6 +42,8 @@ from typing import Any, Dict, Optional
 
 from clearledgr.core.ap_states import APState, validate_transition
 from clearledgr.core.database import get_db
+from clearledgr.integrations.erp_router import _erp_connection_from_row
+from clearledgr.services.invoice_models import InvoiceData
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +51,14 @@ logger = logging.getLogger(__name__)
 # ─── Public entrypoint ──────────────────────────────────────────────
 
 
-def dispatch_netsuite_event(organization_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+async def dispatch_netsuite_event(
+    organization_id: str, payload: Dict[str, Any]
+) -> Dict[str, Any]:
     """Route a verified NetSuite webhook payload to the right handler.
 
-    Returns a small status dict for the webhook response body — primarily
-    for our own logs since NetSuite only cares about the status code.
+    Returns a small status dict for the webhook response body —
+    primarily for our own logs since NetSuite only cares about the
+    status code.
     """
     event_type = str(payload.get("event_type") or "").strip().lower()
     bill = payload.get("bill") or {}
@@ -58,101 +67,168 @@ def dispatch_netsuite_event(organization_id: str, payload: Dict[str, Any]) -> Di
         return {"ok": False, "reason": "missing_ns_internal_id"}
 
     if event_type == "vendorbill.create":
-        return _handle_create(organization_id, payload, bill, ns_internal_id)
+        return await _handle_create(organization_id, payload, bill, ns_internal_id)
     if event_type == "vendorbill.update":
-        return _handle_update(organization_id, payload, bill, ns_internal_id)
+        return await _handle_update(organization_id, payload, bill, ns_internal_id)
     if event_type == "vendorbill.paid":
-        return _handle_paid(organization_id, payload, bill, ns_internal_id)
+        return await _handle_paid(organization_id, payload, bill, ns_internal_id)
     if event_type == "vendorbill.delete":
-        return _handle_delete(organization_id, payload, bill, ns_internal_id)
-    # Unknown events are ignored (forward-compat for new event types
-    # NetSuite or our SuiteScript may emit). Audit event is already
-    # written by the webhook route.
+        return await _handle_delete(organization_id, payload, bill, ns_internal_id)
     return {"ok": True, "reason": "ignored_event", "event_type": event_type}
 
 
 # ─── Handlers ───────────────────────────────────────────────────────
 
 
-def _handle_create(
+async def _handle_create(
     organization_id: str,
     envelope: Dict[str, Any],
     bill: Dict[str, Any],
     ns_internal_id: str,
 ) -> Dict[str, Any]:
+    """Full-pipeline path: fetch enrichment + run process_new_invoice."""
     db = get_db()
     existing = db.get_ap_item_by_erp_reference(organization_id, ns_internal_id)
     if existing:
-        # Replay or out-of-order delivery — caller already created the
-        # Box. Forward to update path so any state drift since last sync
-        # gets reconciled.
-        return _handle_update(organization_id, envelope, bill, ns_internal_id, existing=existing)
+        # Replay or out-of-order delivery — we already created this Box.
+        # Forward to update path so any state drift since last sync is
+        # reconciled.
+        return await _handle_update(
+            organization_id, envelope, bill, ns_internal_id, existing=existing,
+        )
 
-    initial_state = _state_from_bill(bill)
-    payload = _ap_item_payload_from_bill(
+    connection = _resolve_netsuite_connection(db, organization_id)
+    if connection is None:
+        # No NetSuite connection on this org — fall back to the thin
+        # path so we at least record the bill arrived. Validation is
+        # impossible without ERP read access, so the Box enters at
+        # `posted_to_erp` (the bill IS in NetSuite) without further
+        # coordination.
+        logger.warning(
+            "erp_webhook_dispatch: no NetSuite connection for org=%s — falling back to thin intake",
+            organization_id,
+        )
+        return _thin_intake(organization_id, envelope, bill, ns_internal_id)
+
+    # ── Enrich from NetSuite ──
+    try:
+        from clearledgr.integrations.erp_netsuite_intake import fetch_intake_context
+        intake = await fetch_intake_context(connection, ns_internal_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "erp_webhook_dispatch: enrichment fetch failed for ns=%s — %s; falling back to thin intake",
+            ns_internal_id, exc,
+        )
+        return _thin_intake(organization_id, envelope, bill, ns_internal_id)
+
+    if not intake.get("bill_header"):
+        logger.warning(
+            "erp_webhook_dispatch: no bill_header from enrichment for ns=%s — falling back to thin intake",
+            ns_internal_id,
+        )
+        return _thin_intake(organization_id, envelope, bill, ns_internal_id)
+
+    # ── Upsert linked PO + GRs into Clearledgr stores ──
+    if intake.get("linked_po"):
+        try:
+            from clearledgr.services.erp_intake_po_sync import upsert_netsuite_po
+            upsert_netsuite_po(
+                organization_id=organization_id,
+                po_payload=intake["linked_po"],
+                po_lines=intake.get("linked_po_lines") or [],
+                item_receipts=intake.get("goods_receipts") or [],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "erp_webhook_dispatch: PO/GR upsert failed for ns=%s — %s "
+                "(pipeline will continue with reduced 3-way-match coverage)",
+                ns_internal_id, exc,
+            )
+
+    # ── Build InvoiceData from enrichment + envelope ──
+    invoice = _build_invoice_data_from_intake(
         organization_id=organization_id,
-        bill=bill,
         envelope=envelope,
+        intake=intake,
+        bill_summary=bill,
         ns_internal_id=ns_internal_id,
-        state=initial_state,
     )
-    item = db.create_ap_item(payload)
-    ap_item_id = str((item or {}).get("id") or payload.get("id") or "").strip()
-    logger.info(
-        "erp_webhook_dispatch: created AP item %s for NetSuite bill %s (org=%s, state=%s)",
-        ap_item_id, ns_internal_id, organization_id, initial_state,
-    )
+
+    # ── Run the full coordination pipeline ──
+    try:
+        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        workflow = get_invoice_workflow(organization_id)
+        result = await workflow.process_new_invoice(invoice)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "erp_webhook_dispatch: process_new_invoice raised for ns=%s — %s",
+            ns_internal_id, exc, exc_info=True,
+        )
+        return {"ok": False, "reason": "pipeline_failed", "error": str(exc)}
+
+    # ── Stamp the resulting AP item with ERP linkage so subsequent
+    # update / paid / delete events can find it via the existing
+    # erp_reference key. ──
+    ap_item_id = _resolve_ap_item_id_from_pipeline_result(db, invoice, result)
+    if ap_item_id:
+        try:
+            db.update_ap_item(
+                ap_item_id,
+                erp_reference=ns_internal_id,
+                _actor_type="erp_webhook",
+                _actor_id="netsuite",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "erp_webhook_dispatch: failed to stamp erp_reference on ap_item=%s — %s",
+                ap_item_id, exc,
+            )
+
     _record_intake_audit(
         organization_id=organization_id,
-        ap_item_id=ap_item_id,
+        ap_item_id=ap_item_id or "",
         envelope=envelope,
         action="created",
-        target_state=initial_state,
+        target_state=str(result.get("state") or ""),
     )
-
-    # Phase 2 of write-direction: if this ERP-native bill landed at
-    # needs_approval (NetSuite-side payment hold present), route to
-    # Slack so an approver can release the hold without leaving Slack.
-    # Best-effort — the Box is created either way; the route is async
-    # and shouldn't block the webhook ACK.
-    if initial_state == APState.NEEDS_APPROVAL.value and ap_item_id:
-        _route_for_approval_async(item or {**payload, "id": ap_item_id})
-
     return {
         "ok": True,
         "action": "created",
         "ap_item_id": ap_item_id,
-        "state": initial_state,
-        "routed_to_slack": initial_state == APState.NEEDS_APPROVAL.value,
+        "state": result.get("state"),
+        "pipeline_status": result.get("status"),
+        "pipeline_reason": result.get("reason"),
     }
 
 
-def _handle_update(
+async def _handle_update(
     organization_id: str,
     envelope: Dict[str, Any],
     bill: Dict[str, Any],
     ns_internal_id: str,
     existing: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Lightweight: refresh ERP-side fields + apply valid state transition.
+    Does NOT re-run the full pipeline (avoids re-routing approvals on
+    every NetSuite memo edit). For payment-block-added-after-creation
+    cases the state derivation flips to needs_approval and the
+    GmailLabelObserver / approval routing fires through the existing
+    state-transition machinery."""
     db = get_db()
     if existing is None:
         existing = db.get_ap_item_by_erp_reference(organization_id, ns_internal_id)
     if not existing:
-        # Update arrived before the create — synthesize the create.
-        return _handle_create(organization_id, envelope, bill, ns_internal_id)
+        return await _handle_create(organization_id, envelope, bill, ns_internal_id)
 
     ap_item_id = str(existing.get("id") or "").strip()
     current_state = str(existing.get("state") or "").strip().lower()
     desired_state = _state_from_bill(bill)
 
-    # Cheap field updates (amount, vendor, due-date, currency may have
-    # changed in NetSuite). Drop anything that's None to avoid clobbering
-    # values we don't have authority over.
     field_updates = {
         k: v for k, v in {
             "vendor_name": bill.get("entity_name") or bill.get("entity_id"),
             "amount": bill.get("amount"),
-            "currency": (bill.get("currency") or "").upper() or None,
+            "currency": (str(bill.get("currency") or "").upper() or None),
             "invoice_number": bill.get("invoice_number"),
             "due_date": bill.get("due_date"),
         }.items()
@@ -172,7 +248,10 @@ def _handle_update(
                 "erp_webhook_dispatch: update failed ap_item=%s ns_id=%s — %s",
                 ap_item_id, ns_internal_id, exc,
             )
-            return {"ok": False, "action": "update_failed", "ap_item_id": ap_item_id, "reason": str(exc)}
+            return {
+                "ok": False, "action": "update_failed",
+                "ap_item_id": ap_item_id, "reason": str(exc),
+            }
 
     target_state_for_audit = field_updates.get("state") or current_state
     _record_intake_audit(
@@ -182,28 +261,14 @@ def _handle_update(
         action="updated",
         target_state=target_state_for_audit,
     )
-
-    # Same Slack-routing trigger as create: if this update transitioned
-    # the Box INTO needs_approval (e.g., NetSuite added a payment hold
-    # after the fact), post the approval card. The approval module's
-    # idempotency guard prevents duplicate cards.
-    if (
-        field_updates.get("state") == APState.NEEDS_APPROVAL.value
-        and current_state != APState.NEEDS_APPROVAL.value
-    ):
-        refreshed = db.get_ap_item(ap_item_id) if hasattr(db, "get_ap_item") else None
-        _route_for_approval_async(refreshed or existing)
-
     return {
-        "ok": True,
-        "action": "updated",
-        "ap_item_id": ap_item_id,
-        "state": target_state_for_audit,
+        "ok": True, "action": "updated",
+        "ap_item_id": ap_item_id, "state": target_state_for_audit,
         "fields_updated": [k for k in field_updates.keys() if not k.startswith("_")],
     }
 
 
-def _handle_paid(
+async def _handle_paid(
     organization_id: str,
     envelope: Dict[str, Any],
     bill: Dict[str, Any],
@@ -212,46 +277,43 @@ def _handle_paid(
     db = get_db()
     existing = db.get_ap_item_by_erp_reference(organization_id, ns_internal_id)
     if not existing:
-        # Paid event for a bill we never saw — synthesize the create
-        # in a paid-already shape so we have a record.
         envelope_with_paid_bill = dict(envelope)
         envelope_with_paid_bill["bill"] = {**bill, "status_label": "Paid In Full"}
-        return _handle_create(organization_id, envelope_with_paid_bill, envelope_with_paid_bill["bill"], ns_internal_id)
-
+        return await _handle_create(
+            organization_id, envelope_with_paid_bill, envelope_with_paid_bill["bill"], ns_internal_id,
+        )
     ap_item_id = str(existing.get("id") or "").strip()
     current_state = str(existing.get("state") or "").strip().lower()
     if current_state == APState.CLOSED.value:
         return {"ok": True, "action": "noop_already_closed", "ap_item_id": ap_item_id}
     if not validate_transition(current_state, APState.CLOSED.value):
+        # Race condition: bill was paid in NetSuite while Clearledgr's
+        # Box was in a state that doesn't normally close (e.g. NEEDS_INFO
+        # → CLOSED is allowed; NEEDS_APPROVAL → CLOSED is allowed). If
+        # we land here it's a real state-machine gap; surface clearly.
         logger.warning(
             "erp_webhook_dispatch: paid event but %s → closed is not a valid transition (ap_item=%s)",
             current_state, ap_item_id,
         )
-        return {"ok": False, "action": "invalid_transition", "ap_item_id": ap_item_id, "from": current_state}
+        return {
+            "ok": False, "action": "invalid_transition",
+            "ap_item_id": ap_item_id, "from": current_state,
+        }
     try:
         db.update_ap_item(
-            ap_item_id,
-            state=APState.CLOSED.value,
-            _actor_type="erp_webhook",
-            _actor_id="netsuite",
+            ap_item_id, state=APState.CLOSED.value,
+            _actor_type="erp_webhook", _actor_id="netsuite",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "erp_webhook_dispatch: paid → closed update failed ap_item=%s — %s",
-            ap_item_id, exc,
-        )
-        return {"ok": False, "action": "close_failed", "ap_item_id": ap_item_id}
+        return {"ok": False, "action": "close_failed", "ap_item_id": ap_item_id, "error": str(exc)}
     _record_intake_audit(
-        organization_id=organization_id,
-        ap_item_id=ap_item_id,
-        envelope=envelope,
-        action="paid_closed",
-        target_state=APState.CLOSED.value,
+        organization_id=organization_id, ap_item_id=ap_item_id,
+        envelope=envelope, action="paid_closed", target_state=APState.CLOSED.value,
     )
     return {"ok": True, "action": "closed", "ap_item_id": ap_item_id, "state": APState.CLOSED.value}
 
 
-def _handle_delete(
+async def _handle_delete(
     organization_id: str,
     envelope: Dict[str, Any],
     bill: Dict[str, Any],
@@ -268,37 +330,191 @@ def _handle_delete(
     if validate_transition(current_state, APState.CLOSED.value):
         try:
             db.update_ap_item(
-                ap_item_id,
-                state=APState.CLOSED.value,
-                _actor_type="erp_webhook",
-                _actor_id="netsuite",
+                ap_item_id, state=APState.CLOSED.value,
+                _actor_type="erp_webhook", _actor_id="netsuite",
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("erp_webhook_dispatch: delete → close failed: %s", exc)
             return {"ok": False, "action": "close_failed", "ap_item_id": ap_item_id}
     _record_intake_audit(
-        organization_id=organization_id,
-        ap_item_id=ap_item_id,
-        envelope=envelope,
-        action="deleted_in_erp",
-        target_state=APState.CLOSED.value,
+        organization_id=organization_id, ap_item_id=ap_item_id,
+        envelope=envelope, action="deleted_in_erp", target_state=APState.CLOSED.value,
     )
     return {"ok": True, "action": "closed_via_delete", "ap_item_id": ap_item_id}
+
+
+# ─── InvoiceData construction from enrichment ──────────────────────
+
+
+def _build_invoice_data_from_intake(
+    *,
+    organization_id: str,
+    envelope: Dict[str, Any],
+    intake: Dict[str, Any],
+    bill_summary: Dict[str, Any],
+    ns_internal_id: str,
+) -> InvoiceData:
+    """Map NetSuite enrichment payload onto an InvoiceData ready for
+    process_new_invoice. ERP-native flag set; field_confidences seeded
+    at 1.0 since the ERP-extracted values are authoritative."""
+    header = intake.get("bill_header") or {}
+    bill_lines = intake.get("bill_lines") or []
+    expense_lines = intake.get("expense_lines") or []
+    vendor = intake.get("vendor") or {}
+    bank_history = intake.get("vendor_bank_history") or []
+
+    # Pull primary vendor email from the vendor record if available;
+    # otherwise fall back to the synthetic erp-native sender so the
+    # vendor-domain trust observer can be turned back on later
+    # without code changes (see Phase A guard).
+    vendor_email = ""
+    if isinstance(vendor, dict):
+        vendor_email = str(vendor.get("email") or "").strip()
+    sender = vendor_email or f"{header.get('vendor_name') or 'vendor'} <netsuite@erp-native>"
+
+    # Bank details — most-recent / default entry from the vendor record.
+    primary_bank = next(
+        (b for b in bank_history if b.get("is_default")),
+        bank_history[0] if bank_history else None,
+    )
+    bank_details = None
+    if primary_bank:
+        bank_details = {
+            "iban": primary_bank.get("iban"),
+            "account_number": primary_bank.get("account_number"),
+            "swift": primary_bank.get("swift"),
+            "bank_name": primary_bank.get("bank_name"),
+        }
+        bank_details = {k: v for k, v in bank_details.items() if v}
+
+    # Line items — combine item lines + expense lines into the
+    # uniform shape the validation pipeline expects.
+    line_items: list = []
+    for line in bill_lines:
+        line_items.append({
+            "description": line.get("description") or line.get("item_name") or "",
+            "quantity": _safe_float(line.get("quantity")),
+            "unit_price": _safe_float(line.get("unit_price")),
+            "amount": _safe_float(line.get("amount")),
+            "gl_code": line.get("gl_code"),
+            "tax_amount": _safe_float(line.get("tax_amount")),
+        })
+    for exp in expense_lines:
+        line_items.append({
+            "description": exp.get("description") or "",
+            "amount": _safe_float(exp.get("amount")),
+            "gl_code": exp.get("gl_code"),
+        })
+
+    # PO number — first PO referenced by any line. Multi-PO bills
+    # surface as an exception in 3-way match.
+    po_number = ""
+    for line in bill_lines:
+        candidate = str(line.get("po_number") or "").strip()
+        if candidate:
+            po_number = candidate
+            break
+
+    # Field confidences seeded at 1.0 — ERP-extracted fields are
+    # authoritative. The confidence gate runs but treats every field
+    # as fully trusted.
+    field_confidences = {
+        "vendor_name": 1.0, "amount": 1.0, "currency": 1.0,
+        "invoice_number": 1.0, "invoice_date": 1.0, "due_date": 1.0,
+        "po_number": 1.0 if po_number else 0.0,
+    }
+
+    erp_metadata = {
+        "ns_internal_id": ns_internal_id,
+        "ns_account_id": str(envelope.get("account_id") or "").strip(),
+        "ns_subsidiary_id": header.get("subsidiary_id"),
+        "ns_subsidiary_name": header.get("subsidiary_name"),
+        "ns_status": header.get("status"),
+        "ns_approval_status": header.get("approval_status"),
+        "ns_payment_hold": header.get("payment_hold"),
+        "ns_external_id": header.get("external_id"),
+        "ns_event_id": envelope.get("event_id"),
+        "ns_po_internal_id": (
+            (intake.get("linked_po") or {}).get("id")
+            if isinstance(intake.get("linked_po"), dict) else None
+        ),
+        "ns_item_receipt_ids": [
+            str((rec or {}).get("id") or "")
+            for rec in (intake.get("goods_receipts") or [])
+        ],
+    }
+    erp_metadata = {k: v for k, v in erp_metadata.items() if v not in (None, "")}
+
+    return InvoiceData(
+        source_type="netsuite",
+        source_id=ns_internal_id,
+        erp_native=True,
+        erp_metadata=erp_metadata,
+        # Other fields
+        subject=f"NetSuite Bill {header.get('tran_id') or ns_internal_id} — {header.get('vendor_name') or 'vendor'}",
+        sender=sender,
+        vendor_name=header.get("vendor_name") or bill_summary.get("entity_name") or "Unknown vendor",
+        amount=_safe_float(header.get("amount") or bill_summary.get("amount"), default=0.0),
+        currency=str(header.get("currency_id") or bill_summary.get("currency") or "USD").upper(),
+        invoice_number=str(header.get("tran_id") or bill_summary.get("invoice_number") or "").strip() or ns_internal_id,
+        due_date=str(header.get("due_date") or bill_summary.get("due_date") or "").strip() or None,
+        po_number=po_number or None,
+        confidence=1.0,
+        bank_details=bank_details,
+        line_items=line_items or None,
+        field_confidences=field_confidences,
+        organization_id=organization_id,
+        correlation_id=f"erp-intake:{envelope.get('event_id') or ns_internal_id}",
+        tax_amount=_safe_float(header.get("tax_amount")) or None,
+        subtotal=_safe_float(header.get("subtotal")) or None,
+    )
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
 
 
+def _safe_float(value: Any, *, default: Optional[float] = None) -> Optional[float]:
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_netsuite_connection(db: Any, organization_id: str):
+    if not hasattr(db, "get_erp_connections"):
+        return None
+    try:
+        for row in db.get_erp_connections(organization_id):
+            if str(row.get("erp_type") or "").lower() == "netsuite":
+                return _erp_connection_from_row(row)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("erp_webhook_dispatch: connection lookup failed — %s", exc)
+    return None
+
+
+def _resolve_ap_item_id_from_pipeline_result(
+    db: Any, invoice: InvoiceData, result: Dict[str, Any]
+) -> str:
+    candidate = str(result.get("ap_item_id") or "").strip()
+    if candidate:
+        return candidate
+    # Fall back to looking up by gmail_id (which for ERP-native is the
+    # synthetic source_id) — that's the canonical idempotency key.
+    if hasattr(db, "get_invoice_status"):
+        try:
+            row = db.get_invoice_status(invoice.gmail_id)
+            if row:
+                return str(row.get("ap_item_id") or "").strip()
+        except Exception:
+            pass
+    return ""
+
+
 def _state_from_bill(bill: Dict[str, Any]) -> str:
-    """Derive the right AP state from a NetSuite vendor-bill payload.
-
-    Mapping (Phase 1):
-
-    - Status "Paid In Full" → ``closed``
-    - Payment hold set → ``needs_approval``
-    - Otherwise → ``posted_to_erp``  (the bill IS in NetSuite — Clearledgr
-      is tracking it, not creating it; "posted" is the right semantic.)
-    """
+    """Lightweight state derivation for the update / paid / delete paths
+    (NOT the create path — create runs the full pipeline whose
+    AP-Decision determines state)."""
     status_label = str(bill.get("status_label") or bill.get("status") or "").strip().lower()
     if "paid" in status_label and "in full" in status_label:
         return APState.CLOSED.value
@@ -308,107 +524,59 @@ def _state_from_bill(bill: Dict[str, Any]) -> str:
     return APState.POSTED_TO_ERP.value
 
 
-def _ap_item_payload_from_bill(
-    *,
+def _thin_intake(
     organization_id: str,
-    bill: Dict[str, Any],
     envelope: Dict[str, Any],
+    bill: Dict[str, Any],
     ns_internal_id: str,
-    state: str,
 ) -> Dict[str, Any]:
-    """Construct an ``ap_items`` INSERT payload from a NetSuite bill blob."""
-    metadata = {
-        "source": "netsuite_native",
-        "ns_account_id": str(envelope.get("account_id") or "").strip(),
-        "ns_subsidiary_id": bill.get("subsidiary_id"),
-        "ns_status_label": bill.get("status_label"),
-        "ns_payment_hold": bill.get("payment_hold"),
-        "ns_approval_status": bill.get("approval_status"),
-        "ns_external_id": bill.get("external_id"),
-        "ns_event_id": envelope.get("event_id"),
-    }
-    # Filter out None metadata so the JSON stays small.
-    metadata = {k: v for k, v in metadata.items() if v not in (None, "")}
+    """Fallback path for orgs without a configured NetSuite connection.
 
-    amount = bill.get("amount")
-    try:
-        amount_val = float(amount) if amount not in (None, "") else None
-    except (TypeError, ValueError):
-        amount_val = None
-
-    return {
-        "thread_id": None,  # ERP-native bills don't have an email thread
-        "message_id": None,
-        "subject": _bill_subject(bill),
-        "sender": _bill_sender(bill),
+    We can't enrich (no OAuth tokens) so we can't run the full pipeline.
+    Record what we know directly into ap_items so the bill at least
+    appears in the queue. This is the pre-Phase-B behaviour preserved
+    as a safety net — operators see *something* even when the
+    connection is misconfigured.
+    """
+    db = get_db()
+    initial_state = _state_from_bill(bill)
+    payload = {
+        "thread_id": None,
+        "subject": f"NetSuite Bill {bill.get('invoice_number') or bill.get('tran_id') or ns_internal_id} — {bill.get('entity_name') or 'vendor'}",
+        "sender": f"{bill.get('entity_name') or 'vendor'} <netsuite@erp-native>",
         "vendor_name": bill.get("entity_name") or bill.get("entity_id") or "Unknown vendor",
-        "amount": amount_val,
+        "amount": bill.get("amount"),
         "currency": (str(bill.get("currency") or "USD")).upper(),
         "invoice_number": bill.get("invoice_number") or bill.get("tran_id"),
         "invoice_date": bill.get("tran_date"),
         "due_date": bill.get("due_date"),
-        "state": state,
-        "confidence": 1.0,  # ERP-extracted fields are authoritative; we trust them
-        "approval_required": state == APState.NEEDS_APPROVAL.value,
+        "state": initial_state,
+        "confidence": 1.0,
+        "approval_required": initial_state == APState.NEEDS_APPROVAL.value,
         "erp_reference": ns_internal_id,
-        "erp_posted_at": datetime.now(timezone.utc).isoformat() if state == APState.POSTED_TO_ERP.value else None,
+        "erp_posted_at": datetime.now(timezone.utc).isoformat() if initial_state == APState.POSTED_TO_ERP.value else None,
         "organization_id": organization_id,
-        "approval_surface": "slack",  # ERP-native flows route to Slack/Teams by default
-        "metadata": metadata,
+        "approval_surface": "slack",
+        "metadata": {
+            "source": "netsuite_native",
+            "ns_account_id": str(envelope.get("account_id") or "").strip(),
+            "fallback_thin_intake": True,
+            "fallback_reason": "no_netsuite_connection_for_org",
+        },
         "document_type": "invoice",
     }
-
-
-def _bill_subject(bill: Dict[str, Any]) -> str:
-    inv = bill.get("invoice_number") or bill.get("tran_id") or ""
-    vendor = bill.get("entity_name") or bill.get("entity_id") or "vendor"
-    if inv:
-        return f"NetSuite Bill {inv} — {vendor}"
-    return f"NetSuite Bill — {vendor}"
-
-
-def _bill_sender(bill: Dict[str, Any]) -> str:
-    vendor = bill.get("entity_name") or bill.get("entity_id") or "vendor"
-    return f"{vendor} <netsuite@erp-native>"
-
-
-def _route_for_approval_async(ap_item: Dict[str, Any]) -> None:
-    """Fire-and-forget Slack approval routing for an ERP-native AP item.
-
-    Webhook handlers are sync (FastAPI BaseHTTPMiddleware path); the
-    approval routing is async (Slack API + DB writes). We can't
-    ``await`` here without restructuring the whole webhook pipeline,
-    so we schedule the coroutine on the running loop and let it
-    complete in the background. If there's no running loop (pytest in
-    sync mode, etc.), we fall back to a brand-new loop in a thread.
-    """
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-
-    if not ap_item:
-        return
-    try:
-        from clearledgr.services.erp_native_approval import route_for_approval
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("erp_webhook_dispatch: approval module import failed — %s", exc)
-        return
-
-    async def _runner():
-        try:
-            await route_for_approval(ap_item)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "erp_webhook_dispatch: route_for_approval raised for ap_item=%s — %s",
-                ap_item.get("id"), exc,
-            )
-
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_runner())
-    except RuntimeError:
-        # No running loop. Spin up a single-shot worker.
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(asyncio.run, _runner())
+    item = db.create_ap_item(payload)
+    ap_item_id = str((item or {}).get("id") or "").strip()
+    _record_intake_audit(
+        organization_id=organization_id, ap_item_id=ap_item_id,
+        envelope=envelope, action="created_thin_intake_fallback",
+        target_state=initial_state,
+    )
+    return {
+        "ok": True, "action": "created_thin",
+        "ap_item_id": ap_item_id, "state": initial_state,
+        "fallback": "no_connection",
+    }
 
 
 def _record_intake_audit(
@@ -419,13 +587,6 @@ def _record_intake_audit(
     action: str,
     target_state: str,
 ) -> None:
-    """Best-effort audit event for the ERP-native intake transition.
-
-    Already-recorded ``erp_webhook_received`` audit (in the webhook
-    route) covers the inbound HTTP call. This event covers the
-    business-side action — what the dispatch *did* with the payload,
-    so the timeline reads cleanly in the panel and the admin console.
-    """
     if not ap_item_id:
         return
     db = get_db()
@@ -433,13 +594,10 @@ def _record_intake_audit(
         return
     try:
         db.record_audit_event(
-            actor_id="netsuite",
-            actor_type="erp_webhook",
+            actor_id="netsuite", actor_type="erp_webhook",
             action=f"erp_native_intake.{action}",
-            box_id=ap_item_id,
-            box_type="ap_item",
-            entity_type="ap_item",
-            entity_id=ap_item_id,
+            box_id=ap_item_id, box_type="ap_item",
+            entity_type="ap_item", entity_id=ap_item_id,
             organization_id=organization_id,
             metadata={
                 "target_state": target_state,

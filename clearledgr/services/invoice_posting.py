@@ -1437,7 +1437,40 @@ class InvoicePostingMixin:
         Enforces state guard (PLAN.md S4.6-1): posting only from ``ready_to_post``.
         Enforces mandatory idempotency key (PLAN.md S7.3-1): generates one if
         the caller did not provide one.
+
+        ERP-native short-circuit (Phase D of intake refactor): when
+        ``invoice.erp_native`` is True the bill is already in the ERP —
+        the customer's own AP team or an EDI gateway posted it before
+        we ever saw it. Calling ``post_bill_to_*`` again would create
+        a duplicate. We fabricate a successful PostResult shape with
+        the existing ``erp_reference`` so the downstream state
+        transition path runs unchanged but no actual ERP write
+        happens.
         """
+        if getattr(invoice, "erp_native", False):
+            ap_item_id_native = self._lookup_ap_item_id(
+                gmail_id=invoice.gmail_id,
+                vendor_name=invoice.vendor_name,
+                invoice_number=invoice.invoice_number,
+            )
+            existing_native = self.db.get_ap_item(ap_item_id_native) if ap_item_id_native else None
+            erp_reference_native = (
+                str((existing_native or {}).get("erp_reference") or "").strip()
+                or str(getattr(invoice, "source_id", "") or "").strip()
+            )
+            erp_metadata = getattr(invoice, "erp_metadata", None) or {}
+            return {
+                "status": "success",
+                "erp": str(getattr(invoice, "source_type", "") or "").replace("_native", "") or "erp_native",
+                "erp_reference": erp_reference_native,
+                "ap_item_id": ap_item_id_native,
+                "invoice_id": invoice.gmail_id,
+                "posted_by_erp_native": True,
+                "skipped_post": True,
+                "skip_reason": "erp_native_already_posted",
+                "erp_metadata": erp_metadata,
+            }
+
         # B2: State guard — only post from ready_to_post (PLAN.md S4.6)
         ap_item_id = self._lookup_ap_item_id(
             gmail_id=invoice.gmail_id,
