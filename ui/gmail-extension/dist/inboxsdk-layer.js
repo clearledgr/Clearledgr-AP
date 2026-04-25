@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:af4151ea58463bf1ca99828fdf43a6631c06ad524e0d5a108dc0d26336410068 */
+/* clearledgr-source-fingerprint:088ace59818a3072e27059d6d3d10a9143b0e9aa2180a73a15e4119e165a14e4 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -76376,6 +76376,7 @@ Reason (required — logged to the audit trail):`) : null;
           } catch (_2) {}
         }
         if (item && typeof threadView.addNoticeBar === "function") {
+          injectExceptionBanner(threadView, item);
           injectInvoiceBanner(threadView, item);
         }
         threadView.on("destroy", () => {
@@ -76452,6 +76453,98 @@ Reason (required — logged to the audit trail):`) : null;
         openItemInPipeline(item, "thread_banner");
       });
       el.appendChild(openBtn);
+    }
+    threadView.addNoticeBar({ el });
+  }
+  function _itemHasActiveException(item) {
+    if (!item)
+      return false;
+    if (item.exception_code)
+      return true;
+    if (item.requires_field_review)
+      return true;
+    const blockers = Array.isArray(item.field_review_blockers) ? item.field_review_blockers : [];
+    if (blockers.length > 0)
+      return true;
+    const pipelineBlockers = Array.isArray(item.pipeline_blockers) ? item.pipeline_blockers : [];
+    if (pipelineBlockers.length > 0)
+      return true;
+    return false;
+  }
+  function _humanizeExceptionCode(code) {
+    if (!code)
+      return "Exception raised";
+    return String(code).replace(/_/g, " ").replace(/\b\w/g, (c3) => c3.toUpperCase());
+  }
+  function _exceptionSeverityConfig(severity) {
+    const sev = String(severity || "").toLowerCase();
+    if (sev === "critical")
+      return { bg: "#fef2f2", border: "#dc2626", text: "#991b1b", label: "Critical" };
+    if (sev === "high")
+      return { bg: "#fef9ee", border: "#ea580c", text: "#9a3412", label: "High" };
+    if (sev === "medium")
+      return { bg: "#fefce8", border: "#ca8a04", text: "#854d0e", label: "Medium" };
+    if (sev === "low")
+      return { bg: "#f0fdf4", border: "#16a34a", text: "#166534", label: "Low" };
+    return { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Exception" };
+  }
+  function injectExceptionBanner(threadView, item) {
+    if (!_itemHasActiveException(item))
+      return;
+    if (typeof threadView.addNoticeBar !== "function")
+      return;
+    const cfg = _exceptionSeverityConfig(item.exception_severity);
+    const headline = _humanizeExceptionCode(item.exception_code) || (item.requires_field_review ? "Field review required" : "Exception raised");
+    const fieldBlockers = (Array.isArray(item.field_review_blockers) ? item.field_review_blockers : []).slice(0, 3).map((b) => {
+      if (!b)
+        return "";
+      const field = String(b.field_name || b.field || "").replace(/_/g, " ");
+      const reason = String(b.reason || b.message || "").replace(/_/g, " ");
+      if (field && reason)
+        return `${field}: ${reason}`;
+      return field || reason;
+    }).filter(Boolean);
+    const el = document.createElement("div");
+    el.style.cssText = `
+    display:flex; align-items:flex-start; gap:12px; padding:10px 16px;
+    background:${cfg.bg}; border-left:3px solid ${cfg.border};
+    font-family:Inter,-apple-system,system-ui,sans-serif; font-size:13px; color:${cfg.text};
+  `;
+    const left = document.createElement("div");
+    left.style.cssText = "flex:1; display:flex; flex-direction:column; gap:4px;";
+    const titleRow = document.createElement("div");
+    titleRow.style.cssText = "display:flex; align-items:center; gap:8px;";
+    const sevPill = document.createElement("span");
+    sevPill.style.cssText = `
+    font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px;
+    background:${cfg.border}20; color:${cfg.text}; text-transform:uppercase; letter-spacing:0.02em;
+  `;
+    sevPill.textContent = cfg.label;
+    titleRow.appendChild(sevPill);
+    const title = document.createElement("span");
+    title.style.cssText = "font-weight:600;";
+    title.textContent = headline;
+    titleRow.appendChild(title);
+    left.appendChild(titleRow);
+    if (fieldBlockers.length > 0) {
+      const list = document.createElement("div");
+      list.style.cssText = "font-size:12px; opacity:0.9;";
+      list.textContent = fieldBlockers.join(" • ");
+      left.appendChild(list);
+    }
+    el.appendChild(left);
+    if (item?.id) {
+      const detailsBtn = document.createElement("button");
+      detailsBtn.textContent = "View details";
+      detailsBtn.style.cssText = `
+      align-self:center; border:1px solid ${cfg.border}; border-radius:6px;
+      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
+      background:transparent; color:${cfg.text}; font-family:inherit;
+    `;
+      detailsBtn.addEventListener("click", () => {
+        openItemInPipeline(item, "thread_exception_banner");
+      });
+      el.appendChild(detailsBtn);
     }
     threadView.addNoticeBar({ el });
   }

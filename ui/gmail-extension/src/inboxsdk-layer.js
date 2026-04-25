@@ -807,8 +807,12 @@ function registerThreadHandler() {
           } catch (_) { /* no finance record for this thread — that's fine */ }
         }
 
-        // Inject thread-top banner for finance-record threads (Mixmax-style)
+        // Inject thread-top banner for finance-record threads (Mixmax-style).
+        // The exception banner stacks ABOVE the state banner when there's
+        // an active exception, so the most actionable signal is closest
+        // to the message body.
         if (item && typeof threadView.addNoticeBar === 'function') {
+          injectExceptionBanner(threadView, item);
           injectInvoiceBanner(threadView, item);
         }
 
@@ -898,6 +902,123 @@ function injectInvoiceBanner(threadView, item) {
       openItemInPipeline(item, 'thread_banner');
     });
     el.appendChild(openBtn);
+  }
+
+  threadView.addNoticeBar({ el });
+}
+
+// Phase 3.1: contextual exception banner. Renders above the state banner
+// when the AP item has an active exception (exception_code set, or
+// requires_field_review, or non-empty field_review_blockers). The intent
+// is to surface "what's blocking this thread, and why" inline in the
+// Gmail message view so the user doesn't have to leave Gmail to find
+// out what an Exception means. Streak/Fyxer-style: invisible AI, native
+// Gmail primitives.
+function _itemHasActiveException(item) {
+  if (!item) return false;
+  if (item.exception_code) return true;
+  if (item.requires_field_review) return true;
+  const blockers = Array.isArray(item.field_review_blockers)
+    ? item.field_review_blockers
+    : [];
+  if (blockers.length > 0) return true;
+  const pipelineBlockers = Array.isArray(item.pipeline_blockers)
+    ? item.pipeline_blockers
+    : [];
+  if (pipelineBlockers.length > 0) return true;
+  return false;
+}
+
+function _humanizeExceptionCode(code) {
+  if (!code) return 'Exception raised';
+  // Match the snake_case → Title-Case pattern used by ThreadSidebar's
+  // humanizeEventType so banner copy stays consistent with the timeline.
+  return String(code)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function _exceptionSeverityConfig(severity) {
+  const sev = String(severity || '').toLowerCase();
+  if (sev === 'critical') return { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'Critical' };
+  if (sev === 'high')     return { bg: '#fef9ee', border: '#ea580c', text: '#9a3412', label: 'High' };
+  if (sev === 'medium')   return { bg: '#fefce8', border: '#ca8a04', text: '#854d0e', label: 'Medium' };
+  if (sev === 'low')      return { bg: '#f0fdf4', border: '#16a34a', text: '#166534', label: 'Low' };
+  // No declared severity but we know there's an exception — render in
+  // the same warning palette as the state banner uses for needs_info.
+  return { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Exception' };
+}
+
+function injectExceptionBanner(threadView, item) {
+  if (!_itemHasActiveException(item)) return;
+  if (typeof threadView.addNoticeBar !== 'function') return;
+
+  const cfg = _exceptionSeverityConfig(item.exception_severity);
+  const headline = _humanizeExceptionCode(item.exception_code)
+    || (item.requires_field_review ? 'Field review required' : 'Exception raised');
+
+  // Up to 3 most relevant blocker bullets — anything more belongs in
+  // the sidebar's full Exceptions section so the banner stays scannable.
+  const fieldBlockers = (Array.isArray(item.field_review_blockers) ? item.field_review_blockers : [])
+    .slice(0, 3)
+    .map((b) => {
+      if (!b) return '';
+      const field = String(b.field_name || b.field || '').replace(/_/g, ' ');
+      const reason = String(b.reason || b.message || '').replace(/_/g, ' ');
+      if (field && reason) return `${field}: ${reason}`;
+      return field || reason;
+    })
+    .filter(Boolean);
+
+  const el = document.createElement('div');
+  el.style.cssText = `
+    display:flex; align-items:flex-start; gap:12px; padding:10px 16px;
+    background:${cfg.bg}; border-left:3px solid ${cfg.border};
+    font-family:Inter,-apple-system,system-ui,sans-serif; font-size:13px; color:${cfg.text};
+  `;
+
+  const left = document.createElement('div');
+  left.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:4px;';
+
+  const titleRow = document.createElement('div');
+  titleRow.style.cssText = 'display:flex; align-items:center; gap:8px;';
+  const sevPill = document.createElement('span');
+  sevPill.style.cssText = `
+    font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px;
+    background:${cfg.border}20; color:${cfg.text}; text-transform:uppercase; letter-spacing:0.02em;
+  `;
+  sevPill.textContent = cfg.label;
+  titleRow.appendChild(sevPill);
+  const title = document.createElement('span');
+  title.style.cssText = 'font-weight:600;';
+  title.textContent = headline;
+  titleRow.appendChild(title);
+  left.appendChild(titleRow);
+
+  if (fieldBlockers.length > 0) {
+    const list = document.createElement('div');
+    list.style.cssText = 'font-size:12px; opacity:0.9;';
+    list.textContent = fieldBlockers.join(' • ');
+    left.appendChild(list);
+  }
+
+  el.appendChild(left);
+
+  if (item?.id) {
+    const detailsBtn = document.createElement('button');
+    detailsBtn.textContent = 'View details';
+    detailsBtn.style.cssText = `
+      align-self:center; border:1px solid ${cfg.border}; border-radius:6px;
+      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
+      background:transparent; color:${cfg.text}; font-family:inherit;
+    `;
+    // The sidebar is already open and bound to this thread; the click
+    // routes through the same intent the Exceptions tab uses, so
+    // clicking from the banner lands at the same context.
+    detailsBtn.addEventListener('click', () => {
+      openItemInPipeline(item, 'thread_exception_banner');
+    });
+    el.appendChild(detailsBtn);
   }
 
   threadView.addNoticeBar({ el });
