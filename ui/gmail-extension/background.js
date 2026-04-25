@@ -363,14 +363,9 @@ function launchWebAuthFlow() {
     authUrl.searchParams.set('redirect_uri', redirectUrl);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('access_type', 'offline');
+    authUrl.searchParams.set('prompt', 'consent');
     authUrl.searchParams.set('scope', OAUTH_CONFIG.scopes.join(' '));
-    // Note: deliberately NOT setting `prompt=consent` and
-    // `include_granted_scopes=true` — that combination interacted
-    // poorly with our Web Application OAuth client and Google
-    // returned `invalid_grant: Bad Request` from the token endpoint
-    // even though the auth phase succeeded. Letting Google manage
-    // re-prompting (it does so automatically when scopes change or
-    // the grant is stale) keeps the simpler, more-tolerated flow.
+    authUrl.searchParams.set('include_granted_scopes', 'true');
 
     chrome.identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true }, (responseUrl) => {
       if (chrome.runtime.lastError) {
