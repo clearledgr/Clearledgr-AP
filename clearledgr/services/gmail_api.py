@@ -897,10 +897,31 @@ async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None
     if oauth["client_secret"]:
         payload["client_secret"] = oauth["client_secret"]
 
+    # TEMP DIAG: log redacted payload + raw Google response body to
+    # diagnose the persistent invalid_grant: Bad Request. Remove once
+    # root cause identified.
+    _diag_payload = {
+        "client_id": oauth["client_id"],
+        "client_id_len": len(oauth["client_id"] or ""),
+        "client_secret_set": bool(oauth["client_secret"]),
+        "client_secret_len": len(oauth["client_secret"] or ""),
+        "client_secret_last4": (oauth["client_secret"] or "")[-4:],
+        "code_len": len(code or ""),
+        "code_prefix": (code or "")[:6],
+        "redirect_uri": resolved_redirect_uri,
+    }
+    logger.warning("EXCHANGE_DIAG_REQUEST: %s", _diag_payload)
+
     client = get_http_client()
     response = await client.post(
         OAUTH_TOKEN_URL,
         data=payload,
+    )
+    logger.warning(
+        "EXCHANGE_DIAG_RESPONSE: status=%s body=%r headers=%r",
+        response.status_code,
+        response.text[:500],
+        dict(response.headers),
     )
     if response.status_code >= 400:
         # Surface Google's actual error reason ("invalid_grant",
