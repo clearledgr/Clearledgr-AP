@@ -678,6 +678,42 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         background_tasks.add_task(_handle_send_chase_now, db, _chase_session_id, payload)
         return {"response_type": "ephemeral", "text": "Chase sent immediately."}
 
+    # ERP-native bill approvals (NetSuite-arrived bills with payment
+    # holds — see clearledgr/services/erp_native_approval.py). Action
+    # IDs are prefixed cl_erp_approve_<ap_item_id> / cl_erp_reject_<ap_item_id>.
+    # Dispatched to a separate module so the Gmail-bound approve_invoice
+    # handler below stays unchanged.
+    if _chase_action_id.startswith("cl_erp_approve_") or _chase_action_id.startswith("cl_erp_reject_"):
+        from clearledgr.services.erp_native_approval import (
+            SLACK_ACTION_APPROVE,
+            SLACK_ACTION_REJECT,
+            handle_slack_decision,
+        )
+        decision = "approve" if _chase_action_id.startswith(SLACK_ACTION_APPROVE) else "reject"
+        ap_item_id_from_action = _chase_action_id.replace(f"{SLACK_ACTION_APPROVE}_", "").replace(f"{SLACK_ACTION_REJECT}_", "").strip()
+        if not ap_item_id_from_action and _chase_session_id.startswith("{"):
+            try:
+                parsed = json.loads(_chase_session_id)
+                ap_item_id_from_action = str(parsed.get("ap_item_id") or "").strip()
+            except Exception:
+                ap_item_id_from_action = ""
+        slack_user = (payload.get("user") or {}) if isinstance(payload.get("user"), dict) else {}
+        actor_payload = {
+            "actor_id": str(slack_user.get("id") or "").strip() or "slack_user",
+            "actor_email": str(slack_user.get("email") or slack_user.get("username") or "").strip() or None,
+        }
+        result = await handle_slack_decision(
+            ap_item_id=ap_item_id_from_action,
+            decision=decision,
+            actor=actor_payload,
+        )
+        if result.get("ok"):
+            verb = "approved" if decision == "approve" else "rejected"
+            extra = " · payment hold released in NetSuite" if decision == "approve" else ""
+            return {"response_type": "ephemeral", "text": f"Bill {verb}.{extra}"}
+        reason = str(result.get("reason") or "action_failed")
+        return {"response_type": "ephemeral", "text": f"Action could not complete: {reason}"}
+
     gmail_candidate = ""
     value = str(raw_action.get("value") or "")
     if value.startswith("{"):

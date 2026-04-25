@@ -51,7 +51,7 @@ Bill (record view)  │  │ Standard │  │ Clearledgr (subtab)│  │
 | 2 (read) | Suitelet serves panel HTML/JS/CSS, panel calls Clearledgr API w/ dev token, renders Box state | ✅ scaffolded | 2.5 |
 | 3 (read) | Real per-tenant HMAC JWT auth (Suitelet mints, backend verifies via `webhook_secret` in `erp_connections.credentials`) | ✅ scaffolded | 4 |
 | 1 (write) | UE `afterSubmit` fires signed webhook on bill create/update/paid; backend dispatcher creates/advances/closes Box | ✅ scaffolded | 3 |
-| 2 (write) | Slack approval routing for ERP-native bills with payment holds; remove the hold via NetSuite API on approval | not started | 2 |
+| 2 (write) | Slack approval routing for ERP-native bills with payment holds; remove the hold via NetSuite REST API on approval | ✅ scaffolded | 3 |
 | 4 | SuiteApp marketplace listing | not started | weeks |
 
 The code on disk is Phase-1+2+3 ready. What still needs human action: a NetSuite sandbox account, a TBA integration record, and a SuiteCloud CLI install. See **Deploy** below.
@@ -169,6 +169,7 @@ For each tenant:
 - **Existing endpoint reused:** `POST /erp/webhooks/netsuite/{org_id}` in [`clearledgr/api/erp_webhooks.py`](../../clearledgr/api/erp_webhooks.py). Verifies HMAC signature against `erp_connections.credentials.webhook_secret`, records audit, then calls the dispatcher.
 - **New dispatcher:** [`clearledgr/services/erp_webhook_dispatch.py`](../../clearledgr/services/erp_webhook_dispatch.py) — routes `vendorbill.create / .update / .paid / .delete` to handlers that create or advance the AP item Box. Idempotent on `erp_reference == ns_internal_id`.
 - **State machine bypass:** ERP-native bills enter the Box state machine at `posted_to_erp` (the bill is already in the ERP — Clearledgr is tracking, not creating) or `needs_approval` (if NetSuite has a payment hold). `closed` on payment events.
+- **Slack approval routing:** [`clearledgr/services/erp_native_approval.py`](../../clearledgr/services/erp_native_approval.py). When a bill enters at `needs_approval`, posts a Slack card with Approve/Reject buttons. Approve calls NetSuite REST API to clear the `paymentHold` flag, then walks the Box through `approved → ready_to_post → posted_to_erp`. Buttons use action IDs prefixed `cl_erp_approve_` / `cl_erp_reject_` so the existing Gmail-bound approve handler in `slack_invoices.py` is untouched.
 
 ---
 

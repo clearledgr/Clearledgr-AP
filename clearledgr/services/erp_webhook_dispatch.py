@@ -109,11 +109,21 @@ def _handle_create(
         action="created",
         target_state=initial_state,
     )
+
+    # Phase 2 of write-direction: if this ERP-native bill landed at
+    # needs_approval (NetSuite-side payment hold present), route to
+    # Slack so an approver can release the hold without leaving Slack.
+    # Best-effort — the Box is created either way; the route is async
+    # and shouldn't block the webhook ACK.
+    if initial_state == APState.NEEDS_APPROVAL.value and ap_item_id:
+        _route_for_approval_async(item or {**payload, "id": ap_item_id})
+
     return {
         "ok": True,
         "action": "created",
         "ap_item_id": ap_item_id,
         "state": initial_state,
+        "routed_to_slack": initial_state == APState.NEEDS_APPROVAL.value,
     }
 
 
@@ -172,6 +182,18 @@ def _handle_update(
         action="updated",
         target_state=target_state_for_audit,
     )
+
+    # Same Slack-routing trigger as create: if this update transitioned
+    # the Box INTO needs_approval (e.g., NetSuite added a payment hold
+    # after the fact), post the approval card. The approval module's
+    # idempotency guard prevents duplicate cards.
+    if (
+        field_updates.get("state") == APState.NEEDS_APPROVAL.value
+        and current_state != APState.NEEDS_APPROVAL.value
+    ):
+        refreshed = db.get_ap_item(ap_item_id) if hasattr(db, "get_ap_item") else None
+        _route_for_approval_async(refreshed or existing)
+
     return {
         "ok": True,
         "action": "updated",
@@ -348,6 +370,45 @@ def _bill_subject(bill: Dict[str, Any]) -> str:
 def _bill_sender(bill: Dict[str, Any]) -> str:
     vendor = bill.get("entity_name") or bill.get("entity_id") or "vendor"
     return f"{vendor} <netsuite@erp-native>"
+
+
+def _route_for_approval_async(ap_item: Dict[str, Any]) -> None:
+    """Fire-and-forget Slack approval routing for an ERP-native AP item.
+
+    Webhook handlers are sync (FastAPI BaseHTTPMiddleware path); the
+    approval routing is async (Slack API + DB writes). We can't
+    ``await`` here without restructuring the whole webhook pipeline,
+    so we schedule the coroutine on the running loop and let it
+    complete in the background. If there's no running loop (pytest in
+    sync mode, etc.), we fall back to a brand-new loop in a thread.
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not ap_item:
+        return
+    try:
+        from clearledgr.services.erp_native_approval import route_for_approval
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("erp_webhook_dispatch: approval module import failed — %s", exc)
+        return
+
+    async def _runner():
+        try:
+            await route_for_approval(ap_item)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "erp_webhook_dispatch: route_for_approval raised for ap_item=%s — %s",
+                ap_item.get("id"), exc,
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_runner())
+    except RuntimeError:
+        # No running loop. Spin up a single-shot worker.
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(asyncio.run, _runner())
 
 
 def _record_intake_audit(
