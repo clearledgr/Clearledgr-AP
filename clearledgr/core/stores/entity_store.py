@@ -69,13 +69,13 @@ class EntityStore:
         gl_mapping_json = json.dumps(gl_mapping) if gl_mapping else None
         approval_rules_json = json.dumps(approval_rules) if approval_rules else None
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO entities
             (id, organization_id, name, code, erp_connection_id,
              gl_mapping_json, approval_rules_json, default_currency,
              is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+        """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (
@@ -89,7 +89,7 @@ class EntityStore:
     def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
         """Get a single entity by ID."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM entities WHERE id = ?")
+        sql = "SELECT * FROM entities WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (entity_id,))
@@ -189,7 +189,7 @@ class EntityStore:
     def get_parent_organization(self, org_id: str) -> Optional[Dict[str, Any]]:
         """Return the parent organization, or the org itself if it has no parent."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM organizations WHERE id = ?")
+        sql = "SELECT * FROM organizations WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (org_id,))
@@ -222,7 +222,7 @@ class EntityStore:
         Uses ``get_parent_organization`` to walk up the hierarchy.
         """
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM subscriptions WHERE organization_id = ?")
+        sql = "SELECT * FROM subscriptions WHERE organization_id = %s"
         # Check own subscription first
         with self.connect() as conn:
             cur = conn.cursor()
@@ -259,7 +259,7 @@ class EntityStore:
         # Get org-level settings
         org_settings = {}
         try:
-            sql = self._prepare_sql("SELECT settings_json FROM organizations WHERE id = ?")
+            sql = "SELECT settings_json FROM organizations WHERE id = %s"
             with self.connect() as conn:
                 cur = conn.cursor()
                 cur.execute(sql, (org_id,))

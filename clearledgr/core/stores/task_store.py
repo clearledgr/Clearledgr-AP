@@ -127,7 +127,7 @@ class TaskStore:
     def get_task_run(self, task_run_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a task run by primary key."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM task_runs WHERE id = ?")
+        sql = "SELECT * FROM task_runs WHERE id = %s"
         try:
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -141,7 +141,7 @@ class TaskStore:
     def get_task_run_by_idempotency_key(self, key: str) -> Optional[Dict[str, Any]]:
         """Fetch a task run by idempotency key."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM task_runs WHERE idempotency_key = ?")
+        sql = "SELECT * FROM task_runs WHERE idempotency_key = %s"
         try:
             with self.connect() as conn:
                 cur = conn.cursor()

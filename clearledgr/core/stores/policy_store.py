@@ -177,7 +177,7 @@ class PolicyStore:
                 ),
             )
             conn.commit()
-            row_sql = self._prepare_sql("SELECT * FROM ap_policy_audit_events WHERE id = ? LIMIT 1")
+            row_sql = "SELECT * FROM ap_policy_audit_events WHERE id = %s LIMIT 1"
             cur.execute(row_sql, (event_id,))
             row = cur.fetchone()
         return self._deserialize_ap_policy_audit_event(dict(row)) if row else None

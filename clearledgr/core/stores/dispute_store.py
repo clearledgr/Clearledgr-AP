@@ -36,12 +36,12 @@ class DisputeStore:
         now = datetime.now(timezone.utc).isoformat()
         dispute_id = f"dsp_{uuid.uuid4().hex[:12]}"
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO disputes
             (id, ap_item_id, organization_id, dispute_type, status, vendor_name,
              vendor_email, description, followup_thread_id, opened_at, updated_at)
-            VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)
+        """
         params = (
             dispute_id, ap_item_id, organization_id, dispute_type,
             vendor_name, vendor_email, description, followup_thread_id,
@@ -66,7 +66,7 @@ class DisputeStore:
 
     def get_dispute(self, dispute_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM disputes WHERE id = ?")
+        sql = "SELECT * FROM disputes WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (dispute_id,))

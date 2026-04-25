@@ -422,7 +422,7 @@ class APRuntimeStore:
     def get_finance_email_by_gmail_id(self, gmail_id: str) -> Optional[Any]:
         from clearledgr.core.models import FinanceEmail
 
-        sql = self._prepare_sql("SELECT * FROM finance_emails WHERE gmail_id = ? LIMIT 1")
+        sql = "SELECT * FROM finance_emails WHERE gmail_id = %s LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (gmail_id,))
@@ -607,7 +607,7 @@ class APRuntimeStore:
         }
 
     def get_gl_accounts(self, organization_id: str) -> List[Dict[str, Any]]:
-        sql = self._prepare_sql("SELECT account_data FROM gl_accounts WHERE organization_id=?")
+        sql = "SELECT account_data FROM gl_accounts WHERE organization_id=%s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))

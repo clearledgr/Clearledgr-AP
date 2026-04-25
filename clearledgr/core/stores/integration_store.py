@@ -31,7 +31,7 @@ class IntegrationStore:
 
     def get_gmail_autopilot_state(self, user_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM gmail_autopilot_state WHERE user_id = ?")
+        sql = "SELECT * FROM gmail_autopilot_state WHERE user_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (user_id,))
@@ -60,10 +60,10 @@ class IntegrationStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO gmail_autopilot_state
             (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id)
             DO UPDATE SET email = EXCLUDED.email,
                           last_history_id = EXCLUDED.last_history_id,
@@ -72,7 +72,7 @@ class IntegrationStore:
                           last_scan_at = EXCLUDED.last_scan_at,
                           last_error = EXCLUDED.last_error,
                           updated_at = EXCLUDED.updated_at
-        """)
+        """
         params = (user_id, email, last_history_id, watch_expiration, last_watch_at, last_scan_at, last_error, now)
 
         with self.connect() as conn:
@@ -86,7 +86,7 @@ class IntegrationStore:
 
     def get_outlook_autopilot_state(self, user_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM outlook_autopilot_state WHERE user_id = ?")
+        sql = "SELECT * FROM outlook_autopilot_state WHERE user_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (user_id,))
@@ -114,10 +114,10 @@ class IntegrationStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO outlook_autopilot_state
             (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id)
             DO UPDATE SET email = EXCLUDED.email,
                           subscription_id = EXCLUDED.subscription_id,
@@ -125,7 +125,7 @@ class IntegrationStore:
                           last_scan_at = EXCLUDED.last_scan_at,
                           last_error = EXCLUDED.last_error,
                           updated_at = EXCLUDED.updated_at
-        """)
+        """
         params = (user_id, email, subscription_id, subscription_expiration, last_scan_at, last_error, now)
 
         with self.connect() as conn:
@@ -158,11 +158,11 @@ class IntegrationStore:
         encrypted_refresh = self._encrypt_secret(refresh_token) if refresh_token else None
         encrypted_creds = self._encrypt_secret(credentials_json) if credentials_json else None
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO erp_connections
             (id, organization_id, erp_type, access_token, refresh_token, realm_id, tenant_id, base_url,
              credentials, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
             ON CONFLICT (organization_id, erp_type)
             DO UPDATE SET access_token = EXCLUDED.access_token,
                           refresh_token = EXCLUDED.refresh_token,
@@ -172,7 +172,7 @@ class IntegrationStore:
                           credentials = EXCLUDED.credentials,
                           is_active = 1,
                           updated_at = EXCLUDED.updated_at
-        """)
+        """
         params = (connection_id, organization_id, erp_type, encrypted_access, encrypted_refresh, realm_id,
                   tenant_id, base_url, encrypted_creds, now, now)
 
@@ -260,7 +260,7 @@ class IntegrationStore:
     def get_erp_connection_by_id(self, connection_id: str) -> Optional[Dict[str, Any]]:
         """Get a single ERP connection by its ID."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM erp_connections WHERE id = ? AND is_active = 1")
+        sql = "SELECT * FROM erp_connections WHERE id = %s AND is_active = 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (connection_id,))
@@ -291,12 +291,12 @@ class IntegrationStore:
         encrypted_refresh = self._encrypt_secret(refresh_token) if refresh_token else None
         encrypted_creds = self._encrypt_secret(credentials_json) if credentials_json else None
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO erp_connections
             (id, organization_id, erp_type, entity_id, access_token, refresh_token, realm_id, tenant_id, base_url,
              credentials, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+        """
         params = (connection_id, organization_id, erp_type, entity_id, encrypted_access, encrypted_refresh, realm_id,
                   tenant_id, base_url, encrypted_creds, now, now)
 
@@ -586,7 +586,7 @@ class IntegrationStore:
 
     def get_subscription_record(self, organization_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM subscriptions WHERE organization_id = ? LIMIT 1")
+        sql = "SELECT * FROM subscriptions WHERE organization_id = %s LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))

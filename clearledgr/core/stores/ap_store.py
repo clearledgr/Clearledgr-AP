@@ -171,7 +171,7 @@ class APStore:
         elif isinstance(raw_fc, str):
             field_confidences_json = raw_fc
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO ap_items
             (id, invoice_key, thread_id, message_id, subject, sender, vendor_name, amount, currency,
             invoice_number, invoice_date, due_date, state, confidence, approval_required,
@@ -181,8 +181,8 @@ class APStore:
              last_error, po_number, attachment_url, exception_code, exception_severity,
              organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences, document_type,
              bank_details_encrypted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         values = (
             item_id,
             payload.get("invoice_key"),
@@ -604,7 +604,7 @@ class APStore:
         ``logger.info(ap_item)`` cannot leak the plaintext.
         """
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM ap_items WHERE id = ?")
+        sql = "SELECT * FROM ap_items WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (ap_item_id,))
@@ -866,12 +866,12 @@ class APStore:
         import uuid as _uuid
         now = datetime.now(timezone.utc).isoformat()
         notif_id = f"notif-{_uuid.uuid4().hex[:12]}"
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO pending_notifications
             (id, organization_id, box_id, box_type, channel, payload_json,
              retry_count, max_retries, next_retry_at, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'pending', ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, 'pending', %s, %s)
+        """
         with self.connect() as conn:
             conn.cursor().execute(sql, (
                 notif_id, organization_id, box_id, box_type, channel,
@@ -1290,7 +1290,7 @@ class APStore:
         ``approval_steps``.
         """
         self.initialize()
-        sql = self._prepare_sql("SELECT metadata FROM ap_items WHERE id = ?")
+        sql = "SELECT metadata FROM ap_items WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (ap_item_id,))
@@ -1574,7 +1574,7 @@ class APStore:
 
     def get_ap_item_context_cache(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM ap_item_context_cache WHERE ap_item_id = ?")
+        sql = "SELECT * FROM ap_item_context_cache WHERE ap_item_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (ap_item_id,))
@@ -1642,12 +1642,12 @@ class APStore:
         now = datetime.now(timezone.utc).isoformat()
         thread_id = f"CT-{_uuid.uuid4().hex}"
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO channel_threads
             (id, ap_item_id, channel, conversation_id, message_id, activity_id,
              service_url, state, last_action, updated_by, reason, organization_id,
              created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ap_item_id, channel, conversation_id)
             DO UPDATE SET
                 message_id = EXCLUDED.message_id,
@@ -1658,7 +1658,7 @@ class APStore:
                 updated_by = EXCLUDED.updated_by,
                 reason = EXCLUDED.reason,
                 updated_at = EXCLUDED.updated_at
-        """)
+        """
 
         try:
             with self.connect() as conn:
@@ -1732,14 +1732,14 @@ class APStore:
                 "append_audit_event requires (box_id, box_type) or ap_item_id"
             )
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO audit_events
             (id, box_id, box_type, event_type, prev_state, new_state,
              actor_type, actor_id, payload_json, external_refs,
              idempotency_key, source, correlation_id, workflow_id, run_id,
              decision_reason, organization_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         try:
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -1782,7 +1782,7 @@ class APStore:
 
     def get_ap_audit_event(self, event_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM audit_events WHERE id = ?")
+        sql = "SELECT * FROM audit_events WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (event_id,))
@@ -1793,7 +1793,7 @@ class APStore:
         if not idempotency_key:
             return None
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM audit_events WHERE idempotency_key = ?")
+        sql = "SELECT * FROM audit_events WHERE idempotency_key = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (idempotency_key,))
@@ -1981,14 +1981,14 @@ class APStore:
             if existing:
                 return existing
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO agent_retry_jobs
             (id, organization_id, ap_item_id, gmail_id, job_type, status,
              retry_count, max_retries, next_retry_at, last_attempt_at, last_error,
              payload_json, result_json, idempotency_key, correlation_id,
              locked_by, locked_at, created_at, updated_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -2021,7 +2021,7 @@ class APStore:
 
     def get_agent_retry_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM agent_retry_jobs WHERE id = ?")
+        sql = "SELECT * FROM agent_retry_jobs WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (job_id,))
@@ -2032,7 +2032,7 @@ class APStore:
         if not idempotency_key:
             return None
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM agent_retry_jobs WHERE idempotency_key = ?")
+        sql = "SELECT * FROM agent_retry_jobs WHERE idempotency_key = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (idempotency_key,))
@@ -2277,12 +2277,12 @@ class APStore:
         now = datetime.now(timezone.utc).isoformat()
         approval_id = payload.get("id") or f"APR-{uuid.uuid4().hex}"
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO approvals
             (id, ap_item_id, channel_id, message_ts, source_channel, source_message_ref,
              decision_idempotency_key, decision_payload, status, approved_by, approved_at,
              rejected_by, rejected_at, rejection_reason, organization_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ap_item_id, channel_id, message_ts)
             DO UPDATE SET status = EXCLUDED.status,
                           source_channel = EXCLUDED.source_channel,
@@ -2294,7 +2294,7 @@ class APStore:
                           rejected_by = EXCLUDED.rejected_by,
                           rejected_at = EXCLUDED.rejected_at,
                           rejection_reason = EXCLUDED.rejection_reason
-        """)
+        """
 
         with self.connect() as conn:
             cur = conn.cursor()

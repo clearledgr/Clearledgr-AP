@@ -128,7 +128,7 @@ class ReconStore:
         """Get a reconciliation session by ID."""
         with self.connect() as conn:
             row = conn.execute(
-                self._prepare_sql("SELECT * FROM recon_sessions WHERE id = ?"),
+                "SELECT * FROM recon_sessions WHERE id = %s",
                 (session_id,),
             ).fetchone()
         return dict(row) if row else None

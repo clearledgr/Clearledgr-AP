@@ -983,7 +983,7 @@ class SubscriptionService:
         try:
             import json
             db = self._get_db()
-            sql = db._prepare_sql("UPDATE subscriptions SET usage_json = ? WHERE organization_id = ?")
+            sql = "UPDATE subscriptions SET usage_json = %s WHERE organization_id = %s"
             with db.connect() as conn:
                 conn.execute(sql, (json.dumps(usage.to_dict()), organization_id))
                 conn.commit()

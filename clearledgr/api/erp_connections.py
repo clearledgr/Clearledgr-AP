@@ -385,7 +385,7 @@ def _pop_oauth_state(state: str) -> Optional[Dict[str, Any]]:
         if row is None:
             return None
         # Delete atomically so a replay attempt fails
-        del_sql = db._prepare_sql("DELETE FROM erp_oauth_states WHERE state = ?")
+        del_sql = "DELETE FROM erp_oauth_states WHERE state = %s"
         cur.execute(del_sql, (state,))
         conn.commit()
         # Normalise to plain dict (handles both sqlite3.Row and psycopg dict_row)

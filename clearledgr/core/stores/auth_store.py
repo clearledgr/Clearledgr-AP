@@ -56,17 +56,17 @@ class AuthStore:
         encrypted_access = self._encrypt_secret(access_token)
         encrypted_refresh = self._encrypt_secret(refresh_token)
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO oauth_tokens
             (id, user_id, provider, access_token, refresh_token, expires_at, email, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id, provider)
             DO UPDATE SET access_token = EXCLUDED.access_token,
                           refresh_token = EXCLUDED.refresh_token,
                           expires_at = EXCLUDED.expires_at,
                           email = EXCLUDED.email,
                           updated_at = EXCLUDED.updated_at
-        """)
+        """
         params = (token_id, user_id, provider, encrypted_access, encrypted_refresh, expires_at, email, now, now)
 
         with self.connect() as conn:
@@ -88,7 +88,7 @@ class AuthStore:
 
     def get_oauth_token(self, user_id: str, provider: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM oauth_tokens WHERE user_id = ? AND provider = ?")
+        sql = "SELECT * FROM oauth_tokens WHERE user_id = %s AND provider = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (user_id, provider))
@@ -97,7 +97,7 @@ class AuthStore:
 
     def get_oauth_token_by_email(self, email: str, provider: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM oauth_tokens WHERE email = ? AND provider = ?")
+        sql = "SELECT * FROM oauth_tokens WHERE email = %s AND provider = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (email, provider))
@@ -107,7 +107,7 @@ class AuthStore:
     def list_oauth_tokens(self, provider: Optional[str] = None) -> List[Dict[str, Any]]:
         self.initialize()
         if provider:
-            sql = self._prepare_sql("SELECT * FROM oauth_tokens WHERE provider = ?")
+            sql = "SELECT * FROM oauth_tokens WHERE provider = %s"
             params = (provider,)
         else:
             sql = "SELECT * FROM oauth_tokens"
@@ -120,7 +120,7 @@ class AuthStore:
 
     def delete_oauth_token(self, user_id: str, provider: str) -> None:
         self.initialize()
-        sql = self._prepare_sql("DELETE FROM oauth_tokens WHERE user_id = ? AND provider = ?")
+        sql = "DELETE FROM oauth_tokens WHERE user_id = %s AND provider = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (user_id, provider))
@@ -174,8 +174,8 @@ class AuthStore:
 
     def consume_google_auth_code(self, auth_code: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        select_sql = self._prepare_sql("SELECT * FROM google_auth_codes WHERE auth_code = ?")
-        delete_sql = self._prepare_sql("DELETE FROM google_auth_codes WHERE auth_code = ?")
+        select_sql = "SELECT * FROM google_auth_codes WHERE auth_code = %s"
+        delete_sql = "DELETE FROM google_auth_codes WHERE auth_code = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(select_sql, (str(auth_code),))
@@ -196,7 +196,7 @@ class AuthStore:
     def purge_expired_google_auth_codes(self) -> int:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql("DELETE FROM google_auth_codes WHERE expires_at IS NOT NULL AND expires_at < ?")
+        sql = "DELETE FROM google_auth_codes WHERE expires_at IS NOT NULL AND expires_at < %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (now,))
@@ -360,7 +360,7 @@ class AuthStore:
 
     def get_organization(self, organization_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM organizations WHERE id = ?")
+        sql = "SELECT * FROM organizations WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))
@@ -376,7 +376,7 @@ class AuthStore:
     def get_organization_by_domain(self, domain: str) -> Optional[Dict[str, Any]]:
         """Look up an organization by its email domain."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM organizations WHERE domain = ? LIMIT 1")
+        sql = "SELECT * FROM organizations WHERE domain = %s LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (domain,))
@@ -392,7 +392,7 @@ class AuthStore:
     def list_organizations(self, limit: int = 500) -> List[Dict[str, Any]]:
         self.initialize()
         safe_limit = max(1, min(int(limit or 500), 5000))
-        sql = self._prepare_sql("SELECT * FROM organizations ORDER BY created_at DESC LIMIT ?")
+        sql = "SELECT * FROM organizations ORDER BY created_at DESC LIMIT %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (safe_limit,))
@@ -551,7 +551,7 @@ class AuthStore:
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM users WHERE id = ?")
+        sql = "SELECT * FROM users WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (user_id,))
@@ -567,7 +567,7 @@ class AuthStore:
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1")
+        sql = "SELECT * FROM users WHERE lower(email) = lower(%s) LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (email.strip(),))
@@ -583,7 +583,7 @@ class AuthStore:
 
     def get_user_by_google_id(self, google_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM users WHERE google_id = ? LIMIT 1")
+        sql = "SELECT * FROM users WHERE google_id = %s LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (google_id,))
@@ -599,7 +599,7 @@ class AuthStore:
 
     def get_user_by_slack_id(self, slack_user_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM users WHERE slack_user_id = ? LIMIT 1")
+        sql = "SELECT * FROM users WHERE slack_user_id = %s LIMIT 1"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (slack_user_id,))
@@ -1018,7 +1018,7 @@ class AuthStore:
 
     def get_team_invite(self, invite_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM team_invites WHERE id = ?")
+        sql = "SELECT * FROM team_invites WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (invite_id,))
@@ -1027,7 +1027,7 @@ class AuthStore:
 
     def get_team_invite_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM team_invites WHERE token = ?")
+        sql = "SELECT * FROM team_invites WHERE token = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (token,))

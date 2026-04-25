@@ -65,7 +65,7 @@ def run_migrations(db) -> int:
     try:
         lock_conn = db.connect().__enter__()
         lock_conn.cursor().execute(
-            db._prepare_sql("SELECT pg_advisory_lock(?)"),
+            "SELECT pg_advisory_lock(%s)",
             (MIGRATION_LOCK_KEY,),
         )
         lock_conn.commit()
@@ -161,7 +161,7 @@ def run_migrations(db) -> int:
         if lock_conn is not None:
             try:
                 lock_conn.cursor().execute(
-                    db._prepare_sql("SELECT pg_advisory_unlock(?)"),
+                    "SELECT pg_advisory_unlock(%s)",
                     (MIGRATION_LOCK_KEY,),
                 )
                 lock_conn.commit()
@@ -649,7 +649,7 @@ def _m015_role_taxonomy_cutover(cur, db):
     for legacy, canonical in mapping.items():
         try:
             cur.execute(
-                db._prepare_sql("UPDATE users SET role = ? WHERE role = ?"),
+                "UPDATE users SET role = %s WHERE role = %s",
                 (canonical, legacy),
             )
             rows = cur.rowcount or 0
@@ -1456,7 +1456,7 @@ def _v38_rename_vendor_onboarding_states(cur, db):
     for old, new in renames:
         try:
             cur.execute(
-                db._prepare_sql("UPDATE vendor_onboarding_sessions SET state = ? WHERE state = ?"),
+                "UPDATE vendor_onboarding_sessions SET state = %s WHERE state = %s",
                 (new, old),
             )
         except Exception as exc:
@@ -1497,7 +1497,7 @@ def _v38_rename_vendor_onboarding_states(cur, db):
                     seen.add(s)
                     deduped.append(s)
             cur.execute(
-                db._prepare_sql("UPDATE pipeline_stages SET source_states = ? WHERE id = ?"),
+                "UPDATE pipeline_stages SET source_states = %s WHERE id = %s",
                 (_json.dumps(deduped), stage_id),
             )
         except Exception as exc:
@@ -1532,7 +1532,7 @@ def _v39_backfill_grn_reference_column(cur, db):
 
     try:
         cur.execute(
-            db._prepare_sql("SELECT slug FROM pipeline_columns WHERE pipeline_id = ?"),
+            "SELECT slug FROM pipeline_columns WHERE pipeline_id = %s",
             (ap_pipeline_id,),
         )
         existing_slugs = {r[0] for r in cur.fetchall()}

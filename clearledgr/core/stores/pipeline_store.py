@@ -124,7 +124,7 @@ class PipelineStore:
         self.initialize()
 
         # Get pipeline + stage config
-        pipeline_sql = self._prepare_sql("SELECT source_table FROM pipelines WHERE id = ?")
+        pipeline_sql = "SELECT source_table FROM pipelines WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(pipeline_sql, (pipeline_id,))
@@ -293,7 +293,7 @@ class PipelineStore:
     def get_saved_view(self, view_id: str) -> Optional[Dict[str, Any]]:
         """Get a single saved view by ID."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM saved_views WHERE id = ?")
+        sql = "SELECT * FROM saved_views WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (view_id,))
@@ -311,7 +311,7 @@ class PipelineStore:
     def delete_saved_view(self, view_id: str) -> bool:
         """Delete a saved view. Default views cannot be deleted."""
         self.initialize()
-        sql = self._prepare_sql("DELETE FROM saved_views WHERE id = ? AND is_default = 0")
+        sql = "DELETE FROM saved_views WHERE id = %s AND is_default = 0"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (view_id,))

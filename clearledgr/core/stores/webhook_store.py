@@ -25,11 +25,11 @@ class WebhookStore:
         now = datetime.now(timezone.utc).isoformat()
         sub_id = f"wh_{uuid.uuid4().hex[:12]}"
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO webhook_subscriptions
             (id, organization_id, url, event_types, secret, is_active, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s)
+        """
         params = (sub_id, organization_id, url, json.dumps(event_types), secret, description, now, now)
 
         with self.connect() as conn:
@@ -77,7 +77,7 @@ class WebhookStore:
 
     def get_webhook_subscription(self, subscription_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM webhook_subscriptions WHERE id = ?")
+        sql = "SELECT * FROM webhook_subscriptions WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (subscription_id,))
@@ -122,7 +122,7 @@ class WebhookStore:
 
     def delete_webhook_subscription(self, subscription_id: str) -> bool:
         self.initialize()
-        sql = self._prepare_sql("DELETE FROM webhook_subscriptions WHERE id = ?")
+        sql = "DELETE FROM webhook_subscriptions WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (subscription_id,))

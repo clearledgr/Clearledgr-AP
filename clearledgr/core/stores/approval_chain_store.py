@@ -66,18 +66,16 @@ class ApprovalChainStore:
         """Persist a new ApprovalChain (and all its steps) to the DB."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        chain_sql = self._prepare_sql("""
-            INSERT OR IGNORE INTO approval_chains
+        chain_sql = """
+            INSERT INTO approval_chains
             (id, organization_id, invoice_id, vendor_name, amount, gl_code, department,
              status, current_step, requester_id, requester_name, created_at, completed_at, metadata, entity_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
-        step_sql = self._prepare_sql("""
-            INSERT OR IGNORE INTO approval_steps
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"""
+        step_sql = """
+            INSERT INTO approval_steps
             (id, chain_id, step_index, level, approvers, approval_type,
              status, approved_by, approved_at, rejection_reason, comments, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"""
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(chain_sql, (
@@ -119,8 +117,8 @@ class ApprovalChainStore:
     def db_get_approval_chain(self, chain_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a chain row + its step rows. Returns None if not found."""
         self.initialize()
-        chain_sql = self._prepare_sql("SELECT * FROM approval_chains WHERE id = ?")
-        steps_sql = self._prepare_sql("SELECT * FROM approval_steps WHERE chain_id = ? ORDER BY step_index ASC")
+        chain_sql = "SELECT * FROM approval_chains WHERE id = %s"
+        steps_sql = "SELECT * FROM approval_steps WHERE chain_id = %s ORDER BY step_index ASC"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(chain_sql, (chain_id,))
@@ -161,12 +159,12 @@ class ApprovalChainStore:
         """Update a single step's status and outcome fields."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql("""
+        sql = """
             UPDATE approval_steps
-            SET status = ?, approved_by = ?, approved_at = ?,
-                comments = ?, rejection_reason = ?, updated_at = ?
-            WHERE chain_id = ? AND step_index = ?
-        """)
+            SET status = %s, approved_by = %s, approved_at = %s,
+                comments = %s, rejection_reason = %s, updated_at = %s
+            WHERE chain_id = %s AND step_index = %s
+        """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (status, approved_by, approved_at, comments, rejection_reason, now, chain_id, step_index))
@@ -186,11 +184,11 @@ class ApprovalChainStore:
             return False
 
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql("""
+        sql = """
             UPDATE approval_steps
-            SET approvers = ?, comments = ?, updated_at = ?
-            WHERE chain_id = ? AND status = 'pending'
-        """)
+            SET approvers = %s, comments = %s, updated_at = %s
+            WHERE chain_id = %s AND status = 'pending'
+        """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -214,10 +212,10 @@ class ApprovalChainStore:
     ) -> None:
         """Update chain-level status and current_step pointer."""
         self.initialize()
-        sql = self._prepare_sql("""
-            UPDATE approval_chains SET status = ?, current_step = ?, completed_at = ?
-            WHERE id = ?
-        """)
+        sql = """
+            UPDATE approval_chains SET status = %s, current_step = %s, completed_at = %s
+            WHERE id = %s
+        """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (status, current_step, completed_at, chain_id))

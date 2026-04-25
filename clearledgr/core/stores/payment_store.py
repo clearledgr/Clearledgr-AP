@@ -88,13 +88,13 @@ class PaymentStore:
             logger.warning("organization_id missing in create_payment payload (payment_id=%s), falling back to 'default'", payment_id)
         _pay_org_id = str(_pay_org_id or "default")
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO payments
             (id, ap_item_id, organization_id, vendor_name, amount, currency,
              status, payment_method, payment_reference, due_date, scheduled_date,
              completed_date, erp_reference, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         values = (
             payment_id,
             payload.get("ap_item_id"),
@@ -157,7 +157,7 @@ class PaymentStore:
     def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single payment record by ID."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM payments WHERE id = ?")
+        sql = "SELECT * FROM payments WHERE id = %s"
         with self.connect() as conn:
             cur = conn.execute(sql, (payment_id,))
             row = cur.fetchone()
@@ -288,12 +288,12 @@ class PaymentStore:
         event_id = f"PEVT-{uuid.uuid4().hex[:12]}"
         erp_data_json = json.dumps(erp_data or {})
 
-        sql = self._prepare_sql("""
+        sql = """
             INSERT INTO payment_events
             (id, payment_id, organization_id, event_type, amount, reference,
              method, detected_at, erp_data_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         values = (
             event_id,
             payment_id,

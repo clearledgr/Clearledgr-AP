@@ -184,7 +184,7 @@ class OverrideWindowStore:
     def get_override_window(self, window_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a window by its id."""
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM override_windows WHERE id = ?")
+        sql = "SELECT * FROM override_windows WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (window_id,))

@@ -44,11 +44,11 @@ class DelegationService:
         now = datetime.now(timezone.utc).isoformat()
         rule_id = f"dlg_{uuid.uuid4().hex[:12]}"
 
-        sql = self.db._prepare_sql("""
+        sql = """
             INSERT INTO delegation_rules
             (id, organization_id, delegator_id, delegator_email, delegate_id,
              delegate_email, is_active, reason, starts_at, ends_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 organization_id = EXCLUDED.organization_id,
                 delegator_id = EXCLUDED.delegator_id,
@@ -60,7 +60,7 @@ class DelegationService:
                 starts_at = EXCLUDED.starts_at,
                 ends_at = EXCLUDED.ends_at,
                 updated_at = EXCLUDED.updated_at
-        """)
+        """
         params = (
             rule_id, self.organization_id, delegator_id, delegator_email,
             delegate_id, delegate_email, reason, starts_at, ends_at, now, now,
@@ -123,7 +123,7 @@ class DelegationService:
 
     def get_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
         self.db.initialize()
-        sql = self.db._prepare_sql("SELECT * FROM delegation_rules WHERE id = ?")
+        sql = "SELECT * FROM delegation_rules WHERE id = %s"
         with self.db.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (rule_id,))

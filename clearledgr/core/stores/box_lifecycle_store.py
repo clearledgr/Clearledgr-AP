@@ -341,7 +341,7 @@ class BoxLifecycleStore:
 
     def get_box_exception(self, exception_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM box_exceptions WHERE id = ?")
+        sql = "SELECT * FROM box_exceptions WHERE id = %s"
         try:
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -569,7 +569,7 @@ class BoxLifecycleStore:
 
     def _get_box_outcome_by_id(self, outcome_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM box_outcomes WHERE id = ?")
+        sql = "SELECT * FROM box_outcomes WHERE id = %s"
         try:
             with self.connect() as conn:
                 cur = conn.cursor()

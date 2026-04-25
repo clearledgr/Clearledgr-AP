@@ -174,7 +174,7 @@ class PurchaseOrderStore:
         if not po_id:
             return None
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM purchase_orders WHERE po_id = ?")
+        sql = "SELECT * FROM purchase_orders WHERE po_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (po_id,))
@@ -325,7 +325,7 @@ class PurchaseOrderStore:
         if not gr_id:
             return None
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM goods_receipts WHERE gr_id = ?")
+        sql = "SELECT * FROM goods_receipts WHERE gr_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (gr_id,))
@@ -415,7 +415,7 @@ class PurchaseOrderStore:
         if not match_id:
             return None
         self.initialize()
-        sql = self._prepare_sql("SELECT * FROM three_way_matches WHERE match_id = ?")
+        sql = "SELECT * FROM three_way_matches WHERE match_id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (match_id,))
