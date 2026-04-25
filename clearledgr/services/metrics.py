@@ -1,16 +1,78 @@
 """Runtime metrics collection with durable storage on production-like profiles."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Dict
 
+logger = logging.getLogger(__name__)
 
 _PRODUCTION_ENVS = {"production", "prod", "staging", "stage"}
+
+# Background executor for persistent metric writes. Calling
+# ``record_request``/``record_error`` from inside a request middleware
+# previously did the INSERT inline — synchronously, on the asyncio
+# event-loop thread (BaseHTTPMiddleware runs sync code on the loop).
+# That blocked the response on a DB roundtrip per request and made
+# /health p50 trend toward seconds. Submitting to a single-worker
+# executor moves the write off the hot path: the request returns
+# immediately and the write completes in the background.
+#
+# Single worker (not a pool) by design — INSERTs serialize anyway on
+# the underlying connection pool, and a single worker gives FIFO
+# semantics that ``flush_pending`` can rely on without tracking
+# pending futures by hand.
+_METRICS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cl-metrics")
+
+
+def _submit_persist(fn, /, *args, **kwargs) -> None:
+    """Fire-and-forget metric persistence. Logs and swallows on failure
+    — metrics dropping a record is preferable to a request blocking
+    or raising on an audit-side write.
+    """
+    try:
+        future = _METRICS_EXECUTOR.submit(fn, *args, **kwargs)
+        # Attach a logger callback so unhandled exceptions in the
+        # background work surface in the worker logs instead of being
+        # silently swallowed by Python's GC of unawaited futures.
+        future.add_done_callback(_log_persist_failure)
+    except RuntimeError:
+        # Executor is shutting down (process termination). Best-effort:
+        # try the write inline so we don't lose the very last metrics.
+        try:
+            fn(*args, **kwargs)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _log_persist_failure(future) -> None:
+    exc = future.exception()
+    if exc is not None:
+        logger.warning("metrics: background persist failed: %s", exc)
+
+
+def flush_pending(timeout: float = 5.0) -> bool:
+    """Block until all in-flight metric writes complete, or timeout
+    elapses. For tests + graceful shutdown — production code paths
+    should not call this.
+
+    Returns True if the executor drained, False on timeout.
+    """
+    # Single-worker executor → FIFO semantics: a sentinel submitted
+    # now runs strictly after every task that was already queued.
+    # Waiting on the sentinel waits on every prior task transitively.
+    try:
+        sentinel = _METRICS_EXECUTOR.submit(lambda: None)
+        sentinel.result(timeout=timeout)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -200,17 +262,13 @@ def _record_in_memory_reconciliation(source_type: str, status: str, _duration_ms
     _metrics["reconciliation_runs"][f"{source_type}:{status}"] += 1
 
 
-def record_request(method: str, path: str, status_code: int, duration_ms: float) -> None:
-    """Record HTTP request metrics."""
-    if not _PERSISTENT_MODE:
-        _record_in_memory_request(method, path, status_code, duration_ms)
-        return
-
+def _persist_request_metric(method: str, path: str, status_code: int, duration_ms: float, ts: str) -> None:
+    """The blocking part of record_request — runs in the background
+    executor so request handlers don't pay for the DB roundtrip."""
     db = _db()
     if not db:
         _record_in_memory_request(method, path, status_code, duration_ms)
         return
-
     try:
         _ensure_schema(db)
         _maybe_prune_old_metrics(db)
@@ -225,7 +283,7 @@ def record_request(method: str, path: str, status_code: int, duration_ms: float)
                     """),
                 (
                     f"req_{uuid.uuid4().hex}",
-                    datetime.now(timezone.utc).isoformat(),
+                    ts,
                     str(method or "GET"),
                     str(path or "/"),
                     int(status_code),
@@ -237,17 +295,28 @@ def record_request(method: str, path: str, status_code: int, duration_ms: float)
         _record_in_memory_request(method, path, status_code, duration_ms)
 
 
-def record_error(error_type: str, path: str = "") -> None:
-    """Record error metrics."""
+def record_request(method: str, path: str, status_code: int, duration_ms: float) -> None:
+    """Record HTTP request metrics. Non-blocking — the DB write goes
+    through the metrics executor."""
     if not _PERSISTENT_MODE:
-        _record_in_memory_error(error_type, path)
+        _record_in_memory_request(method, path, status_code, duration_ms)
         return
+    _submit_persist(
+        _persist_request_metric,
+        method,
+        path,
+        status_code,
+        duration_ms,
+        datetime.now(timezone.utc).isoformat(),
+    )
 
+
+def _persist_error_metric(error_type: str, path: str, ts: str) -> None:
+    """Background half of record_error."""
     db = _db()
     if not db:
         _record_in_memory_error(error_type, path)
         return
-
     try:
         _ensure_schema(db)
         _maybe_prune_old_metrics(db)
@@ -262,7 +331,7 @@ def record_error(error_type: str, path: str = "") -> None:
                     """),
                 (
                     f"err_{uuid.uuid4().hex}",
-                    datetime.now(timezone.utc).isoformat(),
+                    ts,
                     str(error_type or "unknown_error"),
                     str(path or ""),
                 ),
@@ -270,6 +339,19 @@ def record_error(error_type: str, path: str = "") -> None:
             conn.commit()
     except Exception:
         _record_in_memory_error(error_type, path)
+
+
+def record_error(error_type: str, path: str = "") -> None:
+    """Record error metrics. Non-blocking — see :func:`record_request`."""
+    if not _PERSISTENT_MODE:
+        _record_in_memory_error(error_type, path)
+        return
+    _submit_persist(
+        _persist_error_metric,
+        error_type,
+        path,
+        datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def record_reconciliation_run(source_type: str, status: str, duration_ms: float) -> None:

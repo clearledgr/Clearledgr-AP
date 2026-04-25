@@ -361,6 +361,30 @@ _google_token_cache: Dict[str, tuple] = {}  # token -> (TokenData, expires_at)
 _GOOGLE_TOKEN_CACHE_TTL = 300  # 5 minutes
 
 
+def _looks_like_google_access_token(token: str) -> bool:
+    """Cheap shape check that avoids the network round-trip to Google's
+    tokeninfo endpoint for tokens that obviously aren't Google access
+    tokens — JWTs, API keys, garbage, expired bearers, etc.
+
+    Google access tokens currently start with ``ya29.``; refresh tokens
+    are ``1//``-prefixed (we never receive those here). JWTs always
+    start with ``eyJ`` (the base64-encoded ``{"`` header opener).
+    Anything else: not a Google token, don't burn 1.7s on a tokeninfo
+    call we know will return 400.
+    """
+    if not token:
+        return False
+    # Reject anything that decodes as a JWT — those went through
+    # ``decode_token`` already and were rejected.
+    if token.startswith("eyJ"):
+        return False
+    # Conservative allowlist: today Google access tokens we accept all
+    # start with ya29. If Google ever issues a different prefix the
+    # behaviour will be a 401 (same as before), and we can extend this
+    # check.
+    return token.startswith("ya29.")
+
+
 def _validate_google_token(token: str) -> Optional[TokenData]:
     """Validate a Google OAuth access token and resolve to a Clearledgr user.
 
@@ -376,6 +400,13 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
             return token_data
         else:
             _google_token_cache.pop(token, None)
+
+    # Bail out before the network round-trip if the token doesn't even
+    # look like a Google access token. Saves ~1.7s per failed bearer
+    # against ``tokeninfo`` (timeout was 10s with no body content type
+    # check, so a misshapen token took the full TLS+roundtrip cost).
+    if not _looks_like_google_access_token(token):
+        return None
 
     try:
         import httpx

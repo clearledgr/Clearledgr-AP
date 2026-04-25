@@ -20,6 +20,10 @@ def test_metrics_use_durable_store_in_staging(monkeypatch, tmp_path: Path):
     metrics.record_request("GET", "/health", 200, 12.5)
     metrics.record_error("http_500", "/api/test")
     metrics.record_reconciliation_run("gmail", "success", 50.0)
+    # record_request / record_error are fire-and-forget post-fix —
+    # wait for the executor to drain so the assertions below see the
+    # rows.
+    assert metrics.flush_pending(timeout=5.0)
 
     with db.connect() as conn:
         cur = conn.cursor()
@@ -50,6 +54,12 @@ def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
     metrics = importlib.reload(metrics_module)
     metrics.reset_metrics()
     metrics.record_request("GET", "/health", 200, 10.0)
+    # Wait for the first persist (which also runs the schema-creation
+    # + first prune in the background executor) to land before we
+    # insert the stale row + reset the prune marker. Otherwise that
+    # in-flight task would overwrite our forced reset and the second
+    # record_request would skip the prune step.
+    assert metrics.flush_pending(timeout=5.0)
 
     stale_ts = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     with db.connect() as conn:
@@ -69,6 +79,9 @@ def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
     # Force prune on next write by resetting the in-process monotonic marker.
     metrics._LAST_PRUNE_MONOTONIC = 0.0
     metrics.record_request("GET", "/healthz", 200, 11.0)
+    # record_request is fire-and-forget via the metrics executor — wait
+    # for the in-flight prune+insert to land before reading the table.
+    assert metrics.flush_pending(timeout=5.0)
 
     with db.connect() as conn:
         cur = conn.cursor()

@@ -39,6 +39,12 @@ from clearledgr.services.errors import ClearledgrError, to_http_exception
 from clearledgr.core.errors import safe_error
 from clearledgr.services.logging import log_request, log_error, logger
 from clearledgr.services.metrics import record_request, record_error, get_metrics
+
+# Surface the persistent-metrics mode on /health without calling
+# get_metrics() (which would run 9 SELECTs per call, see L1247).
+_PERSISTENT_METRICS = str(os.getenv("ENV", "dev")).strip().lower() in {
+    "prod", "production", "staging", "stage",
+}
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import time
@@ -1247,7 +1253,7 @@ async def workspace_page():
 async def health():
     """
     Health check endpoint.
-    
+
     Returns API status, version, and detailed health checks.
     No authentication required.
     """
@@ -1266,11 +1272,15 @@ async def health():
         checks["database"] = {"status": "unhealthy", "error": str(exc)}
         status = "unhealthy"
 
-    metrics_payload = get_metrics()
-    backend_info = metrics_payload.get("backend", {}) if isinstance(metrics_payload, dict) else {}
+    # Metrics-backend mode reflects whether the persistent store is
+    # mounted; we report that without calling `get_metrics()`, which
+    # runs 9 separate SELECTs to build a full report. Health checks
+    # fire on every Railway healthcheck poll + every browser session
+    # bootstrap; making them serialise on those queries dominated p50
+    # latency for /health (~8.6s observed in prod).
     checks["metrics_backend"] = {
         "status": "healthy",
-        "mode": str(backend_info.get("mode") or "unknown"),
+        "mode": "durable_db" if _PERSISTENT_METRICS else "memory",
     }
 
     # §11.2.1: Event queue depth for autoscaler. In prod this is
