@@ -807,12 +807,23 @@ function registerThreadHandler() {
           } catch (_) { /* no finance record for this thread — that's fine */ }
         }
 
-        // Inject thread-top banner for finance-record threads (Mixmax-style).
-        // The exception banner stacks ABOVE the state banner when there's
-        // an active exception, so the most actionable signal is closest
-        // to the message body.
+        // Inject thread-top banners for finance-record threads (Mixmax-style).
+        // InboxSDK's addNoticeBar prepends; the call order is reversed
+        // from the visual order so the most actionable signal sits
+        // nearest the message body:
+        //
+        //   [exception banner]  ← if active exception
+        //   [approval banner]   ← if state in needs_approval / pending_approval
+        //   [state banner]      ← always
+        //   [Gmail message body]
+        //
+        // The state banner is the always-on identity row (vendor +
+        // amount + state pill); the contextual banners add the "what's
+        // happening right now" expansion that previously required
+        // leaving Gmail to discover.
         if (item && typeof threadView.addNoticeBar === 'function') {
           injectExceptionBanner(threadView, item);
+          injectApprovalBanner(threadView, item);
           injectInvoiceBanner(threadView, item);
         }
 
@@ -1017,6 +1028,120 @@ function injectExceptionBanner(threadView, item) {
     // clicking from the banner lands at the same context.
     detailsBtn.addEventListener('click', () => {
       openItemInPipeline(item, 'thread_exception_banner');
+    });
+    el.appendChild(detailsBtn);
+  }
+
+  threadView.addNoticeBar({ el });
+}
+
+// Phase 3.2: contextual approval banner. Stacks above the state banner
+// when state is needs_approval / pending_approval, surfacing the
+// information a user previously had to leave Gmail to find: who the
+// approver is, how long they've been sitting on it, and whether the
+// SLA window has tipped into nudge or escalation territory. The state
+// banner still renders ("NEEDS APPROVAL" pill + amount); this banner
+// is the context expansion. Same Streak/Fyxer pattern as 3.1's
+// exception banner.
+function _itemAwaitsApproval(item) {
+  if (!item) return false;
+  const state = String(item.state || '').toLowerCase();
+  return state === 'needs_approval' || state === 'pending_approval';
+}
+
+function _humanizeWaitMinutes(minutes) {
+  const m = Math.max(0, Math.round(Number(minutes) || 0));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const remM = m - h * 60;
+  if (h < 24) return remM ? `${h}h ${remM}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const remH = h - d * 24;
+  return remH ? `${d}d ${remH}h` : `${d}d`;
+}
+
+function _formatApprovers(assignees) {
+  const list = (Array.isArray(assignees) ? assignees : [])
+    .map((a) => String(a || '').trim())
+    .filter(Boolean);
+  if (list.length === 0) return '';
+  // Strip the domain so the banner reads "Awaiting Mo, Sarah" instead
+  // of "mo@x.com, sarah@y.com" — the full email lives in the sidebar's
+  // approval section if the user wants disambiguation.
+  const display = list.slice(0, 2).map((a) => a.split('@')[0]);
+  if (list.length > 2) display.push(`+${list.length - 2} more`);
+  return display.join(', ');
+}
+
+function _approvalUrgencyConfig(followup) {
+  const f = followup && typeof followup === 'object' ? followup : {};
+  if (f.escalation_due) {
+    return { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'Escalate' };
+  }
+  if (f.sla_breached) {
+    return { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'SLA breached' };
+  }
+  // Within SLA — soft yellow, same palette as the state banner's
+  // needs_approval theme so the two visually belong together.
+  return { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Waiting' };
+}
+
+function injectApprovalBanner(threadView, item) {
+  if (!_itemAwaitsApproval(item)) return;
+  if (typeof threadView.addNoticeBar !== 'function') return;
+
+  const followup = (item && typeof item.approval_followup === 'object' && item.approval_followup) || {};
+  const cfg = _approvalUrgencyConfig(followup);
+
+  const waitMinutes = Number(
+    item.approval_wait_minutes != null ? item.approval_wait_minutes : followup.wait_minutes,
+  ) || 0;
+  const approvers = _formatApprovers(
+    item.approval_pending_assignees || followup.pending_assignees,
+  );
+
+  // Headline reads as a single sentence: "[Waiting] 2h 15m — Awaiting Mo, Sarah".
+  // If we have neither a wait time nor an approver, the banner adds no
+  // information beyond the state banner, so suppress it.
+  if (waitMinutes <= 0 && !approvers) return;
+
+  const headlineParts = [];
+  if (waitMinutes > 0) headlineParts.push(_humanizeWaitMinutes(waitMinutes));
+  if (approvers) headlineParts.push(`Awaiting ${approvers}`);
+  const headline = headlineParts.join(' — ');
+
+  const el = document.createElement('div');
+  el.style.cssText = `
+    display:flex; align-items:center; gap:12px; padding:10px 16px;
+    background:${cfg.bg}; border-left:3px solid ${cfg.border};
+    font-family:Inter,-apple-system,system-ui,sans-serif; font-size:13px; color:${cfg.text};
+  `;
+
+  const left = document.createElement('div');
+  left.style.cssText = 'flex:1; display:flex; align-items:center; gap:8px;';
+  const pill = document.createElement('span');
+  pill.style.cssText = `
+    font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px;
+    background:${cfg.border}20; color:${cfg.text}; text-transform:uppercase; letter-spacing:0.02em;
+  `;
+  pill.textContent = cfg.label;
+  left.appendChild(pill);
+  const text = document.createElement('span');
+  text.style.cssText = 'font-weight:500;';
+  text.textContent = headline;
+  left.appendChild(text);
+  el.appendChild(left);
+
+  if (item?.id) {
+    const detailsBtn = document.createElement('button');
+    detailsBtn.textContent = 'View details';
+    detailsBtn.style.cssText = `
+      align-self:center; border:1px solid ${cfg.border}; border-radius:6px;
+      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
+      background:transparent; color:${cfg.text}; font-family:inherit;
+    `;
+    detailsBtn.addEventListener('click', () => {
+      openItemInPipeline(item, 'thread_approval_banner');
     });
     el.appendChild(detailsBtn);
   }
