@@ -1,0 +1,218 @@
+name: Publish Chrome Extension
+
+# Auto-publish the Gmail extension to the Chrome Web Store whenever
+# the version in `ui/gmail-extension/manifest.json` changes on main.
+# Pushing code without a version bump does NOT trigger a release —
+# Chrome Web Store rejects re-uploads of the same version anyway, so
+# the version field is the natural release signal.
+#
+# ── One-time setup (do this once, then auto-publish forever) ───────
+#
+# 1. Create a Chrome Web Store API OAuth client. This is SEPARATE
+#    from the user-sign-in OAuth client. In the same Google Cloud
+#    project (`clearledgr`):
+#
+#      console.cloud.google.com → APIs & Services → Credentials →
+#      Create Credentials → OAuth Client ID → Application type:
+#      "Desktop app" → name "chrome-store-publisher" → Create.
+#
+#    Save the client_id + client_secret.
+#
+# 2. Enable the Chrome Web Store API in that project:
+#
+#      console.cloud.google.com/apis/library/chromewebstore.googleapis.com
+#      → Enable.
+#
+# 3. Generate a refresh token. Replace CLIENT_ID below with the one
+#    from step 1 and visit the URL in a browser:
+#
+#      https://accounts.google.com/o/oauth2/v2/auth
+#        ?client_id=CLIENT_ID
+#        &redirect_uri=urn:ietf:wg:oauth:2.0:oob
+#        &response_type=code
+#        &scope=https://www.googleapis.com/auth/chromewebstore
+#        &access_type=offline
+#        &prompt=consent
+#
+#    Sign in (use the Google account that owns the Web Store
+#    listing — usually founders@clearledgr.com), copy the code that
+#    Google shows. Then exchange it for a refresh token:
+#
+#      curl -X POST https://oauth2.googleapis.com/token \
+#        -d "client_id=CLIENT_ID" \
+#        -d "client_secret=CLIENT_SECRET" \
+#        -d "code=THE_CODE" \
+#        -d "grant_type=authorization_code" \
+#        -d "redirect_uri=urn:ietf:wg:oauth:2.0:oob"
+#
+#    Save the `refresh_token` from the response.
+#
+# 4. Add four secrets to the GitHub repo (Settings → Secrets and
+#    variables → Actions → New repository secret):
+#
+#      CHROME_EXTENSION_ID    ioccdcmiojkcpjcmikikdimnjcpihegd
+#      CHROME_CLIENT_ID       (from step 1)
+#      CHROME_CLIENT_SECRET   (from step 1)
+#      CHROME_REFRESH_TOKEN   (from step 3)
+#
+# 5. List the extension on the Web Store at least once manually
+#    (visibility = Unlisted) so the listing exists. After that, this
+#    workflow handles every subsequent release.
+#
+# ── Day-to-day usage ────────────────────────────────────────────────
+#
+#    1. Make changes, build locally to validate (`bash build.sh prod`).
+#    2. Bump `version` in `ui/gmail-extension/manifest.json`.
+#    3. Push to main. This workflow detects the bump, builds the prod
+#       zip, uploads it via the Web Store API, and publishes.
+#    4. Unlisted-listing reviews usually clear in <24h, sometimes
+#       within minutes — the workflow doesn't wait for review, just
+#       submits.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ui/gmail-extension/**'
+      - '.github/workflows/publish-chrome-extension.yml'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force publish even if version did not change'
+        required: false
+        default: 'false'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui/gmail-extension
+    steps:
+      - name: Checkout (with prior commit for version diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # need HEAD~1 to compare manifest versions
+
+      - name: Detect manifest version change
+        id: version
+        run: |
+          set -e
+          CURRENT=$(jq -r .version manifest.json)
+          # If we don't have a prior commit (first run on a branch), publish.
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            PREVIOUS=$(git show HEAD~1:ui/gmail-extension/manifest.json | jq -r .version)
+          else
+            PREVIOUS=""
+          fi
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
+          if [ "$CURRENT" = "$PREVIOUS" ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            echo "::notice::manifest version unchanged ($CURRENT) — skipping Web Store publish"
+          else
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "::notice::manifest version $PREVIOUS → $CURRENT — will publish"
+          fi
+
+      - name: Setup Node
+        if: steps.version.outputs.should_publish == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.version.outputs.should_publish == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Build prod bundle
+        if: steps.version.outputs.should_publish == 'true'
+        run: bash build.sh prod
+
+      - name: Verify zip artifact
+        if: steps.version.outputs.should_publish == 'true'
+        run: |
+          ls -lh clearledgr-extension-prod.zip
+          # Sanity: zip must contain manifest.json with the expected version.
+          unzip -p clearledgr-extension-prod.zip manifest.json | jq -r .version | tee /tmp/zip_version
+          test "$(cat /tmp/zip_version)" = "${{ steps.version.outputs.current }}" \
+            || { echo "::error::zip manifest version mismatch"; exit 1; }
+
+      - name: Mint Chrome Web Store API access token
+        if: steps.version.outputs.should_publish == 'true'
+        id: mint
+        env:
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          set -e
+          response=$(curl -sS -X POST https://oauth2.googleapis.com/token \
+            -d "client_id=${CHROME_CLIENT_ID}" \
+            -d "client_secret=${CHROME_CLIENT_SECRET}" \
+            -d "refresh_token=${CHROME_REFRESH_TOKEN}" \
+            -d "grant_type=refresh_token")
+          access_token=$(echo "$response" | jq -r .access_token)
+          if [ -z "$access_token" ] || [ "$access_token" = "null" ]; then
+            echo "::error::failed to mint access token: $response"
+            exit 1
+          fi
+          # Mask the token in subsequent step logs (defense in depth —
+          # GitHub redacts secrets, but the access_token isn't a secret yet).
+          echo "::add-mask::$access_token"
+          echo "access_token=$access_token" >> $GITHUB_OUTPUT
+
+      - name: Upload zip to Chrome Web Store
+        if: steps.version.outputs.should_publish == 'true'
+        env:
+          ACCESS_TOKEN: ${{ steps.mint.outputs.access_token }}
+          EXT_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+        run: |
+          set -e
+          response=$(curl -sS -X PUT \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${EXT_ID}" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "x-goog-api-version: 2" \
+            -T clearledgr-extension-prod.zip)
+          echo "Upload response: $response"
+          state=$(echo "$response" | jq -r '.uploadState // empty')
+          if [ "$state" != "SUCCESS" ]; then
+            # The Web Store rejects re-uploads of an existing version
+            # with uploadState=FAILURE + itemError listing the offence.
+            # Fail loud — there's no recovery within this run.
+            echo "::error::Chrome Web Store upload failed: $response"
+            exit 1
+          fi
+
+      - name: Publish item
+        if: steps.version.outputs.should_publish == 'true'
+        env:
+          ACCESS_TOKEN: ${{ steps.mint.outputs.access_token }}
+          EXT_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+        run: |
+          set -e
+          # Default publish target = the listing's current visibility
+          # (Unlisted, Public, or Private). To publish to a different
+          # target, append `?publishTarget=trustedTesters` here.
+          response=$(curl -sS -X POST \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${EXT_ID}/publish" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0")
+          echo "Publish response: $response"
+          status=$(echo "$response" | jq -r '.status[]? // empty' | head -1)
+          # Successful publish returns status array including OK or
+          # IN_REVIEW. Reject only on actual error statuses.
+          if echo "$response" | jq -e '.status[]? | select(. == "ITEM_NOT_UPDATABLE" or . == "USER_NOT_OWNER" or . == "INVALID_DEVELOPER")' >/dev/null; then
+            echo "::error::publish failed: $response"
+            exit 1
+          fi
+          # Surface the new version as a job summary line so the
+          # GitHub UI shows it without diving into logs.
+          echo "## Published to Chrome Web Store" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Extension ID: \`${EXT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: \`${{ steps.version.outputs.current }}\` (was \`${{ steps.version.outputs.previous }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- Listing: https://chrome.google.com/webstore/detail/${EXT_ID}" >> $GITHUB_STEP_SUMMARY
