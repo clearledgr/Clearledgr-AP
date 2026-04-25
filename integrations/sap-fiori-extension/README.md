@@ -163,21 +163,51 @@ https://<approuter-url>/?CompanyCode=1010&SupplierInvoice=5105600123&FiscalYear=
 You'll be redirected to BTP login; after signing in, the panel
 renders the Clearledgr Box for that invoice.
 
-### Backend env vars (Clearledgr side)
+### Backend per-tenant config (Clearledgr side) — **multi-tenant by default**
 
-The `/extension/sap/exchange` endpoint verifies the XSUAA JWT against
-the JWKS endpoint of the customer's BTP subaccount. Configure two env
-vars per environment:
+Each SAP customer has their own BTP subaccount with their own XSUAA
+service, JWKS URL, and `xsappname`. The `/extension/sap/exchange`
+endpoint resolves these *per-tenant* by:
 
-```bash
-# Get from BTP cockpit → Subaccount → Service Instance (xsuaa) → Show Sensitive Data
-SAP_XSUAA_JWKS_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/token_keys
-SAP_XSUAA_AUDIENCE=clearledgr-boxpanel-<space>     # the xsappname from xs-security.json
+1. Reading the JWT's ``iss`` claim (unverified parse — safe; only
+   used for lookup).
+2. Matching the issuer against the org's
+   ``erp_connections.credentials.s4hana_xsuaa_issuer``.
+3. Verifying the JWT against the matched org's
+   ``credentials.s4hana_xsuaa_jwks_url`` + ``s4hana_xsuaa_audience``.
+4. Pinning the resolved org_id from the matched row — caller cannot
+   override (cross-tenant guard).
+
+Provision per tenant once during onboarding:
+
+```sql
+-- Example for booking-corp's S/4HANA connection
+UPDATE erp_connections
+SET credentials = credentials || jsonb_build_object(
+    's4hana_xsuaa_issuer',   'https://booking.authentication.eu10.hana.ondemand.com/oauth/token',
+    's4hana_xsuaa_jwks_url', 'https://booking.authentication.eu10.hana.ondemand.com/token_keys',
+    's4hana_xsuaa_audience', 'clearledgr-boxpanel-prod',
+    'webhook_secret',        '<HMAC secret used for outbound webhook verification>'
+)
+WHERE organization_id = 'booking-corp' AND erp_type = 'sap_s4hana';
 ```
 
-Phase 4 (multi-customer) replaces these single env vars with a
-per-tenant lookup against the org's `erp_connections.credentials`
-JSON — same shape NetSuite uses for `webhook_secret`.
+Look these up in BTP cockpit:
+
+* **Issuer / JWKS URL** → Subaccount → Service Marketplace → XSUAA
+  → Service Instance (Show Sensitive Data) → ``url`` field. The
+  issuer is ``<url>/oauth/token``; the JWKS URL is ``<url>/token_keys``.
+* **Audience** → the ``xsappname`` from `xs-security.json` after MTA
+  deploy resolves the ``${space}`` placeholder (visible in the
+  service binding's ``credentials.xsappname``).
+* **webhook_secret** → generate with ``openssl rand -base64 48``;
+  store the same value on the BTP Event Mesh subscription / ABAP
+  BAdI side.
+
+**Single-tenant fallback** (dev / staging only): if no tenant config
+matches the JWT's issuer, the endpoint falls through to env vars
+``SAP_XSUAA_JWKS_URL`` + ``SAP_XSUAA_AUDIENCE``. Production should
+always use per-tenant config.
 
 ### Write-direction setup
 

@@ -147,6 +147,89 @@ async def _verify_xsuaa_jwt(token: str, *, jwks_url: str, expected_audience: Opt
     return payload
 
 
+# ─── Per-tenant XSUAA config resolution ─────────────────────────────
+
+
+def _extract_unverified_issuer(jwt: str) -> Optional[str]:
+    """Decode the JWT body without verifying so we can read ``iss``.
+
+    Safe because we use the issuer only to *look up* which JWKS to
+    verify against — actual signature verification happens against the
+    resolved JWKS afterward. A forged JWT with a fake issuer either
+    matches no tenant (rejected) or matches a tenant (and then the
+    JWKS verification fails because the attacker doesn't hold the
+    private key).
+    """
+    try:
+        parts = jwt.split(".")
+        if len(parts) != 3:
+            return None
+        payload = json.loads(_b64url_decode(parts[1]))
+    except Exception:
+        return None
+    iss = payload.get("iss")
+    if not isinstance(iss, str):
+        return None
+    return iss.strip()
+
+
+def _resolve_xsuaa_config_for_issuer(db: Any, issuer: str) -> Optional[Dict[str, str]]:
+    """Find the org whose S/4HANA connection matches ``iss``.
+
+    Walks active orgs' ``erp_connections`` looking for an
+    ``erp_type in {'sap_s4hana','s4hana','sap_s4'}`` row whose
+    ``credentials.s4hana_xsuaa_issuer`` matches the supplied issuer
+    exactly. Returns the JWKS URL + audience to use plus the bound
+    org_id, or None if no match.
+
+    Phase 4 wishlist: replace the linear walk with an indexed lookup
+    table once we have more than ~10 SAP customers. For now (1-3
+    customers) this is fine.
+    """
+    if not issuer:
+        return None
+    if not hasattr(db, "list_organizations") or not hasattr(db, "get_erp_connections"):
+        return None
+    try:
+        orgs = db.list_organizations()
+    except Exception:
+        return None
+    for org in orgs or []:
+        org_id = str(org.get("id") or "").strip()
+        if not org_id:
+            continue
+        try:
+            connections = db.get_erp_connections(org_id)
+        except Exception:
+            continue
+        for row in connections or []:
+            erp_type = str(row.get("erp_type") or "").lower()
+            if erp_type not in {"sap_s4hana", "s4hana", "sap_s4"}:
+                continue
+            creds = row.get("credentials") or {}
+            if isinstance(creds, str):
+                try:
+                    creds = json.loads(creds)
+                except Exception:
+                    creds = {}
+            if not isinstance(creds, dict):
+                continue
+            stored_issuer = str(creds.get("s4hana_xsuaa_issuer") or "").strip()
+            if stored_issuer and stored_issuer == issuer:
+                jwks_url = str(creds.get("s4hana_xsuaa_jwks_url") or "").strip()
+                if not jwks_url:
+                    # Tenant matched on issuer but didn't store a JWKS
+                    # URL — fall through to env-var fallback rather
+                    # than fail closed.
+                    return None
+                return {
+                    "jwks_url": jwks_url,
+                    "audience": str(creds.get("s4hana_xsuaa_audience") or "").strip() or None,
+                    "organization_id": org_id,
+                }
+    return None
+
+
 # ─── Endpoints ──────────────────────────────────────────────────────
 
 
@@ -156,34 +239,68 @@ async def exchange_xsuaa_for_clearledgr_jwt(
 ) -> Dict[str, Any]:
     """Exchange an XSUAA-signed user JWT for a short-lived Clearledgr JWT.
 
+    Multi-tenant: each customer's BTP subaccount has its own XSUAA
+    service with its own JWKS URL, issuer, and audience. We resolve
+    these *per-tenant* by reading the JWT's ``iss`` claim (unverified
+    parse, just enough to look up the org), matching it against the
+    ``s4hana_xsuaa_issuer`` field on the org's
+    ``erp_connections.credentials`` row, then verifying the JWT
+    against that org's stored ``s4hana_xsuaa_jwks_url`` +
+    ``s4hana_xsuaa_audience``. The matched row's ``organization_id``
+    is the resolved org — not whatever the caller claims in the body.
+
+    Falls back to ``SAP_XSUAA_JWKS_URL`` / ``SAP_XSUAA_AUDIENCE`` env
+    vars when no per-tenant config matches — useful for single-tenant
+    dev / staging environments where the customer's connection isn't
+    yet provisioned.
+
     Body shape:
     ```
-    {
-        "xsuaa_jwt": "eyJ...",
-        "organization_id": "<org_id>"  // optional; resolved from email if absent
-    }
+    { "xsuaa_jwt": "eyJ..." }
     ```
 
     Response:
     ```
-    {
-        "access_token": "<clearledgr-jwt>",
-        "token_type": "bearer",
-        "expires_in": 300
-    }
+    { "access_token": "<clearledgr-jwt>",
+      "token_type": "bearer",
+      "expires_in": 300 }
     ```
     """
     xsuaa_jwt = str((body or {}).get("xsuaa_jwt") or "").strip()
     if not xsuaa_jwt:
         raise HTTPException(status_code=400, detail="missing_xsuaa_jwt")
 
-    jwks_url = os.getenv("SAP_XSUAA_JWKS_URL", "").strip()
-    if not jwks_url:
-        raise HTTPException(
-            status_code=503,
-            detail="sap_xsuaa: SAP_XSUAA_JWKS_URL env var not configured",
-        )
-    expected_audience = os.getenv("SAP_XSUAA_AUDIENCE", "").strip() or None
+    # Step 1: peek at the JWT issuer (unverified) so we can find the
+    # matching tenant's S/4HANA connection.
+    issuer = _extract_unverified_issuer(xsuaa_jwt)
+    if not issuer:
+        raise HTTPException(status_code=401, detail="sap_xsuaa: missing iss claim in token")
+
+    db = shared.get_db()
+
+    # Step 2: per-tenant config lookup. If we find a match, use the
+    # tenant's JWKS URL + audience. The matched row also pins the
+    # organization_id — caller-supplied org_id is ignored to prevent
+    # cross-tenant token use.
+    tenant_config = _resolve_xsuaa_config_for_issuer(db, issuer)
+    if tenant_config:
+        jwks_url = tenant_config["jwks_url"]
+        expected_audience = tenant_config["audience"]
+        resolved_org_id_hint = tenant_config["organization_id"]
+    else:
+        # Single-tenant dev fallback. Production deployments should
+        # always provision per-tenant config.
+        jwks_url = os.getenv("SAP_XSUAA_JWKS_URL", "").strip()
+        if not jwks_url:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"sap_xsuaa: no tenant config for issuer {issuer!r} "
+                    "and no SAP_XSUAA_JWKS_URL env var fallback"
+                ),
+            )
+        expected_audience = os.getenv("SAP_XSUAA_AUDIENCE", "").strip() or None
+        resolved_org_id_hint = None
 
     payload = await _verify_xsuaa_jwt(
         xsuaa_jwt,
@@ -191,11 +308,17 @@ async def exchange_xsuaa_for_clearledgr_jwt(
         expected_audience=expected_audience,
     )
 
+    # Defence in depth: the verified JWT's iss must match what we
+    # looked up. Catches a misconfiguration where a tenant's config
+    # row has the wrong JWKS URL.
+    verified_iss = str(payload.get("iss") or "").strip()
+    if verified_iss and verified_iss != issuer:
+        raise HTTPException(status_code=401, detail="sap_xsuaa: iss mismatch after verification")
+
     user_email = str(payload.get("email") or payload.get("user_name") or "").strip().lower()
     if not user_email:
         raise HTTPException(status_code=401, detail="sap_xsuaa: no email claim in token")
 
-    db = shared.get_db()
     user_row = None
     if hasattr(db, "get_user_by_email"):
         try:
@@ -208,11 +331,22 @@ async def exchange_xsuaa_for_clearledgr_jwt(
             detail=f"sap_xsuaa: no Clearledgr user matches email {user_email}",
         )
 
-    organization_id = str(
-        (body or {}).get("organization_id")
-        or user_row.get("organization_id")
+    # Per-tenant config wins on org binding. Falls through to the
+    # user's home org only when no tenant match was found.
+    organization_id = (
+        resolved_org_id_hint
+        or str(user_row.get("organization_id") or "default").strip()
         or "default"
-    ).strip() or "default"
+    )
+
+    # Cross-tenant guard: if a tenant config matched, the user's home
+    # org must be the same. Prevents a user from one Clearledgr org
+    # impersonating into another via a captured JWT from a third org's BTP.
+    if resolved_org_id_hint and str(user_row.get("organization_id") or "").strip() != resolved_org_id_hint:
+        raise HTTPException(
+            status_code=403,
+            detail="sap_xsuaa: user's home org does not match tenant resolved from JWT issuer",
+        )
 
     # Mint a 5-minute Clearledgr JWT scoped to this user/org.
     user_id = str(user_row.get("id") or user_email).strip()
