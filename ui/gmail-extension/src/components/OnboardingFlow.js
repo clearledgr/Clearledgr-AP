@@ -34,7 +34,7 @@ const LOGO_URL = typeof chrome !== 'undefined' && chrome.runtime
 
 // ==================== STEP 1: AUTH MODAL ====================
 
-function AuthModal({ onSignIn, pending, onDismiss }) {
+function AuthModal({ onSignIn, pending, onDismiss, errorMessage }) {
   return html`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal">
@@ -46,6 +46,13 @@ function AuthModal({ onSignIn, pending, onDismiss }) {
             Use your Google account to start.
           </p>
         </div>
+        ${errorMessage ? html`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ''}
         <button
           class="cl-onboard-google-btn"
           onClick=${onSignIn}
@@ -409,6 +416,7 @@ function PipelineCreation({ erpType, onComplete }) {
 export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge, backendUrl, signIn }) {
   const [step, setStep] = useState('auth');  // auth | workspace | erp | policy | slack | creating | done
   const [pending, setPending] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [erpType, setErpType] = useState('');
   const [erpError, setErpError] = useState('');
   const [workspaceError, setWorkspaceError] = useState('');
@@ -417,8 +425,47 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
   const [slackError, setSlackError] = useState('');
   const [slackConnected, setSlackConnected] = useState(false);
 
+  // Map raw error codes from queueManager.authorizeGmailNow into a
+  // human-readable line that goes above the Sign-in button. Without
+  // this, every failure mode (cooldown, popup-blocked, redirect_uri
+  // mismatch, network) used to disappear silently — the button just
+  // returned to "Sign in with Google" with no feedback to the user.
+  const _authErrorMessage = useCallback((code) => {
+    const c = String(code || '').toLowerCase();
+    if (!c || c === 'auth_required' || c === 'sign_in_failed') {
+      return 'Sign-in didn\'t complete. Please try again.';
+    }
+    if (c === 'interactive_auth_cooldown') {
+      return 'Sign-in was started recently. Wait about a minute, then try again.';
+    }
+    if (c === 'backend_auth_cooldown') {
+      return 'Sign-in is cooling down after repeated failures. Wait a moment and retry.';
+    }
+    if (c === 'auth_in_progress') {
+      return 'Sign-in is already in progress. Watch for the Google popup.';
+    }
+    if (c === 'auth_unavailable') {
+      return 'Extension isn\'t fully connected to its background worker yet. Reload Gmail and try again.';
+    }
+    if (c.includes('redirect_uri_mismatch')) {
+      return 'OAuth redirect URI mismatch. The deployed OAuth client doesn\'t list this extension yet.';
+    }
+    if (c.includes('access_denied')) {
+      return 'You declined the Google permissions prompt. Click Sign in with Google to try again.';
+    }
+    if (c.includes('no_google_token') || c.includes('oauth_no')) {
+      return 'Google didn\'t return a token. Check that pop-ups are allowed for mail.google.com and retry.';
+    }
+    if (c.includes('network')) {
+      return 'Network error reaching Google or Clearledgr. Check connectivity and try again.';
+    }
+    // Last resort: show the code itself so we can debug what came back.
+    return `Sign-in failed (${c}). Please try again.`;
+  }, []);
+
   const handleSignIn = useCallback(async () => {
     setPending(true);
+    setAuthError('');
     try {
       // Native extension OAuth: chrome.identity.getAuthToken → register with
       // backend → backend Bearer token populated in queueManager. This is
@@ -439,12 +486,17 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
         setWorkspaceDefaultName(seed);
       } catch { /* non-fatal — seed stays empty */ }
       setStep('workspace');
-    } catch (_err) {
-      // Stay on the auth step; user can click again.
+    } catch (err) {
+      // Surface the failure so the user knows what happened. The raw
+      // code on the error message is the queueManager error code
+      // (cooldown, popup-blocked, redirect URI mismatch, etc.).
+      setAuthError(_authErrorMessage(err?.message));
+      // eslint-disable-next-line no-console
+      console.warn('[Clearledgr] sign-in failed:', err);
     } finally {
       setPending(false);
     }
-  }, [signIn, api]);
+  }, [signIn, api, _authErrorMessage]);
 
   const handleWorkspaceContinue = useCallback(async (workspaceName) => {
     setPending(true);
@@ -628,7 +680,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       .cl-onboard-primary-btn:hover { background: #00C271; }
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
-    ${step === 'auth' ? html`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ''}
+    ${step === 'auth' ? html`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} errorMessage=${authError} />` : ''}
     ${step === 'workspace' ? html`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ''}
     ${step === 'erp' ? html`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ''}
     ${step === 'policy' ? html`<${PolicyForm} onContinue=${handlePolicyContinue} pending=${pending} errorMessage=${policyError} />` : ''}

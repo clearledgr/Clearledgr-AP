@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:f0432f24dfe99c3a7b431764b00e607880dd6c9b2c7f13164d05d09b78d89425 */
+/* clearledgr-source-fingerprint:eafdaf43650cffd82706078312ef197cc61f5b0e7bef8251e822ea12e461d7a4 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -62974,7 +62974,7 @@ Reason (required — logged to the audit trail):`);
   // src/components/OnboardingFlow.js
   var html5 = htm_module_default.bind(_);
   var LOGO_URL = typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("icons/icon48.png") : "";
-  function AuthModal({ onSignIn, pending, onDismiss }) {
+  function AuthModal({ onSignIn, pending, onDismiss, errorMessage }) {
     return html5`
     <div class="cl-onboard-overlay">
       <div class="cl-onboard-modal">
@@ -62986,6 +62986,13 @@ Reason (required — logged to the audit trail):`);
             Use your Google account to start.
           </p>
         </div>
+        ${errorMessage ? html5`
+          <div style="
+            background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+            padding:10px 12px;margin-bottom:16px;
+            font:400 12px/1.4 'DM Sans',sans-serif;color:#991B1B;
+          ">${errorMessage}</div>
+        ` : ""}
         <button
           class="cl-onboard-google-btn"
           onClick=${onSignIn}
@@ -63306,6 +63313,7 @@ Reason (required — logged to the audit trail):`);
   function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge, backendUrl, signIn }) {
     const [step, setStep] = d2("auth");
     const [pending, setPending] = d2(false);
+    const [authError, setAuthError] = d2("");
     const [erpType, setErpType] = d2("");
     const [erpError, setErpError] = d2("");
     const [workspaceError, setWorkspaceError] = d2("");
@@ -63313,8 +63321,40 @@ Reason (required — logged to the audit trail):`);
     const [policyError, setPolicyError] = d2("");
     const [slackError, setSlackError] = d2("");
     const [slackConnected, setSlackConnected] = d2(false);
+    const _authErrorMessage = q2((code) => {
+      const c3 = String(code || "").toLowerCase();
+      if (!c3 || c3 === "auth_required" || c3 === "sign_in_failed") {
+        return "Sign-in didn't complete. Please try again.";
+      }
+      if (c3 === "interactive_auth_cooldown") {
+        return "Sign-in was started recently. Wait about a minute, then try again.";
+      }
+      if (c3 === "backend_auth_cooldown") {
+        return "Sign-in is cooling down after repeated failures. Wait a moment and retry.";
+      }
+      if (c3 === "auth_in_progress") {
+        return "Sign-in is already in progress. Watch for the Google popup.";
+      }
+      if (c3 === "auth_unavailable") {
+        return "Extension isn't fully connected to its background worker yet. Reload Gmail and try again.";
+      }
+      if (c3.includes("redirect_uri_mismatch")) {
+        return "OAuth redirect URI mismatch. The deployed OAuth client doesn't list this extension yet.";
+      }
+      if (c3.includes("access_denied")) {
+        return "You declined the Google permissions prompt. Click Sign in with Google to try again.";
+      }
+      if (c3.includes("no_google_token") || c3.includes("oauth_no")) {
+        return "Google didn't return a token. Check that pop-ups are allowed for mail.google.com and retry.";
+      }
+      if (c3.includes("network")) {
+        return "Network error reaching Google or Clearledgr. Check connectivity and try again.";
+      }
+      return `Sign-in failed (${c3}). Please try again.`;
+    }, []);
     const handleSignIn = q2(async () => {
       setPending(true);
+      setAuthError("");
       try {
         if (!signIn)
           throw new Error("signIn handler missing");
@@ -63328,10 +63368,13 @@ Reason (required — logged to the audit trail):`);
           setWorkspaceDefaultName(seed);
         } catch {}
         setStep("workspace");
-      } catch (_err) {} finally {
+      } catch (err) {
+        setAuthError(_authErrorMessage(err?.message));
+        console.warn("[Clearledgr] sign-in failed:", err);
+      } finally {
         setPending(false);
       }
-    }, [signIn, api]);
+    }, [signIn, api, _authErrorMessage]);
     const handleWorkspaceContinue = q2(async (workspaceName) => {
       setPending(true);
       setWorkspaceError("");
@@ -63486,7 +63529,7 @@ Reason (required — logged to the audit trail):`);
       .cl-onboard-primary-btn:hover { background: #00C271; }
       .cl-onboard-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
-    ${step === "auth" ? html5`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} />` : ""}
+    ${step === "auth" ? html5`<${AuthModal} onSignIn=${handleSignIn} pending=${pending} onDismiss=${onDismiss} errorMessage=${authError} />` : ""}
     ${step === "workspace" ? html5`<${CreateWorkspace} onContinue=${handleWorkspaceContinue} pending=${pending} errorMessage=${workspaceError} defaultName=${workspaceDefaultName} />` : ""}
     ${step === "erp" ? html5`<${ErpPicker} onSelect=${handleErpSelect} pending=${pending} errorMessage=${erpError} />` : ""}
     ${step === "policy" ? html5`<${PolicyForm} onContinue=${handlePolicyContinue} pending=${pending} errorMessage=${policyError} />` : ""}
