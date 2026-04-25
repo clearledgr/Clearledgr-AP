@@ -879,10 +879,10 @@ class GmailWatchService:
 async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> GmailToken:
     """
     Exchange an authorization code for tokens.
-    
+
     Args:
         code: The authorization code from OAuth callback
-    
+
     Returns:
         GmailToken with access and refresh tokens
     """
@@ -902,7 +902,27 @@ async def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None
         OAUTH_TOKEN_URL,
         data=payload,
     )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        # Surface Google's actual error reason ("invalid_grant",
+        # "redirect_uri_mismatch", "invalid_client", etc.) to the caller
+        # + the worker logs. Without this, raise_for_status() strips the
+        # body and the caller sees only "400 Bad Request" — useless for
+        # diagnosis when the OAuth client + URIs all look correct.
+        error_summary = ""
+        try:
+            error_payload = response.json()
+            err = str(error_payload.get("error") or "").strip()
+            desc = str(error_payload.get("error_description") or "").strip()
+            error_summary = ": ".join(p for p in (err, desc) if p) or response.text[:300]
+        except Exception:  # noqa: BLE001
+            error_summary = response.text[:300]
+        logger.warning(
+            "exchange_code_for_tokens: Google %s for redirect_uri=%r — %s",
+            response.status_code,
+            resolved_redirect_uri,
+            error_summary,
+        )
+        raise RuntimeError(f"google_token_exchange_{response.status_code}: {error_summary}")
     data = response.json()
 
     # Resolve user identity from OAuth token. Prefer Gmail profile because
