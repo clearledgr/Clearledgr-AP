@@ -139,8 +139,8 @@ class PaymentStore:
     def _find_active_payment_for_item(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
         """Find an existing non-terminal payment for this AP item."""
         terminal_statuses = ("completed", "closed_by_credit", "failed", "reversed")
-        sql = self._prepare_sql(
-            "SELECT * FROM payments WHERE ap_item_id = ? AND status NOT IN ("
+        sql = (
+            "SELECT * FROM payments WHERE ap_item_id = %s AND status NOT IN ("
             + ",".join("%s" for _ in terminal_statuses)
             + ") ORDER BY created_at DESC LIMIT 1"
         )
@@ -168,8 +168,8 @@ class PaymentStore:
     def get_payment_by_ap_item(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
         """Fetch the payment record linked to an AP item."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM payments WHERE ap_item_id = ? ORDER BY created_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM payments WHERE ap_item_id = %s ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.execute(sql, (ap_item_id,))
@@ -196,7 +196,7 @@ class PaymentStore:
 
         set_clause = ", ".join(f"{col} = %s" for col in safe_cols)
         values = list(safe_cols.values()) + [payment_id]
-        sql = self._prepare_sql(f"UPDATE payments SET {set_clause} WHERE id = ?")
+        sql = f"UPDATE payments SET {set_clause} WHERE id = %s"
         with self.connect() as conn:
             conn.execute(sql, values)
             conn.commit()
@@ -224,8 +224,8 @@ class PaymentStore:
             params.append(vendor)
 
         where = " AND ".join(clauses)
-        sql = self._prepare_sql(
-            f"SELECT * FROM payments WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        sql = (
+            f"SELECT * FROM payments WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s"
         )
         params.extend([limit, offset])
 
@@ -250,9 +250,9 @@ class PaymentStore:
     def get_payment_summary(self, organization_id: str) -> Dict[str, int]:
         """Return counts grouped by status for an organization."""
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT status, COUNT(*) as cnt FROM payments "
-            "WHERE organization_id = ? GROUP BY status"
+            "WHERE organization_id = %s GROUP BY status"
         )
         with self.connect() as conn:
             cur = conn.execute(sql, (organization_id,))
@@ -331,9 +331,9 @@ class PaymentStore:
     ) -> List[Dict[str, Any]]:
         """Return all events for a payment in chronological order."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM payment_events WHERE payment_id = ? "
-            "ORDER BY created_at ASC LIMIT ?"
+        sql = (
+            "SELECT * FROM payment_events WHERE payment_id = %s "
+            "ORDER BY created_at ASC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.execute(sql, (payment_id, limit))

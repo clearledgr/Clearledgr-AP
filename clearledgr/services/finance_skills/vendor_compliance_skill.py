@@ -138,12 +138,12 @@ class VendorComplianceSkill(FinanceSkill):
 
     def _load_vendor_profiles(self, runtime, *, limit: int) -> List[Dict[str, Any]]:
         if hasattr(runtime.db, "connect") and hasattr(runtime.db, "_prepare_sql"):
-            sql = runtime.db._prepare_sql(
+            sql = (
                 "SELECT vendor_name, requires_po, contract_amount, payment_terms, "
                 "bank_details_changed_at, approval_override_rate, anomaly_flags, invoice_count "
                 "FROM vendor_profiles "
-                "WHERE organization_id = ? "
-                "ORDER BY invoice_count DESC, vendor_name ASC LIMIT ?"
+                "WHERE organization_id = %s "
+                "ORDER BY invoice_count DESC, vendor_name ASC LIMIT %s"
             )
             try:
                 with runtime.db.connect() as conn:

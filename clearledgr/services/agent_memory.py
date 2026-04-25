@@ -291,11 +291,11 @@ class AgentMemoryService:
             "skill_id": resolved_skill_id,
         }
         now = _now_iso()
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_profiles (
                 id, organization_id, skill_id, profile_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, skill_id)
             DO UPDATE SET
                 profile_json = EXCLUDED.profile_json,
@@ -322,8 +322,8 @@ class AgentMemoryService:
         if not self.enabled:
             return {}
         resolved_skill_id = str(skill_id or "ap_v1").strip() or "ap_v1"
-        sql = self.db._prepare_sql(
-            "SELECT profile_json FROM agent_profiles WHERE organization_id = ? AND skill_id = ?"
+        sql = (
+            "SELECT profile_json FROM agent_profiles WHERE organization_id = %s AND skill_id = %s"
         )
         with self.db.connect() as conn:
             cur = conn.cursor()
@@ -376,12 +376,12 @@ class AgentMemoryService:
             "payload_json": dict(payload or {}),
             "created_at": _now_iso(),
         }
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_memory_events (
                 id, organization_id, skill_id, ap_item_id, thread_id, event_type, channel,
                 actor_id, correlation_id, source, summary, payload_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.db.connect() as conn:
@@ -432,11 +432,11 @@ class AgentMemoryService:
             "payload_json": dict(payload or {}),
             "created_at": _now_iso(),
         }
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_eval_snapshots (
                 id, organization_id, skill_id, scope, scope_id, snapshot_type, payload_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.db.connect() as conn:
@@ -485,7 +485,7 @@ class AgentMemoryService:
         if snapshot_type:
             clauses.append("snapshot_type = %s")
             params.append(str(snapshot_type).strip())
-        sql = self.db._prepare_sql(
+        sql = (
             f"""
             SELECT scope, scope_id, snapshot_type, payload_json, created_at
             FROM agent_eval_snapshots
@@ -740,12 +740,12 @@ class AgentMemoryService:
         if not resolved_pattern_type or not resolved_pattern_key:
             return None
         now = _now_iso()
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_patterns (
                 id, organization_id, skill_id, pattern_type, pattern_key, pattern_json,
                 confidence, usage_count, last_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, skill_id, pattern_type, pattern_key)
             DO UPDATE SET
                 pattern_json = EXCLUDED.pattern_json,
@@ -803,13 +803,13 @@ class AgentMemoryService:
             return None
         resolved_skill_id = str(skill_id or "ap_v1").strip() or "ap_v1"
         now = _now_iso()
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_belief_states (
                 id, organization_id, skill_id, ap_item_id, thread_id, current_state, status,
                 belief_json, evidence_json, uncertainties_json, next_action_json,
                 memory_summary_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, skill_id, ap_item_id)
             DO UPDATE SET
                 thread_id = EXCLUDED.thread_id,
@@ -866,12 +866,12 @@ class AgentMemoryService:
     def get_belief_state(self, *, ap_item_id: str, skill_id: str = "ap_v1") -> Dict[str, Any]:
         if not self.enabled:
             return {}
-        sql = self.db._prepare_sql(
+        sql = (
             """
             SELECT ap_item_id, thread_id, current_state, status, belief_json, evidence_json,
                    uncertainties_json, next_action_json, memory_summary_json, created_at, updated_at
             FROM agent_belief_states
-            WHERE organization_id = ? AND skill_id = ? AND ap_item_id = ?
+            WHERE organization_id = %s AND skill_id = %s AND ap_item_id = %s
             """
         )
         with self.db.connect() as conn:
@@ -918,11 +918,11 @@ class AgentMemoryService:
             return None
         resolved_skill_id = str(skill_id or "ap_v1").strip() or "ap_v1"
         now = _now_iso()
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO agent_episode_summaries (
                 id, organization_id, skill_id, ap_item_id, status, summary, outcome_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, skill_id, ap_item_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
@@ -953,11 +953,11 @@ class AgentMemoryService:
     def get_episode_summary(self, *, ap_item_id: str, skill_id: str = "ap_v1") -> Dict[str, Any]:
         if not self.enabled:
             return {}
-        sql = self.db._prepare_sql(
+        sql = (
             """
             SELECT ap_item_id, status, summary, outcome_json, created_at, updated_at
             FROM agent_episode_summaries
-            WHERE organization_id = ? AND skill_id = ? AND ap_item_id = ?
+            WHERE organization_id = %s AND skill_id = %s AND ap_item_id = %s
             """
         )
         with self.db.connect() as conn:
@@ -1001,13 +1001,13 @@ class AgentMemoryService:
         if pattern_key_prefix:
             clauses.append("pattern_key LIKE %s")
             params.append(f"{str(pattern_key_prefix).strip().lower()}%")
-        sql = self.db._prepare_sql(
+        sql = (
             f"""
             SELECT pattern_type, pattern_key, pattern_json, confidence, usage_count, last_seen_at, created_at, updated_at
             FROM agent_patterns
             WHERE {' AND '.join(clauses)}
             ORDER BY confidence DESC, usage_count DESC, updated_at DESC
-            LIMIT ?
+            LIMIT %s
             """
         )
         params.append(max(1, int(limit or 10)))
@@ -1138,11 +1138,11 @@ class AgentMemoryService:
         resolved_ap_item_id = str(ap_item_id or "").strip()
         if not resolved_ap_item_id:
             return {"compacted": 0, "kept": 0}
-        sql = self.db._prepare_sql(
+        sql = (
             """
             SELECT id, event_type, created_at
             FROM agent_memory_events
-            WHERE organization_id = ? AND skill_id = ? AND ap_item_id = ?
+            WHERE organization_id = %s AND skill_id = %s AND ap_item_id = %s
             ORDER BY created_at ASC
             """
         )
@@ -1190,10 +1190,10 @@ class AgentMemoryService:
                 "compacted_history": compacted_history[-10:],
             },
         )
-        delete_sql = self.db._prepare_sql(
+        delete_sql = (
             """
             DELETE FROM agent_memory_events
-            WHERE id = ? AND organization_id = ? AND skill_id = ? AND ap_item_id = ?
+            WHERE id = %s AND organization_id = %s AND skill_id = %s AND ap_item_id = %s
             """
         )
         with self.db.connect() as conn:
@@ -1231,13 +1231,13 @@ class AgentMemoryService:
         target_state = str(normalized_context.get("current_state") or normalized_context.get("status") or "").strip().lower()
         target_next_action = str(normalized_context.get("next_action_type") or normalized_context.get("next_action") or "").strip().lower()
 
-        sql = self.db._prepare_sql(
+        sql = (
             """
             SELECT ap_item_id, current_state, status, belief_json, next_action_json, memory_summary_json, updated_at
             FROM agent_belief_states
-            WHERE organization_id = ? AND skill_id = ?
+            WHERE organization_id = %s AND skill_id = %s
             ORDER BY updated_at DESC
-            LIMIT ?
+            LIMIT %s
             """
         )
         with self.db.connect() as conn:
@@ -1551,11 +1551,11 @@ class AgentMemoryService:
     def list_memory_events(self, *, ap_item_id: str) -> List[Dict[str, Any]]:
         if not self.enabled:
             return []
-        sql = self.db._prepare_sql(
+        sql = (
             """
             SELECT event_type, summary, payload_json, created_at
             FROM agent_memory_events
-            WHERE organization_id = ? AND ap_item_id = ?
+            WHERE organization_id = %s AND ap_item_id = %s
             ORDER BY created_at ASC
             """
         )

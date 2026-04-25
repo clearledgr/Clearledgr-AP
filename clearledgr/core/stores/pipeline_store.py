@@ -28,9 +28,9 @@ class PipelineStore:
     def get_pipeline(self, organization_id: str, slug: str) -> Optional[Dict[str, Any]]:
         """Get a pipeline by org + slug. Falls back to __default__ org."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM pipelines WHERE slug = ? AND (organization_id = ? OR organization_id = '__default__') "
-            "AND is_active = 1 ORDER BY CASE WHEN organization_id = ? THEN 0 ELSE 1 END LIMIT 1"
+        sql = (
+            "SELECT * FROM pipelines WHERE slug = %s AND (organization_id = %s OR organization_id = '__default__') "
+            "AND is_active = 1 ORDER BY CASE WHEN organization_id = %s THEN 0 ELSE 1 END LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -46,8 +46,8 @@ class PipelineStore:
     def list_pipelines(self, organization_id: str) -> List[Dict[str, Any]]:
         """List all active pipelines for an org (including defaults)."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM pipelines WHERE (organization_id = ? OR organization_id = '__default__') "
+        sql = (
+            "SELECT * FROM pipelines WHERE (organization_id = %s OR organization_id = '__default__') "
             "AND is_active = 1 ORDER BY name"
         )
         with self.connect() as conn:
@@ -63,8 +63,8 @@ class PipelineStore:
     def get_pipeline_stages(self, pipeline_id: str) -> List[Dict[str, Any]]:
         """Get ordered stages for a pipeline."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM pipeline_stages WHERE pipeline_id = ? ORDER BY stage_order"
+        sql = (
+            "SELECT * FROM pipeline_stages WHERE pipeline_id = %s ORDER BY stage_order"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -95,8 +95,8 @@ class PipelineStore:
     def get_pipeline_columns(self, pipeline_id: str) -> List[Dict[str, Any]]:
         """Get ordered columns for a pipeline."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM pipeline_columns WHERE pipeline_id = ? ORDER BY display_order"
+        sql = (
+            "SELECT * FROM pipeline_columns WHERE pipeline_id = %s ORDER BY display_order"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -142,9 +142,9 @@ class PipelineStore:
         # source_filter_json was added in migration v37. On older schemas
         # the column may not exist yet — SELECT *-less so we can default.
         try:
-            stage_sql = self._prepare_sql(
+            stage_sql = (
                 "SELECT source_states, source_filter_json FROM pipeline_stages "
-                "WHERE pipeline_id = ? AND slug = ?"
+                "WHERE pipeline_id = %s AND slug = %s"
             )
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -152,8 +152,8 @@ class PipelineStore:
                 st_row = cur.fetchone()
         except Exception:
             # Fallback for pre-v37 schemas (tests / legacy DBs).
-            stage_sql = self._prepare_sql(
-                "SELECT source_states FROM pipeline_stages WHERE pipeline_id = ? AND slug = ?"
+            stage_sql = (
+                "SELECT source_states FROM pipeline_stages WHERE pipeline_id = %s AND slug = %s"
             )
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -216,8 +216,8 @@ class PipelineStore:
                 params.append(value)
 
         where_clause = " AND ".join(where_parts)
-        query_sql = self._prepare_sql(
-            f"SELECT * FROM {source_table} WHERE {where_clause} ORDER BY created_at DESC LIMIT ?"
+        query_sql = (
+            f"SELECT * FROM {source_table} WHERE {where_clause} ORDER BY created_at DESC LIMIT %s"
         )
         params.append(limit)
 
@@ -245,9 +245,9 @@ class PipelineStore:
         self.initialize()
         view_id = f"SV-{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO saved_views (id, organization_id, pipeline_id, name, filter_json, sort_json, show_in_inbox, created_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         with self.connect() as conn:
             conn.execute(sql, (
@@ -264,14 +264,14 @@ class PipelineStore:
         """List saved views for an org, optionally filtered by pipeline."""
         self.initialize()
         if pipeline_id:
-            sql = self._prepare_sql(
-                "SELECT * FROM saved_views WHERE (organization_id = ? OR organization_id = '__default__') "
-                "AND pipeline_id = ? ORDER BY is_default DESC, name"
+            sql = (
+                "SELECT * FROM saved_views WHERE (organization_id = %s OR organization_id = '__default__') "
+                "AND pipeline_id = %s ORDER BY is_default DESC, name"
             )
             params = (organization_id, pipeline_id)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM saved_views WHERE (organization_id = ? OR organization_id = '__default__') "
+            sql = (
+                "SELECT * FROM saved_views WHERE (organization_id = %s OR organization_id = '__default__') "
                 "ORDER BY is_default DESC, name"
             )
             params = (organization_id,)
@@ -334,9 +334,9 @@ class PipelineStore:
         self.initialize()
         link_id = f"BL-{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "INSERT OR IGNORE INTO box_links (id, source_box_id, source_box_type, target_box_id, target_box_type, link_type, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)"
         )
         with self.connect() as conn:
             conn.execute(sql, (link_id, source_box_id, source_box_type, target_box_id, target_box_type, link_type, now))
@@ -346,9 +346,9 @@ class PipelineStore:
     def get_box_links(self, box_id: str, box_type: str) -> List[Dict[str, Any]]:
         """Get all links for a Box (both directions)."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM box_links WHERE (source_box_id = ? AND source_box_type = ?) "
-            "OR (target_box_id = ? AND target_box_type = ?) ORDER BY created_at DESC"
+        sql = (
+            "SELECT * FROM box_links WHERE (source_box_id = %s AND source_box_type = %s) "
+            "OR (target_box_id = %s AND target_box_type = %s) ORDER BY created_at DESC"
         )
         with self.connect() as conn:
             cur = conn.cursor()

@@ -165,8 +165,8 @@ class ReconciliationFinanceSkill(FinanceSkill):
         try:
             with runtime.db.connect() as conn:
                 row = conn.execute(
-                    runtime.db._prepare_sql(
-                        "SELECT COUNT(*) as total FROM recon_sessions WHERE organization_id = ?"
+                    (
+                        "SELECT COUNT(*) as total FROM recon_sessions WHERE organization_id = %s"
                     ),
                     (runtime.organization_id,),
                 ).fetchone()

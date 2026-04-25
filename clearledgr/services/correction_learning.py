@@ -284,8 +284,8 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
-                    "SELECT * FROM agent_learned_rules WHERE organization_id = ?"),
+                cur.execute((
+                    "SELECT * FROM agent_learned_rules WHERE organization_id = %s"),
                     (self.organization_id,),
                 )
                 fresh: Dict[str, LearningRule] = {}
@@ -318,9 +318,9 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     "SELECT id, action FROM agent_learned_rules "
-                    "WHERE organization_id = ? AND rule_type = 'vendor_pref'"),
+                    "WHERE organization_id = %s AND rule_type = 'vendor_pref'"),
                     (self.organization_id,),
                 )
                 for row in cur.fetchall():
@@ -356,11 +356,11 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """INSERT INTO agent_learned_rules
                     (id, organization_id, rule_type, condition, action,
                      confidence, learned_from, created_at, last_applied, success_rate)
-                    VALUES (?, ?, 'vendor_pref', ?, ?, 0.0, 0, ?, NULL, 1.0)
+                    VALUES (%s, %s, 'vendor_pref', %s, %s, 0.0, 0, %s, NULL, 1.0)
                     ON CONFLICT (id) DO UPDATE SET
                         organization_id = EXCLUDED.organization_id,
                         rule_type = EXCLUDED.rule_type,
@@ -389,12 +389,12 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """INSERT OR IGNORE INTO agent_corrections
                     (id, organization_id, correction_type, original_value,
                      corrected_value, context, user_id, invoice_id, vendor,
                      feedback, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""),
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""),
                     (
                         correction.correction_id,
                         self.organization_id,
@@ -421,11 +421,11 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """INSERT INTO agent_learned_rules
                     (id, organization_id, rule_type, condition, action,
                      confidence, learned_from, created_at, last_applied, success_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         organization_id = EXCLUDED.organization_id,
                         rule_type = EXCLUDED.rule_type,
@@ -627,9 +627,9 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                sql = self.db._prepare_sql(
+                sql = (
                     f"INSERT INTO agent_correction_events ({_COLS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (id) DO UPDATE SET "
                     + ", ".join(
                         f"{c} = EXCLUDED.{c}"
@@ -682,13 +682,13 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     INSERT INTO vendor_layout_error_stats
                     (id, organization_id, vendor_name, sender_domain, layout_key, document_type,
                      field_name, correction_count, first_corrected_at, last_corrected_at, last_ap_item_id,
                      last_original_value, last_corrected_value)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
                     ON CONFLICT(organization_id, vendor_name, layout_key, field_name)
                     DO UPDATE SET
                         correction_count = vendor_layout_error_stats.correction_count + 1,
@@ -741,10 +741,10 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     SELECT correction_fields_json FROM reviewed_extraction_cases
-                    WHERE organization_id = ? AND ap_item_id = ?
+                    WHERE organization_id = %s AND ap_item_id = %s
                     LIMIT 1
                     """),
                     (self.organization_id, ap_item_id),
@@ -762,12 +762,12 @@ class CorrectionLearningService:
                         str(normalized.get("field_name") or "").strip(),
                     }
                 )
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     INSERT INTO reviewed_extraction_cases
                     (id, organization_id, ap_item_id, vendor_name, sender_domain, layout_key, document_type,
                      correction_fields_json, input_payload_json, expected_fields_json, source_event_id, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT(organization_id, ap_item_id)
                     DO UPDATE SET
                         vendor_name = excluded.vendor_name,
@@ -807,13 +807,13 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     SELECT *
                     FROM reviewed_extraction_cases
-                    WHERE organization_id = ?
+                    WHERE organization_id = %s
                     ORDER BY updated_at DESC, created_at DESC
-                    LIMIT ?
+                    LIMIT %s
                     """),
                     (self.organization_id, max(1, int(limit))),
                 )
@@ -853,13 +853,13 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     SELECT *
                     FROM vendor_layout_error_stats
-                    WHERE organization_id = ?
+                    WHERE organization_id = %s
                     ORDER BY correction_count DESC, last_corrected_at DESC
-                    LIMIT ?
+                    LIMIT %s
                     """),
                     (self.organization_id, max(1, int(limit))),
                 )
@@ -886,9 +886,9 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                sql = self.db._prepare_sql(
+                sql = (
                     f"INSERT INTO agent_review_outcomes ({_COLS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (id) DO UPDATE SET "
                     + ", ".join(
                         f"{c} = EXCLUDED.{c}"
@@ -943,14 +943,14 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(
+                cur.execute((
                     """
                     INSERT INTO vendor_layout_review_stats
                     (id, organization_id, vendor_name, sender_domain, layout_key, document_type, field_name,
                      confidence_profile_id, review_count, corrected_count, confirmed_count,
                      email_selected_count, attachment_selected_count, manual_selected_count,
                      last_reviewed_at, last_outcome_type, last_ap_item_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT(organization_id, vendor_name, layout_key, field_name)
                     DO UPDATE SET
                         sender_domain = excluded.sender_domain,
@@ -1091,7 +1091,7 @@ class CorrectionLearningService:
         try:
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(self.db._prepare_sql(sql), tuple(params))
+                cur.execute(sql, tuple(params))
                 rows = [dict(row) for row in cur.fetchall()]
         except Exception as exc:
             logger.error("Could not load review calibration snapshot: %s", exc)
@@ -1228,7 +1228,7 @@ class CorrectionLearningService:
             try:
                 with self.db.connect() as conn:
                     cur = conn.cursor()
-                    cur.execute(self.db._prepare_sql(sql), tuple(params))
+                    cur.execute(sql, tuple(params))
                     rows = [dict(row) for row in cur.fetchall()]
             except Exception as exc:
                 logger.error("Could not load extraction calibration stats: %s", exc)

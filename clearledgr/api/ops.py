@@ -345,14 +345,14 @@ async def get_llm_cost_summary(
             cur = conn.cursor()
             # Aggregates
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT COUNT(*) AS n, "
                     "       COALESCE(SUM(input_tokens), 0) AS input_tok, "
                     "       COALESCE(SUM(output_tokens), 0) AS output_tok, "
                     "       COALESCE(SUM(cost_estimate_usd), 0) AS cost, "
                     "       COALESCE(SUM(CASE WHEN error IS NOT NULL AND error != '' THEN 1 ELSE 0 END), 0) AS errs "
                     "FROM llm_call_log "
-                    "WHERE organization_id = ? AND created_at >= ?"
+                    "WHERE organization_id = %s AND created_at >= %s"
                 ),
                 (organization_id, cutoff),
             )
@@ -374,14 +374,14 @@ async def get_llm_cost_summary(
 
             # Per-action breakdown
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT action, "
                     "       COUNT(*) AS n, "
                     "       COALESCE(SUM(input_tokens), 0) AS input_tok, "
                     "       COALESCE(SUM(output_tokens), 0) AS output_tok, "
                     "       COALESCE(SUM(cost_estimate_usd), 0) AS cost "
                     "FROM llm_call_log "
-                    "WHERE organization_id = ? AND created_at >= ? "
+                    "WHERE organization_id = %s AND created_at >= %s "
                     "GROUP BY action "
                     "ORDER BY cost DESC"
                 ),
@@ -408,12 +408,12 @@ async def get_llm_cost_summary(
 
             # Per-day trend (substr(created_at, 1, 10) = 'YYYY-MM-DD')
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT substr(created_at, 1, 10) AS day, "
                     "       COUNT(*) AS n, "
                     "       COALESCE(SUM(cost_estimate_usd), 0) AS cost "
                     "FROM llm_call_log "
-                    "WHERE organization_id = ? AND created_at >= ? "
+                    "WHERE organization_id = %s AND created_at >= %s "
                     "GROUP BY substr(created_at, 1, 10) "
                     "ORDER BY day ASC"
                 ),
@@ -680,10 +680,10 @@ async def get_extraction_quality(
             corrections.extend(rows or [])
     elif hasattr(db, "connect"):
         # Fallback: direct query
-        sql = db._prepare_sql(
-            "SELECT * FROM audit_events WHERE organization_id = ? "
+        sql = (
+            "SELECT * FROM audit_events WHERE organization_id = %s "
             "AND event_type IN ('correction_applied','field_correction','extraction_correction') "
-            "AND ts >= ? ORDER BY ts DESC LIMIT 5000"
+            "AND ts >= %s ORDER BY ts DESC LIMIT 5000"
         )
         try:
             with db.connect() as conn:
@@ -711,8 +711,8 @@ async def get_extraction_quality(
         total_items = db.count_ap_items_since(organization_id, cutoff)
     else:
         try:
-            sql2 = db._prepare_sql(
-                "SELECT COUNT(*) as cnt FROM ap_items WHERE organization_id = ? AND created_at >= ?"
+            sql2 = (
+                "SELECT COUNT(*) as cnt FROM ap_items WHERE organization_id = %s AND created_at >= %s"
             )
             with db.connect() as conn:
                 cur = conn.cursor()
@@ -734,9 +734,9 @@ async def get_extraction_quality(
 
     field_confidence_buckets: Dict[str, List[float]] = {}
     try:
-        sql_fc = db._prepare_sql(
+        sql_fc = (
             "SELECT field_confidences FROM ap_items "
-            "WHERE organization_id = ? AND created_at >= ? "
+            "WHERE organization_id = %s AND created_at >= %s "
             "AND field_confidences IS NOT NULL LIMIT 2000"
         )
         with db.connect() as conn:
@@ -842,11 +842,11 @@ def _evaluate_monitoring_thresholds(
     # ── 1. ERP post failure rate ────────────────────────────────────────────
     attempted = 0
     failed = 0
-    _post_sql = db._prepare_sql(
+    _post_sql = (
         "SELECT event_type FROM audit_events "
-        "WHERE organization_id = ? "
+        "WHERE organization_id = %s "
         "AND event_type IN ('erp_post_attempted', 'erp_post_failed') "
-        "AND ts >= ?"
+        "AND ts >= %s"
     )
     try:
         with db.connect() as conn:
@@ -865,8 +865,8 @@ def _evaluate_monitoring_thresholds(
     # ── 2. Exception rate (items in exception/failed states / total active) ──
     exception_count = 0
     total_active = 0
-    _state_sql = db._prepare_sql(
-        "SELECT state FROM ap_items WHERE organization_id = ? AND created_at >= ?"
+    _state_sql = (
+        "SELECT state FROM ap_items WHERE organization_id = %s AND created_at >= %s"
     )
     _exception_states = {"exception", "failed_post", "needs_info"}
     _active_states = {
@@ -890,14 +890,14 @@ def _evaluate_monitoring_thresholds(
     # ── 3. Extraction correction rate ───────────────────────────────────────
     correction_count = 0
     total_items = 0
-    _corr_sql = db._prepare_sql(
+    _corr_sql = (
         "SELECT COUNT(*) AS cnt FROM audit_events "
-        "WHERE organization_id = ? "
+        "WHERE organization_id = %s "
         "AND event_type IN ('correction_applied','field_correction','extraction_correction') "
-        "AND ts >= ?"
+        "AND ts >= %s"
     )
-    _total_sql = db._prepare_sql(
-        "SELECT COUNT(*) AS cnt FROM ap_items WHERE organization_id = ? AND created_at >= ?"
+    _total_sql = (
+        "SELECT COUNT(*) AS cnt FROM ap_items WHERE organization_id = %s AND created_at >= %s"
     )
     try:
         with db.connect() as conn:
@@ -914,11 +914,11 @@ def _evaluate_monitoring_thresholds(
 
     # ── 4. Duplicate posting count ───────────────────────────────────────────
     duplicate_post_count = 0
-    _dup_sql = db._prepare_sql(
+    _dup_sql = (
         "SELECT COUNT(*) AS cnt FROM audit_events "
-        "WHERE organization_id = ? "
+        "WHERE organization_id = %s "
         "AND event_type IN ('duplicate_post_detected', 'idempotency_key_collision') "
-        "AND ts >= ?"
+        "AND ts >= %s"
     )
     try:
         with db.connect() as conn:
@@ -1046,9 +1046,9 @@ async def get_ap_decision_health(
     total_items = 0
     decisions: List[Dict[str, Any]] = []
     try:
-        sql = db._prepare_sql(
+        sql = (
             "SELECT metadata, state FROM ap_items "
-            "WHERE organization_id = ? AND created_at >= ? LIMIT 10000"
+            "WHERE organization_id = %s AND created_at >= %s LIMIT 10000"
         )
         with db.connect() as conn:
             conn.row_factory = __import__("sqlite3").Row
@@ -1082,9 +1082,9 @@ async def get_ap_decision_health(
     # Override rate: Claude said approve but item ended up rejected (or vice versa)
     overrides = 0
     try:
-        sql2 = db._prepare_sql(
+        sql2 = (
             "SELECT COUNT(*) as cnt FROM audit_events "
-            "WHERE organization_id = ? AND event_type = 'ap_decision_override' AND ts >= ?"
+            "WHERE organization_id = %s AND event_type = 'ap_decision_override' AND ts >= %s"
         )
         with db.connect() as conn:
             cur = conn.cursor()

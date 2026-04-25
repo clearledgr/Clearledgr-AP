@@ -53,12 +53,12 @@ class WebhookStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         if active_only:
-            sql = self._prepare_sql(
-                "SELECT * FROM webhook_subscriptions WHERE organization_id = ? AND is_active = 1"
+            sql = (
+                "SELECT * FROM webhook_subscriptions WHERE organization_id = %s AND is_active = 1"
             )
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM webhook_subscriptions WHERE organization_id = ?"
+            sql = (
+                "SELECT * FROM webhook_subscriptions WHERE organization_id = %s"
             )
 
         with self.connect() as conn:
@@ -109,8 +109,8 @@ class WebhookStore:
 
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = %s" for k in updates)
-        sql = self._prepare_sql(
-            f"UPDATE webhook_subscriptions SET {set_clause} WHERE id = ?"
+        sql = (
+            f"UPDATE webhook_subscriptions SET {set_clause} WHERE id = %s"
         )
         params = list(updates.values()) + [subscription_id]
 

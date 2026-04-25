@@ -168,12 +168,12 @@ class BoxLifecycleStore:
         now = _now_iso()
         metadata_json = json.dumps(metadata or {})
 
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO box_exceptions "
             "(id, box_id, box_type, organization_id, exception_type, "
             " severity, reason, metadata_json, raised_at, raised_by, "
             " raised_actor_type, idempotency_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         try:
             with self.connect() as conn:
@@ -280,11 +280,11 @@ class BoxLifecycleStore:
 
         self.initialize()
         now = _now_iso()
-        sql = self._prepare_sql(
+        sql = (
             "UPDATE box_exceptions "
-            "SET resolved_at = ?, resolved_by = ?, resolved_actor_type = ?, "
-            "    resolution_note = ? "
-            "WHERE id = ? AND resolved_at IS NULL"
+            "SET resolved_at = %s, resolved_by = %s, resolved_actor_type = %s, "
+            "    resolution_note = %s "
+            "WHERE id = %s AND resolved_at IS NULL"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -357,8 +357,8 @@ class BoxLifecycleStore:
         if not idempotency_key:
             return None
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM box_exceptions WHERE idempotency_key = ?"
+        sql = (
+            "SELECT * FROM box_exceptions WHERE idempotency_key = %s"
         )
         try:
             with self.connect() as conn:
@@ -378,15 +378,15 @@ class BoxLifecycleStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         if only_unresolved:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_exceptions "
-                "WHERE box_type = ? AND box_id = ? AND resolved_at IS NULL "
+                "WHERE box_type = %s AND box_id = %s AND resolved_at IS NULL "
                 "ORDER BY raised_at ASC"
             )
         else:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_exceptions "
-                "WHERE box_type = ? AND box_id = ? "
+                "WHERE box_type = %s AND box_id = %s "
                 "ORDER BY raised_at ASC"
             )
         try:
@@ -410,20 +410,20 @@ class BoxLifecycleStore:
         """
         self.initialize()
         if box_type:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_exceptions "
-                "WHERE organization_id = ? AND box_type = ? "
+                "WHERE organization_id = %s AND box_type = %s "
                 "AND resolved_at IS NULL "
                 "ORDER BY severity DESC, raised_at ASC "
-                "LIMIT ?"
+                "LIMIT %s"
             )
             params = (organization_id, box_type, limit)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_exceptions "
-                "WHERE organization_id = ? AND resolved_at IS NULL "
+                "WHERE organization_id = %s AND resolved_at IS NULL "
                 "ORDER BY severity DESC, raised_at ASC "
-                "LIMIT ?"
+                "LIMIT %s"
             )
             params = (organization_id, limit)
         try:
@@ -471,11 +471,11 @@ class BoxLifecycleStore:
         now = _now_iso()
         data_json = json.dumps(data or {})
 
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO box_outcomes "
             "(id, box_id, box_type, organization_id, outcome_type, "
             " data_json, recorded_at, recorded_by, recorded_actor_type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         try:
             with self.connect() as conn:
@@ -555,8 +555,8 @@ class BoxLifecycleStore:
         box_id: str,
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM box_outcomes WHERE box_type = ? AND box_id = ?"
+        sql = (
+            "SELECT * FROM box_outcomes WHERE box_type = %s AND box_id = %s"
         )
         try:
             with self.connect() as conn:
@@ -589,17 +589,17 @@ class BoxLifecycleStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         if outcome_type:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_outcomes "
-                "WHERE organization_id = ? AND box_type = ? AND outcome_type = ? "
-                "ORDER BY recorded_at DESC LIMIT ?"
+                "WHERE organization_id = %s AND box_type = %s AND outcome_type = %s "
+                "ORDER BY recorded_at DESC LIMIT %s"
             )
             params = (organization_id, box_type, outcome_type, limit)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM box_outcomes "
-                "WHERE organization_id = ? AND box_type = ? "
-                "ORDER BY recorded_at DESC LIMIT ?"
+                "WHERE organization_id = %s AND box_type = %s "
+                "ORDER BY recorded_at DESC LIMIT %s"
             )
             params = (organization_id, box_type, limit)
         try:

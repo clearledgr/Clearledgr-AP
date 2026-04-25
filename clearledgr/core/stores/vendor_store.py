@@ -186,8 +186,8 @@ class VendorStore:
         self, organization_id: str, vendor_name: str
     ) -> Optional[Dict[str, Any]]:
         """Return the vendor profile dict or None if not seen before."""
-        sql = self._prepare_sql(
-            "SELECT * FROM vendor_profiles WHERE organization_id = ? AND vendor_name = ?"
+        sql = (
+            "SELECT * FROM vendor_profiles WHERE organization_id = %s AND vendor_name = %s"
         )
         try:
             with self.connect() as conn:
@@ -227,9 +227,9 @@ class VendorStore:
             return {}
 
         placeholders = ", ".join("%s" for _ in normalized_names)
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_profiles "
-            f"WHERE organization_id = ? AND vendor_name IN ({placeholders})"
+            f"WHERE organization_id = %s AND vendor_name IN ({placeholders})"
         )
         try:
             with self.connect() as conn:
@@ -324,7 +324,7 @@ class VendorStore:
             cols = ["id", "organization_id", "vendor_name", "created_at", "updated_at"] + list(safe_fields.keys())
             vals = [row_id, organization_id, vendor_name, now, now] + list(safe_fields.values())
             placeholders = ", ".join(["%s"] * len(cols))
-            sql = self._prepare_sql(
+            sql = (
                 f"INSERT INTO vendor_profiles ({', '.join(cols)}) VALUES ({placeholders})"
             )
             try:
@@ -338,9 +338,9 @@ class VendorStore:
                 return existing
             set_clause = ", ".join(f"{k} = %s" for k in safe_fields)
             vals = list(safe_fields.values()) + [now, organization_id, vendor_name]
-            sql = self._prepare_sql(
-                f"UPDATE vendor_profiles SET {set_clause}, updated_at = ? "
-                f"WHERE organization_id = ? AND vendor_name = ?"
+            sql = (
+                f"UPDATE vendor_profiles SET {set_clause}, updated_at = %s "
+                f"WHERE organization_id = %s AND vendor_name = %s"
             )
             try:
                 with self.connect() as conn:
@@ -366,9 +366,9 @@ class VendorStore:
         """
         from clearledgr.core.stores.bank_details import decrypt_bank_details
 
-        sql = self._prepare_sql(
+        sql = (
             "SELECT bank_details_encrypted FROM vendor_profiles "
-            "WHERE organization_id = ? AND vendor_name = ?"
+            "WHERE organization_id = %s AND vendor_name = %s"
         )
         try:
             with self.connect() as conn:
@@ -619,9 +619,9 @@ class VendorStore:
         """Decrypt and return the pending (unverified) bank details."""
         from clearledgr.core.stores.bank_details import decrypt_bank_details
 
-        sql = self._prepare_sql(
+        sql = (
             "SELECT pending_bank_details_encrypted FROM vendor_profiles "
-            "WHERE organization_id = ? AND vendor_name = ?"
+            "WHERE organization_id = %s AND vendor_name = %s"
         )
         try:
             with self.connect() as conn:
@@ -839,9 +839,9 @@ class VendorStore:
 
         # Read the pending ciphertext directly so we don't decrypt +
         # re-encrypt unnecessarily.
-        sql = self._prepare_sql(
+        sql = (
             "SELECT pending_bank_details_encrypted FROM vendor_profiles "
-            "WHERE organization_id = ? AND vendor_name = ?"
+            "WHERE organization_id = %s AND vendor_name = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1040,15 +1040,15 @@ class VendorStore:
         start_iso = f"{year}-01-01T00:00:00+00:00"
         end_iso = f"{year + 1}-01-01T00:00:00+00:00"
 
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT COALESCE(SUM(amount), 0) AS total
             FROM vendor_invoice_history
-            WHERE organization_id = ?
-              AND vendor_name = ?
+            WHERE organization_id = %s
+              AND vendor_name = %s
               AND final_state = 'posted_to_erp'
-              AND created_at >= ?
-              AND created_at < ?
+              AND created_at >= %s
+              AND created_at < %s
             """
         )
         try:
@@ -1080,10 +1080,10 @@ class VendorStore:
         self, organization_id: str, vendor_name: str, limit: int = 6
     ) -> List[Dict[str, Any]]:
         """Return the last N invoice history records for a vendor (newest first)."""
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_invoice_history "
-            "WHERE organization_id = ? AND vendor_name = ? "
-            "ORDER BY created_at DESC LIMIT ?"
+            "WHERE organization_id = %s AND vendor_name = %s "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -1112,12 +1112,12 @@ class VendorStore:
         human_decision: Optional[str] = None,
     ) -> None:
         """Insert one invoice outcome into vendor_invoice_history."""
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO vendor_invoice_history "
             "(id, organization_id, vendor_name, ap_item_id, invoice_number, "
             "invoice_date, amount, currency, final_state, exception_code, "
             "was_approved, approval_override, agent_recommendation, human_decision, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         try:
             with self.connect() as conn:
@@ -1150,12 +1150,12 @@ class VendorStore:
         action_outcome: Optional[str] = None,
     ) -> None:
         """Persist one human AP decision outcome for vendor-level learning."""
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO vendor_decision_feedback "
             "(id, organization_id, vendor_name, ap_item_id, human_decision, "
             "agent_recommendation, decision_override, reason, source_channel, actor_id, "
             "correlation_id, action_outcome, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         try:
             with self.connect() as conn:
@@ -1196,10 +1196,10 @@ class VendorStore:
         """
         now = datetime.now(timezone.utc)
         cutoff = (now - timedelta(days=max(1, int(window_days)))).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_decision_feedback "
-            "WHERE organization_id = ? AND vendor_name = ? AND created_at >= ? "
-            "ORDER BY created_at DESC LIMIT ?"
+            "WHERE organization_id = %s AND vendor_name = %s AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         rows: List[Dict[str, Any]] = []
         try:
@@ -1382,11 +1382,11 @@ class VendorStore:
         Returns recent invoice history rows with a computed ``was_late`` flag
         for each row that has both a due_date-like field and a created_at.
         """
-        sql = self._prepare_sql(
+        sql = (
             "SELECT ap_item_id, invoice_date, amount, final_state, created_at "
             "FROM vendor_invoice_history "
-            "WHERE organization_id = ? AND vendor_name = ? AND final_state = 'posted_to_erp' "
-            "ORDER BY created_at DESC LIMIT ?"
+            "WHERE organization_id = %s AND vendor_name = %s AND final_state = 'posted_to_erp' "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -1431,10 +1431,10 @@ class VendorStore:
         returns a list ordered by recency so callers can iterate without
         re-sorting.
         """
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_profiles "
-            "WHERE organization_id = ? "
-            "ORDER BY updated_at DESC LIMIT ?"
+            "WHERE organization_id = %s "
+            "ORDER BY updated_at DESC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -1525,13 +1525,13 @@ class VendorStore:
 
         session_id = str(uuid.uuid4())
         now = _now()
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO vendor_onboarding_sessions (
                 id, organization_id, vendor_name, state, is_active,
                 invited_at, invited_by, last_activity_at,
                 chase_count, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         try:
@@ -1582,8 +1582,8 @@ class VendorStore:
         self, session_id: str
     ) -> Optional[Dict[str, Any]]:
         """Fetch a session by primary key, regardless of active flag."""
-        sql = self._prepare_sql(
-            "SELECT * FROM vendor_onboarding_sessions WHERE id = ?"
+        sql = (
+            "SELECT * FROM vendor_onboarding_sessions WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -1601,9 +1601,9 @@ class VendorStore:
         self, organization_id: str, vendor_name: str
     ) -> Optional[Dict[str, Any]]:
         """Return the currently active session for the vendor, if any."""
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_onboarding_sessions "
-            "WHERE organization_id = ? AND vendor_name = ? AND is_active = 1 "
+            "WHERE organization_id = %s AND vendor_name = %s AND is_active = 1 "
             "ORDER BY invited_at DESC LIMIT 1"
         )
         try:
@@ -1651,10 +1651,10 @@ class VendorStore:
             params.append(organization_id)
         params.append(limit)
 
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_onboarding_sessions WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY last_activity_at ASC LIMIT ?"
+            + " ORDER BY last_activity_at ASC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -1703,10 +1703,10 @@ class VendorStore:
             params.append(since_iso)
         params.append(limit)
 
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_onboarding_sessions WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY erp_activated_at DESC LIMIT ?"
+            + " ORDER BY erp_activated_at DESC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -1818,8 +1818,8 @@ class VendorStore:
 
         set_clause = ", ".join(f"{k} = %s" for k in updates)
         params = list(updates.values()) + [session_id]
-        sql = self._prepare_sql(
-            f"UPDATE vendor_onboarding_sessions SET {set_clause} WHERE id = ?"
+        sql = (
+            f"UPDATE vendor_onboarding_sessions SET {set_clause} WHERE id = %s"
         )
 
         # Box invariant — state and audit share a transaction. The
@@ -1832,12 +1832,12 @@ class VendorStore:
         # writes share one cursor + one commit so they are atomic
         # in both SQLite and Postgres.
         import uuid as _uuid
-        audit_sql = self._prepare_sql(
+        audit_sql = (
             "INSERT INTO audit_events "
             "(id, box_id, box_type, event_type, prev_state, new_state, "
             " actor_type, actor_id, payload_json, decision_reason, "
             " organization_id, source, ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         )
         audit_payload = {
             "session_id": session_id,
@@ -1956,10 +1956,10 @@ class VendorStore:
 
         now = _now()
         new_count = int(session.get("chase_count") or 0) + 1
-        sql = self._prepare_sql(
+        sql = (
             "UPDATE vendor_onboarding_sessions "
-            "SET last_chase_at = ?, chase_count = ?, updated_at = ? "
-            "WHERE id = ?"
+            "SET last_chase_at = %s, chase_count = %s, updated_at = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -2021,10 +2021,10 @@ class VendorStore:
         if session is None:
             return None
         now = _now()
-        sql = self._prepare_sql(
+        sql = (
             "UPDATE vendor_onboarding_sessions "
-            "SET erp_vendor_id = ?, updated_at = ? "
-            "WHERE id = ?"
+            "SET erp_vendor_id = %s, updated_at = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -2044,8 +2044,8 @@ class VendorStore:
     ) -> Optional[Dict[str, Any]]:
         """Get entity-specific vendor overrides (payment terms, bank details)."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM vendor_entity_overrides WHERE vendor_profile_id = ? AND entity_id = ?"
+        sql = (
+            "SELECT * FROM vendor_entity_overrides WHERE vendor_profile_id = %s AND entity_id = %s"
         )
         try:
             with self.connect() as conn:
@@ -2070,8 +2070,8 @@ class VendorStore:
             if not safe:
                 return existing
             set_clause = ", ".join(f"{k} = %s" for k in safe)
-            sql = self._prepare_sql(
-                f"UPDATE vendor_entity_overrides SET {set_clause}, updated_at = ? WHERE vendor_profile_id = ? AND entity_id = ?"
+            sql = (
+                f"UPDATE vendor_entity_overrides SET {set_clause}, updated_at = %s WHERE vendor_profile_id = %s AND entity_id = %s"
             )
             params = (*safe.values(), now, vendor_profile_id, entity_id)
             with self.connect() as conn:
@@ -2086,7 +2086,7 @@ class VendorStore:
             cols.append(k)
             vals.append(v)
         placeholders = ", ".join("%s" for _ in cols)
-        sql = self._prepare_sql(
+        sql = (
             f"INSERT INTO vendor_entity_overrides ({', '.join(cols)}) VALUES ({placeholders})"
         )
         with self.connect() as conn:

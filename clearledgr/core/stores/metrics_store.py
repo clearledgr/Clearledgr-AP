@@ -1003,7 +1003,7 @@ class MetricsStore:
             params.extend(event_types)
         sql += " ORDER BY ts DESC LIMIT %s"
         params.append(limit)
-        sql = self._prepare_sql(sql)
+        sql = sql
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, tuple(params))
@@ -2174,12 +2174,12 @@ class MetricsStore:
         now = datetime.now(timezone.utc)
 
         items = self.list_ap_items(organization_id, limit=safe_limit)
-        source_sql = self._prepare_sql(
+        source_sql = (
             """
             SELECT s.ap_item_id, s.source_type, COUNT(*) AS link_count
             FROM ap_item_sources s
             JOIN ap_items i ON i.id = s.ap_item_id
-            WHERE i.organization_id = ?
+            WHERE i.organization_id = %s
             GROUP BY s.ap_item_id, s.source_type
             """
         )

@@ -131,9 +131,9 @@ def run_migrations(db) -> int:
                         # the lock, ON CONFLICT DO NOTHING keeps the
                         # INSERT harmless.
                         cur.execute(
-                            db._prepare_sql(
+                            (
                                 "INSERT INTO schema_versions (version, description, applied_at) "
-                                "VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
+                                "VALUES (%s, %s, %s) ON CONFLICT (version) DO NOTHING"
                             ),
                             (version, description, datetime.now(timezone.utc).isoformat()),
                         )
@@ -513,9 +513,9 @@ def _m013_bank_details_encryption(cur, db):
             new_metadata = _json.dumps(metadata)
             try:
                 cur.execute(
-                    db._prepare_sql(
-                        f"UPDATE {table_name} SET bank_details_encrypted = ?, metadata = ? "
-                        "WHERE id = ?"
+                    (
+                        f"UPDATE {table_name} SET bank_details_encrypted = %s, metadata = %s "
+                        "WHERE id = %s"
                     ),
                     (ciphertext, new_metadata, row_id),
                 )
@@ -1002,9 +1002,9 @@ def _v25_object_model(cur, db):
     # --- Seed: AP Invoices pipeline (thesis §6.7) ---
     ap_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
-        db._prepare_sql(
+        (
             "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-            "VALUES (?, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', ?)"
+            "VALUES (%s, '__default__', 'AP Invoices', 'ap-invoices', 'invoice', 'ap_items', %s)"
         ),
         (ap_pipeline_id, now),
     )
@@ -1026,9 +1026,9 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, color, states, order in ap_stages:
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
             ),
             (f"STG-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
@@ -1049,9 +1049,9 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, source_field, computed_fn, order in ap_columns:
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO pipeline_columns (id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
             ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, slug, label, source_field, computed_fn, order),
         )
@@ -1059,9 +1059,9 @@ def _v25_object_model(cur, db):
     # --- Seed: Vendor Onboarding pipeline (thesis §9) ---
     vo_pipeline_id = f"PL-{_uuid.uuid4().hex[:12]}"
     cur.execute(
-        db._prepare_sql(
+        (
             "INSERT OR IGNORE INTO pipelines (id, organization_id, name, slug, box_type, source_table, created_at) "
-            "VALUES (?, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', ?)"
+            "VALUES (%s, '__default__', 'Vendor Onboarding', 'vendor-onboarding', 'vendor_onboarding', 'vendor_onboarding_sessions', %s)"
         ),
         (vo_pipeline_id, now),
     )
@@ -1082,9 +1082,9 @@ def _v25_object_model(cur, db):
     ]
     for slug, label, color, states, order in vo_stages:
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO pipeline_stages (id, pipeline_id, slug, label, color, source_states, stage_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
             ),
             (f"STG-{_uuid.uuid4().hex[:12]}", vo_pipeline_id, slug, label, color, _json.dumps(states), order),
         )
@@ -1096,9 +1096,9 @@ def _v25_object_model(cur, db):
         ("Due This Week", _json.dumps({"days_to_due_lte": 5}), 1),
     ]:
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO saved_views (id, organization_id, pipeline_id, name, filter_json, is_default, show_in_inbox, created_at) "
-                "VALUES (?, '__default__', ?, ?, ?, ?, 1, ?)"
+                "VALUES (%s, '__default__', %s, %s, %s, %s, 1, %s)"
             ),
             (f"SV-{_uuid.uuid4().hex[:12]}", ap_pipeline_id, name, filter_json, is_default, now),
         )
@@ -1549,9 +1549,9 @@ def _v39_backfill_grn_reference_column(cur, db):
     try:
         for slug in columns_after_grn:
             cur.execute(
-                db._prepare_sql(
+                (
                     "UPDATE pipeline_columns SET display_order = display_order + 1 "
-                    "WHERE pipeline_id = ? AND slug = ?"
+                    "WHERE pipeline_id = %s AND slug = %s"
                 ),
                 (ap_pipeline_id, slug),
             )
@@ -1560,10 +1560,10 @@ def _v39_backfill_grn_reference_column(cur, db):
 
     try:
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO pipeline_columns "
                 "(id, pipeline_id, slug, label, source_field, computed_fn, display_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
             ),
             (f"COL-{_uuid.uuid4().hex[:12]}", ap_pipeline_id,
              "grn_reference", "GRN Reference", "grn_number", None, 2),
@@ -1896,9 +1896,9 @@ def _v37_split_ap_posted_and_paid(cur, db):
 
     for pl_id in ap_pipeline_ids:
         cur.execute(
-            db._prepare_sql(
+            (
                 "SELECT id, source_states, stage_order FROM pipeline_stages "
-                "WHERE pipeline_id = ? AND slug = 'paid'"
+                "WHERE pipeline_id = %s AND slug = 'paid'"
             ),
             (pl_id,),
         )
@@ -1918,20 +1918,20 @@ def _v37_split_ap_posted_and_paid(cur, db):
         # Rewrite the existing "paid" row to be the new, stricter
         # Paid stage: state=closed only, order 5.
         cur.execute(
-            db._prepare_sql(
+            (
                 "UPDATE pipeline_stages "
-                "SET source_states = ?, stage_order = 5 "
-                "WHERE id = ?"
+                "SET source_states = %s, stage_order = 5 "
+                "WHERE id = %s"
             ),
             (_json.dumps(["closed"]), paid_id),
         )
 
         # Insert the new Posted stage at order 4.
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT OR IGNORE INTO pipeline_stages "
                 "(id, pipeline_id, slug, label, color, source_states, stage_order, source_filter_json) "
-                "VALUES (?, ?, 'posted', 'Posted', '#8B5CF6', ?, 4, '{}')"
+                "VALUES (%s, %s, 'posted', 'Posted', '#8B5CF6', %s, 4, '{}')"
             ),
             (
                 f"STG-{_uuid.uuid4().hex[:12]}",

@@ -354,9 +354,9 @@ def _save_oauth_state(state: str, data: Dict[str, Any]) -> None:
     db = get_db()
     with db.connect() as conn:
         cur = conn.cursor()
-        sql = db._prepare_sql(
+        sql = (
             "INSERT INTO erp_oauth_states (state, organization_id, return_url, erp_type, created_at) "
-            "VALUES (?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s)"
         )
         cur.execute(sql, (
             state,
@@ -376,9 +376,9 @@ def _pop_oauth_state(state: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     with db.connect() as conn:
         cur = conn.cursor()
-        sql = db._prepare_sql(
+        sql = (
             "SELECT organization_id, return_url, erp_type, created_at "
-            "FROM erp_oauth_states WHERE state = ?"
+            "FROM erp_oauth_states WHERE state = %s"
         )
         cur.execute(sql, (state,))
         row = cur.fetchone()

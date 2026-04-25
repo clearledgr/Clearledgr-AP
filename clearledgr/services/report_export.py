@@ -201,7 +201,7 @@ def _generate_posting_status(
         params.append(f"%{vendor}%")
 
     where = " AND ".join(conditions)
-    sql = db._prepare_sql(
+    sql = (
         f"SELECT id, invoice_number, vendor_name, amount, currency, state, "
         f"created_at, erp_posted_at, erp_reference "
         f"FROM ap_items WHERE {where} "

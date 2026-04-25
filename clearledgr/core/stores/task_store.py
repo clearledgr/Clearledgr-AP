@@ -69,10 +69,10 @@ class TaskStore:
             existing = self.get_task_run_by_idempotency_key(idempotency_key)
             if existing:
                 if str(existing.get("status") or "").strip().lower() == "failed":
-                    reset_sql = self._prepare_sql(
-                        "UPDATE task_runs SET status = 'pending', current_step = 0, input_payload = ?, "
-                        "step_results = '{}', correlation_id = ?, updated_at = ?, completed_at = NULL, "
-                        "last_error = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?"
+                    reset_sql = (
+                        "UPDATE task_runs SET status = 'pending', current_step = 0, input_payload = %s, "
+                        "step_results = '{}', correlation_id = %s, updated_at = %s, completed_at = NULL, "
+                        "last_error = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s"
                     )
                     try:
                         with self.connect() as conn:
@@ -88,11 +88,11 @@ class TaskStore:
                     existing = self.get_task_run(existing["id"]) or existing
                 return existing
 
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO task_runs "
             "(id, organization_id, task_type, status, current_step, input_payload, "
             " step_results, idempotency_key, correlation_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'pending', 0, ?, '{}', ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, 'pending', 0, %s, '{}', %s, %s, %s, %s)"
         )
         try:
             with self.connect() as conn:
@@ -161,13 +161,13 @@ class TaskStore:
         self.initialize()
         placeholders = ",".join(["%s"] * len(statuses))
         if organization_id:
-            sql = self._prepare_sql(
-                f"SELECT * FROM task_runs WHERE organization_id = ? AND status IN ({placeholders}) "
+            sql = (
+                f"SELECT * FROM task_runs WHERE organization_id = %s AND status IN ({placeholders}) "
                 "ORDER BY created_at ASC"
             )
             params = (organization_id, *statuses)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 f"SELECT * FROM task_runs WHERE status IN ({placeholders}) ORDER BY created_at ASC"
             )
             params = statuses
@@ -190,13 +190,13 @@ class TaskStore:
         """List recent task runs for memory/audit projection."""
         self.initialize()
         if organization_id:
-            sql = self._prepare_sql(
-                "SELECT * FROM task_runs WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM task_runs WHERE organization_id = %s ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, max(1, int(limit or 50)))
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM task_runs ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM task_runs ORDER BY created_at DESC LIMIT %s"
             )
             params = (max(1, int(limit or 50)),)
         try:
@@ -245,9 +245,9 @@ class TaskStore:
             "at": now,
         }
 
-        sql = self._prepare_sql(
-            "UPDATE task_runs SET current_step = ?, step_results = ?, status = ?, updated_at = ? "
-            "WHERE id = ?"
+        sql = (
+            "UPDATE task_runs SET current_step = %s, step_results = %s, status = %s, updated_at = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -279,9 +279,9 @@ class TaskStore:
             pass
         step_results["final"] = outcome
 
-        sql = self._prepare_sql(
-            "UPDATE task_runs SET status = ?, step_results = ?, completed_at = ?, updated_at = ? "
-            "WHERE id = ?"
+        sql = (
+            "UPDATE task_runs SET status = %s, step_results = %s, completed_at = %s, updated_at = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -300,9 +300,9 @@ class TaskStore:
         """Mark a task run as failed."""
         self.initialize()
         now = _now()
-        sql = self._prepare_sql(
-            "UPDATE task_runs SET status = 'failed', last_error = ?, retry_count = ?, updated_at = ? "
-            "WHERE id = ?"
+        sql = (
+            "UPDATE task_runs SET status = 'failed', last_error = %s, retry_count = %s, updated_at = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:

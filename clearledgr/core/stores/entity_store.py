@@ -106,12 +106,12 @@ class EntityStore:
         """List entities for an organization."""
         self.initialize()
         if include_inactive:
-            sql = self._prepare_sql(
-                "SELECT * FROM entities WHERE organization_id = ? ORDER BY name ASC"
+            sql = (
+                "SELECT * FROM entities WHERE organization_id = %s ORDER BY name ASC"
             )
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM entities WHERE organization_id = ? AND is_active = 1 ORDER BY name ASC"
+            sql = (
+                "SELECT * FROM entities WHERE organization_id = %s AND is_active = 1 ORDER BY name ASC"
             )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -126,8 +126,8 @@ class EntityStore:
     ) -> Optional[Dict[str, Any]]:
         """Look up an active entity by its code within an org."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM entities WHERE organization_id = ? AND code = ? AND is_active = 1"
+        sql = (
+            "SELECT * FROM entities WHERE organization_id = %s AND code = %s AND is_active = 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -158,7 +158,7 @@ class EntityStore:
             return False
         safe["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{col} = %s" for col in safe)
-        sql = self._prepare_sql(f"UPDATE entities SET {set_clause} WHERE id = ?")
+        sql = f"UPDATE entities SET {set_clause} WHERE id = %s"
         params = list(safe.values()) + [entity_id]
         with self.connect() as conn:
             cur = conn.cursor()
@@ -177,8 +177,8 @@ class EntityStore:
     def get_child_organizations(self, parent_org_id: str) -> List[Dict[str, Any]]:
         """List all child organizations of a parent account."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM organizations WHERE parent_organization_id = ?"
+        sql = (
+            "SELECT * FROM organizations WHERE parent_organization_id = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()

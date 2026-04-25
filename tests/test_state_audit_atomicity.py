@@ -76,21 +76,22 @@ def test_no_torn_state_when_audit_insert_fails(db):
     UPDATE must roll back. A torn state (new state without audit row)
     is the specific invariant this fence locks.
 
-    We force the failure by wrapping `_prepare_sql` on the db so the
-    audit_events INSERT never reaches the cursor. Because both writes
+    Failure is injected via psycopg's cursor.execute — when the SQL
+    being run is the audit_events INSERT, raise. Because both writes
     share one `conn.commit()` in the same `with self.connect()` block,
-    the UPDATE must not persist.
+    the state UPDATE must not persist.
     """
     _seed(db, "AP-ATOM-2")
 
-    real_prepare = db._prepare_sql
+    import psycopg
+    real_execute = psycopg.Cursor.execute
 
-    def _reject_audit_insert(sql):
-        if "INSERT INTO audit_events" in str(sql):
+    def _reject_audit_insert(self, query, params=None, *args, **kwargs):
+        if "INSERT INTO audit_events" in str(query):
             raise RuntimeError("simulated audit insert failure")
-        return real_prepare(sql)
+        return real_execute(self, query, params, *args, **kwargs)
 
-    with patch.object(db, "_prepare_sql", _reject_audit_insert):
+    with patch.object(psycopg.Cursor, "execute", _reject_audit_insert):
         with pytest.raises(Exception):
             db.update_ap_item(
                 "AP-ATOM-2",

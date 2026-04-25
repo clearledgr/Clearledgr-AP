@@ -112,10 +112,10 @@ class SLATracker:
             db.initialize()
             now = datetime.now(timezone.utc).isoformat()
             metric_id = f"SLA-{uuid.uuid4().hex[:12]}"
-            sql = db._prepare_sql(
+            sql = (
                 "INSERT INTO ap_sla_metrics "
                 "(id, ap_item_id, organization_id, step_name, latency_ms, breached, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
             )
             with db.connect() as conn:
                 conn.execute(sql, (
@@ -143,12 +143,12 @@ class SLATracker:
         try:
             from datetime import timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-            sql = db._prepare_sql(
+            sql = (
                 "SELECT step_name, COUNT(*) as total, "
                 "AVG(latency_ms) as avg_ms, MAX(latency_ms) as max_ms, "
                 "SUM(CASE WHEN breached = 1 THEN 1 ELSE 0 END) as breached_count "
                 "FROM ap_sla_metrics "
-                "WHERE organization_id = ? AND created_at >= ? "
+                "WHERE organization_id = %s AND created_at >= %s "
                 "GROUP BY step_name"
             )
             with db.connect() as conn:

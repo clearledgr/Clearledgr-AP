@@ -75,8 +75,8 @@ class DisputeStore:
 
     def get_disputes_for_item(self, ap_item_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM disputes WHERE ap_item_id = ? ORDER BY opened_at DESC"
+        sql = (
+            "SELECT * FROM disputes WHERE ap_item_id = %s ORDER BY opened_at DESC"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -91,15 +91,15 @@ class DisputeStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         if status:
-            sql = self._prepare_sql(
-                "SELECT * FROM disputes WHERE organization_id = ? AND status = ? "
-                "ORDER BY opened_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM disputes WHERE organization_id = %s AND status = %s "
+                "ORDER BY opened_at DESC LIMIT %s"
             )
             params = (organization_id, status, limit)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM disputes WHERE organization_id = ? "
-                "ORDER BY opened_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM disputes WHERE organization_id = %s "
+                "ORDER BY opened_at DESC LIMIT %s"
             )
             params = (organization_id, limit)
 
@@ -121,8 +121,8 @@ class DisputeStore:
 
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = %s" for k in updates)
-        sql = self._prepare_sql(
-            f"UPDATE disputes SET {set_clause} WHERE id = ?"
+        sql = (
+            f"UPDATE disputes SET {set_clause} WHERE id = %s"
         )
         params = list(updates.values()) + [dispute_id]
 

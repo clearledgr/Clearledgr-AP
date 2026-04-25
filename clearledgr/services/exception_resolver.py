@@ -745,9 +745,9 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
     def _list_vendor_names(self) -> list:
         """Return a list of known vendor names for the org."""
         try:
-            sql = self.db._prepare_sql(
+            sql = (
                 "SELECT DISTINCT vendor_name FROM vendor_profiles "
-                "WHERE organization_id = ? LIMIT 500"
+                "WHERE organization_id = %s LIMIT 500"
             )
             with self.db.connect() as conn:
                 cur = conn.cursor()

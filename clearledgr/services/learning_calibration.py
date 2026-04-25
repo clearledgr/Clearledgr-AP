@@ -61,11 +61,11 @@ class LearningCalibrationService:
 
     def _load_feedback_rows(self, *, window_days: int, limit: int) -> List[Dict[str, Any]]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(window_days)))).isoformat()
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT vendor_name, human_decision, agent_recommendation, decision_override, reason, created_at "
             "FROM vendor_decision_feedback "
-            "WHERE organization_id = ? AND created_at >= ? "
-            "ORDER BY created_at DESC LIMIT ?"
+            "WHERE organization_id = %s AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         with self.db.connect() as conn:
             cur = conn.cursor()
@@ -333,10 +333,10 @@ class LearningCalibrationService:
             "snapshot_json": json.dumps(snapshot),
             "created_at": created_at,
         }
-        sql = self.db._prepare_sql(
+        sql = (
             "INSERT INTO learning_calibration_snapshots "
             "(id, organization_id, calibration_version, window_days, min_feedback, snapshot_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)"
         )
         with self.db.connect() as conn:
             cur = conn.cursor()
@@ -361,10 +361,10 @@ class LearningCalibrationService:
         }
 
     def get_latest_snapshot(self) -> Dict[str, Any]:
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT id, calibration_version, snapshot_json, created_at, window_days, min_feedback "
             "FROM learning_calibration_snapshots "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.db.connect() as conn:

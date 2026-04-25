@@ -645,12 +645,12 @@ class LLMGateway:
             self._db.initialize()
             now = datetime.now(timezone.utc).isoformat()
             call_id = f"LLM-{uuid.uuid4().hex[:12]}"
-            sql = self._db._prepare_sql(
+            sql = (
                 "INSERT INTO llm_call_log "
                 "(id, organization_id, action, model, input_tokens, output_tokens, "
                 "latency_ms, cost_estimate_usd, truncated, error, "
                 "correlation_id, created_at, box_id, box_type) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             )
             with self._db.connect() as conn:
                 conn.execute(sql, (

@@ -185,12 +185,12 @@ class FinanceLearningService:
         }
         if not self.enabled:
             return row
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO finance_learning_events (
                 id, organization_id, ap_item_id, event_type, actor_id, vendor_name,
                 action_status, learning_summary, payload_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.db.connect() as conn:
@@ -221,13 +221,13 @@ class FinanceLearningService:
         if ap_item_id:
             clauses.append("ap_item_id = %s")
             params.append(str(ap_item_id).strip())
-        sql = self.db._prepare_sql(
+        sql = (
             f"""
             SELECT ap_item_id, event_type, actor_id, vendor_name, action_status, learning_summary, payload_json, created_at
             FROM finance_learning_events
             WHERE {' AND '.join(clauses)}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
             """
         )
         params.append(max(1, int(limit or 20)))
@@ -283,13 +283,13 @@ class FinanceLearningService:
                 "avg_confidence_delta": float(confidence_delta or 0.0),
             }
         now = self._now_iso()
-        sql = self.db._prepare_sql(
+        sql = (
             """
             INSERT INTO finance_learning_calibration (
                 id, organization_id, vendor_name, action_key, sample_count, success_count,
                 shadow_match_count, verification_success_count, recovery_attempt_count,
                 recovery_success_count, confidence_delta_total, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, vendor_name, action_key)
             DO UPDATE SET
                 sample_count = finance_learning_calibration.sample_count + EXCLUDED.sample_count,
@@ -348,7 +348,7 @@ class FinanceLearningService:
         if action_key:
             clauses.append("action_key = %s")
             params.append(str(action_key).strip().lower())
-        sql = self.db._prepare_sql(
+        sql = (
             f"""
             SELECT vendor_name, action_key, sample_count, success_count, shadow_match_count,
                    verification_success_count, recovery_attempt_count, recovery_success_count,

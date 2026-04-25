@@ -136,9 +136,9 @@ class MonitoringService:
                 cur = conn.cursor()
                 # Aggregate total
                 cur.execute(
-                    self.db._prepare_sql(
+                    (
                         "SELECT COUNT(*) FROM pending_notifications "
-                        "WHERE organization_id = ? AND status = 'dead_letter'"
+                        "WHERE organization_id = %s AND status = 'dead_letter'"
                     ),
                     (self.organization_id,),
                 )
@@ -146,9 +146,9 @@ class MonitoringService:
                 count = int(row[0]) if row else 0
                 # Per-channel breakdown
                 cur.execute(
-                    self.db._prepare_sql(
+                    (
                         "SELECT channel, COUNT(*) AS n FROM pending_notifications "
-                        "WHERE organization_id = ? AND status = 'dead_letter' "
+                        "WHERE organization_id = %s AND status = 'dead_letter' "
                         "GROUP BY channel"
                     ),
                     (self.organization_id,),
@@ -273,10 +273,10 @@ class MonitoringService:
     def _check_posting_failures(self) -> Dict[str, Any]:
         """Check for recent ERP posting failures."""
         try:
-            sql = self.db._prepare_sql(
+            sql = (
                 "SELECT state, COUNT(*) as cnt FROM ap_items "
-                "WHERE organization_id = ? "
-                "AND updated_at >= ? "
+                "WHERE organization_id = %s "
+                "AND updated_at >= %s "
                 "AND state IN ('posted_to_erp', 'failed_post') "
                 "GROUP BY state"
             )
@@ -382,10 +382,10 @@ class MonitoringService:
 
             # Check pending approval chains for stuck approvers
             try:
-                sql = self.db._prepare_sql(
+                sql = (
                     "SELECT s.approvers FROM approval_chains c "
                     "JOIN approval_steps s ON s.chain_id = c.id "
-                    "WHERE c.organization_id = ? AND c.status = 'pending' AND s.status = 'pending'"
+                    "WHERE c.organization_id = %s AND c.status = 'pending' AND s.status = 'pending'"
                 )
                 self.db.initialize()
                 with self.db.connect() as conn:
@@ -465,7 +465,7 @@ class MonitoringService:
             # to the users table. For now we surface every watch in the
             # DB — a connected Gmail account with no watch_expiration is
             # itself the signal (never renewed / never set up).
-            sql = self.db._prepare_sql(
+            sql = (
                 "SELECT email, watch_expiration, last_watch_at "
                 "FROM gmail_autopilot_state"
             )

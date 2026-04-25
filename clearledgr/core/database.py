@@ -393,8 +393,8 @@ class _ClearledgrDBBase:
             return [dict(zip(cols, r)) for r in rows]
 
     def _table_columns(self, cur, table: str) -> set[str]:
-        sql = self._prepare_sql(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
+        sql = (
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         )
         cur.execute(sql, (table,))
         rows = cur.fetchall()

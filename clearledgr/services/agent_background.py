@@ -1095,10 +1095,10 @@ async def _verify_recent_erp_postings(org_id: str):
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
         # Fetch recently-posted items
-        sql = db._prepare_sql(
+        sql = (
             "SELECT * FROM ap_items "
-            "WHERE organization_id = ? AND state = 'posted_to_erp' "
-            "AND updated_at >= ? "
+            "WHERE organization_id = %s AND state = 'posted_to_erp' "
+            "AND updated_at >= %s "
             "ORDER BY updated_at DESC LIMIT 50"
         )
         with db.connect() as conn:

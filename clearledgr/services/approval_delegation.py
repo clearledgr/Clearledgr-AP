@@ -91,8 +91,8 @@ class DelegationService:
         """Deactivate a delegation rule (approver returns from OOO)."""
         self.db.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self.db._prepare_sql(
-            "UPDATE delegation_rules SET is_active = 0, updated_at = ? WHERE id = ? AND organization_id = ?"
+        sql = (
+            "UPDATE delegation_rules SET is_active = 0, updated_at = %s WHERE id = %s AND organization_id = %s"
         )
         with self.db.connect() as conn:
             cur = conn.cursor()
@@ -104,12 +104,12 @@ class DelegationService:
         """List delegation rules for this org."""
         self.db.initialize()
         if active_only:
-            sql = self.db._prepare_sql(
-                "SELECT * FROM delegation_rules WHERE organization_id = ? AND is_active = 1 ORDER BY created_at DESC"
+            sql = (
+                "SELECT * FROM delegation_rules WHERE organization_id = %s AND is_active = 1 ORDER BY created_at DESC"
             )
         else:
-            sql = self.db._prepare_sql(
-                "SELECT * FROM delegation_rules WHERE organization_id = ? ORDER BY created_at DESC"
+            sql = (
+                "SELECT * FROM delegation_rules WHERE organization_id = %s ORDER BY created_at DESC"
             )
 
         with self.db.connect() as conn:

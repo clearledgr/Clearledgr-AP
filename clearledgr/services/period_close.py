@@ -168,11 +168,11 @@ class PeriodCloseService:
         except (ValueError, IndexError):
             return []
 
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT id, vendor_name, amount, currency, invoice_number, invoice_date, created_at, state "
-            "FROM ap_items WHERE organization_id = ? "
-            "AND invoice_date >= ? AND invoice_date < ? "
-            "AND created_at >= ? "
+            "FROM ap_items WHERE organization_id = %s "
+            "AND invoice_date >= %s AND invoice_date < %s "
+            "AND created_at >= %s "
             "ORDER BY created_at DESC"
         )
 
@@ -209,11 +209,11 @@ class PeriodCloseService:
 
         accrual_states = ("approved", "ready_to_post", "posted_to_erp")
         placeholders = ", ".join("%s" for _ in accrual_states)
-        sql = self.db._prepare_sql(
+        sql = (
             f"SELECT id, vendor_name, amount, currency, invoice_number, "
             f"invoice_date, state "
-            f"FROM ap_items WHERE organization_id = ? "
-            f"AND created_at >= ? AND created_at < ? "
+            f"FROM ap_items WHERE organization_id = %s "
+            f"AND created_at >= %s AND created_at < %s "
             f"AND state IN ({placeholders}) "
             f"ORDER BY vendor_name, amount DESC"
         )

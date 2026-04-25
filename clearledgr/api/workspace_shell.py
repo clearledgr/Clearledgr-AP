@@ -2272,8 +2272,8 @@ def list_vendor_profiles(
     """List vendor profiles for an org (intelligence accumulated by the reasoning layer)."""
     org_id = _resolve_org_id(user, organization_id)
     db = get_db()
-    sql = db._prepare_sql(
-        "SELECT * FROM vendor_profiles WHERE organization_id = ? ORDER BY invoice_count DESC LIMIT 200"
+    sql = (
+        "SELECT * FROM vendor_profiles WHERE organization_id = %s ORDER BY invoice_count DESC LIMIT 200"
     )
     try:
         with db.connect() as conn:

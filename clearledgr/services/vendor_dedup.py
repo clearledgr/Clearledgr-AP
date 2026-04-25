@@ -288,8 +288,8 @@ class VendorDedupService:
 
     def _load_all_profiles(self) -> List[Dict[str, Any]]:
         """Load all vendor profiles for this org."""
-        sql = self.db._prepare_sql(
-            "SELECT * FROM vendor_profiles WHERE organization_id = ? "
+        sql = (
+            "SELECT * FROM vendor_profiles WHERE organization_id = %s "
             "ORDER BY invoice_count DESC"
         )
         try:
@@ -320,9 +320,9 @@ class VendorDedupService:
 
     def _reassign_ap_items(self, from_name: str, to_name: str) -> int:
         """Reassign AP items from one vendor name to another."""
-        sql = self.db._prepare_sql(
-            "UPDATE ap_items SET vendor_name = ?, updated_at = ? "
-            "WHERE organization_id = ? AND vendor_name = ?"
+        sql = (
+            "UPDATE ap_items SET vendor_name = %s, updated_at = %s "
+            "WHERE organization_id = %s AND vendor_name = %s"
         )
         now = datetime.now(timezone.utc).isoformat()
         try:
@@ -337,8 +337,8 @@ class VendorDedupService:
 
     def _delete_vendor_profile(self, vendor_name: str) -> bool:
         """Delete a vendor profile."""
-        sql = self.db._prepare_sql(
-            "DELETE FROM vendor_profiles WHERE organization_id = ? AND vendor_name = ?"
+        sql = (
+            "DELETE FROM vendor_profiles WHERE organization_id = %s AND vendor_name = %s"
         )
         try:
             with self.db.connect() as conn:

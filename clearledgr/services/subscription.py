@@ -954,13 +954,13 @@ class SubscriptionService:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-            sql = self.db._prepare_sql(
+            sql = (
                 "SELECT COUNT(*) as call_count, "
                 "COALESCE(SUM(cost_estimate_usd), 0) as total_cost_usd, "
                 "COALESCE(SUM(input_tokens), 0) as total_input_tokens, "
                 "COALESCE(SUM(output_tokens), 0) as total_output_tokens "
                 "FROM llm_call_log "
-                "WHERE organization_id = ? AND created_at >= ?"
+                "WHERE organization_id = %s AND created_at >= %s"
             )
             with self.db.connect() as conn:
                 cur = conn.cursor()

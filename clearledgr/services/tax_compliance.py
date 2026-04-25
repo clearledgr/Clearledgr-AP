@@ -199,12 +199,12 @@ class TaxComplianceService:
 
         Returns vendors with total amounts paid in the period.
         """
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT vendor_name, currency, SUM(amount) as total, COUNT(*) as invoice_count "
             "FROM ap_items "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "AND state IN ('posted_to_erp', 'closed') "
-            "AND created_at >= ? AND created_at < ? "
+            "AND created_at >= %s AND created_at < %s "
             "AND amount IS NOT NULL "
             "GROUP BY vendor_name, currency "
             "ORDER BY total DESC"

@@ -78,16 +78,16 @@ class SpendAnalysisService:
         (posted_to_erp, closed).
         """
         cutoff = self._cutoff_iso(period_days)
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT vendor_name, SUM(amount) AS total, COUNT(*) AS invoice_count "
             "FROM ap_items "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "  AND state IN ('posted_to_erp', 'closed') "
-            "  AND created_at >= ? "
+            "  AND created_at >= %s "
             "  AND amount IS NOT NULL "
             "GROUP BY vendor_name "
             "ORDER BY total DESC "
-            "LIMIT ?"
+            "LIMIT %s"
         )
         try:
             self.db.initialize()
@@ -117,12 +117,12 @@ class SpendAnalysisService:
         """
         cutoff = self._cutoff_iso(period_days)
         # Step 1: get per-vendor spend
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT vendor_name, SUM(amount) AS total "
             "FROM ap_items "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "  AND state IN ('posted_to_erp', 'closed') "
-            "  AND created_at >= ? "
+            "  AND created_at >= %s "
             "  AND amount IS NOT NULL "
             "GROUP BY vendor_name"
         )
@@ -183,13 +183,13 @@ class SpendAnalysisService:
             else:
                 month_end = month_start.replace(month=month_start.month + 1)
 
-            sql = self.db._prepare_sql(
+            sql = (
                 "SELECT SUM(amount) AS total, COUNT(*) AS cnt "
                 "FROM ap_items "
-                "WHERE organization_id = ? "
+                "WHERE organization_id = %s "
                 "  AND state IN ('posted_to_erp', 'closed') "
-                "  AND created_at >= ? "
-                "  AND created_at < ? "
+                "  AND created_at >= %s "
+                "  AND created_at < %s "
                 "  AND amount IS NOT NULL"
             )
             try:
@@ -323,12 +323,12 @@ class SpendAnalysisService:
     def _build_summary(self, period_days: int) -> Dict[str, Any]:
         """Total spend, invoice count, and average days to post."""
         cutoff = self._cutoff_iso(period_days)
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT SUM(amount) AS total, COUNT(*) AS cnt "
             "FROM ap_items "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "  AND state IN ('posted_to_erp', 'closed') "
-            "  AND created_at >= ? "
+            "  AND created_at >= %s "
             "  AND amount IS NOT NULL"
         )
         try:
@@ -356,12 +356,12 @@ class SpendAnalysisService:
     def _avg_days_to_post(self, period_days: int) -> Optional[float]:
         """Average days between created_at and erp_posted_at for posted items."""
         cutoff = self._cutoff_iso(period_days)
-        sql = self.db._prepare_sql(
+        sql = (
             "SELECT created_at, erp_posted_at "
             "FROM ap_items "
-            "WHERE organization_id = ? "
+            "WHERE organization_id = %s "
             "  AND state IN ('posted_to_erp', 'closed') "
-            "  AND created_at >= ? "
+            "  AND created_at >= %s "
             "  AND erp_posted_at IS NOT NULL"
         )
         try:

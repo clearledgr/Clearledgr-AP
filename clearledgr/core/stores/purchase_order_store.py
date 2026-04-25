@@ -131,7 +131,7 @@ class PurchaseOrderStore:
             str(po.get("created_at") or now),
             now,  # updated_at
         )
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO purchase_orders (
                 po_id, organization_id, po_number, vendor_id, vendor_name,
@@ -140,7 +140,7 @@ class PurchaseOrderStore:
                 requested_by, approved_by, approved_at,
                 notes, department, project, ship_to_address,
                 erp_po_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (po_id) DO UPDATE SET
                 po_number = EXCLUDED.po_number,
                 vendor_id = EXCLUDED.vendor_id,
@@ -187,9 +187,9 @@ class PurchaseOrderStore:
         if not organization_id or not po_number:
             return None
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM purchase_orders "
-            "WHERE organization_id = ? AND po_number = ? "
+            "WHERE organization_id = %s AND po_number = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -218,12 +218,12 @@ class PurchaseOrderStore:
         self.initialize()
         open_statuses = ("approved", "partially_received", "partially_invoiced")
         if open_only:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM purchase_orders "
-                "WHERE organization_id = ? "
-                "AND LOWER(vendor_name) LIKE ? "
-                "AND status IN (?, ?, ?) "
-                "ORDER BY created_at DESC LIMIT ?"
+                "WHERE organization_id = %s "
+                "AND LOWER(vendor_name) LIKE %s "
+                "AND status IN (%s, %s, %s) "
+                "ORDER BY created_at DESC LIMIT %s"
             )
             params = (
                 organization_id,
@@ -232,11 +232,11 @@ class PurchaseOrderStore:
                 limit,
             )
         else:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM purchase_orders "
-                "WHERE organization_id = ? "
-                "AND LOWER(vendor_name) LIKE ? "
-                "ORDER BY created_at DESC LIMIT ?"
+                "WHERE organization_id = %s "
+                "AND LOWER(vendor_name) LIKE %s "
+                "ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, f"%{vendor_name.lower()}%", limit)
         with self.connect() as conn:
@@ -251,10 +251,10 @@ class PurchaseOrderStore:
         if not organization_id:
             return []
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM purchase_orders "
-            "WHERE organization_id = ? "
-            "ORDER BY created_at DESC LIMIT ?"
+            "WHERE organization_id = %s "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -292,14 +292,14 @@ class PurchaseOrderStore:
             str(gr.get("notes") or ""),
             str(gr.get("created_at") or now),
         )
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO goods_receipts (
                 gr_id, organization_id, gr_number, po_id, po_number,
                 vendor_id, vendor_name, receipt_date, received_by,
                 delivery_note, carrier, line_items_json,
                 status, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (gr_id) DO UPDATE SET
                 gr_number = EXCLUDED.gr_number,
                 po_id = EXCLUDED.po_id,
@@ -336,9 +336,9 @@ class PurchaseOrderStore:
         if not po_id:
             return []
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM goods_receipts "
-            "WHERE po_id = ? "
+            "WHERE po_id = %s "
             "ORDER BY created_at DESC"
         )
         with self.connect() as conn:
@@ -379,7 +379,7 @@ class PurchaseOrderStore:
             str(match.get("matched_at") or now),
             str(match.get("created_at") or now),
         )
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO three_way_matches (
                 match_id, organization_id, invoice_id, po_id, gr_id,
@@ -388,7 +388,7 @@ class PurchaseOrderStore:
                 price_variance, quantity_variance,
                 override_by, override_reason,
                 matched_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (match_id) DO UPDATE SET
                 invoice_id = EXCLUDED.invoice_id,
                 po_id = EXCLUDED.po_id,
@@ -428,9 +428,9 @@ class PurchaseOrderStore:
         if not invoice_id:
             return None
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM three_way_matches "
-            "WHERE invoice_id = ? "
+            "WHERE invoice_id = %s "
             "ORDER BY matched_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -450,17 +450,17 @@ class PurchaseOrderStore:
             return []
         self.initialize()
         if status:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM three_way_matches "
-                "WHERE organization_id = ? AND status = ? "
-                "ORDER BY matched_at DESC LIMIT ?"
+                "WHERE organization_id = %s AND status = %s "
+                "ORDER BY matched_at DESC LIMIT %s"
             )
             params: tuple = (organization_id, status, limit)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 "SELECT * FROM three_way_matches "
-                "WHERE organization_id = ? "
-                "ORDER BY matched_at DESC LIMIT ?"
+                "WHERE organization_id = %s "
+                "ORDER BY matched_at DESC LIMIT %s"
             )
             params = (organization_id, limit)
         with self.connect() as conn:

@@ -134,8 +134,8 @@ class ApprovalChainStore:
     def db_get_chain_by_invoice(self, organization_id: str, invoice_id: str) -> Optional[Dict[str, Any]]:
         """Find the most recent chain for an invoice in an org."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT id FROM approval_chains WHERE organization_id = ? AND invoice_id = ? "
+        sql = (
+            "SELECT id FROM approval_chains WHERE organization_id = %s AND invoice_id = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -255,8 +255,8 @@ class ApprovalChainStore:
         """Return all PENDING chains where the user appears in a pending step's approvers."""
         self.initialize()
         # Fetch all pending chains for the org
-        chains_sql = self._prepare_sql(
-            "SELECT id FROM approval_chains WHERE organization_id = ? AND status = 'pending'"
+        chains_sql = (
+            "SELECT id FROM approval_chains WHERE organization_id = %s AND status = 'pending'"
         )
         with self.connect() as conn:
             cur = conn.cursor()

@@ -75,8 +75,8 @@ def bootstrap_vendor_intelligence(
     existing_ids: set = set()
     try:
         # Fetch all history rows for the org — we only need the ap_item_id column
-        sql = db._prepare_sql(
-            "SELECT ap_item_id FROM vendor_invoice_history WHERE organization_id = ?"
+        sql = (
+            "SELECT ap_item_id FROM vendor_invoice_history WHERE organization_id = %s"
         )
         with db.connect() as conn:
             conn.row_factory = __import__("sqlite3").Row

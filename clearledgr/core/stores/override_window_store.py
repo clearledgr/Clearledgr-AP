@@ -131,12 +131,12 @@ class OverrideWindowStore:
         posted_ts = posted_at or now
         normalized_action = str(action_type or DEFAULT_ACTION_TYPE).strip() or DEFAULT_ACTION_TYPE
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO override_windows
             (id, ap_item_id, organization_id, erp_reference, erp_type,
              action_type, posted_at, expires_at, state, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
             """
         )
         params = (
@@ -196,10 +196,10 @@ class OverrideWindowStore:
     ) -> Optional[Dict[str, Any]]:
         """Fetch the most recent window for an AP item."""
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM override_windows
-            WHERE ap_item_id = ?
+            WHERE ap_item_id = %s
             ORDER BY created_at DESC
             LIMIT 1
             """
@@ -221,22 +221,22 @@ class OverrideWindowStore:
         self.initialize()
         safe_limit = max(1, min(int(limit or 100), 1000))
         if state:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM override_windows
-                WHERE organization_id = ? AND state = ?
+                WHERE organization_id = %s AND state = %s
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT %s
                 """
             )
             params = (organization_id, state, safe_limit)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM override_windows
-                WHERE organization_id = ?
+                WHERE organization_id = %s
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT %s
                 """
             )
             params = (organization_id, safe_limit)
@@ -255,12 +255,12 @@ class OverrideWindowStore:
         self.initialize()
         cutoff = as_of or datetime.now(timezone.utc).isoformat()
         safe_limit = max(1, min(int(limit or 500), 5000))
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM override_windows
-            WHERE state = 'pending' AND expires_at <= ?
+            WHERE state = 'pending' AND expires_at <= %s
             ORDER BY expires_at ASC
-            LIMIT ?
+            LIMIT %s
             """
         )
         with self.connect() as conn:
@@ -282,11 +282,11 @@ class OverrideWindowStore:
         """Record where the Slack undo card was posted."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE override_windows
-            SET slack_channel = ?, slack_message_ts = ?, updated_at = ?
-            WHERE id = ?
+            SET slack_channel = %s, slack_message_ts = %s, updated_at = %s
+            WHERE id = %s
             """
         )
         with self.connect() as conn:
@@ -307,16 +307,16 @@ class OverrideWindowStore:
         """Record a successful reversal on the window."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE override_windows
             SET state = 'reversed',
-                reversed_at = ?,
-                reversed_by = ?,
-                reversal_reason = ?,
-                reversal_ref = ?,
-                updated_at = ?
-            WHERE id = ? AND state = 'pending'
+                reversed_at = %s,
+                reversed_by = %s,
+                reversal_reason = %s,
+                reversal_ref = %s,
+                updated_at = %s
+            WHERE id = %s AND state = 'pending'
             """
         )
         with self.connect() as conn:
@@ -333,11 +333,11 @@ class OverrideWindowStore:
         """Mark a pending window as expired (used by the reaper)."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE override_windows
-            SET state = 'expired', updated_at = ?
-            WHERE id = ? AND state = 'pending'
+            SET state = 'expired', updated_at = %s
+            WHERE id = %s AND state = 'pending'
             """
         )
         with self.connect() as conn:
@@ -353,11 +353,11 @@ class OverrideWindowStore:
         """Mark a window as failed (reversal attempt errored at the ERP)."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE override_windows
-            SET state = 'failed', failure_reason = ?, updated_at = ?
-            WHERE id = ? AND state = 'pending'
+            SET state = 'failed', failure_reason = %s, updated_at = %s
+            WHERE id = %s AND state = 'pending'
             """
         )
         with self.connect() as conn:

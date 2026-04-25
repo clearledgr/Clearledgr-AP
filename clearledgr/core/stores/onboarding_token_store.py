@@ -178,13 +178,13 @@ class OnboardingTokenStore:
         now_dt = _now()
         expires_dt = now_dt + timedelta(days=max(1, int(ttl_days)))
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO vendor_onboarding_tokens (
                 id, organization_id, vendor_name, session_id, token_hash,
                 purpose, issued_at, issued_by, expires_at,
                 last_accessed_at, access_count, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         try:
@@ -269,8 +269,8 @@ class OnboardingTokenStore:
         if not raw_token or not isinstance(raw_token, str):
             return None
         token_hash = _hash_token(raw_token)
-        sql = self._prepare_sql(
-            "SELECT * FROM vendor_onboarding_tokens WHERE token_hash = ?"
+        sql = (
+            "SELECT * FROM vendor_onboarding_tokens WHERE token_hash = %s"
         )
         try:
             with self.connect() as conn:
@@ -313,8 +313,8 @@ class OnboardingTokenStore:
         self, token_id: str
     ) -> Optional[Dict[str, Any]]:
         """Fetch a token row by primary key. Includes revoked tokens."""
-        sql = self._prepare_sql(
-            "SELECT * FROM vendor_onboarding_tokens WHERE id = ?"
+        sql = (
+            "SELECT * FROM vendor_onboarding_tokens WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -338,7 +338,7 @@ class OnboardingTokenStore:
         params: List[Any] = [session_id]
         if not include_revoked:
             clauses.append("revoked_at IS NULL")
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM vendor_onboarding_tokens WHERE "
             + " AND ".join(clauses)
             + " ORDER BY issued_at DESC"
@@ -364,10 +364,10 @@ class OnboardingTokenStore:
         instrumentation write hiccup.
         """
         now = _now_iso()
-        sql = self._prepare_sql(
+        sql = (
             "UPDATE vendor_onboarding_tokens "
-            "SET last_accessed_at = ?, access_count = access_count + 1 "
-            "WHERE id = ?"
+            "SET last_accessed_at = %s, access_count = access_count + 1 "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -391,10 +391,10 @@ class OnboardingTokenStore:
         if token_row.get("revoked_at"):
             return token_row  # already revoked — idempotent
         now = _now_iso()
-        sql = self._prepare_sql(
+        sql = (
             "UPDATE vendor_onboarding_tokens "
-            "SET revoked_at = ?, revoked_by = ?, revoke_reason = ? "
-            "WHERE id = ?"
+            "SET revoked_at = %s, revoked_by = %s, revoke_reason = %s "
+            "WHERE id = %s"
         )
         try:
             with self.connect() as conn:

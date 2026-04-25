@@ -140,11 +140,11 @@ class AuthStore:
     ) -> None:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO google_auth_codes
             (auth_code, access_token, refresh_token, organization_id, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (auth_code) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
@@ -221,11 +221,11 @@ class AuthStore:
         now = datetime.now(timezone.utc).isoformat()
         row_id = organization_id or f"ORG-{uuid.uuid4().hex}"
         settings_json = json.dumps(settings or {})
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO organizations
             (id, name, domain, settings_json, integration_mode, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -312,8 +312,8 @@ class AuthStore:
             cur = conn.cursor()
             for table in tables:
                 try:
-                    sql = self._prepare_sql(
-                        f"DELETE FROM {table} WHERE organization_id = ?"
+                    sql = (
+                        f"DELETE FROM {table} WHERE organization_id = %s"
                     )
                     cur.execute(sql, (org_id,))
                     counts[table] = int(cur.rowcount or 0)
@@ -342,11 +342,11 @@ class AuthStore:
         from clearledgr.core.clock import now_utc
         from datetime import timedelta
         cutoff = (now_utc() - timedelta(days=days)).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT id, deleted_at, purged_at FROM organizations
              WHERE deleted_at IS NOT NULL
-               AND deleted_at < ?
+               AND deleted_at < %s
                AND (purged_at IS NULL OR purged_at = '')
              ORDER BY deleted_at ASC
              LIMIT 50
@@ -456,14 +456,14 @@ class AuthStore:
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = %s" for k in payload.keys())
         if expected_updated_at is not None:
-            sql = self._prepare_sql(
+            sql = (
                 f"UPDATE organizations SET {set_clause} "
-                "WHERE id = ? AND updated_at = ?"
+                "WHERE id = %s AND updated_at = %s"
             )
             params = (*payload.values(), organization_id, expected_updated_at)
         else:
-            sql = self._prepare_sql(
-                f"UPDATE organizations SET {set_clause} WHERE id = ?"
+            sql = (
+                f"UPDATE organizations SET {set_clause} WHERE id = %s"
             )
             params = (*payload.values(), organization_id)
         with self.connect() as conn:
@@ -522,11 +522,11 @@ class AuthStore:
 
         now = datetime.now(timezone.utc).isoformat()
         user_id = f"USR-{uuid.uuid4().hex}"
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO users
             (id, email, name, organization_id, role, password_hash, google_id, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -621,8 +621,8 @@ class AuthStore:
         """
         self.initialize()
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
-        sql = self._prepare_sql(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND is_active = 1 LIMIT 1"
+        sql = (
+            "SELECT * FROM api_keys WHERE key_hash = %s AND is_active = 1 LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -633,8 +633,8 @@ class AuthStore:
         data = dict(row)
         # Touch last_used_at (best-effort, non-blocking)
         try:
-            update_sql = self._prepare_sql(
-                "UPDATE api_keys SET last_used_at = ? WHERE id = ?"
+            update_sql = (
+                "UPDATE api_keys SET last_used_at = %s WHERE id = %s"
             )
             with self.connect() as conn2:
                 conn2.cursor().execute(
@@ -659,10 +659,10 @@ class AuthStore:
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
         key_prefix = raw_key[:12] + "..."
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """INSERT INTO api_keys
             (id, organization_id, key_hash, key_prefix, user_id, label, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"""
+            VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s)"""
         )
         with self.connect() as conn:
             conn.cursor().execute(
@@ -680,13 +680,13 @@ class AuthStore:
     def get_users(self, organization_id: str, include_inactive: bool = False) -> List[Dict[str, Any]]:
         self.initialize()
         if include_inactive:
-            sql = self._prepare_sql(
-                "SELECT * FROM users WHERE organization_id = ? ORDER BY created_at DESC"
+            sql = (
+                "SELECT * FROM users WHERE organization_id = %s ORDER BY created_at DESC"
             )
             params = (organization_id,)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY created_at DESC"
+            sql = (
+                "SELECT * FROM users WHERE organization_id = %s AND is_active = 1 ORDER BY created_at DESC"
             )
             params = (organization_id,)
         with self.connect() as conn:
@@ -729,7 +729,7 @@ class AuthStore:
             payload["preferences_json"] = json.dumps(payload["preferences_json"])
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = %s" for k in payload.keys())
-        sql = self._prepare_sql(f"UPDATE users SET {set_clause} WHERE id = ?")
+        sql = f"UPDATE users SET {set_clause} WHERE id = %s"
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (*payload.values(), user_id))
@@ -804,11 +804,11 @@ class AuthStore:
             )
             return row_id
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO users
             (id, email, name, organization_id, role, password_hash, google_id, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -849,12 +849,12 @@ class AuthStore:
 
         self.initialize()
         now_iso = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT id, organization_id FROM users "
             "WHERE is_active = 1 "
             "  AND seat_type = 'read_only' "
             "  AND seat_expires_at IS NOT NULL "
-            "  AND seat_expires_at <= ?"
+            "  AND seat_expires_at <= %s"
         )
         try:
             with self.connect() as conn:
@@ -914,8 +914,8 @@ class AuthStore:
         pricing structure (Read Only at reduced rate).
         """
         try:
-            sql = self._prepare_sql(
-                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = ? AND is_active = 1"
+            sql = (
+                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = %s AND is_active = 1"
             )
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -924,8 +924,8 @@ class AuthStore:
             active_count = dict(row).get("cnt", 0) if row else 0
 
             # Count Read Only seats separately
-            ro_sql = self._prepare_sql(
-                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = ? AND is_active = 1 AND seat_type = 'read_only'"
+            ro_sql = (
+                "SELECT COUNT(*) as cnt FROM users WHERE organization_id = %s AND is_active = 1 AND seat_type = 'read_only'"
             )
             ro_count = 0
             try:
@@ -938,8 +938,8 @@ class AuthStore:
                 pass  # seat_type column may not exist yet
 
             # Update usage in subscription
-            sub_sql = self._prepare_sql(
-                "SELECT id, usage_json FROM subscriptions WHERE organization_id = ?"
+            sub_sql = (
+                "SELECT id, usage_json FROM subscriptions WHERE organization_id = %s"
             )
             with self.connect() as conn:
                 cur = conn.cursor()
@@ -951,8 +951,8 @@ class AuthStore:
                 usage = json.loads(sub.get("usage_json") or "{}")
                 usage["users_count"] = active_count - ro_count  # Full seats only
                 usage["read_only_users_count"] = ro_count
-                update_sql = self._prepare_sql(
-                    "UPDATE subscriptions SET usage_json = ? WHERE id = ?"
+                update_sql = (
+                    "UPDATE subscriptions SET usage_json = %s WHERE id = %s"
                 )
                 with self.connect() as conn:
                     conn.execute(update_sql, (json.dumps(usage), sub["id"]))
@@ -979,11 +979,11 @@ class AuthStore:
         now = datetime.now(timezone.utc).isoformat()
         invite_id = f"INV-{uuid.uuid4().hex}"
         token = secrets.token_urlsafe(32)
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO team_invites
             (id, organization_id, email, role, token, status, expires_at, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -1007,8 +1007,8 @@ class AuthStore:
 
     def list_team_invites(self, organization_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM team_invites WHERE organization_id = ? ORDER BY created_at DESC"
+        sql = (
+            "SELECT * FROM team_invites WHERE organization_id = %s ORDER BY created_at DESC"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1037,8 +1037,8 @@ class AuthStore:
     def revoke_team_invite(self, invite_id: str) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            "UPDATE team_invites SET status = 'revoked', revoked_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'"
+        sql = (
+            "UPDATE team_invites SET status = 'revoked', revoked_at = %s, updated_at = %s WHERE id = %s AND status = 'pending'"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1049,9 +1049,9 @@ class AuthStore:
     def accept_team_invite(self, invite_id: str, accepted_by: str) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            "UPDATE team_invites SET status = 'accepted', accepted_by = ?, accepted_at = ?, updated_at = ? "
-            "WHERE id = ? AND status = 'pending'"
+        sql = (
+            "UPDATE team_invites SET status = 'accepted', accepted_by = %s, accepted_at = %s, updated_at = %s "
+            "WHERE id = %s AND status = 'pending'"
         )
         with self.connect() as conn:
             cur = conn.cursor()

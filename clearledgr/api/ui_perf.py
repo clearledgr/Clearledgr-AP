@@ -83,10 +83,10 @@ async def record_ui_perf(beacon: PerfBeacon, request: Request) -> Dict[str, Any]
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "INSERT INTO ap_sla_metrics "
                     "(id, ap_item_id, organization_id, step_name, latency_ms, breached, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)"
                 ),
                 (
                     metric_id, ap_item_id, org_id, step_name,

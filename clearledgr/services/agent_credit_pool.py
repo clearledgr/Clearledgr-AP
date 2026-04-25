@@ -128,11 +128,11 @@ def _insert_entry(
     with db.connect() as conn:
         cur = conn.cursor()
         cur.execute(
-            db._prepare_sql(
+            (
                 "INSERT INTO agent_credit_ledger "
                 "(id, organization_id, entry_type, credits, action_type, "
                 " ap_item_id, related_entry_id, metadata, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             ),
             (
                 entry_id, organization_id, entry_type, int(credits),
@@ -167,9 +167,9 @@ def get_balance(organization_id: str, db: Any = None) -> int:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT entry_type, COALESCE(SUM(credits), 0) AS total "
-                    "FROM agent_credit_ledger WHERE organization_id = ? "
+                    "FROM agent_credit_ledger WHERE organization_id = %s "
                     "GROUP BY entry_type"
                 ),
                 (organization_id,),
@@ -225,9 +225,9 @@ def ensure_monthly_grant(organization_id: str, db: Any = None) -> Optional[str]:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT id FROM agent_credit_ledger "
-                    "WHERE organization_id = ? AND entry_type = ? AND created_at >= ? "
+                    "WHERE organization_id = %s AND entry_type = %s AND created_at >= %s "
                     "LIMIT 1"
                 ),
                 (organization_id, ENTRY_AUTO_GRANT, period_start_iso),
@@ -391,10 +391,10 @@ def refund_credit(
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT entry_type, credits, action_type, ap_item_id "
                     "FROM agent_credit_ledger "
-                    "WHERE id = ? AND organization_id = ? LIMIT 1"
+                    "WHERE id = %s AND organization_id = %s LIMIT 1"
                 ),
                 (original_entry_id, organization_id),
             )
@@ -514,10 +514,10 @@ def list_recent_entries(
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
-                db._prepare_sql(
+                (
                     "SELECT * FROM agent_credit_ledger "
-                    "WHERE organization_id = ? "
-                    "ORDER BY created_at DESC LIMIT ?"
+                    "WHERE organization_id = %s "
+                    "ORDER BY created_at DESC LIMIT %s"
                 ),
                 (organization_id, safe_limit),
             )

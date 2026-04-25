@@ -127,14 +127,14 @@ class APRuntimeStore:
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:
             cur = conn.cursor()
-            sql = self._prepare_sql(
+            sql = (
                 """
                 INSERT INTO transactions
                     (id, organization_id, amount, currency, date, description,
                      reference, source, source_id, vendor, status,
                      matched_with, match_confidence, match_score,
                      metadata, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status,
                     matched_with=excluded.matched_with,
@@ -186,8 +186,8 @@ class APRuntimeStore:
             conditions.append("source = %s")
             params.append(source)
         where = " AND ".join(conditions)
-        sql = self._prepare_sql(
-            f"SELECT * FROM transactions WHERE {where} ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM transactions WHERE {where} ORDER BY created_at DESC LIMIT %s"
         )
         params.append(limit)
 
@@ -236,14 +236,14 @@ class APRuntimeStore:
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:
             cur = conn.cursor()
-            sql = self._prepare_sql(
+            sql = (
                 """
                 INSERT INTO finance_emails
                     (id, organization_id, gmail_id, subject, sender,
                      received_at, email_type, confidence, vendor, amount,
                      currency, invoice_number, status, processed_at,
                      transaction_id, user_id, metadata, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(id) DO UPDATE SET
                     organization_id=excluded.organization_id,
                     gmail_id=excluded.gmail_id,
@@ -304,8 +304,8 @@ class APRuntimeStore:
             conditions.append("status = %s")
             params.append(status)
         where = " AND ".join(conditions)
-        sql = self._prepare_sql(
-            f"SELECT * FROM finance_emails WHERE {where} ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM finance_emails WHERE {where} ORDER BY created_at DESC LIMIT %s"
         )
         params.append(limit)
 
@@ -382,8 +382,8 @@ class APRuntimeStore:
             params.extend(normalized_gmail_ids)
 
         where = " AND ".join(conditions)
-        sql = self._prepare_sql(
-            f"SELECT * FROM finance_emails WHERE {where} ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM finance_emails WHERE {where} ORDER BY created_at DESC LIMIT %s"
         )
         params.append(max(1, min(int(limit or 100), 5000)))
 
@@ -510,12 +510,12 @@ class APRuntimeStore:
         correction_dict.setdefault("corrected_at", now)
         with self.connect() as conn:
             cur = conn.cursor()
-            sql = self._prepare_sql(
+            sql = (
                 """
                 INSERT INTO gl_corrections
                     (id, invoice_id, vendor, original_gl, corrected_gl, reason,
                      was_correct, corrected_by, organization_id, corrected_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """
             )
             cur.execute(
@@ -537,10 +537,10 @@ class APRuntimeStore:
         return correction_dict
 
     def get_gl_corrections(self, organization_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        sql = self._prepare_sql(
+        sql = (
             "SELECT id, invoice_id, vendor, original_gl, corrected_gl, reason, "
             "was_correct, confidence_impact, corrected_by, organization_id, corrected_at "
-            "FROM gl_corrections WHERE organization_id=? ORDER BY corrected_at DESC LIMIT ?"
+            "FROM gl_corrections WHERE organization_id=%s ORDER BY corrected_at DESC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -551,27 +551,27 @@ class APRuntimeStore:
     def get_gl_stats(self, organization_id: str) -> Dict[str, Any]:
         from datetime import datetime, timedelta, timezone
 
-        count_sql = self._prepare_sql(
-            "SELECT COUNT(*) FROM gl_corrections WHERE organization_id=?"
+        count_sql = (
+            "SELECT COUNT(*) FROM gl_corrections WHERE organization_id=%s"
         )
-        vendor_sql = self._prepare_sql(
+        vendor_sql = (
             "SELECT vendor, COUNT(*) as correction_count "
-            "FROM gl_corrections WHERE organization_id=? "
+            "FROM gl_corrections WHERE organization_id=%s "
             "GROUP BY vendor ORDER BY correction_count DESC LIMIT 10"
         )
-        remap_sql = self._prepare_sql(
+        remap_sql = (
             "SELECT original_gl, corrected_gl, COUNT(*) as freq "
-            "FROM gl_corrections WHERE organization_id=? "
+            "FROM gl_corrections WHERE organization_id=%s "
             "GROUP BY original_gl, corrected_gl ORDER BY freq DESC LIMIT 10"
         )
         now = datetime.now(timezone.utc)
         last_30 = (now - timedelta(days=30)).isoformat()
         prior_30 = (now - timedelta(days=60)).isoformat()
-        trend_sql = self._prepare_sql(
+        trend_sql = (
             "SELECT "
-            "SUM(CASE WHEN corrected_at >= ? THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN corrected_at >= ? AND corrected_at < ? THEN 1 ELSE 0 END) "
-            "FROM gl_corrections WHERE organization_id=?"
+            "SUM(CASE WHEN corrected_at >= %s THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN corrected_at >= %s AND corrected_at < %s THEN 1 ELSE 0 END) "
+            "FROM gl_corrections WHERE organization_id=%s"
         )
 
         with self.connect() as conn:
@@ -641,11 +641,11 @@ class APRuntimeStore:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "INSERT INTO clarifying_questions "
             "(id, invoice_id, question_type, question_text, options_json, "
             "slack_ts, slack_channel, status, organization_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT(id) DO UPDATE SET "
             "slack_ts=excluded.slack_ts, slack_channel=excluded.slack_channel"
         )
@@ -672,8 +672,8 @@ class APRuntimeStore:
 
     def get_clarifying_question(self, question_id: str) -> Optional[Dict[str, Any]]:
         """Load a clarifying question by ID."""
-        sql = self._prepare_sql(
-            "SELECT * FROM clarifying_questions WHERE id = ?"
+        sql = (
+            "SELECT * FROM clarifying_questions WHERE id = %s"
         )
         try:
             with self.connect() as conn:
@@ -698,10 +698,10 @@ class APRuntimeStore:
         code = account_dict.get("code", "")
         with self.connect() as conn:
             cur = conn.cursor()
-            sql = self._prepare_sql(
+            sql = (
                 """
                 INSERT INTO gl_accounts (id, organization_id, code, account_data)
-                VALUES (?,?,?,?)
+                VALUES (%s,%s,%s,%s)
                 ON CONFLICT(organization_id, code) DO UPDATE SET account_data=excluded.account_data
                 """
             )

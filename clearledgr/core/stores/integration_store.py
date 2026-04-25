@@ -200,8 +200,8 @@ class IntegrationStore:
 
     def get_erp_connections(self, organization_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM erp_connections WHERE organization_id = ? AND is_active = 1"
+        sql = (
+            "SELECT * FROM erp_connections WHERE organization_id = %s AND is_active = 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -222,13 +222,13 @@ class IntegrationStore:
         self.initialize()
         # Try entity-specific first
         if erp_type:
-            sql = self._prepare_sql(
-                "SELECT * FROM erp_connections WHERE organization_id = ? AND entity_id = ? AND erp_type = ? AND is_active = 1 LIMIT 1"
+            sql = (
+                "SELECT * FROM erp_connections WHERE organization_id = %s AND entity_id = %s AND erp_type = %s AND is_active = 1 LIMIT 1"
             )
             params = (organization_id, entity_id, erp_type)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM erp_connections WHERE organization_id = ? AND entity_id = ? AND is_active = 1 LIMIT 1"
+            sql = (
+                "SELECT * FROM erp_connections WHERE organization_id = %s AND entity_id = %s AND is_active = 1 LIMIT 1"
             )
             params = (organization_id, entity_id)
         with self.connect() as conn:
@@ -240,13 +240,13 @@ class IntegrationStore:
 
         # Fallback: org-level connection (entity_id IS NULL or empty)
         if erp_type:
-            sql = self._prepare_sql(
-                "SELECT * FROM erp_connections WHERE organization_id = ? AND (entity_id IS NULL OR entity_id = '') AND erp_type = ? AND is_active = 1 LIMIT 1"
+            sql = (
+                "SELECT * FROM erp_connections WHERE organization_id = %s AND (entity_id IS NULL OR entity_id = '') AND erp_type = %s AND is_active = 1 LIMIT 1"
             )
             params = (organization_id, erp_type)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM erp_connections WHERE organization_id = ? AND (entity_id IS NULL OR entity_id = '') AND is_active = 1 LIMIT 1"
+            sql = (
+                "SELECT * FROM erp_connections WHERE organization_id = %s AND (entity_id IS NULL OR entity_id = '') AND is_active = 1 LIMIT 1"
             )
             params = (organization_id,)
         with self.connect() as conn:
@@ -309,8 +309,8 @@ class IntegrationStore:
     def delete_erp_connection(self, organization_id: str, erp_type: str) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            "UPDATE erp_connections SET is_active = 0, updated_at = ? WHERE organization_id = ? AND erp_type = ?"
+        sql = (
+            "UPDATE erp_connections SET is_active = 0, updated_at = %s WHERE organization_id = %s AND erp_type = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -349,12 +349,12 @@ class IntegrationStore:
         if user_token:
             metadata_payload["user_token_encrypted"] = self._encrypt_secret(user_token)
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO slack_installations
             (id, organization_id, team_id, team_name, bot_user_id, bot_token_encrypted, scope_csv, mode,
              is_active, metadata_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, team_id)
             DO UPDATE SET team_name = EXCLUDED.team_name,
                           bot_user_id = EXCLUDED.bot_user_id,
@@ -408,8 +408,8 @@ class IntegrationStore:
         include_secrets: bool = False,
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM slack_installations WHERE organization_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM slack_installations WHERE organization_id = %s AND is_active = 1 ORDER BY updated_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -438,8 +438,8 @@ class IntegrationStore:
         include_secrets: bool = False,
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM slack_installations WHERE team_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM slack_installations WHERE team_id = %s AND is_active = 1 ORDER BY updated_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -478,11 +478,11 @@ class IntegrationStore:
         """
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE slack_installations
-               SET is_active = 0, updated_at = ?
-             WHERE team_id = ?
+               SET is_active = 0, updated_at = %s
+             WHERE team_id = %s
             """
         )
         with self.connect() as conn:
@@ -512,11 +512,11 @@ class IntegrationStore:
         existing = self.get_organization_integration(organization_id, integration_type)
         row_id = (existing or {}).get("id") or f"INT-{uuid.uuid4().hex}"
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO organization_integrations
             (id, organization_id, integration_type, status, mode, last_sync_at, metadata_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id, integration_type)
             DO UPDATE SET status = EXCLUDED.status,
                           mode = EXCLUDED.mode,
@@ -551,8 +551,8 @@ class IntegrationStore:
         integration_type: str,
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM organization_integrations WHERE organization_id = ? AND integration_type = ? LIMIT 1"
+        sql = (
+            "SELECT * FROM organization_integrations WHERE organization_id = %s AND integration_type = %s LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -566,8 +566,8 @@ class IntegrationStore:
 
     def list_organization_integrations(self, organization_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM organization_integrations WHERE organization_id = ? ORDER BY integration_type ASC"
+        sql = (
+            "SELECT * FROM organization_integrations WHERE organization_id = %s ORDER BY integration_type ASC"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -644,13 +644,13 @@ class IntegrationStore:
         if isinstance(usage_json, dict):
             usage_json = json.dumps(usage_json)
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO subscriptions
             (id, organization_id, plan, status, trial_started_at, trial_ends_at, trial_days_remaining,
              billing_cycle, current_period_start, current_period_end, stripe_customer_id, stripe_subscription_id,
              limits_json, features_json, usage_json, onboarding_completed, onboarding_step, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (organization_id)
             DO UPDATE SET plan = EXCLUDED.plan,
                           status = EXCLUDED.status,

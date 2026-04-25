@@ -332,10 +332,10 @@ class APStore:
         set_clause = ", ".join(f"{k} = %s" for k in kwargs.keys())
         if expected_updated_at:
             # §11.2.5: Optimistic locking — only update if updated_at hasn't changed
-            sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ? AND updated_at = ?")
+            sql = f"UPDATE ap_items SET {set_clause} WHERE id = %s AND updated_at = %s"
             params = (*kwargs.values(), ap_item_id, expected_updated_at)
         else:
-            sql = self._prepare_sql(f"UPDATE ap_items SET {set_clause} WHERE id = ?")
+            sql = f"UPDATE ap_items SET {set_clause} WHERE id = %s"
             params = (*kwargs.values(), ap_item_id)
         with self.connect() as conn:
             cur = conn.cursor()
@@ -348,12 +348,12 @@ class APStore:
                 org_id = kwargs.get("organization_id") or (
                     current.get("organization_id") if current else None
                 ) or ""
-                audit_sql = self._prepare_sql(
+                audit_sql = (
                     """INSERT INTO audit_events
                     (id, box_id, box_type, event_type, prev_state, new_state,
                      actor_type, actor_id, payload_json, source, correlation_id,
                      workflow_id, run_id, decision_reason, organization_id, ts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
                 )
                 audit_payload = {
                     k: v
@@ -519,11 +519,11 @@ class APStore:
         # FOR UPDATE locks the row for the duration of the txn so
         # concurrent patch_ap_item_metadata() calls serialize on the
         # row read instead of racing on the read-modify-write window.
-        sql_select = self._prepare_sql(
-            "SELECT metadata FROM ap_items WHERE id = ? FOR UPDATE"
+        sql_select = (
+            "SELECT metadata FROM ap_items WHERE id = %s FOR UPDATE"
         )
-        sql_update = self._prepare_sql(
-            "UPDATE ap_items SET metadata = ?, updated_at = ? WHERE id = ?"
+        sql_update = (
+            "UPDATE ap_items SET metadata = %s, updated_at = %s WHERE id = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -634,8 +634,8 @@ class APStore:
         from clearledgr.core.stores.bank_details import decrypt_bank_details
 
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT bank_details_encrypted FROM ap_items WHERE id = ?"
+        sql = (
+            "SELECT bank_details_encrypted FROM ap_items WHERE id = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -715,8 +715,8 @@ class APStore:
     def get_invoice_status(self, gmail_id: str) -> Optional[Dict[str, Any]]:
         """Look up an AP item by its Gmail thread/message ID."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM ap_items WHERE thread_id = %s ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -884,10 +884,10 @@ class APStore:
         """Return notifications that are due for retry."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM pending_notifications "
-            "WHERE status = 'pending' AND next_retry_at <= ? "
-            "ORDER BY next_retry_at ASC LIMIT ?"
+            "WHERE status = 'pending' AND next_retry_at <= %s "
+            "ORDER BY next_retry_at ASC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -899,8 +899,8 @@ class APStore:
         """Mark a notification as successfully sent."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
-            "UPDATE pending_notifications SET status = 'sent', updated_at = ? WHERE id = ?"
+        sql = (
+            "UPDATE pending_notifications SET status = 'sent', updated_at = %s WHERE id = %s"
         )
         with self.connect() as conn:
             conn.cursor().execute(sql, (now, notif_id))
@@ -912,8 +912,8 @@ class APStore:
         now = datetime.now(timezone.utc)
         # Backoff schedule: 1m, 5m, 15m, 1h, 4h
         backoff_seconds = [60, 300, 900, 3600, 14400]
-        sql_read = self._prepare_sql(
-            "SELECT retry_count, max_retries FROM pending_notifications WHERE id = ?"
+        sql_read = (
+            "SELECT retry_count, max_retries FROM pending_notifications WHERE id = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -936,17 +936,17 @@ class APStore:
                 idx = min(retry_count - 1, len(backoff_seconds) - 1)
                 from datetime import timedelta
                 next_retry = (now + timedelta(seconds=backoff_seconds[idx])).isoformat()
-            sql_update = self._prepare_sql(
-                "UPDATE pending_notifications SET retry_count = ?, next_retry_at = ?, "
-                "last_error = ?, status = ?, updated_at = ? WHERE id = ?"
+            sql_update = (
+                "UPDATE pending_notifications SET retry_count = %s, next_retry_at = %s, "
+                "last_error = %s, status = %s, updated_at = %s WHERE id = %s"
             )
             cur.execute(sql_update, (retry_count, next_retry, error, status, now.isoformat(), notif_id))
             conn.commit()
 
     def get_ap_item_by_invoice_key(self, organization_id: str, invoice_key: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND invoice_key = ?"
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND invoice_key = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -959,9 +959,9 @@ class APStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         prefix = invoice_key_prefix.replace("%", "\\%").replace("_", "\\_")
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND invoice_key LIKE ? ESCAPE '\\' "
-            "ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND invoice_key LIKE %s ESCAPE '\\' "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -988,9 +988,9 @@ class APStore:
         normalized_invoice = self._normalize_invoice_number(invoice_number)
         self.initialize()
         # First try exact LOWER match (most common, uses index)
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? "
-            "AND LOWER(vendor_name) = LOWER(?) AND LOWER(invoice_number) = LOWER(?) "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s "
+            "AND LOWER(vendor_name) = LOWER(%s) AND LOWER(invoice_number) = LOWER(%s) "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -1001,9 +1001,9 @@ class APStore:
             return dict(row)
         # Fallback: load recent vendor items and compare normalized forms
         if normalized_invoice:
-            sql2 = self._prepare_sql(
-                "SELECT * FROM ap_items WHERE organization_id = ? "
-                "AND LOWER(vendor_name) = LOWER(?) "
+            sql2 = (
+                "SELECT * FROM ap_items WHERE organization_id = %s "
+                "AND LOWER(vendor_name) = LOWER(%s) "
                 "ORDER BY created_at DESC LIMIT 50"
             )
             with self.connect() as conn:
@@ -1020,8 +1020,8 @@ class APStore:
         self, organization_id: str, vendor_name: str, invoice_number: str
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND vendor_name = ? AND invoice_number = ? "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND vendor_name = %s AND invoice_number = %s "
             "AND state = 'rejected' ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -1032,16 +1032,16 @@ class APStore:
 
     def get_ap_item_by_thread(self, organization_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM ap_items
-            WHERE organization_id = ?
+            WHERE organization_id = %s
               AND (
-                thread_id = ?
+                thread_id = %s
                 OR id IN (
                   SELECT ap_item_id
                   FROM ap_item_sources
-                  WHERE source_type = 'gmail_thread' AND source_ref = ?
+                  WHERE source_type = 'gmail_thread' AND source_ref = %s
                 )
               )
             ORDER BY created_at DESC
@@ -1056,16 +1056,16 @@ class APStore:
 
     def get_ap_item_by_message_id(self, organization_id: str, message_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM ap_items
-            WHERE organization_id = ?
+            WHERE organization_id = %s
               AND (
-                message_id = ?
+                message_id = %s
                 OR id IN (
                   SELECT ap_item_id
                   FROM ap_item_sources
-                  WHERE source_type = 'gmail_message' AND source_ref = ?
+                  WHERE source_type = 'gmail_message' AND source_ref = %s
                 )
               )
             ORDER BY created_at DESC
@@ -1081,8 +1081,8 @@ class APStore:
     def get_ap_item_by_erp_reference(self, organization_id: str, erp_reference: str) -> Optional[Dict[str, Any]]:
         """Look up AP item by its ERP reference (indexed)."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND erp_reference = ? "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND erp_reference = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -1094,8 +1094,8 @@ class APStore:
     def get_ap_item_by_invoice_number(self, organization_id: str, invoice_number: str) -> Optional[Dict[str, Any]]:
         """Look up AP item by invoice number."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND invoice_number = ? "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND invoice_number = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -1106,8 +1106,8 @@ class APStore:
 
     def get_ap_item_by_workflow_id(self, organization_id: str, workflow_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND workflow_id = ? "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND workflow_id = %s "
             "ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -1118,16 +1118,16 @@ class APStore:
 
     def list_ap_items_by_thread(self, organization_id: str, thread_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM ap_items
-            WHERE organization_id = ?
+            WHERE organization_id = %s
               AND (
-                thread_id = ?
+                thread_id = %s
                 OR id IN (
                   SELECT ap_item_id
                   FROM ap_item_sources
-                  WHERE source_type = 'gmail_thread' AND source_ref = ?
+                  WHERE source_type = 'gmail_thread' AND source_ref = %s
                 )
               )
             ORDER BY created_at DESC
@@ -1204,8 +1204,8 @@ class APStore:
 
         if prioritized:
             fetch_limit = max(500, safe_limit * 8)
-            sql = self._prepare_sql(
-                f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT %s"
             )
             params_list.append(fetch_limit)
             with self.connect() as conn:
@@ -1216,8 +1216,8 @@ class APStore:
             items.sort(key=self._worklist_sort_key)
             return items[:safe_limit]
 
-        sql = self._prepare_sql(
-            f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            f"SELECT * FROM ap_items WHERE {where_clause} ORDER BY created_at DESC LIMIT %s"
         )
         params_list.append(safe_limit)
         with self.connect() as conn:
@@ -1237,15 +1237,15 @@ class APStore:
         if not organization_id:
             raise ValueError("organization_id is required for list_ap_items_all")
         if state:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items WHERE organization_id = ? AND state = ? "
-                "ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM ap_items WHERE organization_id = %s AND state = %s "
+                "ORDER BY created_at DESC LIMIT %s"
             )
             params: tuple = (organization_id, state, limit)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_items WHERE organization_id = ? "
-                "ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM ap_items WHERE organization_id = %s "
+                "ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, limit)
         with self.connect() as conn:
@@ -1267,11 +1267,11 @@ class APStore:
         # result is TEXT (both branches are text), so cast the
         # result to timestamptz before comparing against NOW() —
         # otherwise PG errors with "text < timestamp with time zone".
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM ap_items "
-            "WHERE organization_id = ? AND state = 'needs_approval' "
+            "WHERE organization_id = %s AND state = 'needs_approval' "
             "AND COALESCE(NULLIF(metadata::jsonb->>'approval_requested_at', ''), updated_at)::timestamptz "
-            "< (NOW() - (? * INTERVAL '1 hour')) "
+            "< (NOW() - (%s * INTERVAL '1 hour')) "
             "ORDER BY updated_at ASC LIMIT 50"
         )
         params: tuple = (organization_id, min_hours)
@@ -1324,9 +1324,9 @@ class APStore:
         chain_id = str(meta.get("approval_chain_id") or "").strip()
         if not chain_id:
             return []
-        steps_sql = self._prepare_sql(
+        steps_sql = (
             "SELECT approvers FROM approval_steps "
-            "WHERE chain_id = ? AND status = 'pending' "
+            "WHERE chain_id = %s AND status = 'pending' "
             "ORDER BY step_index ASC"
         )
         with self.connect() as conn:
@@ -1364,11 +1364,11 @@ class APStore:
         if not source_type or not source_ref:
             raise ValueError("source_type_and_source_ref_required")
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO ap_item_sources
             (id, ap_item_id, source_type, source_ref, subject, sender, detected_at, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ap_item_id, source_type, source_ref) DO NOTHING
             """
         )
@@ -1391,8 +1391,8 @@ class APStore:
                     now,
                 ),
             )
-            row_sql = self._prepare_sql(
-                "SELECT * FROM ap_item_sources WHERE ap_item_id = ? AND source_type = ? AND source_ref = ? LIMIT 1"
+            row_sql = (
+                "SELECT * FROM ap_item_sources WHERE ap_item_id = %s AND source_type = %s AND source_ref = %s LIMIT 1"
             )
             cur.execute(row_sql, (ap_item_id, source_type, source_ref))
             row = cur.fetchone()
@@ -1424,13 +1424,13 @@ class APStore:
     def list_ap_item_sources(self, ap_item_id: str, source_type: Optional[str] = None) -> List[Dict[str, Any]]:
         self.initialize()
         if source_type:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_item_sources WHERE ap_item_id = ? AND source_type = ? ORDER BY detected_at ASC, created_at ASC"
+            sql = (
+                "SELECT * FROM ap_item_sources WHERE ap_item_id = %s AND source_type = %s ORDER BY detected_at ASC, created_at ASC"
             )
             params = (ap_item_id, source_type)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM ap_item_sources WHERE ap_item_id = ? ORDER BY detected_at ASC, created_at ASC"
+            sql = (
+                "SELECT * FROM ap_item_sources WHERE ap_item_id = %s ORDER BY detected_at ASC, created_at ASC"
             )
             params = (ap_item_id,)
         with self.connect() as conn:
@@ -1467,7 +1467,7 @@ class APStore:
             return {}
 
         placeholders = ", ".join("%s" for _ in normalized_ids)
-        sql = self._prepare_sql(
+        sql = (
             "SELECT * FROM ap_item_sources "
             f"WHERE ap_item_id IN ({placeholders}) "
             "ORDER BY ap_item_id ASC, detected_at ASC, created_at ASC"
@@ -1492,8 +1492,8 @@ class APStore:
 
     def list_ap_item_sources_by_ref(self, source_type: str, source_ref: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_item_sources WHERE source_type = ? AND source_ref = ? ORDER BY created_at DESC"
+        sql = (
+            "SELECT * FROM ap_item_sources WHERE source_type = %s AND source_ref = %s ORDER BY created_at DESC"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1513,8 +1513,8 @@ class APStore:
 
     def unlink_ap_item_source(self, ap_item_id: str, source_type: str, source_ref: str) -> bool:
         self.initialize()
-        sql = self._prepare_sql(
-            "DELETE FROM ap_item_sources WHERE ap_item_id = ? AND source_type = ? AND source_ref = ?"
+        sql = (
+            "DELETE FROM ap_item_sources WHERE ap_item_id = %s AND source_type = %s AND source_ref = %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -1558,10 +1558,10 @@ class APStore:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO ap_item_context_cache (ap_item_id, context_json, updated_at)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
             ON CONFLICT (ap_item_id)
             DO UPDATE SET context_json = EXCLUDED.context_json, updated_at = EXCLUDED.updated_at
             """
@@ -1676,8 +1676,8 @@ class APStore:
     def get_channel_threads(self, ap_item_id: str) -> List[Dict[str, Any]]:
         """Return all channel thread records for an AP item."""
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM channel_threads WHERE ap_item_id = ? ORDER BY updated_at DESC"
+        sql = (
+            "SELECT * FROM channel_threads WHERE ap_item_id = %s ORDER BY updated_at DESC"
         )
         try:
             with self.connect() as conn:
@@ -1836,7 +1836,7 @@ class APStore:
         if limit is not None:
             sql += " LIMIT %s"
             params = (box_id, box_type, int(limit))
-        sql = self._prepare_sql(sql)
+        sql = sql
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -1847,7 +1847,7 @@ class APStore:
         """Return recent AP audit events for an organization (newest first)."""
         self.initialize()
         safe_limit = max(1, min(int(limit or 30), 500))
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT ae.*,
                    ai.vendor_name AS vendor_name,
@@ -1857,10 +1857,10 @@ class APStore:
             FROM audit_events ae
             LEFT JOIN ap_items ai
                    ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
-            WHERE ae.organization_id = ?
-               OR (ae.organization_id IS NULL AND ai.organization_id = ?)
+            WHERE ae.organization_id = %s
+               OR (ae.organization_id IS NULL AND ai.organization_id = %s)
             ORDER BY ae.ts DESC
-            LIMIT ?
+            LIMIT %s
 """
         )
         with self.connect() as conn:
@@ -1900,7 +1900,7 @@ class APStore:
         from datetime import datetime, timedelta, timezone
         cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT ae.*,
                    ai.vendor_name AS vendor_name,
@@ -1910,11 +1910,11 @@ class APStore:
             FROM audit_events ae
             LEFT JOIN ap_items ai
                    ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
-            WHERE (ae.organization_id = ?
-                   OR (ae.organization_id IS NULL AND ai.organization_id = ?))
-              AND ae.ts >= ?
+            WHERE (ae.organization_id = %s
+                   OR (ae.organization_id IS NULL AND ai.organization_id = %s))
+              AND ae.ts >= %s
             ORDER BY ae.ts DESC
-            LIMIT ?
+            LIMIT %s
 """
         )
         with self.connect() as conn:
@@ -1948,11 +1948,11 @@ class APStore:
         # paused for a long time is never collected. completed_at IS
         # NOT NULL implies the row reached a terminal state (success,
         # exhausted, dead-letter).
-        sql = self._prepare_sql(
+        sql = (
             """
             DELETE FROM agent_retry_jobs
              WHERE completed_at IS NOT NULL
-               AND completed_at < ?
+               AND completed_at < %s
             """
         )
         with self.connect() as conn:
@@ -2047,10 +2047,10 @@ class APStore:
         job_type: str = "erp_post_retry",
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT * FROM agent_retry_jobs
-            WHERE organization_id = ? AND ap_item_id = ? AND job_type = ?
+            WHERE organization_id = %s AND ap_item_id = %s AND job_type = %s
               AND status IN ('pending', 'running')
             ORDER BY created_at DESC
             LIMIT 1
@@ -2073,35 +2073,35 @@ class APStore:
         self.initialize()
         safe_limit = max(1, min(int(limit or 100), 1000))
         if ap_item_id and status:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE organization_id = ? AND ap_item_id = ? AND status = ?
-                ORDER BY created_at DESC LIMIT ?
+                WHERE organization_id = %s AND ap_item_id = %s AND status = %s
+                ORDER BY created_at DESC LIMIT %s
                 """
             )
             params = (organization_id, ap_item_id, status, safe_limit)
         elif ap_item_id:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE organization_id = ? AND ap_item_id = ?
-                ORDER BY created_at DESC LIMIT ?
+                WHERE organization_id = %s AND ap_item_id = %s
+                ORDER BY created_at DESC LIMIT %s
                 """
             )
             params = (organization_id, ap_item_id, safe_limit)
         elif status:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE organization_id = ? AND status = ?
-                ORDER BY created_at DESC LIMIT ?
+                WHERE organization_id = %s AND status = %s
+                ORDER BY created_at DESC LIMIT %s
                 """
             )
             params = (organization_id, status, safe_limit)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM agent_retry_jobs WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM agent_retry_jobs WHERE organization_id = %s ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, safe_limit)
         with self.connect() as conn:
@@ -2122,38 +2122,38 @@ class APStore:
         safe_limit = max(1, min(int(limit or 25), 500))
         due_at = now_iso or datetime.now(timezone.utc).isoformat()
         if organization_id and job_type:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE organization_id = ? AND job_type = ? AND status = 'pending' AND next_retry_at <= ?
-                ORDER BY next_retry_at ASC LIMIT ?
+                WHERE organization_id = %s AND job_type = %s AND status = 'pending' AND next_retry_at <= %s
+                ORDER BY next_retry_at ASC LIMIT %s
                 """
             )
             params = (organization_id, job_type, due_at, safe_limit)
         elif organization_id:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE organization_id = ? AND status = 'pending' AND next_retry_at <= ?
-                ORDER BY next_retry_at ASC LIMIT ?
+                WHERE organization_id = %s AND status = 'pending' AND next_retry_at <= %s
+                ORDER BY next_retry_at ASC LIMIT %s
                 """
             )
             params = (organization_id, due_at, safe_limit)
         elif job_type:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE job_type = ? AND status = 'pending' AND next_retry_at <= ?
-                ORDER BY next_retry_at ASC LIMIT ?
+                WHERE job_type = %s AND status = 'pending' AND next_retry_at <= %s
+                ORDER BY next_retry_at ASC LIMIT %s
                 """
             )
             params = (job_type, due_at, safe_limit)
         else:
-            sql = self._prepare_sql(
+            sql = (
                 """
                 SELECT * FROM agent_retry_jobs
-                WHERE status = 'pending' AND next_retry_at <= ?
-                ORDER BY next_retry_at ASC LIMIT ?
+                WHERE status = 'pending' AND next_retry_at <= %s
+                ORDER BY next_retry_at ASC LIMIT %s
                 """
             )
             params = (due_at, safe_limit)
@@ -2166,16 +2166,16 @@ class APStore:
     def claim_agent_retry_job(self, job_id: str, *, worker_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE agent_retry_jobs
             SET status = 'running',
                 retry_count = COALESCE(retry_count, 0) + 1,
-                locked_by = ?,
-                locked_at = ?,
-                last_attempt_at = ?,
-                updated_at = ?
-            WHERE id = ? AND status = 'pending' AND next_retry_at <= ?
+                locked_by = %s,
+                locked_at = %s,
+                last_attempt_at = %s,
+                updated_at = %s
+            WHERE id = %s AND status = 'pending' AND next_retry_at <= %s
             """
         )
         with self.connect() as conn:
@@ -2196,11 +2196,11 @@ class APStore:
     ) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE agent_retry_jobs
-            SET status = ?, result_json = ?, last_error = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = %s, result_json = %s, last_error = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
             """
         )
         with self.connect() as conn:
@@ -2230,11 +2230,11 @@ class APStore:
     ) -> bool:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE agent_retry_jobs
-            SET status = ?, next_retry_at = ?, last_error = ?, result_json = ?, updated_at = ?
-            WHERE id = ?
+            SET status = %s, next_retry_at = %s, last_error = %s, result_json = %s, updated_at = %s
+            WHERE id = %s
             """
         )
         with self.connect() as conn:
@@ -2321,8 +2321,8 @@ class APStore:
 
     def get_latest_approval(self, ap_item_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM approvals WHERE ap_item_id = ? ORDER BY created_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM approvals WHERE ap_item_id = %s ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -2332,8 +2332,8 @@ class APStore:
 
     def get_approval_by_decision_key(self, ap_item_id: str, decision_idempotency_key: str) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM approvals WHERE ap_item_id = ? AND decision_idempotency_key = ? ORDER BY created_at DESC LIMIT 1"
+        sql = (
+            "SELECT * FROM approvals WHERE ap_item_id = %s AND decision_idempotency_key = %s ORDER BY created_at DESC LIMIT 1"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -2355,12 +2355,12 @@ class APStore:
         latest = self.get_latest_approval(ap_item_id)
         if not latest:
             return
-        sql = self._prepare_sql(
+        sql = (
             """
             UPDATE approvals
-            SET status = ?, approved_by = ?, approved_at = ?, rejected_by = ?,
-                rejected_at = ?, rejection_reason = ?
-            WHERE id = ?
+            SET status = %s, approved_by = %s, approved_at = %s, rejected_by = %s,
+                rejected_at = %s, rejection_reason = %s
+            WHERE id = %s
             """
         )
         params = (
@@ -2380,13 +2380,13 @@ class APStore:
     def list_approvals(self, organization_id: str, status: Optional[str] = None, limit: int = 1000) -> List[Dict[str, Any]]:
         self.initialize()
         if status:
-            sql = self._prepare_sql(
-                "SELECT * FROM approvals WHERE organization_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM approvals WHERE organization_id = %s AND status = %s ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, status, limit)
         else:
-            sql = self._prepare_sql(
-                "SELECT * FROM approvals WHERE organization_id = ? ORDER BY created_at DESC LIMIT ?"
+            sql = (
+                "SELECT * FROM approvals WHERE organization_id = %s ORDER BY created_at DESC LIMIT %s"
             )
             params = (organization_id, limit)
         with self.connect() as conn:
@@ -2397,8 +2397,8 @@ class APStore:
 
     def list_approvals_by_item(self, ap_item_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM approvals WHERE ap_item_id = ? ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            "SELECT * FROM approvals WHERE ap_item_id = %s ORDER BY created_at DESC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()
@@ -2408,12 +2408,12 @@ class APStore:
 
     def list_ap_audit_events_by_thread(self, organization_id: str, thread_id: str) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
+        sql = (
             """
             SELECT ae.* FROM audit_events ae
             JOIN ap_items ai
                  ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
-            WHERE ai.organization_id = ? AND ai.thread_id = ?
+            WHERE ai.organization_id = %s AND ai.thread_id = %s
             ORDER BY ae.ts ASC
             """
         )
@@ -2451,9 +2451,9 @@ class APStore:
     ) -> List[Dict[str, Any]]:
         """AP items for a vendor within a date window."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? AND vendor_name = ? "
-            "AND created_at >= ? ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s AND vendor_name = %s "
+            "AND created_at >= %s ORDER BY created_at DESC LIMIT %s"
         )
         try:
             with self.connect() as conn:
@@ -2469,10 +2469,10 @@ class APStore:
     ) -> Dict[str, float]:
         """Spending grouped by vendor for a time window. Returns {vendor: total}."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT vendor_name, SUM(amount) as total "
-            "FROM ap_items WHERE organization_id = ? "
-            "AND created_at >= ? AND amount IS NOT NULL "
+            "FROM ap_items WHERE organization_id = %s "
+            "AND created_at >= %s AND amount IS NOT NULL "
             "GROUP BY vendor_name ORDER BY total DESC"
         )
         try:
@@ -2491,10 +2491,10 @@ class APStore:
         now = datetime.now(timezone.utc)
         start = (now - timedelta(days=max(1, days_ago_start))).isoformat()
         end = (now - timedelta(days=max(0, days_ago_end))).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             "SELECT vendor_name, SUM(amount) as total "
-            "FROM ap_items WHERE organization_id = ? "
-            "AND created_at >= ? AND created_at < ? AND amount IS NOT NULL "
+            "FROM ap_items WHERE organization_id = %s "
+            "AND created_at >= %s AND created_at < %s AND amount IS NOT NULL "
             "GROUP BY vendor_name ORDER BY total DESC"
         )
         try:
@@ -2513,9 +2513,9 @@ class APStore:
         now = datetime.now(timezone.utc)
         today = now.strftime("%Y-%m-%d")
         horizon = (now + timedelta(days=max(1, days))).strftime("%Y-%m-%d")
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_items WHERE organization_id = ? "
-            "AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ? "
+        sql = (
+            "SELECT * FROM ap_items WHERE organization_id = %s "
+            "AND due_date IS NOT NULL AND due_date >= %s AND due_date <= %s "
             "AND state NOT IN ('posted_to_erp', 'rejected', 'closed') "
             "ORDER BY due_date ASC LIMIT 50"
         )

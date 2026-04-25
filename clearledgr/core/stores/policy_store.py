@@ -33,9 +33,9 @@ class PolicyStore:
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_policy_versions WHERE organization_id = ? AND policy_name = ? "
-            "ORDER BY version DESC LIMIT ?"
+        sql = (
+            "SELECT * FROM ap_policy_versions WHERE organization_id = %s AND policy_name = %s "
+            "ORDER BY version DESC LIMIT %s"
         )
         safe_limit = max(1, min(int(limit or 50), 500))
         with self.connect() as conn:
@@ -61,8 +61,8 @@ class PolicyStore:
         policy_name: str = "ap_business_v1",
     ) -> Optional[Dict[str, Any]]:
         self.initialize()
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_policy_versions WHERE organization_id = ? AND policy_name = ? "
+        sql = (
+            "SELECT * FROM ap_policy_versions WHERE organization_id = %s AND policy_name = %s "
             "ORDER BY version DESC LIMIT 1"
         )
         with self.connect() as conn:
@@ -97,11 +97,11 @@ class PolicyStore:
         policy_id = f"APPOL-{uuid.uuid4().hex}"
         now = datetime.now(timezone.utc).isoformat()
 
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO ap_policy_versions
             (id, organization_id, policy_name, version, enabled, config_json, updated_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -154,11 +154,11 @@ class PolicyStore:
 
         event_id = f"APPOL-AUD-{uuid.uuid4().hex}"
         now = datetime.now(timezone.utc).isoformat()
-        sql = self._prepare_sql(
+        sql = (
             """
             INSERT INTO ap_policy_audit_events
             (id, organization_id, policy_name, version, action, actor_id, payload_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -190,9 +190,9 @@ class PolicyStore:
     ) -> List[Dict[str, Any]]:
         self.initialize()
         safe_limit = max(1, min(int(limit or 100), 1000))
-        sql = self._prepare_sql(
-            "SELECT * FROM ap_policy_audit_events WHERE organization_id = ? AND policy_name = ? "
-            "ORDER BY created_at DESC LIMIT ?"
+        sql = (
+            "SELECT * FROM ap_policy_audit_events WHERE organization_id = %s AND policy_name = %s "
+            "ORDER BY created_at DESC LIMIT %s"
         )
         with self.connect() as conn:
             cur = conn.cursor()

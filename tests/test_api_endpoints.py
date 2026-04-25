@@ -3795,65 +3795,33 @@ class TestAgentIntentEndpoints:
         assert payload["policy_precheck"]["read_only"] is True
 
     def test_preview_intent_endpoint_supports_read_vendor_compliance_health(self):
+        # Seed one vendor profile with high override rate via the real
+        # store, then exercise the preview endpoint against the session
+        # PG. The previous incarnation of this test used a hand-rolled
+        # SQLite stub with a `_prepare_sql` passthrough, which broke
+        # once the production SQL became %s-native (C.3).
+        from clearledgr.core.database import get_db
+        db = get_db()
+        db.upsert_vendor_profile(
+            organization_id="default",
+            vendor_name="Acme Supplies",
+            requires_po=1,
+            payment_terms="Net 30",
+            approval_override_rate=0.35,
+            anomaly_flags=["po_missing"],
+            invoice_count=12,
+        )
+
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
-
-        class _FakeRuntimeDB:
-            use_postgres = False
-
-            def _prepare_sql(self, sql):
-                return sql
-
-            def connect(self):
-                import sqlite3
-                from contextlib import contextmanager
-
-                @contextmanager
-                def _conn():
-                    conn = sqlite3.connect(":memory:")
-                    conn.row_factory = sqlite3.Row
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        CREATE TABLE vendor_profiles (
-                            vendor_name TEXT,
-                            organization_id TEXT,
-                            requires_po INTEGER,
-                            contract_amount REAL,
-                            payment_terms TEXT,
-                            bank_details_changed_at TEXT,
-                            approval_override_rate REAL,
-                            anomaly_flags TEXT,
-                            invoice_count INTEGER
-                        )
-                        """
-                    )
-                    cur.execute(
-                        """
-                        INSERT INTO vendor_profiles
-                        (vendor_name, organization_id, requires_po, contract_amount, payment_terms,
-                         bank_details_changed_at, approval_override_rate, anomaly_flags, invoice_count)
-                        VALUES
-                        ('Acme Supplies', 'default', 1, NULL, 'Net 30', NULL, 0.35, '["po_missing"]', 12)
-                        """
-                    )
-                    conn.commit()
-                    try:
-                        yield conn
-                    finally:
-                        conn.close()
-
-                return _conn()
-
         try:
-            with patch.object(agent_intents_module, "get_db", return_value=_FakeRuntimeDB()):
-                response = client.post(
-                    "/api/agent/intents/preview",
-                    json={
-                        "intent": "read_vendor_compliance_health",
-                        "input": {"limit": 100},
-                        "organization_id": "default",
-                    },
-                )
+            response = client.post(
+                "/api/agent/intents/preview",
+                json={
+                    "intent": "read_vendor_compliance_health",
+                    "input": {"limit": 100},
+                    "organization_id": "default",
+                },
+            )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
 
