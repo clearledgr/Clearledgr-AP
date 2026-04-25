@@ -433,12 +433,12 @@ class TestMigrationV13Backfill:
         from clearledgr.core.migrations import _MIGRATIONS
         m13 = next(m for m in _MIGRATIONS if m[0] == 13)
         with tmp_db.connect() as conn:
-            if tmp_db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m13[2](cur, tmp_db)
-            if not tmp_db.use_postgres:
-                conn.commit()
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m13[2](cur, tmp_db)
+            finally:
+                conn.autocommit = False
 
         # After migration: encrypted column populated, metadata stripped
         with tmp_db.connect() as conn:
@@ -491,12 +491,12 @@ class TestMigrationV13Backfill:
         with tmp_db.connect() as conn:
             # Same autocommit dance as the sibling test above — see
             # test_backfill_strips_plaintext_from_metadata for why.
-            if tmp_db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m13[2](cur, tmp_db)
-            if not tmp_db.use_postgres:
-                conn.commit()
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m13[2](cur, tmp_db)
+            finally:
+                conn.autocommit = False
 
         assert tmp_db.get_ap_item_bank_details("AP-CLEAN") is None
 

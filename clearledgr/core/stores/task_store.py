@@ -2,7 +2,7 @@
 
 Follows the exact ApprovalChainStore mixin pattern:
 - No __init__ of its own
-- Expects host class to provide self.connect(), self._prepare_sql(), self.use_postgres
+- Expects host class to provide self.connect()
 - One class-level SQL constant consumed by database.py:initialize()
 - All write operations are atomic (checkpoint before + after each tool call)
 

@@ -4,9 +4,7 @@
 expects the concrete class that inherits it to provide:
 
 * ``self.connect()``      -- returns a DB connection (context manager)
-* ``self._prepare_sql()`` -- adapts ``?`` placeholders for the active engine
 * ``self.initialize()``   -- ensures tables exist
-* ``self.use_postgres``   -- bool flag for Postgres vs SQLite dialect
 
 All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 ``ClearledgrDB(PolicyStore, ...)`` inherits them without any behavioural change.

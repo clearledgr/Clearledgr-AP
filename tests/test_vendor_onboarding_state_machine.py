@@ -202,22 +202,16 @@ class TestValidTransitions:
 class TestMigrationV17:
 
     def test_table_present_after_init(self, tmp_db):
-        # PRAGMA is SQLite-only; under PG use information_schema. Both
-        # dialects end at the same shape: a set of column names.
         with tmp_db.connect() as conn:
             cur = conn.cursor()
-            if tmp_db.use_postgres:
-                cur.execute(
-                    (
-                        "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = %s"
-                    ),
-                    ("vendor_onboarding_sessions",),
-                )
-                columns = {row[0] for row in cur.fetchall()}
-            else:
-                cur.execute("PRAGMA table_info(vendor_onboarding_sessions)")
-                columns = {row[1] for row in cur.fetchall()}
+            cur.execute(
+                (
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s"
+                ),
+                ("vendor_onboarding_sessions",),
+            )
+            columns = {row[0] for row in cur.fetchall()}
         for col in (
             "id",
             "organization_id",
@@ -253,12 +247,12 @@ class TestMigrationV17:
         from clearledgr.core.migrations import _MIGRATIONS
         m17 = next(m for m in _MIGRATIONS if m[0] == 17)
         with tmp_db.connect() as conn:
-            if tmp_db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m17[2](cur, tmp_db)  # already-applied table; should not raise
-            if not tmp_db.use_postgres:
-                conn.commit()
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m17[2](cur, tmp_db)  # already-applied table; should not raise
+            finally:
+                conn.autocommit = False
 
 
 # ===========================================================================
@@ -581,9 +575,6 @@ class TestAuditEmission:
         # psycopg connection errors.
         try:
             with db.connect() as conn:
-                if not db.use_postgres:
-                    import sqlite3
-                    conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 if event_type:
                     cur.execute(

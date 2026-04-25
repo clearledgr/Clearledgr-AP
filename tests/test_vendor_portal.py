@@ -174,21 +174,16 @@ class TestSessionTokenRevocation:
 class TestMigrationV18:
 
     def test_table_present_after_init(self, tmp_db):
-        # PRAGMA is SQLite-only; use information_schema under PG.
         with tmp_db.connect() as conn:
             cur = conn.cursor()
-            if tmp_db.use_postgres:
-                cur.execute(
-                    (
-                        "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = %s"
-                    ),
-                    ("vendor_onboarding_tokens",),
-                )
-                columns = {row[0] for row in cur.fetchall()}
-            else:
-                cur.execute("PRAGMA table_info(vendor_onboarding_tokens)")
-                columns = {row[1] for row in cur.fetchall()}
+            cur.execute(
+                (
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s"
+                ),
+                ("vendor_onboarding_tokens",),
+            )
+            columns = {row[0] for row in cur.fetchall()}
         for col in ("id", "token_hash", "session_id", "expires_at", "revoked_at", "access_count"):
             assert col in columns, f"missing column {col}"
 
@@ -196,12 +191,12 @@ class TestMigrationV18:
         from clearledgr.core.migrations import _MIGRATIONS
         m18 = next(m for m in _MIGRATIONS if m[0] == 18)
         with tmp_db.connect() as conn:
-            if tmp_db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m18[2](cur, tmp_db)
-            if not tmp_db.use_postgres:
-                conn.commit()
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m18[2](cur, tmp_db)
+            finally:
+                conn.autocommit = False
 
 
 # ===========================================================================

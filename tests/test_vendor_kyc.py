@@ -53,18 +53,14 @@ class TestMigrationV16:
         the updated CREATE TABLE statement."""
         with tmp_db.connect() as conn:
             cur = conn.cursor()
-            if tmp_db.use_postgres:
-                cur.execute(
-                    (
-                        "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name = %s"
-                    ),
-                    ("vendor_profiles",),
-                )
-                columns = {row[0] for row in cur.fetchall()}
-            else:
-                cur.execute("PRAGMA table_info(vendor_profiles)")
-                columns = {row[1] for row in cur.fetchall()}
+            cur.execute(
+                (
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s"
+                ),
+                ("vendor_profiles",),
+            )
+            columns = {row[0] for row in cur.fetchall()}
         for col in (
             "registration_number",
             "vat_number",
@@ -80,15 +76,15 @@ class TestMigrationV16:
         from clearledgr.core.migrations import _MIGRATIONS
         m16 = next(m for m in _MIGRATIONS if m[0] == 16)
         with tmp_db.connect() as conn:
-            # PG: run in autocommit so the try/except ALTER TABLE
-            # pattern inside the migration doesn't poison the txn when
-            # columns already exist on re-run.
-            if tmp_db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m16[2](cur, tmp_db)  # should not raise
-            if not tmp_db.use_postgres:
-                conn.commit()
+            # Run in autocommit so the try/except ALTER TABLE pattern
+            # inside the migration doesn't poison the txn when columns
+            # already exist on re-run.
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m16[2](cur, tmp_db)  # should not raise
+            finally:
+                conn.autocommit = False
 
 
 # ===========================================================================

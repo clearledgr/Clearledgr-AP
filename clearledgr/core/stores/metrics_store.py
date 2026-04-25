@@ -4,7 +4,6 @@
 expects the concrete class that inherits it to provide:
 
 * ``self.connect()``                       -- returns a DB connection (context manager)
-* ``self._prepare_sql()``                  -- adapts ``?`` placeholders for the active engine
 * ``self.initialize()``                    -- ensures tables exist
 * ``self._decode_json()``                  -- safely parses a JSON string or returns ``{}``
 * ``self._deserialize_audit_event()``      -- deserializes an audit event row
@@ -12,7 +11,6 @@ expects the concrete class that inherits it to provide:
 * ``self.list_ap_items()``                 -- lists AP items for an organization
 * ``self.list_approvals()``                -- lists approvals for an organization
 * ``self.list_audit_events()``             -- lists audit events for an organization
-* ``self.use_postgres``                    -- bool flag for Postgres vs SQLite dialect
 
 All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 ``ClearledgrDB(MetricsStore, ...)`` inherits them without any behavioural change.

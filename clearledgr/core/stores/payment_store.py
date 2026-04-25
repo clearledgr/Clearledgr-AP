@@ -2,7 +2,7 @@
 
 ``PaymentStore`` is a **mixin class** — it has no ``__init__`` of its own and
 expects the concrete class that inherits it to provide the standard DB
-infrastructure (``connect()``, ``_prepare_sql()``, ``initialize()``).
+infrastructure (``connect()``, ``initialize()``).
 
 The ``payments`` table is purely informational.  Clearledgr NEVER executes
 payments — it tracks readiness and status.  Humans trigger payments in the ERP.

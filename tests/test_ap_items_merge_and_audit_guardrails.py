@@ -290,7 +290,6 @@ def test_postgres_append_only_guard_ddl_is_installed_without_live_db(db):
             return None
 
     cur = _FakeCursor()
-    db.use_postgres = True
     db._install_audit_append_only_guards(cur)
 
     joined = "\n".join(cur.statements)

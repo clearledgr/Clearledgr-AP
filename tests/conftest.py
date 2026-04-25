@@ -79,51 +79,18 @@ def reset_service_singletons():
     (via monkeypatch.setenv("CLEARLEDGR_DB_PATH", ...)) do not leave a stale
     connection for subsequent tests.
     """
-    # Pre-test guard: if a previous test's tmp_db fixture left the
-    # singleton as a SQLite instance (``ClearledgrDB.__init__`` reads
-    # DATABASE_URL once at construction; if the env var was missing at
-    # that moment, use_postgres is pinned to False for the lifetime of
-    # that instance), nuke it here so the current test's ``get_db()``
-    # constructs a fresh PG-backed instance. Without this pre-check,
-    # trust_arc hits sqlite3.IntegrityError on the second
-    # create_organization('org_t') because the SQLite singleton
-    # survived the teardown ordering.
-    try:
-        import clearledgr.core.database as _db_mod
-        if _TEST_DB_ENGINE == "postgres":
-            inst = _db_mod._DB_INSTANCE
-            if inst is not None and not getattr(inst, "use_postgres", True):
-                _db_mod._DB_INSTANCE = None
-    except Exception:
-        pass
+    # Under Postgres we keep the session-scoped singleton alive so the
+    # shared psycopg_pool isn't torn down mid-suite (which would force
+    # thread-joins and deadlock). The pre-C.3 SQLite-taint detection is
+    # gone now: ClearledgrDB.__init__ raises on non-PG DSNs, so a stale
+    # SQLite singleton can no longer exist.
     yield
-    # Reset DB singleton so each test starts with the correct DB path.
-    # Under Postgres, we normally keep the session singleton alive
-    # (dropping it would trigger psycopg_pool thread-join teardown and
-    # deadlock mid-session). BUT — some tests flip to SQLite with
-    # `db_module._DB_INSTANCE = None; monkeypatch.delenv("DATABASE_URL")`
-    # and leave a dangling SQLite singleton behind. Subsequent tests
-    # calling `get_db()` then silently get that SQLite DB instead of
-    # the session PG, and trip a ``sqlite3.IntegrityError`` on the
-    # second ``create_organization("org_t")`` — because the SQLite
-    # instance is not part of the per-test TRUNCATE cycle.
-    #
-    # Detection: under PG mode, if the current singleton has
-    # ``use_postgres=False`` it was tainted by one of those flips —
-    # nuke it so the next ``get_db()`` re-constructs from env (which
-    # by now has DATABASE_URL restored by monkeypatch). When the
-    # singleton is healthy (use_postgres=True) we still preserve it
-    # to keep the shared pool alive.
-    try:
-        import clearledgr.core.database as _db_mod
-        if _TEST_DB_ENGINE != "postgres":
+    if _TEST_DB_ENGINE != "postgres":
+        try:
+            import clearledgr.core.database as _db_mod
             _db_mod._DB_INSTANCE = None
-        else:
-            inst = _db_mod._DB_INSTANCE
-            if inst is not None and not getattr(inst, "use_postgres", True):
-                _db_mod._DB_INSTANCE = None
-    except Exception:
-        pass
+        except Exception:
+            pass
     try:
         from clearledgr.services.gl_correction import _gl_correction_services
         _gl_correction_services.clear()
@@ -299,19 +266,9 @@ def _reset_postgres_test_db_between_tests(request, postgres_test_db):
     """
     # Pre-test: restore DATABASE_URL from the session DSN so a prior
     # test that mutated (or removed) it can't leak that state forward.
-    # Also nuke a tainted SQLite singleton — constructing ClearledgrDB
-    # against the old DATABASE_URL locked its use_postgres flag, and
-    # ``get_db()`` won't reconstruct unless _DB_INSTANCE is None.
     if postgres_test_db is not None:
         import os as _os
         _os.environ["DATABASE_URL"] = postgres_test_db
-        try:
-            import clearledgr.core.database as _db_mod
-            inst = _db_mod._DB_INSTANCE
-            if inst is not None and not getattr(inst, "use_postgres", True):
-                _db_mod._DB_INSTANCE = None
-        except Exception:
-            pass
     yield
     if postgres_test_db is None:
         return

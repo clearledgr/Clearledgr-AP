@@ -35,20 +35,16 @@ def _fresh_db(tmp_path, monkeypatch):
 
 
 def _column_names(db, table):
-    # PRAGMA is SQLite-only; information_schema on PG.
     with db.connect() as conn:
         cur = conn.cursor()
-        if db.use_postgres:
-            cur.execute(
-                (
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = %s ORDER BY ordinal_position"
-                ),
-                (table,),
-            )
-            return [r[0] for r in cur.fetchall()]
-        cur.execute(f"PRAGMA table_info({table})")
-        return [r[1] for r in cur.fetchall()]
+        cur.execute(
+            (
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = %s ORDER BY ordinal_position"
+            ),
+            (table,),
+        )
+        return [r[0] for r in cur.fetchall()]
 
 
 def _rerun_v42(db):

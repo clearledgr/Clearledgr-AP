@@ -9,11 +9,9 @@ surface area from several focused store modules.
 The mixin assumes the consuming class exposes:
     - ``self.connect()``
     - ``self.initialize()``
-    - ``self._prepare_sql(sql)``
     - ``self._encrypt_secret(value)``
     - ``self._decrypt_secret(value)``
     - ``self._decode_json_value(value, fallback)``
-    - ``self.use_postgres``
 """
 
 from __future__ import annotations

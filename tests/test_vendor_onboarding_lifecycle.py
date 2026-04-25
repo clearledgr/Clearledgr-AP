@@ -323,9 +323,6 @@ class TestActivationAudit:
         # Check audit events. psycopg uses HybridRow (dict + positional)
         # so no row_factory override is needed on PG.
         with tmp_db.connect() as conn:
-            if not tmp_db.use_postgres:
-                import sqlite3
-                conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             cur.execute(
                 "SELECT * FROM audit_events WHERE event_type = 'vendor_onboarding_activated'"

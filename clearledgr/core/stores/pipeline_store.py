@@ -5,7 +5,7 @@ These layer on top of existing ap_items and vendor_onboarding_sessions
 tables without modifying them.
 
 ``PipelineStore`` is a mixin — no ``__init__``, expects:
-  self.connect(), self._prepare_sql(), self.use_postgres
+  self.connect()
 """
 from __future__ import annotations
 

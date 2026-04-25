@@ -2,7 +2,7 @@
 
 Follows the exact VendorStore mixin pattern:
 - No __init__ of its own
-- Expects host class to provide self.connect(), self._prepare_sql(), self.use_postgres
+- Expects host class to provide self.connect()
 - Two class-level SQL constants consumed by database.py:initialize()
 - All methods prefix with db_ to avoid collision with ApprovalChainService methods
 """

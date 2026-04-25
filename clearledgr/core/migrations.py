@@ -1707,18 +1707,13 @@ def _v42_box_keyed_audit(cur, db):
       extracted from ``payload_json`` ``session_id`` field,
       ``box_type = 'vendor_onboarding_session'``.
     """
-    use_pg = bool(getattr(db, "use_postgres", False))
-
     def _column_exists(table: str, column: str) -> bool:
-        if use_pg:
-            cur.execute(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = %s AND column_name = %s",
-                (table, column),
-            )
-            return cur.fetchone() is not None
-        cur.execute(f"PRAGMA table_info({table})")
-        return any(row[1] == column for row in cur.fetchall())
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = %s AND column_name = %s",
+            (table, column),
+        )
+        return cur.fetchone() is not None
 
     # Step 1: add box_id + box_type if absent.
     for col in ("box_id", "box_type"):
@@ -1739,10 +1734,7 @@ def _v42_box_keyed_audit(cur, db):
         except Exception:
             pass
 
-    if use_pg:
-        json_session = "(payload_json::jsonb ->> 'session_id')"
-    else:
-        json_session = "json_extract(payload_json, '$.session_id')"
+    json_session = "(payload_json::jsonb ->> 'session_id')"
 
     # Step 2: backfill. audit_events has an append-only trigger, so
     # drop it for the duration of the backfill and reinstate it
@@ -1752,12 +1744,9 @@ def _v42_box_keyed_audit(cur, db):
     has_ap_col_pn = _column_exists("pending_notifications", "ap_item_id")
 
     if has_ap_col_ae:
-        if use_pg:
-            cur.execute(
-                "DROP TRIGGER IF EXISTS trg_audit_events_no_update ON audit_events"
-            )
-        else:
-            cur.execute("DROP TRIGGER IF EXISTS trg_audit_events_no_update")
+        cur.execute(
+            "DROP TRIGGER IF EXISTS trg_audit_events_no_update ON audit_events"
+        )
         try:
             cur.execute(
                 "UPDATE audit_events "
@@ -1835,21 +1824,12 @@ def _v42_box_keyed_audit(cur, db):
 
     # Reinstate the audit_events append-only UPDATE trigger.
     if has_ap_col_ae:
-        if use_pg:
-            cur.execute(
-                "CREATE TRIGGER trg_audit_events_no_update "
-                "BEFORE UPDATE ON audit_events "
-                "FOR EACH ROW "
-                "EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()"
-            )
-        else:
-            cur.execute(
-                "CREATE TRIGGER IF NOT EXISTS trg_audit_events_no_update "
-                "BEFORE UPDATE ON audit_events "
-                "BEGIN "
-                "    SELECT RAISE(ABORT, 'audit_events is append-only'); "
-                "END"
-            )
+        cur.execute(
+            "CREATE TRIGGER trg_audit_events_no_update "
+            "BEFORE UPDATE ON audit_events "
+            "FOR EACH ROW "
+            "EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()"
+        )
 
 
 @migration(37, "Split AP Kanban: Posted + Paid; add source_filter_json to pipeline_stages")

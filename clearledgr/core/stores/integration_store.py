@@ -4,12 +4,10 @@
 and expects the concrete class that inherits it to provide:
 
 * ``self.connect()``               -- returns a DB connection (context manager)
-* ``self._prepare_sql()``          -- adapts ``?`` placeholders for the active engine
 * ``self.initialize()``            -- ensures tables exist
 * ``self._decode_json_value()``    -- safely parses a JSON string or returns ``{}``
 * ``self._encrypt_secret()``       -- Fernet-encrypts a plaintext secret
 * ``self._decrypt_secret()``       -- Fernet-decrypts an encrypted secret
-* ``self.use_postgres``            -- bool flag for Postgres vs SQLite dialect
 
 All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 ``ClearledgrDB(IntegrationStore, ...)`` inherits them without any behavioural change.

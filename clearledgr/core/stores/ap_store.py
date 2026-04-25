@@ -4,12 +4,10 @@
 expects the concrete class that inherits it to provide:
 
 * ``self.connect()``      -- returns a DB connection (context manager)
-* ``self._prepare_sql()`` -- adapts ``?`` placeholders for the active engine
 * ``self.initialize()``   -- ensures tables exist
 * ``self._decode_json()`` -- safely parses a JSON string or returns ``{}``
 * ``self._parse_iso()``   -- parses an ISO-8601 string into a datetime
 * ``self._exception_severity_rank()`` -- maps severity label to int rank
-* ``self.use_postgres``   -- bool flag for Postgres vs SQLite dialect
 
 All methods are copied verbatim from ``clearledgr/core/database.py`` so that
 ``ClearledgrDB(APStore, ...)`` inherits them without any behavioural change.

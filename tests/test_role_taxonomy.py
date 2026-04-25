@@ -371,14 +371,14 @@ class TestMigrationV15:
         from clearledgr.core.migrations import _MIGRATIONS
         m15 = next(m for m in _MIGRATIONS if m[0] == 15)
         with db.connect() as conn:
-            # PG: autocommit so idempotent try/except patterns in the
+            # autocommit so idempotent try/except patterns in the
             # migration body don't poison the txn.
-            if db.use_postgres:
-                conn.autocommit = True
-            cur = conn.cursor()
-            m15[2](cur, db)
-            if not db.use_postgres:
-                conn.commit()
+            conn.autocommit = True
+            try:
+                cur = conn.cursor()
+                m15[2](cur, db)
+            finally:
+                conn.autocommit = False
 
     def test_user_becomes_ap_clerk(self, tmp_db):
         self._seed_legacy_user(tmp_db, "USR-u", "user")

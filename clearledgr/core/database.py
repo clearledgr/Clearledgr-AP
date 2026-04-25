@@ -200,10 +200,6 @@ class _ClearledgrDBBase:
     def __init__(self, db_path: str = "clearledgr.db"):
         self.dsn = os.getenv("DATABASE_URL")
         self.db_path = db_path
-        # Postgres is the only supported engine post-C.2. The
-        # `use_postgres` attribute is retained as a static True so that
-        # external callers which read it for logging/observability keep
-        # working; removal is scheduled for C.3.
         if not self.dsn:
             raise RuntimeError(
                 "DATABASE_URL is required. Clearledgr no longer supports SQLite."
@@ -213,7 +209,6 @@ class _ClearledgrDBBase:
             raise RuntimeError(
                 f"DATABASE_URL must point at Postgres, got: {self.dsn!r}"
             )
-        self.use_postgres = True
         from clearledgr.core.secrets import require_secret
         self._secret_key = require_secret("CLEARLEDGR_SECRET_KEY")
         self._fernet = None

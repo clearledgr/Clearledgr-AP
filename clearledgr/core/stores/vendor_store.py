@@ -4,7 +4,7 @@ Tracks vendor profiles (patterns, risk signals) and per-vendor invoice history
 so the AP reasoning layer can make context-aware decisions.
 
 ``VendorStore`` is a mixin — no ``__init__``, expects:
-  self.connect(), self._prepare_sql(), self.use_postgres
+  self.connect()
 """
 from __future__ import annotations
 
