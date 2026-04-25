@@ -49,7 +49,15 @@
             <displaytype>NORMAL</displaytype>
             <ismandatory>T</ismandatory>
             <maxlength>255</maxlength>
-            <description>Shared HMAC secret provisioned during onboarding. Used by the Suitelet to sign short-lived JWTs that the panel sends to Clearledgr. Treat as sensitive.</description>
+            <description>Shared HMAC secret provisioned during onboarding. Used to sign panel JWTs (read direction) AND outbound webhooks (write direction). Treat as sensitive — Clearledgr stores the same value as `webhook_secret` in `erp_connections.credentials` for that tenant.</description>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_cl_org_id">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Clearledgr Organization ID</label>
+            <displaytype>NORMAL</displaytype>
+            <ismandatory>T</ismandatory>
+            <maxlength>128</maxlength>
+            <description>Tenant's Clearledgr org_id. Used by outbound vendor-bill webhooks to address the correct tenant on the Clearledgr side (URL path component). Provisioned during onboarding.</description>
         </customrecordcustomfield>
     </customrecordcustomfields>
 </customrecordtype>

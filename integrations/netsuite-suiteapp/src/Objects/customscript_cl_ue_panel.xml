@@ -20,7 +20,10 @@
             <status>RELEASED</status>
             <title>Clearledgr — Vendor Bill Panel · Deployment</title>
             <eventtype></eventtype>
-            <executioncontext>USERINTERFACE</executioncontext>
+            <!-- No executioncontext restriction: beforeLoad needs USERINTERFACE
+                 to render the panel, but afterSubmit must fire on EVERY save
+                 path (CSV import, RESTlet, vendor portal API, SuiteFlow,
+                 manual UI save) so ERP-native bill creates reach Clearledgr. -->
         </scriptdeployment>
     </scriptdeployments>
 </usereventscript>

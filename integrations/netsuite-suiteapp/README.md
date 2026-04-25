@@ -1,8 +1,18 @@
 # Clearledgr — NetSuite SuiteApp
 
-Embeds a Clearledgr panel inside the **Vendor Bill** record in NetSuite.
-The panel renders the Box state, timeline, exceptions, and approval
-actions for the AP item Clearledgr posted as that bill.
+Two-way bridge between NetSuite and Clearledgr's coordination layer:
+
+* **Read direction** — embeds a Clearledgr panel inside the **Vendor Bill**
+  record showing Box state, timeline, exceptions, and approval actions
+  for whatever AP item is linked to that bill (whether it originated
+  via Gmail and was posted to NetSuite, or originated in NetSuite and
+  was tracked back into Clearledgr — see write direction).
+* **Write direction** — the User Event Script's `afterSubmit` fires an
+  HMAC-signed webhook to `/erp/webhooks/netsuite/<orgId>` on every
+  vendor-bill insert / update / paid event. Bills that arrive via EDI,
+  vendor portal, or AP-clerk-typed entry (i.e. never touching Gmail)
+  become Boxes, run through validation/exception detection, and route
+  to Slack the same way email-arrived bills do.
 
 ```
                     ┌────────────────────────────────────────┐
@@ -37,9 +47,11 @@ Bill (record view)  │  │ Standard │  │ Clearledgr (subtab)│  │
 
 | Phase | What it does | Done? | Hours |
 |-------|--------------|-------|-------|
-| 1 | UE script injects "Clearledgr" subtab on Vendor Bill, iframe loads Suitelet | ✅ scaffolded | 2.5 |
-| 2 | Suitelet serves panel HTML/JS/CSS, panel calls Clearledgr API w/ dev token, renders Box state | ✅ scaffolded | 2.5 |
-| 3 | Real per-tenant HMAC JWT auth (Suitelet mints, backend verifies via `panel_secret` in `erp_connections.credentials`) | ✅ scaffolded | 4 |
+| 1 (read) | UE script injects "Clearledgr" subtab on Vendor Bill, iframe loads Suitelet | ✅ scaffolded | 2.5 |
+| 2 (read) | Suitelet serves panel HTML/JS/CSS, panel calls Clearledgr API w/ dev token, renders Box state | ✅ scaffolded | 2.5 |
+| 3 (read) | Real per-tenant HMAC JWT auth (Suitelet mints, backend verifies via `webhook_secret` in `erp_connections.credentials`) | ✅ scaffolded | 4 |
+| 1 (write) | UE `afterSubmit` fires signed webhook on bill create/update/paid; backend dispatcher creates/advances/closes Box | ✅ scaffolded | 3 |
+| 2 (write) | Slack approval routing for ERP-native bills with payment holds; remove the hold via NetSuite API on approval | not started | 2 |
 | 4 | SuiteApp marketplace listing | not started | weeks |
 
 The code on disk is Phase-1+2+3 ready. What still needs human action: a NetSuite sandbox account, a TBA integration record, and a SuiteCloud CLI install. See **Deploy** below.
@@ -126,13 +138,12 @@ railway variables --service api --set "NETSUITE_PANEL_DEV_TOKEN=DEMO_PHASE_2"
 
 For each tenant:
 1. Generate a strong shared secret (e.g. `openssl rand -base64 48`).
-2. Add it to the tenant's NetSuite custom record:
+2. Add it to the tenant's NetSuite custom record (one record per account):
    - Customization → Lists, Records & Fields → Record Types → Clearledgr Settings → New
    - Field `custrecord_cl_api_base`: `https://api.clearledgr.com`
    - Field `custrecord_cl_bundle_secret`: paste the secret
-3. Add the same secret to Clearledgr's `erp_connections` row for that org:
-   - Look up the org's NetSuite connection: `SELECT credentials FROM erp_connections WHERE organization_id=… AND erp_type='netsuite';`
-   - Merge `panel_secret` into the credentials JSON (preserves `account_id`, TBA tokens, etc.)
+   - Field `custrecord_cl_org_id`: paste the tenant's Clearledgr org_id (used in outbound webhook URL)
+3. Add the same secret to Clearledgr's `erp_connections.credentials.webhook_secret` for that org. The same field is reused for both the panel JWT (read direction) and the outbound webhook signature (write direction).
 4. Update `sl_clearledgr_panel.js` to read the secret from `customrecord_cl_settings` and HMAC-sign the JWT (the scaffold currently uses the dev token — see the comment block at the top of that file).
 
 ---
@@ -148,12 +159,16 @@ For each tenant:
 
 ## Backend dependencies
 
-This SuiteApp expects the following on the Clearledgr API:
-
+### Read direction
 - **New endpoint** `GET /extension/ap-items/by-netsuite-bill/{ns_internal_id}?account_id=…` — implemented in [`clearledgr/api/netsuite_panel.py`](../../clearledgr/api/netsuite_panel.py).
 - **CORS regex** allows `https://<account>.app.netsuite.com` — see [`main.py`](../../main.py) `_resolve_cors_policy`.
 - **Strict-profile allowlist** includes the new dynamic path — see `STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS` in `main.py`.
 - **Approve / Reject / Request-info actions** call the existing `POST /extension/submit-for-approval`, `POST /extension/reject-invoice`, `POST /extension/route-low-risk-approval` endpoints. No new action routes.
+
+### Write direction
+- **Existing endpoint reused:** `POST /erp/webhooks/netsuite/{org_id}` in [`clearledgr/api/erp_webhooks.py`](../../clearledgr/api/erp_webhooks.py). Verifies HMAC signature against `erp_connections.credentials.webhook_secret`, records audit, then calls the dispatcher.
+- **New dispatcher:** [`clearledgr/services/erp_webhook_dispatch.py`](../../clearledgr/services/erp_webhook_dispatch.py) — routes `vendorbill.create / .update / .paid / .delete` to handlers that create or advance the AP item Box. Idempotent on `erp_reference == ns_internal_id`.
+- **State machine bypass:** ERP-native bills enter the Box state machine at `posted_to_erp` (the bill is already in the ERP — Clearledgr is tracking, not creating) or `needs_approval` (if NetSuite has a payment hold). `closed` on payment events.
 
 ---
 

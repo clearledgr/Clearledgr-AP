@@ -186,13 +186,17 @@ def _resolve_panel_user(
             creds = json.loads(creds)
         except Exception:
             creds = {}
-    panel_secret = str((creds or {}).get("panel_secret") or "").strip()
-    if not panel_secret:
+    # The same `webhook_secret` provisioned for outbound vendor-bill webhooks
+    # signs the panel JWT — single secret in `customrecord_cl_settings`,
+    # rotatable as one unit. If we ever need to rotate independently, split
+    # into `panel_secret` here without touching the SuiteScript side.
+    bundle_secret = str((creds or {}).get("webhook_secret") or "").strip()
+    if not bundle_secret:
         raise HTTPException(
             status_code=401,
-            detail="netsuite_panel: tenant has no panel_secret provisioned (Phase 3 setup pending)",
+            detail="netsuite_panel: tenant has no webhook_secret provisioned (Phase 3 setup pending)",
         )
-    payload = _verify_panel_jwt(token, panel_secret)
+    payload = _verify_panel_jwt(token, bundle_secret)
     if not payload:
         raise HTTPException(status_code=401, detail="netsuite_panel: invalid or expired token")
     # Cross-check claims against query params — JWT must be issued for the
