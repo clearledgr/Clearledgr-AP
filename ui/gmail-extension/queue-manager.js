@@ -536,6 +536,7 @@ class ClearledgrQueueManager {
 
   async backendFetch(url, init = {}, options = {}) {
     const retryOnAuth = options?.retryOnAuth !== false;
+    const retryOnGateway = options?.retryOnGateway !== false;
     const suppressRefresh = options?.suppressRefresh === true;
     if (
       !suppressRefresh
@@ -551,7 +552,28 @@ class ClearledgrQueueManager {
       ...(init || {}),
       headers
     };
-    const response = await fetch(url, requestInit);
+    let response = await fetch(url, requestInit);
+
+    // Transient-gateway retry. During Railway deploy rollovers the
+    // edge briefly returns 502/503/504 from the time gunicorn workers
+    // restart until the new ones are accepting traffic — typically
+    // 1-3s. Without this, the extension loses bootstrap data for the
+    // entire session because the failed promise never re-fires (the
+    // auth-401 retry path doesn't apply to 5xx). Two short-spaced
+    // retries cover ~3s of unavailability without amplifying load on
+    // a backend that's actually broken.
+    if (retryOnGateway && (response.status === 502 || response.status === 503 || response.status === 504)) {
+      for (const delayMs of [600, 1500]) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        try {
+          response = await fetch(url, requestInit);
+        } catch (_) { /* retry on next iteration */ }
+        if (response && response.status !== 502 && response.status !== 503 && response.status !== 504) {
+          break;
+        }
+      }
+    }
+
     if (response.status !== 401) {
       this.backendAuthRequired = false;
       return response;

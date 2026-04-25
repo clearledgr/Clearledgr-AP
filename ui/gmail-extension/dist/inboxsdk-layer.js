@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:0c7225cca50c541ea9e1fc94e07952ff6386a55f4fbab9e1887436a9df8abd13 */
+/* clearledgr-source-fingerprint:f0432f24dfe99c3a7b431764b00e607880dd6c9b2c7f13164d05d09b78d89425 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53816,6 +53816,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     async backendFetch(url, init = {}, options = {}) {
       const retryOnAuth = options?.retryOnAuth !== false;
+      const retryOnGateway = options?.retryOnGateway !== false;
       const suppressRefresh = options?.suppressRefresh === true;
       if (!suppressRefresh && !this.hasBackendCredential() && !this.authInFlight && !this.isBackendAuthCoolingDown()) {
         await this.ensureBackendAuth({ force: false, interactive: false });
@@ -53826,7 +53827,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         ...init || {},
         headers
       };
-      const response = await fetch(url, requestInit);
+      let response = await fetch(url, requestInit);
+      if (retryOnGateway && (response.status === 502 || response.status === 503 || response.status === 504)) {
+        for (const delayMs of [600, 1500]) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          try {
+            response = await fetch(url, requestInit);
+          } catch (_2) {}
+          if (response && response.status !== 502 && response.status !== 503 && response.status !== 504) {
+            break;
+          }
+        }
+      }
       if (response.status !== 401) {
         this.backendAuthRequired = false;
         return response;
