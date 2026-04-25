@@ -60,22 +60,11 @@ export const ROUTES = [
     viewCapability: 'view_activity',
   },
   {
-    id: 'clearledgr/exceptions',
-    title: 'Exceptions',
-    subtitle: 'Unresolved exceptions across every Box — what needs a human.',
-    icon: 'activity',
-    navOrder: 5,
-    defaultPinned: true,
-    canHide: false,
-    menuGroup: 'primary',
-    viewCapability: 'view_activity',
-  },
-  {
     id: 'clearledgr/settings',
     title: 'Settings',
     subtitle: 'ERP, policies, approvals, team, and billing.',
     icon: 'settings',
-    navOrder: 6,
+    navOrder: 5,
     defaultPinned: true,
     canHide: false,
     menuGroup: 'settings',
@@ -85,9 +74,18 @@ export const ROUTES = [
 
 // Pre-thesis routes — still render via handleCustomRoute but never appear in nav.
 // Some redirect to Settings sections; others render their legacy page.
+//
+// Phase 3.4 retired ``clearledgr/exceptions`` from the primary nav.
+// Exceptions now surface contextually — the thread-top exception
+// banner (Phase 3.1) shows the same severity + blocker + Suggest-
+// reply CTA inline above the relevant Gmail thread, so the dedicated
+// queue route is no longer load-bearing for daily use. The page
+// itself stays accessible via direct URL (``#clearledgr/exceptions``)
+// for power users and admins who want the cross-thread view.
 export const LEGACY_ROUTES = [
   { id: 'clearledgr/review', title: 'Review', redirectTo: null },
   { id: 'clearledgr/upcoming', title: 'Upcoming', redirectTo: null },
+  { id: 'clearledgr/exceptions', title: 'Exceptions', redirectTo: null },
   { id: 'clearledgr/connections', title: 'Connections', redirectTo: 'clearledgr/settings' },
   { id: 'clearledgr/rules', title: 'Approval Rules', redirectTo: 'clearledgr/settings' },
   { id: 'clearledgr/vendors', title: 'Vendors', redirectTo: null },

@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:fa65e3652ccb2bb95172520ed36be8e60db62a53d640b5e6adc16741786b2081 */
+/* clearledgr-source-fingerprint:0c7225cca50c541ea9e1fc94e07952ff6386a55f4fbab9e1887436a9df8abd13 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -63534,22 +63534,11 @@ Reason (required — logged to the audit trail):`);
       viewCapability: "view_activity"
     },
     {
-      id: "clearledgr/exceptions",
-      title: "Exceptions",
-      subtitle: "Unresolved exceptions across every Box — what needs a human.",
-      icon: "activity",
-      navOrder: 5,
-      defaultPinned: true,
-      canHide: false,
-      menuGroup: "primary",
-      viewCapability: "view_activity"
-    },
-    {
       id: "clearledgr/settings",
       title: "Settings",
       subtitle: "ERP, policies, approvals, team, and billing.",
       icon: "settings",
-      navOrder: 6,
+      navOrder: 5,
       defaultPinned: true,
       canHide: false,
       menuGroup: "settings",
