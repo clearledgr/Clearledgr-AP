@@ -651,7 +651,15 @@ async def start_google_web_auth(
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        "include_granted_scopes": "true",
+        # No include_granted_scopes here on purpose. The Gmail extension
+        # has a separate OAuth flow with its own scopes
+        # (gmail.readonly, gmail.modify, gmail.labels). If we set
+        # include_granted_scopes=true, Google bundles those previously-
+        # granted scopes into THIS sign-in code; if the client_secret
+        # was rotated since that prior Gmail grant was issued, Google
+        # rejects token-exchange with `invalid_grant: Bad Request`.
+        # Sign-in only needs identity scopes; keep the surfaces
+        # cleanly separated.
         "prompt": "select_account",
     }
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
