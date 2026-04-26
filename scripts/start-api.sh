@@ -13,4 +13,14 @@ exec gunicorn main:app \
   --bind "${HOST}:${PORT}" \
   --access-logfile - \
   --error-logfile - \
-  --log-level "${LOG_LEVEL}"
+  --log-level "${LOG_LEVEL}" \
+  --timeout "${GUNICORN_TIMEOUT:-90}" \
+  --graceful-timeout 30
+  # --timeout 90: cold workers run database.initialize() lazily on
+  # the first request, which can run ~50 IF NOT EXISTS DDL statements
+  # against overlapping tables. The default 30s gunicorn timeout
+  # SIGABRTs workers mid-init, leaving the api in a restart loop after
+  # every redeploy. 90s gives schema init enough headroom while still
+  # killing genuinely-stuck requests.
+  # --graceful-timeout 30: when reloading, give workers 30s to finish
+  # in-flight requests before SIGTERM.
