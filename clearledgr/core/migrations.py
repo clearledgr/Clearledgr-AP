@@ -2345,3 +2345,107 @@ def _v48_annotation_attempts(cur, db):
             logger.warning(
                 "[Migration v48] annotation_attempts index skipped: %s", exc
             )
+
+
+@migration(49, "box_summary + box_summary_history + vendor_summary — read-side projections (Gap 6)")
+def _v49_projections(cur, db):
+    """Three materialised projections. The primary read path
+    (``GET /api/ap/items/{id}/box``) becomes a single-row lookup
+    instead of 3-4 separate queries. Time-travel queries become
+    O(1) per snapshot, vendor rollups become O(1) per vendor.
+
+    The audit_events table remains the source of truth — these
+    projections are eventually-consistent caches updated by the
+    BoxProjectionObserver via the Gap 4 outbox. Stale rows are
+    detected by ``last_event_id`` not matching the audit_events tip;
+    the read path falls through to live composition in that case.
+    """
+
+    # ── box_summary: current snapshot, one row per Box ──
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS box_summary (
+            box_type TEXT NOT NULL,
+            box_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            timeline_preview_json TEXT NOT NULL DEFAULT '[]',
+            exceptions_json TEXT NOT NULL DEFAULT '[]',
+            outcome_json TEXT,
+            event_count INTEGER NOT NULL DEFAULT 0,
+            last_event_id TEXT,
+            last_state_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (box_type, box_id)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_box_summary_org_state "
+        "ON box_summary(organization_id, box_type, state)",
+        "CREATE INDEX IF NOT EXISTS idx_box_summary_updated "
+        "ON box_summary(organization_id, updated_at DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v49] box_summary index skipped: %s", exc)
+
+    # ── box_summary_history: append-only snapshots for time-travel ──
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS box_summary_history (
+            id TEXT PRIMARY KEY,
+            box_type TEXT NOT NULL,
+            box_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            snapshot_at TEXT NOT NULL,
+            state TEXT NOT NULL,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            transition_event_id TEXT,
+            triggered_by TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_box_history_box_at "
+        "ON box_summary_history(box_type, box_id, snapshot_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_box_history_org_at "
+        "ON box_summary_history(organization_id, snapshot_at DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v49] box_summary_history index skipped: %s", exc)
+
+    # ── vendor_summary: per-vendor rollup ──
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vendor_summary (
+            organization_id TEXT NOT NULL,
+            vendor_name_normalized TEXT NOT NULL,
+            vendor_display_name TEXT,
+            total_bills INTEGER NOT NULL DEFAULT 0,
+            total_amount_by_currency_json TEXT NOT NULL DEFAULT '{}',
+            avg_days_to_pay REAL,
+            exception_rate REAL NOT NULL DEFAULT 0.0,
+            last_activity_at TEXT,
+            posted_count INTEGER NOT NULL DEFAULT 0,
+            paid_count INTEGER NOT NULL DEFAULT 0,
+            rejected_count INTEGER NOT NULL DEFAULT 0,
+            recomputed_at TEXT NOT NULL,
+            PRIMARY KEY (organization_id, vendor_name_normalized)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vendor_summary_activity "
+        "ON vendor_summary(organization_id, last_activity_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_summary_exception_rate "
+        "ON vendor_summary(organization_id, exception_rate DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v49] vendor_summary index skipped: %s", exc)

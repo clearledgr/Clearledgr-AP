@@ -109,6 +109,11 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # Eager-import the targets so each one's register_target() runs
         # before any annotation outbox row is processed.
         import clearledgr.services.annotation_targets  # noqa: F401
+        # Gap 6: eager-import box_projection so the projection-prefix
+        # outbox handler is registered + the default projectors are
+        # in the registry before BoxProjectionObserver enqueues anything.
+        import clearledgr.services.box_projection  # noqa: F401
+        from clearledgr.services.box_projection import BoxProjectionObserver
 
         self._observer_registry = StateObserverRegistry()
         legacy_gmail_observer = GmailLabelObserver(self.db)
@@ -123,6 +128,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             # Phase 2.2: record the vendor's sender domain as trusted on
             # first successful post (TOFU bootstrap for the domain lock).
             VendorDomainTrackingObserver(self.db),
+            # Gap 6: read-side projections — fans out to BoxSummaryProjector
+            # and VendorSummaryProjector via outbox so admin/Gmail/Slack
+            # reads land on materialised rollups instead of live joins.
+            BoxProjectionObserver(self.db, box_type="ap_item"),
         ]
         for obs in observers:
             self._observer_registry.register(obs)

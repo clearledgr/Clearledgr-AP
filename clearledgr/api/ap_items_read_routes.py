@@ -313,6 +313,7 @@ def get_ap_item_audit(
 @router.get("/{ap_item_id}/box")
 def get_ap_item_box(
     ap_item_id: str,
+    fresh: bool = Query(default=False),
     _user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return the full §8 Box contract for this AP item.
@@ -322,6 +323,13 @@ def get_ap_item_box(
     console, Backoffice webhooks. Direct reads from ap_items.exception_code
     or ap_items.erp_reference miss the audit trail the deck promises
     customers.
+
+    Gap 6: reads from the ``box_summary`` projection first; falls
+    through to live composition (audit_events join) when the
+    projection is missing or stale, or when ``?fresh=true`` is
+    passed. The projection is updated by BoxSummaryProjector via the
+    state-transition outbox so it's eventually consistent within
+    seconds of every transition.
     """
     db = shared.get_db()
     item = shared._require_item(
@@ -329,6 +337,25 @@ def get_ap_item_box(
         expected_organization_id=getattr(_user, "organization_id", None),
     )
     verify_org_access(item.get("organization_id") or "default", _user)
+
+    if not fresh:
+        try:
+            from clearledgr.services.box_projection import get_box_summary_row
+            projection = get_box_summary_row("ap_item", ap_item_id, db=db)
+        except Exception:
+            projection = None
+        if projection and not _is_projection_stale(db, ap_item_id, projection):
+            return {
+                "box_id": ap_item_id,
+                "box_type": "ap_item",
+                "state": projection.get("state") or item.get("state"),
+                "timeline": projection.get("timeline_preview") or [],
+                "exceptions": projection.get("exceptions") or [],
+                "outcome": projection.get("outcome"),
+                "summary": projection.get("summary") or {},
+                "from_projection": True,
+                "projection_updated_at": projection.get("updated_at"),
+            }
 
     timeline = normalize_operator_audit_events(db.list_ap_audit_events(ap_item_id))
 
@@ -359,6 +386,69 @@ def get_ap_item_box(
         "timeline": timeline,
         "exceptions": exceptions,
         "outcome": outcome,
+        "from_projection": False,
+    }
+
+
+def _is_projection_stale(db: Any, ap_item_id: str, projection: Dict[str, Any]) -> bool:
+    """A projection is stale when audit_events has rows newer than
+    the projection's last_event_id. Falls open (treats as fresh) on
+    any read error so the projection still serves under DB pressure."""
+    last_event_id = projection.get("last_event_id")
+    if not last_event_id:
+        return True
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id FROM audit_events
+                WHERE box_id = %s
+                ORDER BY ts DESC LIMIT 1
+                """,
+                (ap_item_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return False
+        tip = str(row["id"]) if hasattr(row, "__getitem__") else str(row[0])
+        return tip != str(last_event_id)
+    except Exception:
+        return False
+
+
+@router.get("/{ap_item_id}/history")
+def get_ap_item_history(
+    ap_item_id: str,
+    at: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Time-travel query against the ``box_summary_history`` table.
+
+    With ``?at=<ISO ts>`` returns the latest snapshot at or before
+    ``at`` (one row). Without ``at``, returns the most recent
+    snapshots in descending order. Backed by Gap 6's append-only
+    history projection.
+    """
+    db = shared.get_db()
+    item = shared._require_item(
+        db, ap_item_id,
+        expected_organization_id=getattr(_user, "organization_id", None),
+    )
+    verify_org_access(item.get("organization_id") or "default", _user)
+
+    from clearledgr.services.box_projection import get_box_history
+    snapshots = get_box_history(
+        "ap_item", ap_item_id,
+        at=at, limit=limit, db=db,
+    )
+    return {
+        "box_type": "ap_item",
+        "box_id": ap_item_id,
+        "at": at,
+        "count": len(snapshots),
+        "snapshots": snapshots,
     }
 
 

@@ -287,6 +287,10 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/policies",
     # Gap 4: transactional outbox ops
     "/api/ops/outbox",
+    # Gap 6: read-side projections (ops rebuild + projector introspection).
+    # Vendor summary endpoints live under /api/vendors which has its own
+    # per-route allowlist further down — do not broaden /api/vendors here.
+    "/api/ops/projections",
     # Organization settings — GL mappings, approval thresholds, migration
     # state, autonomy rules. All routes are scoped to /settings/{org_id}/*
     # and enforce org access in each handler.
@@ -491,6 +495,8 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/agent/sessions/[^/]+/results$",
         r"^/api/ap/items/[^/]+$",
         r"^/api/ap/items/[^/]+/audit$",
+        # Gap 6: time-travel snapshots for a Box
+        r"^/api/ap/items/[^/]+/history$",
         r"^/api/ap/items/[^/]+/context$",
         r"^/api/ap/items/[^/]+/entity-route/resolve$",
         r"^/api/ap/items/[^/]+/merge$",
@@ -509,6 +515,9 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         # Phase 2.4: vendor KYC + risk score endpoints
         r"^/api/vendors/[^/]+/kyc$",
+        # Gap 6: vendor rollup (read-side projection)
+        r"^/api/vendors/summary$",
+        r"^/api/vendors/[^/]+/summary$",
         # Phase 3.1.b: vendor onboarding control endpoints (customer-side)
         r"^/api/vendors/[^/]+/onboarding/invite$",
         r"^/api/vendors/[^/]+/onboarding/session$",
@@ -725,6 +734,12 @@ import clearledgr.services.state_observers  # noqa: F401,E402
 # before any annotation outbox row is processed.
 import clearledgr.services.annotation_targets  # noqa: F401,E402
 
+# Eager-import box projection (Gap 6) so the projection-prefix
+# outbox handler is registered + BoxSummaryProjector +
+# VendorSummaryProjector are in the projector registry before the
+# OutboxWorker drains its first projection row.
+import clearledgr.services.box_projection  # noqa: F401,E402
+
 # Policies router (Gap 2 — versioned policy + replay)
 from clearledgr.api.policies import router as policies_router  # noqa: E402
 app.include_router(policies_router)
@@ -732,6 +747,14 @@ app.include_router(policies_router)
 # Outbox ops router (Gap 4 — transactional outbox inspection / retry / replay)
 from clearledgr.api.outbox_ops import router as outbox_ops_router  # noqa: E402
 app.include_router(outbox_ops_router)
+
+# Projection routers (Gap 6 — vendor summary + ops rebuild + introspection)
+from clearledgr.api.projections_ops import (  # noqa: E402
+    ops_router as projections_ops_router,
+    vendors_router as projections_vendors_router,
+)
+app.include_router(projections_ops_router)
+app.include_router(projections_vendors_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.
