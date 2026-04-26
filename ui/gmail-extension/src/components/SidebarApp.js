@@ -49,7 +49,7 @@ import {
 import { navigateInboxRoute } from '../utils/inbox-route.js';
 import { navigateToRecordDetail } from '../utils/record-route.js';
 import { navigateToVendorRecord } from '../utils/vendor-route.js';
-import { focusPipelineItem } from '../routes/pipeline-views.js';
+import { workspaceItemUrl, workspacePipelineUrl } from '../utils/workspace-link.js';
 
 const html = htm.bind(h);
 const LOGO_PATH = 'icons/icon48.png';
@@ -1364,13 +1364,14 @@ function WorkPanel({ item, queueManager }) {
   });
 
   const openPipeline = useCallback(() => {
+    // B.2: in-Gmail pipeline view is gone. Open the workspace SPA's
+    // pipeline in a new tab, focused on this item.
     if (!item?.id) return;
     store.setSelectedItem(String(item.id));
-    focusPipelineItem(pipelineScope, item, 'thread');
-    if (!gotoRoute('clearledgr/invoices')) {
-      showToast('Unable to open invoices', 'error');
-    }
-  }, [gotoRoute, item, pipelineScope]);
+    try {
+      window.open(workspaceItemUrl(item.id), '_blank', 'noopener,noreferrer');
+    } catch (_) { /* popup blocked */ }
+  }, [item]);
   const openSource = useCallback(() => {
     if (!openSourceEmail(item)) showToast('Unable to open source email', 'error');
   }, [item]);
@@ -1382,12 +1383,12 @@ function WorkPanel({ item, queueManager }) {
     }
   }, [gotoRoute, item]);
   const openRelatedRecord = useCallback((relatedItem) => {
+    // B.2: invoice-detail page lifted to workspace SPA. Deep-link there.
     if (!relatedItem?.id) return;
-    focusPipelineItem(pipelineScope, relatedItem, 'related_record');
-    if (!navigateToRecordDetail(gotoRoute, relatedItem.id)) {
-      showToast('Unable to open related record', 'error');
-    }
-  }, [gotoRoute, pipelineScope]);
+    try {
+      window.open(workspaceItemUrl(relatedItem.id), '_blank', 'noopener,noreferrer');
+    } catch (_) { /* popup blocked */ }
+  }, []);
 
   const basePrimaryAction = (pauseReason || item?.finance_effect_review_required)
     ? null
