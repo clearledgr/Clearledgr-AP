@@ -1,9 +1,11 @@
 import { Router, Route, Switch } from 'wouter-preact';
 import { html } from './utils/htm.js';
 import { AppShell } from './shell/AppShell.js';
+import { BootstrapProvider } from './shell/BootstrapContext.js';
+import { ToastProvider } from './shell/Toast.js';
 import { AuthGate } from './auth/AuthGate.js';
 import { LoginPage } from './auth/LoginPage.js';
-import { PipelinePage } from './pages/PipelinePage.js';
+import { PipelineRoute } from './routes/pages/PipelineRoute.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
 export function App() {
@@ -13,13 +15,15 @@ export function App() {
         <${Route} path="/login"><${LoginPage} /><//>
         <${Route}>
           <${AuthGate}>
+            <${BootstrapProvider}>
+              <${ToastProvider}>
             <${AppShell}>
               <${Switch}>
                 <${Route} path="/">
                   <${PlaceholderPage} title="Home" lift="ui/gmail-extension/src/routes/pages/PlanPage.js" />
                 <//>
                 <${Route} path="/pipeline">
-                  <${PipelinePage} />
+                  <${PipelineRoute} />
                 <//>
                 <${Route} path="/review">
                   <${PlaceholderPage} title="Review queue" lift="ui/gmail-extension/src/routes/pages/ReviewPage.js" />
@@ -48,6 +52,8 @@ export function App() {
                 <${Route}>
                   <${PlaceholderPage} title="Page not found" />
                 <//>
+              <//>
+            <//>
               <//>
             <//>
           <//>
