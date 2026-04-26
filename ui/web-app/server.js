@@ -49,15 +49,13 @@ const app = express();
 // at startup above so we don't need a deeper probe here.
 app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'web-app' }));
 
-// Proxy paths handled by the api service. Order matters: register the
-// proxy BEFORE the static handler so /api/* never falls through to the
-// SPA index.html fallback.
+// Paths handled by the api service. Mounting the proxy via a single
+// pathFilter at root preserves the full URL — `app.use('/auth', ...)`
+// would strip the `/auth` prefix and forward `/me` to the api as
+// just `/me`, which the api rejects with strict-profile 404.
 //
-// Note: Express's `app.use(prefix, ...)` matches by prefix, so a
-// shorter prefix would shadow a longer one. /healthz must NOT be in
-// here (it's served by the Express server above for Railway's
-// healthcheck on this service); the api's /health is reachable via
-// /api/v1/health if needed by future code.
+// /healthz is intentionally absent: the Express server above answers
+// it directly for Railway's per-service healthcheck.
 const PROXY_PATHS = ['/api', '/auth', '/v1', '/extension', '/erp', '/portal', '/onboard', '/slack', '/teams', '/outlook', '/oauth'];
 
 const proxy = createProxyMiddleware({
@@ -66,14 +64,13 @@ const proxy = createProxyMiddleware({
   xfwd: true,
   ws: true,
   logLevel: PROXY_LOG ? 'debug' : 'warn',
+  pathFilter: (path) => PROXY_PATHS.some((p) => path === p || path.startsWith(`${p}/`)),
   // Preserve cookies on responses (the SPA needs the workspace session
   // Set-Cookie to land on app.clearledgr.com, not the upstream host).
   cookieDomainRewrite: '',
 });
 
-for (const prefix of PROXY_PATHS) {
-  app.use(prefix, proxy);
-}
+app.use(proxy);
 
 // Static SPA. Cache JS/CSS aggressively (they're hashed by Vite); never
 // cache index.html (it references the latest hashed asset names).
