@@ -410,22 +410,20 @@ class _ClearledgrDBBase:
             ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_delete", "DELETE"),
         )
         for table, trigger_name, operation in triggers:
+            # CREATE OR REPLACE TRIGGER is atomic and race-free
+            # (Postgres 14+). The previous IF NOT EXISTS DO block was
+            # racy: two workers could both pass the pg_trigger check
+            # (snapshot isolation hides the other's pending INSERT)
+            # and both run CREATE TRIGGER, with one losing on
+            # "tuple concurrently updated". CREATE OR REPLACE replaces
+            # in place via a single catalog mutation, so concurrent
+            # workers serialise cleanly through the catalog lock.
             cur.execute(
                 f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_trigger
-                        WHERE tgname = '{trigger_name}'
-                          AND NOT tgisinternal
-                    ) THEN
-                        CREATE TRIGGER {trigger_name}
-                        BEFORE {operation} ON {table}
-                        FOR EACH ROW
-                        EXECUTE FUNCTION clearledgr_prevent_append_only_mutation();
-                    END IF;
-                END
-                $$;
+                CREATE OR REPLACE TRIGGER {trigger_name}
+                BEFORE {operation} ON {table}
+                FOR EACH ROW
+                EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()
                 """
             )
 
