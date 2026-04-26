@@ -55,6 +55,11 @@ POLICY_KINDS: Set[str] = {
     "confidence_gate",
     "autonomy_policy",
     "vendor_master_gate",
+    # Gap 3: match-engine tolerances. Per-match-type tolerance config
+    # (price variance, quantity variance, amount fuzz, date window).
+    # Sub-namespaced under match_type so AP 3-way + bank-recon +
+    # AR cash-app + ... can each have independent settings.
+    "match_tolerances",
 }
 
 
@@ -449,6 +454,18 @@ def _default_content(kind: str) -> Dict[str, Any]:
         return {"autonomy_actions": {}}
     if kind == "vendor_master_gate":
         return {"vendor_master_gate": False}
+    if kind == "match_tolerances":
+        return {
+            "ap_three_way": {
+                "price_tolerance_percent": 2.0,
+                "quantity_tolerance_percent": 5.0,
+                "amount_tolerance": 10.0,
+            },
+            "bank_reconciliation": {
+                "amount_tolerance": 0.01,
+                "date_window_days": 3,
+            },
+        }
     return {}
 
 
@@ -468,6 +485,11 @@ def _slice_settings_for_kind(kind: str, settings: Dict[str, Any]) -> Dict[str, A
         return {"autonomy_actions": dict(settings.get("autonomy_actions") or {})}
     if kind == "vendor_master_gate":
         return {"vendor_master_gate": bool(settings.get("vendor_master_gate") or False)}
+    if kind == "match_tolerances":
+        existing = settings.get("match_tolerances") or {}
+        if isinstance(existing, dict) and existing:
+            return existing
+        return _default_content("match_tolerances")
     return {}
 
 
@@ -487,6 +509,8 @@ def _merge_kind_into_settings(
         settings["autonomy_actions"] = dict(content.get("autonomy_actions") or {})
     elif kind == "vendor_master_gate":
         settings["vendor_master_gate"] = bool(content.get("vendor_master_gate") or False)
+    elif kind == "match_tolerances":
+        settings["match_tolerances"] = dict(content or {})
 
 
 def _row_to_version(row: Dict[str, Any]) -> PolicyVersion:

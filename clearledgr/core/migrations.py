@@ -2150,3 +2150,69 @@ def _v45_policy_versions(cur, db):
             logger.warning(
                 "[Migration v45] policy_versions index skipped: %s", exc
             )
+
+
+@migration(46, "match_records — persistent matching primitive (Gap 3): one row per match attempt across AP/AR/Recon/intercompany")
+def _v46_match_records(cur, db):
+    """Match-as-a-Box: every match attempt becomes a persistent
+    auditable row. Left/right references identify what was matched
+    against what; match_type names the matching variant
+    ('ap_three_way' / 'bank_reconciliation' / 'ar_cash_application' /
+    'vendor_statement_recon' / 'intercompany'); status mirrors the
+    Box state-machine pattern. Tolerance_version_id links to a
+    ``policy_versions`` row (kind=match_tolerances) so we can
+    audit + replay matches against a different tolerance set later.
+
+    Index priorities:
+      - (org, left_type, left_id) — find all matches involving a
+        given AP item / bank line
+      - (org, right_type, right_id) — find all matches involving a
+        given PO / GL transaction / counterparty
+      - (org, match_type, status) — Q4 dashboard "all unmatched
+        bank-recon items"
+      - (org, created_at DESC) — recent activity timeline
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS match_records (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            match_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.0,
+            left_type TEXT NOT NULL,
+            left_id TEXT NOT NULL,
+            right_type TEXT NOT NULL,
+            right_id TEXT,
+            extra_refs_json TEXT NOT NULL DEFAULT '[]',
+            tolerance_version_id TEXT,
+            variance_json TEXT NOT NULL DEFAULT '{}',
+            exceptions_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            box_id TEXT,
+            box_type TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            override_of_match_id TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_match_records_left "
+        "ON match_records(organization_id, left_type, left_id)",
+        "CREATE INDEX IF NOT EXISTS idx_match_records_right "
+        "ON match_records(organization_id, right_type, right_id)",
+        "CREATE INDEX IF NOT EXISTS idx_match_records_status "
+        "ON match_records(organization_id, match_type, status)",
+        "CREATE INDEX IF NOT EXISTS idx_match_records_created "
+        "ON match_records(organization_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_match_records_box "
+        "ON match_records(organization_id, box_type, box_id)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v46] match_records index skipped: %s", exc
+            )

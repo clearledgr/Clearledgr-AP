@@ -708,6 +708,10 @@ app.include_router(teams_invoices_router)
 import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401,E402
 import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401,E402
 
+# Eager-import the MatchEngine implementations (Gap 3) so the
+# registry is populated before any matching call.
+import clearledgr.services.match_engines  # noqa: F401,E402
+
 # Policies router (Gap 2 — versioned policy + replay)
 from clearledgr.api.policies import router as policies_router  # noqa: E402
 app.include_router(policies_router)

@@ -78,6 +78,14 @@ def test_merge_round_trips_for_every_kind():
         "confidence_gate": {"critical_field_confidence_threshold": 0.95},
         "autonomy_policy": {"autonomy_actions": {"auto_post": {"max_amount": 500}}},
         "vendor_master_gate": {"vendor_master_gate": True},
+        "match_tolerances": {
+            "ap_three_way": {
+                "price_tolerance_percent": 2.0,
+                "quantity_tolerance_percent": 5.0,
+                "amount_tolerance": 10.0,
+            },
+            "bank_reconciliation": {"amount_tolerance": 0.01, "date_window_days": 3},
+        },
     }
     for kind in POLICY_KINDS:
         settings: Dict[str, Any] = {}
