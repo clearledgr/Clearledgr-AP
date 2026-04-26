@@ -700,6 +700,12 @@ app.include_router(slack_invoices_router)
 app.include_router(slack_legacy_router)
 app.include_router(teams_invoices_router)
 
+# Eager-import the IntakeAdapter implementations so the registry is
+# populated before any webhook fires. Each module calls
+# `register_adapter(...)` at import time.
+import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401,E402
+import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401,E402
+
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.
 

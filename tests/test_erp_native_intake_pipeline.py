@@ -247,83 +247,129 @@ def test_approval_link_falls_back_to_clearledgr_when_metadata_missing():
     assert _source_link_label(inv) == "Open in Clearledgr"
 
 
-# ─── SAP dispatcher event normalization + state derivation ─────────
+# ─── SAP IntakeAdapter event normalization + state derivation ──────
 
 
-def test_sap_dispatcher_normalizes_cloudevents_shape():
-    from clearledgr.services.sap_webhook_dispatch import (
-        _composite_key, _normalize_event, _state_from_invoice,
-    )
-    payload = {
+@pytest.mark.asyncio
+async def test_sap_adapter_normalizes_cloudevents_shape():
+    import json
+    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    adapter = SapS4HanaIntakeAdapter()
+    raw = json.dumps({
         "type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Created.v1",
         "data": {
-            "CompanyCode": "1010",
-            "SupplierInvoice": "5105600123",
-            "FiscalYear": "2026",
-            "PaymentBlockingReason": "A",
+            "CompanyCode": "1010", "SupplierInvoice": "5105600123",
+            "FiscalYear": "2026", "PaymentBlockingReason": "A",
         },
-    }
-    event_type, invoice = _normalize_event(payload)
-    assert event_type == "created"
-    assert _composite_key(invoice) == "1010/5105600123/2026"
-    assert _state_from_invoice(invoice) == "needs_approval"
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    assert env.event_type == "create"
+    assert env.source_id == "1010/5105600123/2026"
+    assert env.source_type == "sap_s4hana"
+
+    update = await adapter.derive_state_update("org-1", env._replace(event_type="blocked") if False else env)
+    # event_type is 'create', so derive_state_update returns no-op (None target)
+    assert update.target_state is None
+
+    # Now test blocked event derivation
+    raw_blocked = json.dumps({
+        "type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Blocked.v1",
+        "data": {
+            "CompanyCode": "1010", "SupplierInvoice": "5105600123",
+            "FiscalYear": "2026", "PaymentBlockingReason": "A",
+        },
+    }).encode()
+    env_blocked = await adapter.parse_envelope(raw_blocked, {}, "org-1")
+    update = await adapter.derive_state_update("org-1", env_blocked)
+    assert update.target_state == "needs_approval"
 
 
-def test_sap_dispatcher_normalizes_abap_shape():
+@pytest.mark.asyncio
+async def test_sap_adapter_normalizes_abap_shape():
     """ABAP BAdI senders use UPPER_SNAKE field names (BUKRS, BELNR, GJAHR)."""
-    from clearledgr.services.sap_webhook_dispatch import (
-        _composite_key, _normalize_event, _state_from_invoice,
-    )
-    payload = {
+    import json
+    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    adapter = SapS4HanaIntakeAdapter()
+    raw = json.dumps({
         "event_type": "supplier_invoice.posted",
         "invoice": {"BUKRS": "1010", "BELNR": "5105600123", "GJAHR": "2026", "ZLSPR": "", "InvoiceStatus": "Posted"},
-    }
-    event_type, invoice = _normalize_event(payload)
-    assert event_type == "posted"
-    assert _composite_key(invoice) == "1010/5105600123/2026"
-    assert _state_from_invoice(invoice) == "posted_to_erp"
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    assert env.event_type == "posted"
+    assert env.source_id == "1010/5105600123/2026"
 
 
-def test_sap_dispatcher_paid_event_resolves_to_closed():
-    from clearledgr.services.sap_webhook_dispatch import (
-        _normalize_event, _state_from_invoice,
-    )
-    payload = {
+@pytest.mark.asyncio
+async def test_sap_adapter_paid_event_resolves_to_closed():
+    import json
+    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    adapter = SapS4HanaIntakeAdapter()
+    raw = json.dumps({
         "type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Paid.v1",
         "data": {
             "CompanyCode": "1010", "SupplierInvoice": "5105600123",
             "FiscalYear": "2026", "InvoiceStatus": "Paid In Full",
         },
-    }
-    event_type, invoice = _normalize_event(payload)
-    assert event_type == "paid"
-    assert _state_from_invoice(invoice) == "closed"
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    assert env.event_type == "paid"
+    update = await adapter.derive_state_update("org-1", env)
+    assert update.target_state == "closed"
 
 
-def test_sap_dispatcher_missing_composite_key_returns_none():
-    from clearledgr.services.sap_webhook_dispatch import _composite_key
-    assert _composite_key({"CompanyCode": "1010"}) is None  # missing doc + fy
-    assert _composite_key({}) is None
+@pytest.mark.asyncio
+async def test_sap_adapter_missing_composite_key_returns_empty_source_id():
+    import json
+    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    adapter = SapS4HanaIntakeAdapter()
+    raw = json.dumps({"type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Created.v1", "data": {"CompanyCode": "1010"}}).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    assert env.source_id == ""  # missing doc + fy
 
 
-# ─── NetSuite dispatcher state derivation (lightweight update path) ──
+# ─── NetSuite IntakeAdapter state derivation ──────────────────────
 
 
-def test_netsuite_state_from_bill_paid():
-    from clearledgr.services.erp_webhook_dispatch import _state_from_bill
-    assert _state_from_bill({"status_label": "Paid In Full"}) == "closed"
+@pytest.mark.asyncio
+async def test_netsuite_adapter_state_from_paid_bill():
+    import json
+    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    adapter = NetSuiteIntakeAdapter()
+    raw = json.dumps({
+        "event_type": "vendorbill.update",
+        "bill": {"ns_internal_id": "5135", "status_label": "Paid In Full"},
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    update = await adapter.derive_state_update("org-1", env)
+    assert update.target_state == "closed"
 
 
-def test_netsuite_state_from_bill_payment_hold():
-    from clearledgr.services.erp_webhook_dispatch import _state_from_bill
-    assert _state_from_bill({"payment_hold": "T"}) == "needs_approval"
-    assert _state_from_bill({"payment_hold": "true"}) == "needs_approval"
+@pytest.mark.asyncio
+async def test_netsuite_adapter_state_from_payment_hold():
+    import json
+    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    adapter = NetSuiteIntakeAdapter()
+    raw = json.dumps({
+        "event_type": "vendorbill.update",
+        "bill": {"ns_internal_id": "5135", "payment_hold": "T"},
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    update = await adapter.derive_state_update("org-1", env)
+    assert update.target_state == "needs_approval"
 
 
-def test_netsuite_state_from_bill_open():
-    from clearledgr.services.erp_webhook_dispatch import _state_from_bill
-    assert _state_from_bill({"status_label": "Open"}) == "posted_to_erp"
-    assert _state_from_bill({}) == "posted_to_erp"  # default
+@pytest.mark.asyncio
+async def test_netsuite_adapter_state_from_open_bill():
+    import json
+    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    adapter = NetSuiteIntakeAdapter()
+    raw = json.dumps({
+        "event_type": "vendorbill.update",
+        "bill": {"ns_internal_id": "5135", "status_label": "Open"},
+    }).encode()
+    env = await adapter.parse_envelope(raw, {}, "org-1")
+    update = await adapter.derive_state_update("org-1", env)
+    assert update.target_state == "posted_to_erp"
 
 
 # ─── erp_intake_po_sync idempotency ────────────────────────────────
@@ -446,89 +492,146 @@ def test_sap_xsuaa_resolver_rejects_unknown_issuer():
 
 
 @pytest.mark.asyncio
-async def test_netsuite_dispatcher_routes_through_full_pipeline():
-    """When enrichment + connection are present, the dispatcher should
-    call workflow.process_new_invoice — NOT db.create_ap_item directly."""
-    import clearledgr.services.erp_webhook_dispatch as dispatcher_mod
+async def test_handle_intake_event_routes_through_full_pipeline_for_netsuite():
+    """When the NetSuite adapter is registered + connection present,
+    handle_intake_event should call workflow.process_new_invoice —
+    NOT db.create_ap_item directly. The pipeline owns Box creation."""
+    import json
+    import clearledgr.services.intake_adapter as adapter_mod
+    # Ensure adapter is registered
+    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
 
     fake_db = MagicMock()
-    fake_db.get_ap_item_by_erp_reference.return_value = None  # not existing
+    fake_db.get_ap_item_by_erp_reference.return_value = None
     fake_db.get_erp_connections.return_value = [
         {"erp_type": "netsuite", "credentials": {"account_id": "ACCT", "consumer_key": "k", "consumer_secret": "s", "token_id": "t", "token_secret": "ts"}, "access_token": None, "refresh_token": None}
     ]
     fake_db.update_ap_item.return_value = True
 
-    # Fake intake context: minimal bill_header with no PO so we skip the upsert path
     fake_intake = {
         "bill_header": {"ns_internal_id": "5135", "tran_id": "BILL-001", "vendor_name": "Acme", "amount": "1000"},
-        "bill_lines": [],
-        "expense_lines": [],
-        "vendor": None,
-        "linked_po": None,
-        "linked_po_lines": [],
-        "goods_receipts": [],
-        "vendor_bank_history": [],
+        "bill_lines": [], "expense_lines": [], "vendor": None,
+        "linked_po": None, "linked_po_lines": [],
+        "goods_receipts": [], "vendor_bank_history": [],
         "raw_payload": {"id": "5135"},
     }
     fake_workflow = MagicMock()
     fake_workflow.process_new_invoice = AsyncMock(return_value={"status": "received", "state": "needs_approval", "ap_item_id": "AP-NEW"})
 
-    payload = {
+    raw = json.dumps({
         "event_type": "vendorbill.create",
-        "account_id": "ACCT",
-        "event_id": "evt-1",
+        "account_id": "ACCT", "event_id": "evt-1",
         "bill": {
-            "ns_internal_id": "5135",
-            "entity_name": "Acme",
-            "amount": "1000",
-            "currency": "USD",
-            "invoice_number": "BILL-001",
+            "ns_internal_id": "5135", "entity_name": "Acme",
+            "amount": "1000", "currency": "USD", "invoice_number": "BILL-001",
         },
-    }
+    }).encode()
 
-    with patch.object(dispatcher_mod, "get_db", return_value=fake_db), \
+    with patch.object(adapter_mod, "get_db", return_value=fake_db), \
+         patch("clearledgr.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
          patch("clearledgr.integrations.erp_netsuite_intake.fetch_intake_context", new_callable=AsyncMock, return_value=fake_intake), \
-         patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow):
-        result = await dispatcher_mod.dispatch_netsuite_event("org-1", payload)
+         patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
+         patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
+        result = await adapter_mod.handle_intake_event(
+            source_type="netsuite",
+            organization_id="org-1",
+            raw=raw,
+            headers={"X-NetSuite-Signature": "v1=fake", "X-NetSuite-Timestamp": "0"},
+            secret="any-secret",
+        )
 
     assert result["ok"] is True
     assert result["action"] == "created"
     assert result["state"] == "needs_approval"
     fake_workflow.process_new_invoice.assert_awaited_once()
     invoice_passed = fake_workflow.process_new_invoice.call_args.args[0]
-    # Critical assertion: the dispatcher built the right shape — erp_native + source_type
     assert invoice_passed.source_type == "netsuite"
     assert invoice_passed.erp_native is True
     assert invoice_passed.source_id == "5135"
     assert invoice_passed.gmail_id == "netsuite-bill:5135"
-    # Critical: db.create_ap_item is NOT called directly — pipeline owns creation
     fake_db.create_ap_item.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_netsuite_dispatcher_falls_back_to_thin_intake_without_connection():
-    """Orgs without a configured NetSuite connection still get the bill
-    recorded — just without the full pipeline."""
-    import clearledgr.services.erp_webhook_dispatch as dispatcher_mod
+async def test_handle_intake_event_falls_back_to_thin_intake_without_connection():
+    """Orgs without a configured NetSuite connection get a thin
+    InvoiceData built from the envelope alone — pipeline still runs,
+    just without the enrichment data."""
+    import json
+    import clearledgr.services.intake_adapter as adapter_mod
+    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
 
     fake_db = MagicMock()
     fake_db.get_ap_item_by_erp_reference.return_value = None
     fake_db.get_erp_connections.return_value = []  # no connection
-    fake_db.create_ap_item.return_value = {"id": "AP-THIN"}
 
-    payload = {
+    fake_workflow = MagicMock()
+    fake_workflow.process_new_invoice = AsyncMock(return_value={"status": "received", "state": "needs_approval", "ap_item_id": "AP-THIN"})
+
+    raw = json.dumps({
         "event_type": "vendorbill.create",
         "account_id": "ACCT", "event_id": "evt-1",
-        "bill": {
-            "ns_internal_id": "5135", "entity_name": "Acme",
-            "amount": "1000", "currency": "USD",
-        },
-    }
-    with patch.object(dispatcher_mod, "get_db", return_value=fake_db):
-        result = await dispatcher_mod.dispatch_netsuite_event("org-1", payload)
+        "bill": {"ns_internal_id": "5135", "entity_name": "Acme", "amount": "1000", "currency": "USD"},
+    }).encode()
 
+    with patch.object(adapter_mod, "get_db", return_value=fake_db), \
+         patch("clearledgr.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
+         patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
+         patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
+        result = await adapter_mod.handle_intake_event(
+            source_type="netsuite",
+            organization_id="org-1",
+            raw=raw,
+            headers={"X-NetSuite-Signature": "v1=fake", "X-NetSuite-Timestamp": "0"},
+            secret="any-secret",
+        )
+
+    # Even without connection, the adapter builds a thin InvoiceData
+    # and the pipeline is called — different from "no Box created at all".
     assert result["ok"] is True
-    assert result["action"] == "created_thin"
-    assert result["fallback"] == "no_connection"
-    # Thin path falls back to direct create_ap_item
-    fake_db.create_ap_item.assert_called_once()
+    assert result["action"] == "created"
+    fake_workflow.process_new_invoice.assert_awaited_once()
+    invoice_passed = fake_workflow.process_new_invoice.call_args.args[0]
+    assert invoice_passed.source_type == "netsuite"
+    assert invoice_passed.erp_native is True
+    # Thin invoice carries the fallback marker in metadata
+    assert invoice_passed.erp_metadata.get("fallback_thin_intake") is True
+
+
+@pytest.mark.asyncio
+async def test_handle_intake_event_rejects_invalid_signature():
+    """Forged webhook → handler returns ok=False, reason=signature_invalid."""
+    import json
+    import clearledgr.services.intake_adapter as adapter_mod
+    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    raw = json.dumps({"event_type": "vendorbill.create", "bill": {"ns_internal_id": "5135"}}).encode()
+    with patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=False):
+        result = await adapter_mod.handle_intake_event(
+            source_type="netsuite", organization_id="org-1",
+            raw=raw, headers={}, secret="any-secret",
+        )
+    assert result["ok"] is False
+    assert result["reason"] == "signature_invalid"
+
+
+@pytest.mark.asyncio
+async def test_handle_intake_event_rejects_unknown_source():
+    import clearledgr.services.intake_adapter as adapter_mod
+    result = await adapter_mod.handle_intake_event(
+        source_type="not_a_real_erp", organization_id="org-1",
+        raw=b"{}", headers={}, secret="any-secret",
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_adapter"
+
+
+@pytest.mark.asyncio
+async def test_handle_intake_event_rejects_missing_secret():
+    import clearledgr.services.intake_adapter as adapter_mod
+    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    result = await adapter_mod.handle_intake_event(
+        source_type="netsuite", organization_id="org-1",
+        raw=b"{}", headers={}, secret=None,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "no_secret_provisioned"

@@ -275,36 +275,34 @@ async def netsuite_webhook(
             content=_UNAUTHORIZED_BODY,
         )
 
+    # Delegate to the universal IntakeAdapter dispatch. The
+    # signature was already verified above; we re-verify inside the
+    # handler too (idempotent, defence-in-depth) and skip the audit
+    # event we already wrote. NetSuite-specific dispatch logic
+    # (envelope parsing, enrichment, state derivation) lives in the
+    # NetSuiteIntakeAdapter — see clearledgr/integrations/erp_netsuite_intake_adapter.py.
     _record_webhook_event(
         organization_id=organization_id,
         erp_type="netsuite",
         event_type="erp_webhook_received",
         payload_preview=_preview_json(raw),
     )
-
-    # Dispatch the NetSuite payload into Clearledgr's coordination layer
-    # (full pipeline path: enrichment + 3-way match + AP Decision +
-    # Slack routing). Best-effort — any failure is logged + audited but
-    # does not change the 200 we return: NetSuite retries on non-2xx,
-    # and the "received" audit event above is enough to reconstruct
-    # what happened from logs.
     try:
-        import json as _json
-        from clearledgr.services.erp_webhook_dispatch import dispatch_netsuite_event
-        try:
-            payload_obj = _json.loads(raw.decode("utf-8")) if raw else {}
-        except (ValueError, UnicodeDecodeError):
-            payload_obj = {}
-        if payload_obj:
-            dispatch_result = await dispatch_netsuite_event(organization_id, payload_obj)
-            logger.info(
-                "netsuite webhook dispatch: org=%s event=%s result=%s",
-                organization_id,
-                payload_obj.get("event_type"),
-                dispatch_result,
-            )
+        from clearledgr.services.intake_adapter import handle_intake_event
+        # Ensure the adapter is registered (import side-effect).
+        import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+        result = await handle_intake_event(
+            source_type="netsuite",
+            organization_id=organization_id,
+            raw=raw,
+            headers=dict(request.headers),
+            secret=secret,
+        )
+        logger.info(
+            "netsuite webhook dispatch: org=%s result=%s",
+            organization_id, result,
+        )
     except Exception as dispatch_exc:  # noqa: BLE001
-        # Never let dispatch failures sink the webhook ACK.
         logger.warning(
             "netsuite webhook dispatch raised for org=%s — %s",
             organization_id, dispatch_exc,
@@ -355,32 +353,31 @@ async def sap_webhook(
             content=_UNAUTHORIZED_BODY,
         )
 
+    # Delegate to the universal IntakeAdapter dispatch. SAP S/4HANA
+    # specific event-shape normalization (CloudEvents vs ABAP-BAdI),
+    # enrichment, and state derivation live in
+    # SapS4HanaIntakeAdapter — see
+    # clearledgr/integrations/erp_sap_s4hana_intake_adapter.py.
     _record_webhook_event(
         organization_id=organization_id,
         erp_type="sap",
         event_type="erp_webhook_received",
         payload_preview=_preview_json(raw),
     )
-
-    # Dispatch the SAP S/4HANA payload (BTP Event Mesh CloudEvent or
-    # ABAP-BAdI HTTP push) into Clearledgr's coordination layer. Same
-    # best-effort posture as the NetSuite handler — failures log + audit
-    # but never sink the 200 ACK.
     try:
-        import json as _json
-        from clearledgr.services.sap_webhook_dispatch import dispatch_sap_event
-        try:
-            payload_obj = _json.loads(raw.decode("utf-8")) if raw else {}
-        except (ValueError, UnicodeDecodeError):
-            payload_obj = {}
-        if payload_obj:
-            dispatch_result = await dispatch_sap_event(organization_id, payload_obj)
-            logger.info(
-                "sap webhook dispatch: org=%s event=%s result=%s",
-                organization_id,
-                payload_obj.get("type") or payload_obj.get("event_type"),
-                dispatch_result,
-            )
+        from clearledgr.services.intake_adapter import handle_intake_event
+        import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401
+        result = await handle_intake_event(
+            source_type="sap_s4hana",
+            organization_id=organization_id,
+            raw=raw,
+            headers=dict(request.headers),
+            secret=secret,
+        )
+        logger.info(
+            "sap webhook dispatch: org=%s result=%s",
+            organization_id, result,
+        )
     except Exception as dispatch_exc:  # noqa: BLE001
         logger.warning(
             "sap webhook dispatch raised for org=%s — %s",
