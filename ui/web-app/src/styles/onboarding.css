@@ -1,0 +1,205 @@
+/* Onboarding wizard (workstream C) */
+
+.cl-onb-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 0 64px;
+}
+
+.cl-onb-header {
+  margin-bottom: 32px;
+}
+
+.cl-onb-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-mint-strong);
+  margin-bottom: 6px;
+}
+
+.cl-onb-title {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+
+.cl-onb-sub {
+  margin: 0;
+  color: var(--cl-ink-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.cl-onb-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cl-onb-step {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cl-onb-step-next { border-color: var(--cl-mint); box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.08); }
+.cl-onb-step-done { background: linear-gradient(0deg, rgba(0, 214, 126, 0.04), rgba(0, 214, 126, 0.04)) , var(--cl-surface); }
+.cl-onb-step-pending { opacity: 0.7; }
+.cl-onb-step-optional { opacity: 0.85; }
+
+.cl-onb-step-rail {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.cl-onb-step-pip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--cl-bg);
+  color: var(--cl-ink-muted);
+  border: 1px solid var(--cl-border);
+}
+
+.cl-onb-step-pip-done {
+  background: var(--cl-mint-soft);
+  color: var(--cl-mint-strong);
+  border-color: rgba(0, 214, 126, 0.4);
+}
+
+.cl-onb-step-pip-next {
+  background: var(--cl-mint);
+  color: #fff;
+  border-color: var(--cl-mint);
+}
+
+.cl-onb-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cl-onb-step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cl-onb-step-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cl-onb-step-tag {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cl-ink-muted);
+  background: var(--cl-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.cl-onb-step-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+}
+
+.cl-onb-step-status-done { color: var(--cl-mint-strong); }
+.cl-onb-step-status-next { color: var(--cl-mint-strong); }
+.cl-onb-step-status-optional { color: var(--cl-ink-muted); }
+
+.cl-onb-step-desc {
+  margin: 0;
+  color: var(--cl-ink-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.cl-onb-step-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cl-onb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--cl-radius-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cl-onb-btn-primary {
+  background: var(--cl-navy);
+  color: #fff;
+}
+.cl-onb-btn-primary:hover { background: #14233e; }
+
+.cl-onb-btn-ghost {
+  background: transparent;
+  border-color: var(--cl-border);
+  color: var(--cl-ink-secondary);
+}
+.cl-onb-btn-ghost:hover { border-color: var(--cl-ink-muted); color: var(--cl-ink-primary); }
+
+.cl-onb-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cl-onb-step-time {
+  font-size: 11px;
+  color: var(--cl-ink-muted);
+  margin-top: 4px;
+}
+
+.cl-onb-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--cl-border);
+}
+
+.cl-onb-footer-hint {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+}

@@ -999,20 +999,33 @@ async def get_admin_bootstrap(
     slack_or_teams_connected = _is_connected("slack") or _is_connected("teams")
     has_ap_policy = bool((org_settings or {}).get("ap_policy") or (org_settings or {}).get("workflow_controls"))
 
+    # Hub-and-spoke onboarding (industry-standard ERP-first):
+    #   1. Connect ERP            (anchor — without this, no AP coordination)
+    #   2. Set AP policy          (auto-approve, match tolerance, GL map)
+    #   3. Connect Slack/Teams    (approval surface)
+    #   4. Install Gmail extension (optional intake channel — companion only;
+    #                               ERP-native customers can skip)
+    # Mirrors BILL.com / Ramp / Stampli onboarding sequence: integration
+    # first, then policy, then collaboration surface, then optional clients.
+    # The Gmail extension was step 1 in the previous Streak-aligned model;
+    # demoting to step 4 reflects the new hub-and-spoke positioning where
+    # Gmail is one of several intake channels, not the home.
     derived_step = 0
-    if gmail_connected:
+    if erp_connected:
         derived_step = 1
-    if derived_step >= 1 and erp_connected:
+    if derived_step >= 1 and has_ap_policy:
         derived_step = 2
-    if derived_step >= 2 and has_ap_policy:
+    if derived_step >= 2 and slack_or_teams_connected:
         derived_step = 3
-    if derived_step >= 3 and slack_or_teams_connected:
+    if derived_step >= 3 and gmail_connected:
         derived_step = 4
 
     persisted_step = int(subscription.get("onboarding_step") or 0)
     persisted_completed = bool(subscription.get("onboarding_completed"))
     effective_step = max(persisted_step, derived_step)
-    effective_completed = persisted_completed or derived_step >= 4
+    # Onboarding can complete at step 3 — Gmail extension is optional. The
+    # explicit completed flag from the user dismissing the wizard also wins.
+    effective_completed = persisted_completed or derived_step >= 3
 
     onboarding = {
         "completed": effective_completed,
@@ -1020,27 +1033,31 @@ async def get_admin_bootstrap(
         "steps": [
             {
                 "id": 1,
-                "name": "Install Chrome Extension",
-                "description": "Clearledgr section appears in Gmail's left nav. Extension ready to use.",
-                "time_estimate": "2 minutes",
+                "name": "Connect ERP",
+                "description": "OAuth connection to NetSuite, SAP S/4HANA, Xero, or QuickBooks. Read access to PO, GRN, and vendor master.",
+                "time_estimate": "5 minutes",
+                "required": True,
             },
             {
                 "id": 2,
-                "name": "Connect ERP",
-                "description": "OAuth connection to NetSuite, SAP, Xero, or QuickBooks. Read access to PO, GRN, and vendor master.",
-                "time_estimate": "5 minutes",
+                "name": "Set AP policy",
+                "description": "Auto-approve threshold, match tolerance, and approval routing — built to your actual finance rules.",
+                "time_estimate": "10 minutes",
+                "required": True,
             },
             {
                 "id": 3,
-                "name": "Set AP Policy",
-                "description": "Auto-approve threshold, match tolerance, and approval routing — built to your actual finance rules.",
-                "time_estimate": "10 minutes",
-            },
-            {
-                "id": 4,
                 "name": "Connect Slack or Teams",
                 "description": "Choose your approval surface. Agent begins processing immediately after this step.",
                 "time_estimate": "5 minutes",
+                "required": True,
+            },
+            {
+                "id": 4,
+                "name": "Install Gmail extension",
+                "description": "Optional. Adds a contextual sidebar in Gmail when an invoice email is open. ERP-native customers (SAP S/4HANA, NetSuite-only intake) can skip.",
+                "time_estimate": "2 minutes",
+                "required": False,
             },
         ],
     }

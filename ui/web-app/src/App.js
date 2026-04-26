@@ -6,6 +6,8 @@ import { ToastProvider } from './shell/Toast.js';
 import { AuthGate } from './auth/AuthGate.js';
 import { LoginPage } from './auth/LoginPage.js';
 import { InviteAcceptPage } from './auth/InviteAcceptPage.js';
+import { OnboardingGate } from './shell/OnboardingGate.js';
+import { OnboardingPage } from './routes/pages/OnboardingPage.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
 import { PipelineRoute } from './routes/pages/PipelineRoute.js';
@@ -30,8 +32,10 @@ export function App() {
           <${AuthGate}>
             <${BootstrapProvider}>
               <${ToastProvider}>
+                <${OnboardingGate}>
                 <${AppShell}>
                   <${Switch}>
+                    <${Route} path="/onboarding"><${OnboardingPage} /><//>
                     <${Route} path="/"><${PlanRoute} /><//>
                     <${Route} path="/pipeline"><${PipelineRoute} /><//>
                     <${Route} path="/review"><${ReviewRoute} /><//>
@@ -54,6 +58,7 @@ export function App() {
                     <//>
                     <${Route}><${PlaceholderPage} title="Page not found" /><//>
                   <//>
+                <//>
                 <//>
               <//>
             <//>
