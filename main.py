@@ -285,6 +285,8 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/box-links",
     # Gap 2: versioned policy storage + replay
     "/api/policies",
+    # Gap 4: transactional outbox ops
+    "/api/ops/outbox",
     # Organization settings — GL mappings, approval thresholds, migration
     # state, autonomy rules. All routes are scoped to /settings/{org_id}/*
     # and enforce org access in each handler.
@@ -712,9 +714,19 @@ import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401,E402
 # registry is populated before any matching call.
 import clearledgr.services.match_engines  # noqa: F401,E402
 
+# Eager-import state_observers (Gap 4) so the outbox observer-prefix
+# handler is registered before the OutboxWorker starts polling. The
+# worker process needs this even though it doesn't construct an
+# InvoiceWorkflowService.
+import clearledgr.services.state_observers  # noqa: F401,E402
+
 # Policies router (Gap 2 — versioned policy + replay)
 from clearledgr.api.policies import router as policies_router  # noqa: E402
 app.include_router(policies_router)
+
+# Outbox ops router (Gap 4 — transactional outbox inspection / retry / replay)
+from clearledgr.api.outbox_ops import router as outbox_ops_router  # noqa: E402
+app.include_router(outbox_ops_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.

@@ -2216,3 +2216,81 @@ def _v46_match_records(cur, db):
             logger.warning(
                 "[Migration v46] match_records index skipped: %s", exc
             )
+
+
+@migration(47, "outbox_events table — universal seam for transactional side-effect dispatch (Gap 4)")
+def _v47_outbox_events(cur, db):
+    """Transactional outbox: every async side-effect (observer
+    callback, customer webhook delivery, ERP write-back, Slack
+    notification, Gmail label sync) writes a row into this table
+    inside the same DB transaction as the business write that
+    triggered it. A worker drains the table; observers become
+    consumers of outbox events instead of in-process callbacks.
+
+    Closes the silent-failure race: today a state transition can
+    commit while the observer fan-out crashes mid-flight, leaving
+    the Box in a state where the Slack card was never posted /
+    Gmail label never applied / override window never opened. With
+    the outbox, the side-effect intent is durable; the worker
+    retries with exponential backoff until the side-effect succeeds
+    or hits dead-letter.
+
+    Status lifecycle: pending → processing → succeeded | failed
+    (will retry) | dead (max attempts hit, ops attention needed).
+    The ``dedupe_key`` makes enqueue idempotent — calling
+    ``enqueue('state.posted_to_erp', ..., dedupe_key='override-window:AP-1')``
+    twice for the same AP item produces one row, not two.
+
+    Index priorities:
+      - (status, next_attempt_at) — worker poll: 'give me pending
+        rows whose backoff window has elapsed'
+      - (organization_id, event_type, created_at DESC) — ops view
+        and the replay endpoint
+      - (organization_id, dedupe_key) — idempotent enqueue lookup
+      - (parent_event_id) — chained side-effect tracing
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS outbox_events (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            target TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            dedupe_key TEXT,
+            parent_event_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 5,
+            next_attempt_at TEXT,
+            last_attempted_at TEXT,
+            succeeded_at TEXT,
+            error_log_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            created_by TEXT NOT NULL DEFAULT 'system'
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_outbox_pending_due "
+        "ON outbox_events(status, next_attempt_at) "
+        "WHERE status IN ('pending', 'failed')",
+        "CREATE INDEX IF NOT EXISTS idx_outbox_org_type_created "
+        "ON outbox_events(organization_id, event_type, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_outbox_dedupe "
+        "ON outbox_events(organization_id, dedupe_key) "
+        "WHERE dedupe_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_outbox_parent "
+        "ON outbox_events(parent_event_id) "
+        "WHERE parent_event_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_outbox_dead "
+        "ON outbox_events(organization_id, status) "
+        "WHERE status = 'dead'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v47] outbox_events index skipped: %s", exc
+            )

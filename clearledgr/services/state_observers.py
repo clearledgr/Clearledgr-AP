@@ -58,11 +58,32 @@ class StateObserver(ABC):
 
 
 class StateObserverRegistry:
-    """Fan-out dispatcher for state transition events."""
+    """Fan-out dispatcher for state transition events.
 
-    def __init__(self) -> None:
+    Two dispatch modes:
+
+    * **Outbox mode (default)**: each registered observer becomes a
+      consumer of outbox events. ``notify`` enqueues one outbox row
+      per registered observer (with target ``observer:<class_name>``)
+      inside whatever transaction is active. The :class:`OutboxWorker`
+      drains the queue and calls each observer's ``on_transition``
+      with the rebuilt :class:`StateTransitionEvent`. Closes the race
+      where a transition could commit while the in-process fan-out
+      crashed mid-flight.
+
+    * **Inline mode**: legacy synchronous fan-out, used by
+      tests + by paths that need observer side-effects to be visible
+      before the caller returns. Set ``inline=True`` at construction
+      time. The existing observer interface is unchanged in either
+      mode.
+
+    Outbox mode is the production default. Inline mode is opt-in.
+    """
+
+    def __init__(self, *, inline: bool = False) -> None:
         self._observers: List[StateObserver] = []
         self._observer_failure_count: int = 0
+        self._inline = inline
 
     def register(self, observer: StateObserver) -> None:
         self._observers.append(observer)
@@ -70,9 +91,60 @@ class StateObserverRegistry:
     async def notify(self, event: StateTransitionEvent) -> None:
         """Dispatch *event* to all registered observers.
 
-        Each observer runs independently; a failure in one does not affect
-        the others or the caller.
+        In outbox mode (default), enqueues one outbox row per
+        observer; the worker fans out durably + with retry.
+
+        In inline mode, runs each observer in-process — failures are
+        logged but isolated from each other and from the caller.
         """
+        if self._inline:
+            await self._notify_inline(event)
+            return
+
+        # Outbox mode: enqueue one row per observer. Failures here
+        # would be DB connectivity issues — which we want to surface
+        # rather than silently drop, since the side-effect is
+        # supposed to be durable.
+        from clearledgr.services.outbox import OutboxWriter
+        writer = OutboxWriter(event.organization_id)
+        payload = _serialize_event(event)
+        for obs in self._observers:
+            obs_name = type(obs).__name__
+            # Dedupe key prevents duplicate enqueues when notify is
+            # called twice for the same transition (e.g., retry path).
+            dedupe_key = (
+                f"observer:{obs_name}:{event.ap_item_id}:"
+                f"{event.old_state}->{event.new_state}:"
+                f"{event.correlation_id or event.metadata.get('idempotency_key', '')}"
+            )
+            try:
+                writer.enqueue(
+                    event_type=f"state.{event.new_state}",
+                    target=f"observer:{obs_name}",
+                    payload=payload,
+                    dedupe_key=dedupe_key,
+                    actor=event.actor_id or event.source,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Don't sink the caller — fall back to inline for
+                # this observer if the outbox enqueue failed.
+                logger.warning(
+                    "outbox enqueue failed for observer %s; falling back to inline — %s",
+                    obs_name, exc,
+                )
+                try:
+                    await obs.on_transition(event)
+                except Exception as obs_exc:  # noqa: BLE001
+                    self._observer_failure_count += 1
+                    logger.error(
+                        "Inline-fallback observer %s also failed on %s->%s: %s",
+                        obs_name, event.old_state, event.new_state, obs_exc,
+                    )
+
+    async def _notify_inline(self, event: StateTransitionEvent) -> None:
+        """Legacy inline fan-out — the original behavior, preserved
+        for tests and for paths that must see side-effects before
+        returning."""
         for obs in self._observers:
             try:
                 await obs.on_transition(event)
@@ -89,6 +161,94 @@ class StateObserverRegistry:
                     exc,
                     exc_info=True,
                 )
+
+
+# ─── Outbox integration ────────────────────────────────────────────
+
+
+def _serialize_event(event: StateTransitionEvent) -> Dict[str, Any]:
+    """Pack a StateTransitionEvent into the JSON payload the outbox
+    worker will use to rebuild it before calling the observer."""
+    return {
+        "ap_item_id": event.ap_item_id,
+        "organization_id": event.organization_id,
+        "old_state": event.old_state,
+        "new_state": event.new_state,
+        "actor_id": event.actor_id,
+        "correlation_id": event.correlation_id,
+        "source": event.source,
+        "gmail_id": event.gmail_id,
+        "metadata": dict(event.metadata or {}),
+        "source_type": event.source_type,
+        "erp_native": event.erp_native,
+    }
+
+
+def _deserialize_event(payload: Dict[str, Any]) -> StateTransitionEvent:
+    return StateTransitionEvent(
+        ap_item_id=str(payload.get("ap_item_id") or ""),
+        organization_id=str(payload.get("organization_id") or ""),
+        old_state=str(payload.get("old_state") or ""),
+        new_state=str(payload.get("new_state") or ""),
+        actor_id=payload.get("actor_id"),
+        correlation_id=payload.get("correlation_id"),
+        source=str(payload.get("source") or "invoice_workflow"),
+        gmail_id=payload.get("gmail_id"),
+        metadata=dict(payload.get("metadata") or {}),
+        source_type=str(payload.get("source_type") or "gmail"),
+        erp_native=bool(payload.get("erp_native") or False),
+    )
+
+
+# Singleton-ish: keep the dispatch registry alive for the worker so
+# we can resolve observer-class-name → instance at handler time.
+_OBSERVER_DISPATCH: Dict[str, "StateObserver"] = {}
+
+
+def register_observer_for_outbox_dispatch(observer: "StateObserver") -> None:
+    """Register an observer instance so the outbox handler can
+    resolve ``target='observer:<ClassName>'`` to the right callable.
+
+    Called from each ``InvoiceWorkflowService.__init__`` so the
+    worker process (which may be a different worker than the one
+    that enqueued) can dispatch to the same observer types."""
+    name = type(observer).__name__
+    existing = _OBSERVER_DISPATCH.get(name)
+    if existing is None:
+        _OBSERVER_DISPATCH[name] = observer
+
+
+async def _outbox_handler_observer(outbox_event) -> None:
+    """Outbox handler for ``target = 'observer:<ClassName>'`` —
+    resolves the observer instance + calls on_transition with the
+    rebuilt StateTransitionEvent. Raised exceptions trigger the
+    outbox's retry/dead-letter logic."""
+    target = outbox_event.target
+    if not target.startswith("observer:"):
+        raise ValueError(f"unexpected target {target!r}")
+    obs_name = target.split(":", 1)[1]
+    observer = _OBSERVER_DISPATCH.get(obs_name)
+    if observer is None:
+        raise LookupError(
+            f"no observer registered for {obs_name!r} — "
+            f"workers must call register_observer_for_outbox_dispatch on boot"
+        )
+    state_event = _deserialize_event(outbox_event.payload)
+    await observer.on_transition(state_event)
+
+
+def _register_outbox_handler() -> None:
+    """One-shot registration of the observer-prefix handler with the
+    outbox. Safe to call repeatedly — outbox.register_handler is
+    idempotent for the same callable."""
+    try:
+        from clearledgr.services.outbox import register_handler
+        register_handler("observer", _outbox_handler_observer)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("state_observers: outbox handler registration failed — %s", exc)
+
+
+_register_outbox_handler()
 
 
 # ---------------------------------------------------------------------------

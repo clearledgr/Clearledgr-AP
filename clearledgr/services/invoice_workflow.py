@@ -96,18 +96,28 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             StateObserverRegistry,
             VendorDomainTrackingObserver,
             VendorFeedbackObserver,
+            register_observer_for_outbox_dispatch,
         )
         self._observer_registry = StateObserverRegistry()
-        self._observer_registry.register(AuditTrailObserver(self.db))
-        self._observer_registry.register(VendorFeedbackObserver(self.db))
-        self._observer_registry.register(NotificationObserver(self.db))
-        self._observer_registry.register(GmailLabelObserver(self.db))
-        # Phase 1.4: open an override window + post the Slack undo card
-        # whenever an AP item transitions into posted_to_erp.
-        self._observer_registry.register(OverrideWindowObserver(self.db))
-        # Phase 2.2: record the vendor's sender domain as trusted on
-        # first successful post (TOFU bootstrap for the domain lock).
-        self._observer_registry.register(VendorDomainTrackingObserver(self.db))
+        observers = [
+            AuditTrailObserver(self.db),
+            VendorFeedbackObserver(self.db),
+            NotificationObserver(self.db),
+            GmailLabelObserver(self.db),
+            # Phase 1.4: open an override window + post the Slack undo
+            # card whenever an AP item transitions into posted_to_erp.
+            OverrideWindowObserver(self.db),
+            # Phase 2.2: record the vendor's sender domain as trusted on
+            # first successful post (TOFU bootstrap for the domain lock).
+            VendorDomainTrackingObserver(self.db),
+        ]
+        for obs in observers:
+            self._observer_registry.register(obs)
+            # Gap 4: also register with the outbox dispatch registry
+            # so the worker process can resolve target='observer:<Cls>'
+            # to the right callable. Idempotent — safe across multiple
+            # InvoiceWorkflowService instantiations.
+            register_observer_for_outbox_dispatch(obs)
 
     def _load_settings(self):
         """Load organization settings if not already loaded."""
