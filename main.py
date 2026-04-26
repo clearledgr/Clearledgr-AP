@@ -1079,16 +1079,6 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
         seen.add(token)
         normalized_origins.append(token)
 
-    if normalized_origins:
-        # Explicit origin list takes precedence; regex disabled to avoid
-        # emitting ambiguous multi-value origin headers.
-        return normalized_origins, None
-
-    if wildcard_requested:
-        # Credentials are enabled, so wildcard-origin mode is unsafe/invalid.
-        # Fall back to safe canonical defaults instead of `*`.
-        logger.warning("CORS_ALLOW_ORIGINS wildcard ignored; falling back to canonical origin allowlist")
-
     _UNSAFE_CORS_PATTERNS = {".*", ".+", "^.*$", "^.+$", "", ".*\\..*"}
     if configured_regex and configured_regex in _UNSAFE_CORS_PATTERNS:
         logger.error(
@@ -1113,6 +1103,23 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
         r"|https://[a-z0-9_.-]+\.fiori\.cloud\.sap"
         r")$"
     )
+
+    if normalized_origins:
+        # Explicit origin list ADDS to the dynamic regex coverage rather
+        # than replacing it. Two consumers depend on this: the Gmail
+        # extension's per-install chrome-extension://<32-char-id> origin
+        # and the per-tenant ERP host patterns. Setting CORS_ALLOW_ORIGINS
+        # to add app.clearledgr.com or any other static origin must NOT
+        # break those dynamic origins. Starlette's CORSMiddleware accepts
+        # the request when EITHER the origin matches the explicit list
+        # OR the regex — they coexist cleanly.
+        return normalized_origins, default_regex
+
+    if wildcard_requested:
+        # Credentials are enabled, so wildcard-origin mode is unsafe/invalid.
+        # Fall back to safe canonical defaults instead of `*`.
+        logger.warning("CORS_ALLOW_ORIGINS wildcard ignored; falling back to canonical origin allowlist")
+
     return _default_cors_origins, default_regex
 
 
