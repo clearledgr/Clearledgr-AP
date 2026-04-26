@@ -1,5 +1,5 @@
 import { createContext, h } from 'preact';
-import { useContext, useEffect, useState } from 'preact/hooks';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'preact/hooks';
 import { html } from '../utils/htm.js';
 import { api } from '../api/client.js';
 
@@ -8,36 +8,50 @@ import { api } from '../api/client.js';
  * via InboxSDK injection. Includes current_user, organization,
  * integrations, and capability flags. Pages read it through context
  * instead of the prop drilling the extension did.
+ *
+ * The provider also exposes a `refresh` callback that re-fetches
+ * /api/workspace/bootstrap; pages that take an `onRefresh` prop
+ * (ConnectionsPage, SettingsPage, ReconciliationPage, etc.) get this
+ * via `usePageProps()` so admin actions which change integration
+ * state can invalidate the cached bootstrap.
  */
-const BootstrapContext = createContext(null);
+const BootstrapContext = createContext({ data: null, refresh: () => Promise.resolve() });
 
 const BOOTSTRAP_ENDPOINT = '/api/workspace/bootstrap';
 
 export function BootstrapProvider({ children }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
 
-  useEffect(() => {
-    let cancelled = false;
-    api(BOOTSTRAP_ENDPOINT, { retry: false })
-      .then((data) => { if (!cancelled) setState({ status: 'ready', data, error: null }); })
-      .catch((err) => {
-        if (cancelled) return;
-        // Non-fatal: pages can render without a bootstrap by treating
-        // the user as `operator` with no integrations. Capabilities
-        // hook returns the fallback in that case.
-        setState({ status: 'ready', data: null, error: err.message || String(err) });
-      });
-    return () => { cancelled = true; };
+  const load = useCallback(async () => {
+    try {
+      const data = await api(BOOTSTRAP_ENDPOINT, { retry: false });
+      setState({ status: 'ready', data, error: null });
+      return data;
+    } catch (err) {
+      // Non-fatal: pages can render without a bootstrap by treating
+      // the user as `operator` with no integrations. Capabilities
+      // hook returns the fallback in that case.
+      setState({ status: 'ready', data: null, error: err?.message || String(err) });
+      return null;
+    }
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const value = useMemo(() => ({ data: state.data, refresh: load }), [state.data, load]);
 
   if (state.status === 'loading') {
     return html`<div class="cl-app-loading">Loading workspace…</div>`;
   }
-  return html`<${BootstrapContext.Provider} value=${state.data}>${children}<//>`;
+  return html`<${BootstrapContext.Provider} value=${value}>${children}<//>`;
 }
 
 export function useBootstrap() {
-  return useContext(BootstrapContext);
+  return useContext(BootstrapContext).data;
+}
+
+export function useBootstrapRefresh() {
+  return useContext(BootstrapContext).refresh;
 }
 
 export function useOrgId() {

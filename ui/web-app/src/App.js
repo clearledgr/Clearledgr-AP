@@ -5,8 +5,19 @@ import { BootstrapProvider } from './shell/BootstrapContext.js';
 import { ToastProvider } from './shell/Toast.js';
 import { AuthGate } from './auth/AuthGate.js';
 import { LoginPage } from './auth/LoginPage.js';
-import { PipelineRoute } from './routes/pages/PipelineRoute.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
+
+import { PipelineRoute } from './routes/pages/PipelineRoute.js';
+import { ReviewRoute } from './routes/pages/ReviewRoute.js';
+import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
+import { VendorsRoute } from './routes/pages/VendorsRoute.js';
+import { ReconciliationRoute } from './routes/pages/ReconciliationRoute.js';
+import { ActivityRoute } from './routes/pages/ActivityRoute.js';
+import { ConnectionsRoute } from './routes/pages/ConnectionsRoute.js';
+import { SettingsRoute } from './routes/pages/SettingsRoute.js';
+import { TemplatesRoute } from './routes/pages/TemplatesRoute.js';
+import { HealthRoute } from './routes/pages/HealthRoute.js';
+import { PlanRoute } from './routes/pages/PlanRoute.js';
 
 export function App() {
   return html`
@@ -17,43 +28,31 @@ export function App() {
           <${AuthGate}>
             <${BootstrapProvider}>
               <${ToastProvider}>
-            <${AppShell}>
-              <${Switch}>
-                <${Route} path="/">
-                  <${PlaceholderPage} title="Home" lift="ui/gmail-extension/src/routes/pages/PlanPage.js" />
+                <${AppShell}>
+                  <${Switch}>
+                    <${Route} path="/"><${PlanRoute} /><//>
+                    <${Route} path="/pipeline"><${PipelineRoute} /><//>
+                    <${Route} path="/review"><${ReviewRoute} /><//>
+                    <${Route} path="/exceptions"><${ExceptionsRoute} /><//>
+                    <${Route} path="/vendors"><${VendorsRoute} /><//>
+                    <${Route} path="/vendors/:name">
+                      ${(params) => html`<${VendorsRoute} initialVendor=${params.name} />`}
+                    <//>
+                    <${Route} path="/reconciliation"><${ReconciliationRoute} /><//>
+                    <${Route} path="/activity"><${ActivityRoute} /><//>
+                    <${Route} path="/connections"><${ConnectionsRoute} /><//>
+                    <${Route} path="/settings"><${SettingsRoute} /><//>
+                    <${Route} path="/settings/:section">
+                      ${(params) => html`<${SettingsRoute} routeId=${params.section} />`}
+                    <//>
+                    <${Route} path="/templates"><${TemplatesRoute} /><//>
+                    <${Route} path="/health"><${HealthRoute} /><//>
+                    <${Route} path="/items/:id">
+                      ${(params) => html`<${PlaceholderPage} title=${`Item ${params.id}`} lift="record-route" />`}
+                    <//>
+                    <${Route}><${PlaceholderPage} title="Page not found" /><//>
+                  <//>
                 <//>
-                <${Route} path="/pipeline">
-                  <${PipelineRoute} />
-                <//>
-                <${Route} path="/review">
-                  <${PlaceholderPage} title="Review queue" lift="ui/gmail-extension/src/routes/pages/ReviewPage.js" />
-                <//>
-                <${Route} path="/exceptions">
-                  <${PlaceholderPage} title="Exceptions" lift="ui/gmail-extension/src/routes/pages/ExceptionsPage.js" />
-                <//>
-                <${Route} path="/vendors">
-                  <${PlaceholderPage} title="Vendors" lift="ui/gmail-extension/src/routes/pages/VendorsPage.js" />
-                <//>
-                <${Route} path="/reconciliation">
-                  <${PlaceholderPage} title="Reconciliation" lift="ui/gmail-extension/src/routes/pages/ReconciliationPage.js" />
-                <//>
-                <${Route} path="/activity">
-                  <${PlaceholderPage} title="Activity" lift="ui/gmail-extension/src/routes/pages/ActivityPage.js" />
-                <//>
-                <${Route} path="/connections">
-                  <${PlaceholderPage} title="Connections" lift="ui/gmail-extension/src/routes/pages/ConnectionsPage.js" />
-                <//>
-                <${Route} path="/settings">
-                  <${PlaceholderPage} title="Settings" lift="ui/gmail-extension/src/routes/pages/SettingsPage.js" />
-                <//>
-                <${Route} path="/items/:id" component=${({ params }) =>
-                  html`<${PlaceholderPage} title=${`Item ${params.id}`} lift="record-route" />`
-                } />
-                <${Route}>
-                  <${PlaceholderPage} title="Page not found" />
-                <//>
-              <//>
-            <//>
               <//>
             <//>
           <//>
