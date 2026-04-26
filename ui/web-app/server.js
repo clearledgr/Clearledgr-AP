@@ -52,7 +52,13 @@ app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'web-app' }));
 // Proxy paths handled by the api service. Order matters: register the
 // proxy BEFORE the static handler so /api/* never falls through to the
 // SPA index.html fallback.
-const PROXY_PATHS = ['/api', '/auth', '/v1', '/extension', '/erp', '/portal', '/onboard', '/slack', '/teams', '/outlook', '/oauth', '/health'];
+//
+// Note: Express's `app.use(prefix, ...)` matches by prefix, so a
+// shorter prefix would shadow a longer one. /healthz must NOT be in
+// here (it's served by the Express server above for Railway's
+// healthcheck on this service); the api's /health is reachable via
+// /api/v1/health if needed by future code.
+const PROXY_PATHS = ['/api', '/auth', '/v1', '/extension', '/erp', '/portal', '/onboard', '/slack', '/teams', '/outlook', '/oauth'];
 
 const proxy = createProxyMiddleware({
   target: API_TARGET,
