@@ -774,8 +774,17 @@ async def google_web_auth_callback(
         organization_id=user.organization_id,
     )
     redirect_path = _sanitize_redirect_path(state_payload.get("redirect_path"))
+    # The SPA lives on a different origin than the api (api.clearledgr.com
+    # vs workspace.clearledgr.com / web-app-production-*.up.railway.app).
+    # A relative `redirect_path` like `/?post_oauth=1` would resolve
+    # against the api's own origin and land the user at api.clearledgr.com/
+    # which has no handler — strict-profile returns
+    # `endpoint_disabled_in_ap_v1_profile`. Prepend APP_BASE_URL so the
+    # browser jumps back to the SPA origin.
+    spa_base = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+    target = (spa_base + redirect_path) if spa_base else redirect_path
     redirect_url = _append_query_params(
-        redirect_path,
+        target,
         {
             "auth_code": auth_code,
             "org": user.organization_id,
