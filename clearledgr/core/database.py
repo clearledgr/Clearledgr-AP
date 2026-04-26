@@ -376,6 +376,22 @@ class _ClearledgrDBBase:
 
         A shared plpgsql trigger function raises on UPDATE/DELETE against
         the audit tables, enforcing append-only semantics at the DB level.
+
+        Idempotency / concurrency notes:
+          The previous implementation did unconditional ``DROP TRIGGER IF
+          EXISTS`` + ``CREATE TRIGGER``, which takes ``AccessExclusiveLock``
+          on the table. When two gunicorn workers boot in parallel and
+          both run ``initialize()`` concurrently they deadlock against
+          each other (one holding the lock on audit_events, the other on
+          ap_policy_audit_events, each waiting on the other). The
+          ``CREATE OR REPLACE FUNCTION`` is fine — only the trigger
+          drop+create needed serialisation.
+
+          Fix: skip when the trigger already exists. Uses the same
+          ``IF NOT EXISTS (SELECT 1 FROM pg_trigger ...)`` pattern as
+          ``_install_ap_state_guard``. Steady-state cost is one cheap
+          catalog read per trigger; only the very first worker to boot
+          against a fresh schema actually takes the table lock.
         """
         cur.execute(
             """
@@ -394,13 +410,22 @@ class _ClearledgrDBBase:
             ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_delete", "DELETE"),
         )
         for table, trigger_name, operation in triggers:
-            cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table}")
             cur.execute(
                 f"""
-                CREATE TRIGGER {trigger_name}
-                BEFORE {operation} ON {table}
-                FOR EACH ROW
-                EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = '{trigger_name}'
+                          AND NOT tgisinternal
+                    ) THEN
+                        CREATE TRIGGER {trigger_name}
+                        BEFORE {operation} ON {table}
+                        FOR EACH ROW
+                        EXECUTE FUNCTION clearledgr_prevent_append_only_mutation();
+                    END IF;
+                END
+                $$;
                 """
             )
 
