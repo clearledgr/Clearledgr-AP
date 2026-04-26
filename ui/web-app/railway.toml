@@ -1,0 +1,30 @@
+# Railway deployment configuration for the web-app service.
+#
+# This is the 5th Railway service in the Clearledgr project, alongside
+# api / worker / beat / redis. Static SPA + reverse proxy to the api
+# service. Same-origin model: app.clearledgr.com serves both the SPA
+# and proxies /api, /auth, /v1, /extension, /erp, /portal, /slack,
+# /teams, /outlook, /health to the api service. No CORS, no
+# cookie-domain config required.
+#
+# Required env vars (set in the Railway service dashboard):
+#   API_TARGET   — full URL of the api service. Use Railway's private
+#                  network for low-latency: http://api.railway.internal:PORT
+#                  Or fall back to the public URL: https://api.clearledgr.com
+#   PORT         — Railway-supplied; the server respects this.
+#
+# Optional:
+#   PROXY_LOG=1  — verbose proxy logs (off by default)
+#
+# Custom domain: app.clearledgr.com points here once the Railway-issued
+# preview URL is confirmed working.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm run start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30

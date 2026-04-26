@@ -1,0 +1,20 @@
+# Nixpacks build plan for the web-app Railway service.
+#
+# 1. Install all deps (including devDependencies — Vite is needed at
+#    build time, not just install time).
+# 2. Run `npm run build` to produce ./dist.
+# 3. Start command from railway.toml runs `npm run start` which boots
+#    server.js (Express + http-proxy-middleware) against the built
+#    dist directory.
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"
