@@ -2093,3 +2093,60 @@ def _v44_llm_cost_paused_at(cur, db):
         cur.execute("ALTER TABLE organizations ADD COLUMN llm_cost_paused_at TEXT")
     except Exception:
         pass  # Already exists on a re-run or older schema
+
+
+@migration(45, "policy_versions table — append-only snapshots for the 5 policy kinds that drive AP coordination outcomes")
+def _v45_policy_versions(cur, db):
+    """Append-only versioned policy storage.
+
+    Five policy kinds today:
+      - approval_thresholds (per-amount routing + approver_targets)
+      - gl_account_map (vendor → ERP account code)
+      - confidence_gate (auto-approve confidence floor)
+      - autonomy_policy (agent action scope)
+      - vendor_master_gate (whether unknown-vendor bills create Boxes)
+
+    Every change to any of these creates a new immutable row.
+    Rollbacks are new versions linking via ``parent_version_id``.
+    AP items reference the version they were evaluated under via
+    ``ap_items.approval_policy_version`` (already exists from v33-ish).
+
+    The replay endpoint (``POST /api/policies/replay``) takes a
+    historical version_id + a date range and returns the deltas:
+    'these N bills would have routed to a different approver / hit
+    a different threshold band / been blocked / been auto-approved'.
+    Auditable answer to 'we changed thresholds two weeks ago — what
+    bills would have routed differently?'.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS policy_versions (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            policy_kind TEXT NOT NULL,
+            version_number INTEGER NOT NULL,
+            content_json TEXT NOT NULL DEFAULT '{}',
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            parent_version_id TEXT,
+            is_rollback INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (organization_id, policy_kind, version_number)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_policy_versions_org_kind "
+        "ON policy_versions(organization_id, policy_kind, version_number DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_policy_versions_hash "
+        "ON policy_versions(organization_id, policy_kind, content_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_policy_versions_created "
+        "ON policy_versions(organization_id, created_at DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v45] policy_versions index skipped: %s", exc
+            )

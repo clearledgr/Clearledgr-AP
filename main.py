@@ -283,6 +283,8 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/pipelines",
     "/api/saved-views",
     "/api/box-links",
+    # Gap 2: versioned policy storage + replay
+    "/api/policies",
     # Organization settings — GL mappings, approval thresholds, migration
     # state, autonomy rules. All routes are scoped to /settings/{org_id}/*
     # and enforce org access in each handler.
@@ -705,6 +707,10 @@ app.include_router(teams_invoices_router)
 # `register_adapter(...)` at import time.
 import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401,E402
 import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401,E402
+
+# Policies router (Gap 2 — versioned policy + replay)
+from clearledgr.api.policies import router as policies_router  # noqa: E402
+app.include_router(policies_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.
