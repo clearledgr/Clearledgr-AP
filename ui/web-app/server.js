@@ -44,6 +44,95 @@ if (!fs.existsSync(STATIC_DIR)) {
 
 const app = express();
 
+// Don't advertise the framework on every response — minor info-disclosure
+// hardening. No reason for clients to know we're on Express.
+app.disable('x-powered-by');
+
+// Trust the Railway edge proxy so req.protocol / req.ip reflect the
+// real client, not the internal forwarding hop. Required for HSTS to
+// only fire on requests that genuinely arrived over HTTPS.
+app.set('trust proxy', 1);
+
+// ── Security headers (workstream G) ─────────────────────────────────
+//
+// Hand-rolled rather than `helmet` so the policy is explicit and
+// auditable. Applied to every response, including proxied API replies
+// and the SPA fallback.
+//
+// CSP rationale:
+//   default-src 'self'           — start strict; explicit allow per directive
+//   script-src 'self'            — Vite emits ONE bundled JS file; no inline
+//                                  scripts. Does NOT include 'unsafe-inline'
+//                                  or 'unsafe-eval'.
+//   style-src 'self' 'unsafe-inline' https://rsms.me
+//                                — index-*.css from /assets/ + Inter from
+//                                  rsms.me. 'unsafe-inline' kept because the
+//                                  lifted PipelinePage/ReviewPage/etc. carry
+//                                  inline style="..." attrs from their
+//                                  extension origin (BatchOps STATE_STYLES,
+//                                  per-row colour swatches). Tightening this
+//                                  to nonce-based is a follow-up.
+//   font-src 'self' https://rsms.me data:
+//                                — rsms.me serves the woff2 referenced by
+//                                  inter.css. data: covers any inline font
+//                                  preloads.
+//   img-src 'self' data: https:  — page may render Slack avatars / Google
+//                                  profile photos via https:// URLs.
+//   connect-src 'self'           — every API call same-origin (proxy).
+//   frame-ancestors 'none'       — blocks iframe embedding (clickjacking).
+//                                  Modern replacement for X-Frame-Options.
+//   form-action 'self' https://accounts.google.com
+//                                — Google OAuth start uses location.href so
+//                                  this is defence-in-depth, not load-bearing.
+//   base-uri 'self'              — prevents <base> tag injection from
+//                                  redirecting relative URLs.
+//   object-src 'none'            — no flash, no plugins.
+//   upgrade-insecure-requests    — auto-rewrite http:// URLs in resources
+//                                  to https://.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://rsms.me",
+  "font-src 'self' https://rsms.me data:",
+  "img-src 'self' data: https:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "form-action 'self' https://accounts.google.com",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "upgrade-insecure-requests",
+].join('; ');
+
+app.use((req, res, next) => {
+  // Force HTTPS for a year, including subdomains, with preload eligibility.
+  // `req.secure` honours the `trust proxy` setting above so we don't issue
+  // HSTS on http traffic during local dev.
+  if (req.secure) {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains; preload'
+    );
+  }
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Permissions-Policy disables browser features we never use. Keeps the
+  // attack surface narrow if a dependency ever tries to access them.
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()'
+  );
+  // COOP isolates window references so cross-origin popups (e.g. Google
+  // OAuth) don't leak access to window.opener. COEP intentionally NOT
+  // set — it would block the rsms.me / data: / https: image loads we
+  // currently allow via CSP.
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // X-Frame-Options is redundant with `frame-ancestors 'none'` above for
+  // modern browsers, but kept for legacy IE-style fallbacks.
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
+
 // Health endpoint used by Railway's healthchecker. Returns 200 once the
 // process is up; the static dist + proxy target existence are validated
 // at startup above so we don't need a deeper probe here.
