@@ -207,14 +207,69 @@ def _consume_google_auth_code(code: str) -> Dict[str, Any]:
     return payload
 
 
-# NOTE: /auth/register, /auth/login, /auth/refresh have been deleted.
-# Clearledgr is a Gmail-native product (Streak-aligned). The only auth
-# path is "Continue with Google", which lands on /auth/google/callback
-# and exchanges via /auth/google/exchange. There is no email/password
-# login surface and no Clearledgr-issued refresh token — when the
-# access JWT expires, the extension silently re-runs Google's token
-# flow and re-exchanges. See _set_workspace_session_cookies for the
-# cookie shape.
+# Auth surfaces:
+#
+#   - "Continue with Google" — /auth/google/start → callback →
+#     /auth/google/exchange. Issues workspace session cookies.
+#   - Email + password — /auth/login. Required since the hub-and-spoke
+#     migration; non-Gmail customers (SAP-on-Outlook, etc.) need a
+#     way to sign in that doesn't depend on a Google identity. The
+#     password is set during invite-accept (/auth/invites/accept) and
+#     verified here against the bcrypt hash on the user row.
+#
+# There is no Clearledgr-issued refresh token. When the access JWT
+# expires, the SPA falls through to /login and the user re-authenticates
+# (Google flow OR password form). See _set_workspace_session_cookies
+# for the cookie shape.
+#
+# /auth/register is intentionally absent: Clearledgr is sales-led
+# (admin-creates-org, then invites teammates). Self-serve org
+# creation would be added when GTM moves to PLG.
+
+
+class PasswordLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    password: str = Field(..., min_length=1, max_length=1024)
+
+
+@router.post("/login")
+async def login_with_password(request: PasswordLoginRequest, response: Response):
+    """Verify email + password, issue workspace session cookies.
+
+    Generic 401 on every failure mode — never reveal whether an email
+    exists. Rate limiting + lockout is the existing global middleware's
+    responsibility (see clearledgr/services/rate_limit.py); this
+    handler stays focused on credential check + cookie issuance.
+    """
+    from clearledgr.core.auth import get_user_by_email, verify_password
+    from clearledgr.core.database import get_db
+
+    email = (request.email or "").strip().lower()
+    password = request.password or ""
+    if not email or not password:
+        raise HTTPException(status_code=401, detail="invalid_credentials")
+
+    db = get_db()
+    user = get_user_by_email(email)
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid_credentials")
+
+    user_row = db.get_user(user.id) or {}
+    password_hash = user_row.get("password_hash") or user_row.get("hashed_password")
+    if not password_hash or not verify_password(password, password_hash):
+        raise HTTPException(status_code=401, detail="invalid_credentials")
+
+    if user_row.get("is_active") is False:
+        raise HTTPException(status_code=401, detail="invalid_credentials")
+
+    access = create_access_token(user.id, user.email, user.organization_id, user.role)
+    _set_workspace_session_cookies(response, access)
+    return {
+        "success": True,
+        "user": user,
+        "access_token": SESSION_TOKEN_PLACEHOLDER,
+        "token_type": "bearer",
+    }
 
 
 @router.get("/me", response_model=User)

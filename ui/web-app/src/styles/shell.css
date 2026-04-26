@@ -369,6 +369,59 @@
   color: var(--cl-ink-muted);
 }
 
+.cl-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.cl-auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.cl-auth-field span {
+  color: var(--cl-ink-secondary);
+  font-weight: 500;
+}
+
+.cl-auth-field span em {
+  color: var(--cl-ink-muted);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.cl-auth-field input {
+  height: 38px;
+  padding: 0 12px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--cl-ink-primary);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cl-auth-field input:focus {
+  outline: none;
+  border-color: var(--cl-mint-strong);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+}
+
+.cl-auth-form .cl-auth-btn {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.cl-auth-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Toast rail */
 
 .cl-toast-rail {

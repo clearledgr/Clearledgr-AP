@@ -2,12 +2,16 @@ import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { useSession, refreshSession } from './useSession.js';
+import { api, ApiError } from '../api/client.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
 
 export function LoginPage() {
   const { isAuthenticated, isLoading } = useSession();
   const [, navigate] = useLocation();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -18,13 +22,12 @@ export function LoginPage() {
     }
   }, [isAuthenticated, navigate]);
 
-  // After Google callback redirects back here we re-fetch /auth/me
-  // so the session cache picks up the freshly issued cookies.
+  // After Google's callback returns the user to /login?post_oauth=1,
+  // re-fetch /auth/me so the session cache picks up the freshly issued
+  // cookies before AuthGate redirects.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.has('post_oauth')) {
-      refreshSession();
-    }
+    if (params.has('post_oauth')) refreshSession();
   }, []);
 
   const startGoogle = () => {
@@ -36,6 +39,34 @@ export function LoginPage() {
     window.location.href = `${GOOGLE_START_PATH}?${params.toString()}`;
   };
 
+  const submitPassword = async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError('');
+    setSubmitting(true);
+    try {
+      await api('/auth/login', {
+        method: 'POST',
+        body: { email: email.trim(), password },
+        retry: false,
+      });
+      await refreshSession();
+      // The useEffect above redirects on isAuthenticated flip; this
+      // handles the rare case where the session listener hasn't fired
+      // by the time we get here.
+      const params = new URLSearchParams(window.location.search);
+      navigate(params.get('next') || '/', { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError("Email or password didn't match.");
+      } else {
+        setError(err?.message || 'Sign-in failed. Try again.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (isLoading) return html`<div class="cl-auth-loading">Loading…</div>`;
 
   return html`
@@ -44,14 +75,50 @@ export function LoginPage() {
         <div class="cl-auth-brand">Clearledgr</div>
         <h1 class="cl-auth-title">Sign in</h1>
         <p class="cl-auth-sub">Coordination layer for finance teams.</p>
+
         ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
-        <button class="cl-auth-btn cl-auth-btn-primary" onClick=${startGoogle}>
+
+        <button class="cl-auth-btn cl-auth-btn-primary" onClick=${startGoogle} disabled=${submitting}>
           Continue with Google
         </button>
+
         <div class="cl-auth-divider"><span>or</span></div>
-        <a class="cl-auth-btn cl-auth-btn-secondary" href="mailto:hello@clearledgr.com?subject=Email%20sign-in%20access">
-          Email sign-in
-        </a>
+
+        <form class="cl-auth-form" onSubmit=${submitPassword} autoComplete="on">
+          <label class="cl-auth-field">
+            <span>Work email</span>
+            <input
+              type="email"
+              autoComplete="email"
+              required
+              value=${email}
+              onInput=${(e) => setEmail(e.currentTarget.value)}
+              placeholder="you@company.com"
+            />
+          </label>
+          <label class="cl-auth-field">
+            <span>Password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value=${password}
+              onInput=${(e) => setPassword(e.currentTarget.value)}
+            />
+          </label>
+          <button
+            type="submit"
+            class="cl-auth-btn cl-auth-btn-secondary"
+            disabled=${submitting || !email || !password}>
+            ${submitting ? 'Signing in…' : 'Sign in with email'}
+          </button>
+        </form>
+
+        <p class="cl-auth-fineprint">
+          Don't have an account yet? Sales onboards new orgs — reach
+          <a href="mailto:hello@clearledgr.com">hello@clearledgr.com</a>.
+          If your team admin sent you an invite link, open it directly.
+        </p>
         <p class="cl-auth-fineprint">
           By continuing you agree to our <a href="https://clearledgr.com/terms">Terms</a>
           and <a href="https://clearledgr.com/privacy">Privacy Policy</a>.
