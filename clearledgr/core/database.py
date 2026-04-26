@@ -542,35 +542,11 @@ class _ClearledgrDBBase:
     # Schema initialization
     # ------------------------------------------------------------------
 
-    # Stable 64-bit constant for the schema-init advisory lock. Any
-    # value works; chosen to be unique to clearledgr-init so it never
-    # collides with application-level advisory locks elsewhere in the
-    # codebase. Hex 'CLE' + 'INIT' encoded as int.
-    _INIT_ADVISORY_LOCK_KEY = 0x434C4549_4E495400
-
     def initialize(self) -> None:
         if self._initialized:
             return
         with self.connect() as conn:
             cur = conn.cursor()
-            # Serialise schema init across gunicorn workers. Without
-            # this, every worker concurrently runs ~50 DDL statements
-            # against overlapping tables — CREATE TRIGGER /
-            # ALTER TABLE ... ADD COLUMN / CREATE INDEX all take
-            # table-level locks that collide and stretch the init from
-            # ~200ms to >30s, tripping the gunicorn worker timeout.
-            #
-            # pg_advisory_xact_lock is transaction-scoped: auto-released
-            # when this transaction commits at the end of initialize().
-            # No risk of leaking the lock back into the connection pool.
-            # Workers serialise: the first one runs the full DDL pass,
-            # subsequent workers wait, then sail through every
-            # IF NOT EXISTS / IF NOT EXISTS-guarded DO block in
-            # milliseconds.
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(%s)",
-                (self._INIT_ADVISORY_LOCK_KEY,),
-            )
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_tokens (
