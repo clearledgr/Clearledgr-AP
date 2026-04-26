@@ -58,6 +58,24 @@ from clearledgr.services.app_startup import cancel_deferred_startup, schedule_de
 async def app_lifespan(app: FastAPI):
     """Canonical app lifecycle — fires slow startup in background so server binds fast."""
     _apply_runtime_surface_profile()
+
+    # Run database.initialize() once per worker on startup, not lazily
+    # on the first request. Schema init runs ~50 IF NOT EXISTS DDL +
+    # CREATE OR REPLACE TRIGGER + run_migrations(). The whole pass is
+    # ~5-30s on a cold worker. Doing it lazily meant the FIRST request
+    # to each worker took 30-60s and frequently exceeded the gunicorn
+    # timeout (or the client-side HTTP/2 keepalive). Running it here
+    # eats the cost during the healthcheck startup window so subsequent
+    # request handlers always hit `_initialized=True` and short-circuit.
+    try:
+        from clearledgr.core.database import get_db
+        get_db().initialize()
+        logger.info("Database schema initialized at app startup (eager)")
+    except Exception as exc:
+        logger.error("Eager database init failed at startup: %s", exc)
+        # Fall through — first request will retry lazily; better to bind
+        # the port and serve /health than to exit and crash-loop.
+
     if _should_skip_deferred_startup():
         yield
         return
