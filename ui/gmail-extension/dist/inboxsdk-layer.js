@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:eafdaf43650cffd82706078312ef197cc61f5b0e7bef8251e822ea12e461d7a4 */
+/* clearledgr-source-fingerprint:76ce240b0adeed559bf0b92a552cc6518a6bc1a5a07a0d72906662d022d0b551 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -59410,6 +59410,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 }
 `;
 
+  // src/utils/workspace-link.js
+  var WORKSPACE_URL = (() => {
+    const fromConfig = typeof self !== "undefined" && self.CLEARLEDGR_CONFIG?.WORKSPACE_URL || typeof globalThis !== "undefined" && globalThis.CLEARLEDGR_CONFIG?.WORKSPACE_URL;
+    return String(fromConfig || "https://web-app-production-a046.up.railway.app").replace(/\/+$/, "");
+  })();
+  function workspaceItemUrl(itemId) {
+    const id = String(itemId || "").trim();
+    if (!id)
+      return WORKSPACE_URL;
+    return `${WORKSPACE_URL}/items/${encodeURIComponent(id)}`;
+  }
+
   // src/components/ThreadSidebar.js
   var THREAD_SIDEBAR_CSS = `
 .cl-thread-sidebar { padding: 0; max-width: 100%; overflow-x: hidden; }
@@ -60725,6 +60737,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
 
       <div class="cl-ts-footer">
+        ${item?.id ? m3`
+          <a
+            class="cl-ts-footer-link cl-ts-workspace-link"
+            href=${workspaceItemUrl(item.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open this invoice in the Clearledgr workspace"
+          >Open in workspace ↗</a>
+        ` : ""}
         <button type="button" class="cl-ts-footer-link" onClick=${openFeedback}>
           Report issue
         </button>

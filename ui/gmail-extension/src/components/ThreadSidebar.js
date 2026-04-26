@@ -26,6 +26,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import InviteVendorModal from './InviteVendorModal.js';
 import BudgetPausedBanner from './BudgetPausedBanner.js';
+import { workspaceItemUrl } from '../utils/workspace-link.js';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -1410,6 +1411,15 @@ export function ThreadSidebar({
       </div>
 
       <div class="cl-ts-footer">
+        ${item?.id ? html`
+          <a
+            class="cl-ts-footer-link cl-ts-workspace-link"
+            href=${workspaceItemUrl(item.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open this invoice in the Clearledgr workspace"
+          >Open in workspace ↗</a>
+        ` : ''}
         <button type="button" class="cl-ts-footer-link" onClick=${openFeedback}>
           Report issue
         </button>

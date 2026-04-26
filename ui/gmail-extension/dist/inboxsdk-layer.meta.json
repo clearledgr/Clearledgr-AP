@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-25T17:21:00.987Z",
-  "fingerprint": "eafdaf43650cffd82706078312ef197cc61f5b0e7bef8251e822ea12e461d7a4",
+  "generated_at": "2026-04-26T22:02:51.293Z",
+  "fingerprint": "76ce240b0adeed559bf0b92a552cc6518a6bc1a5a07a0d72906662d022d0b551",
   "inputs": [
     "background.js",
     "manifest.json",
@@ -54,6 +54,7 @@
     "src/utils/store.js",
     "src/utils/vendor-route.js",
     "src/utils/work-actions.js",
+    "src/utils/workspace-link.js",
     "webpack.common.cjs",
     "webpack.dev.cjs",
     "webpack.prod.cjs"
