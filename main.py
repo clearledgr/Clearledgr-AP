@@ -720,6 +720,11 @@ import clearledgr.services.match_engines  # noqa: F401,E402
 # InvoiceWorkflowService.
 import clearledgr.services.state_observers  # noqa: F401,E402
 
+# Eager-import annotation targets (Gap 5) so the annotation-prefix
+# handler is registered + every target instance is in the registry
+# before any annotation outbox row is processed.
+import clearledgr.services.annotation_targets  # noqa: F401,E402
+
 # Policies router (Gap 2 — versioned policy + replay)
 from clearledgr.api.policies import router as policies_router  # noqa: E402
 app.include_router(policies_router)

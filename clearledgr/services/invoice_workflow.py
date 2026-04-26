@@ -98,12 +98,25 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             VendorFeedbackObserver,
             register_observer_for_outbox_dispatch,
         )
+        # Gap 5: AnnotationDispatchObserver replaces the legacy
+        # GmailLabelObserver in the live registry. The Gmail label
+        # writer now runs as one of several annotation targets
+        # (gmail_label / netsuite_custom_field / sap_z_field /
+        # customer_webhook / slack_card_update). The legacy class is
+        # still registered with the outbox dispatch table so any
+        # in-flight outbox rows targeting it directly still resolve.
+        from clearledgr.services.annotation_targets.base import AnnotationDispatchObserver
+        # Eager-import the targets so each one's register_target() runs
+        # before any annotation outbox row is processed.
+        import clearledgr.services.annotation_targets  # noqa: F401
+
         self._observer_registry = StateObserverRegistry()
+        legacy_gmail_observer = GmailLabelObserver(self.db)
         observers = [
             AuditTrailObserver(self.db),
             VendorFeedbackObserver(self.db),
             NotificationObserver(self.db),
-            GmailLabelObserver(self.db),
+            AnnotationDispatchObserver(self.db),
             # Phase 1.4: open an override window + post the Slack undo
             # card whenever an AP item transitions into posted_to_erp.
             OverrideWindowObserver(self.db),
@@ -115,9 +128,12 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             self._observer_registry.register(obs)
             # Gap 4: also register with the outbox dispatch registry
             # so the worker process can resolve target='observer:<Cls>'
-            # to the right callable. Idempotent — safe across multiple
-            # InvoiceWorkflowService instantiations.
+            # to the right callable. Idempotent.
             register_observer_for_outbox_dispatch(obs)
+        # Back-compat: keep the legacy GmailLabelObserver in the
+        # outbox-dispatch table for any rows enqueued before this
+        # commit shipped.
+        register_observer_for_outbox_dispatch(legacy_gmail_observer)
 
     def _load_settings(self):
         """Load organization settings if not already loaded."""

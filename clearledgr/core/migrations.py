@@ -2294,3 +2294,54 @@ def _v47_outbox_events(cur, db):
             logger.warning(
                 "[Migration v47] outbox_events index skipped: %s", exc
             )
+
+
+@migration(48, "annotation_attempts table — audit trail of external state propagation (Gap 5)")
+def _v48_annotation_attempts(cur, db):
+    """Every external annotation write (Gmail label, NetSuite custom
+    field, SAP Z-field, customer webhook, Slack card update) creates
+    a row here. Distinct from outbox_events: that's the dispatch
+    mechanism's audit (queued / processing / succeeded), this is the
+    business-level audit (what value was applied to which target,
+    what the external system responded).
+
+    Tied 1:1 to an outbox_event via outbox_event_id when the write
+    flowed through the outbox; standalone when written via direct
+    inline path.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS annotation_attempts (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            box_id TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            old_state TEXT,
+            new_state TEXT NOT NULL,
+            applied_value TEXT,
+            external_id TEXT,
+            status TEXT NOT NULL DEFAULT 'attempted',
+            response_code INTEGER,
+            response_body_preview TEXT,
+            outbox_event_id TEXT,
+            attempted_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_annotation_box "
+        "ON annotation_attempts(organization_id, box_type, box_id, attempted_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_annotation_target "
+        "ON annotation_attempts(organization_id, target_type, status)",
+        "CREATE INDEX IF NOT EXISTS idx_annotation_outbox "
+        "ON annotation_attempts(outbox_event_id) "
+        "WHERE outbox_event_id IS NOT NULL",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v48] annotation_attempts index skipped: %s", exc
+            )

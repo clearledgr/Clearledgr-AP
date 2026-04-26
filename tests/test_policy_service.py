@@ -86,6 +86,13 @@ def test_merge_round_trips_for_every_kind():
             },
             "bank_reconciliation": {"amount_tolerance": 0.01, "date_window_days": 3},
         },
+        "annotation_targets": {
+            "gmail_label": {"enabled": True},
+            "netsuite_custom_field": {"enabled": False, "field_id": "custbody_clearledgr_state"},
+            "sap_z_field": {"enabled": False, "field_id": "YY1_CLEARLEDGR_STATE"},
+            "customer_webhook": {"enabled": False, "filter_event_types": [], "include_metadata": True},
+            "slack_card_update": {"enabled": False, "show_actor_attribution": True},
+        },
     }
     for kind in POLICY_KINDS:
         settings: Dict[str, Any] = {}

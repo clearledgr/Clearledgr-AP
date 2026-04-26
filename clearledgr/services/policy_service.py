@@ -60,6 +60,11 @@ POLICY_KINDS: Set[str] = {
     # Sub-namespaced under match_type so AP 3-way + bank-recon +
     # AR cash-app + ... can each have independent settings.
     "match_tolerances",
+    # Gap 5: annotation targets. Per-tenant on/off + per-target
+    # configuration of every external surface that should reflect
+    # Box state. Default content has every target disabled — opt-in
+    # per customer.
+    "annotation_targets",
 }
 
 
@@ -466,6 +471,30 @@ def _default_content(kind: str) -> Dict[str, Any]:
                 "date_window_days": 3,
             },
         }
+    if kind == "annotation_targets":
+        # All targets disabled by default — customers opt in per
+        # surface. Activating a target is a policy edit (creates a
+        # new version row, mirrors back to settings_json).
+        return {
+            "gmail_label": {"enabled": False},
+            "netsuite_custom_field": {
+                "enabled": False,
+                "field_id": "custbody_clearledgr_state",
+            },
+            "sap_z_field": {
+                "enabled": False,
+                "field_id": "YY1_CLEARLEDGR_STATE",
+            },
+            "customer_webhook": {
+                "enabled": False,
+                "filter_event_types": [],
+                "include_metadata": True,
+            },
+            "slack_card_update": {
+                "enabled": False,
+                "show_actor_attribution": True,
+            },
+        }
     return {}
 
 
@@ -490,6 +519,11 @@ def _slice_settings_for_kind(kind: str, settings: Dict[str, Any]) -> Dict[str, A
         if isinstance(existing, dict) and existing:
             return existing
         return _default_content("match_tolerances")
+    if kind == "annotation_targets":
+        existing = settings.get("annotation_targets") or {}
+        if isinstance(existing, dict) and existing:
+            return existing
+        return _default_content("annotation_targets")
     return {}
 
 
@@ -511,6 +545,8 @@ def _merge_kind_into_settings(
         settings["vendor_master_gate"] = bool(content.get("vendor_master_gate") or False)
     elif kind == "match_tolerances":
         settings["match_tolerances"] = dict(content or {})
+    elif kind == "annotation_targets":
+        settings["annotation_targets"] = dict(content or {})
 
 
 def _row_to_version(row: Dict[str, Any]) -> PolicyVersion:
