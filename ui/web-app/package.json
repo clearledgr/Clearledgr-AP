@@ -1,7 +1,7 @@
 {
   "name": "clearledgr-web-app",
   "version": "0.1.0",
-  "description": "app.clearledgr.com — coordination layer hub. Renders the Box system of record; Gmail/Slack/Teams/ERP are companion surfaces.",
+  "description": "workspace.clearledgr.com — coordination layer hub. Renders the Box system of record; Gmail/Slack/Teams/ERP are companion surfaces.",
   "type": "module",
   "private": true,
   "scripts": {

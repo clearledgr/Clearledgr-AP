@@ -45,7 +45,11 @@ def _build_source_link(invoice: Any) -> str:
         or getattr(invoice, "source_id", None)
         or getattr(invoice, "gmail_id", "")
     )
-    clearledgr_fallback = f"https://app.clearledgr.com/ap-items/{ap_item_id}" if ap_item_id else "https://app.clearledgr.com"
+    import os
+    base = os.getenv("APP_BASE_URL", "https://workspace.clearledgr.com").rstrip("/")
+    # The web-app routes ap items at /items/:id (see ui/web-app/src/App.js);
+    # /ap-items/:id is the legacy extension path and would 404 in the SPA.
+    clearledgr_fallback = f"{base}/items/{ap_item_id}" if ap_item_id else base
 
     if source_type == "gmail":
         gid = str(getattr(invoice, "gmail_id", "") or "").strip()

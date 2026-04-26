@@ -1,12 +1,12 @@
 /**
- * Production server for app.clearledgr.com.
+ * Production server for workspace.clearledgr.com.
  *
  * Two responsibilities:
  *   1. Serve the static SPA build from `dist/`.
  *   2. Reverse-proxy API paths to the Clearledgr api service running
  *      on the same Railway project, so the browser sees a single
  *      origin (no CORS, no cookie-domain headaches — the workspace
- *      session cookie is scoped to app.clearledgr.com which is also
+ *      session cookie is scoped to workspace.clearledgr.com which is also
  *      what the browser hits for /api, /auth, /v1, etc.).
  *
  * Required env:
@@ -66,7 +66,7 @@ const proxy = createProxyMiddleware({
   logLevel: PROXY_LOG ? 'debug' : 'warn',
   pathFilter: (path) => PROXY_PATHS.some((p) => path === p || path.startsWith(`${p}/`)),
   // Preserve cookies on responses (the SPA needs the workspace session
-  // Set-Cookie to land on app.clearledgr.com, not the upstream host).
+  // Set-Cookie to land on workspace.clearledgr.com, not the upstream host).
   cookieDomainRewrite: '',
 });
 

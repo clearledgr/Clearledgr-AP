@@ -1109,7 +1109,7 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
         # than replacing it. Two consumers depend on this: the Gmail
         # extension's per-install chrome-extension://<32-char-id> origin
         # and the per-tenant ERP host patterns. Setting CORS_ALLOW_ORIGINS
-        # to add app.clearledgr.com or any other static origin must NOT
+        # to add workspace.clearledgr.com or any other static origin must NOT
         # break those dynamic origins. Starlette's CORSMiddleware accepts
         # the request when EITHER the origin matches the explicit list
         # OR the regex — they coexist cleanly.
