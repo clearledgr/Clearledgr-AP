@@ -108,14 +108,24 @@
 
 .cl-topbar-org {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--cl-radius-sm);
   font-size: 12px;
+  cursor: default;
+}
+
+.cl-topbar-org-stack {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
 }
 
 .cl-topbar-org-label {
   color: var(--cl-ink-muted);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -123,6 +133,43 @@
   color: var(--cl-ink-primary);
   font-weight: 500;
   font-size: 13px;
+}
+
+.cl-topbar-role {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cl-ink-secondary);
+  white-space: nowrap;
+}
+
+/* Owner/admin get a softer mint accent so it's clear at a glance who
+   has destructive/configure access. Non-elevated roles stay neutral. */
+.cl-topbar-role-owner,
+.cl-topbar-role-admin {
+  background: var(--cl-mint-soft);
+  border-color: rgba(0, 214, 126, 0.4);
+  color: var(--cl-mint-strong);
+}
+
+.cl-topbar-org-chevron {
+  font-size: 10px;
+  color: var(--cl-ink-muted);
+  /* Cursor stays default — chevron is a forward-looking affordance for
+     multi-org switching that isn't wired today. Keeping it disabled-
+     looking prevents users from clicking expecting a dropdown. */
+  opacity: 0.5;
+}
+
+.cl-topbar-menu-onboarding {
+  color: var(--cl-mint-strong);
+  font-weight: 500;
 }
 
 .cl-topbar-actions {
