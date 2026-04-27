@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload extraction report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: invoice-extraction-report
           path: invoice-extraction-report.json
