@@ -144,8 +144,15 @@ app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'web-app' }));
 // just `/me`, which the api rejects with strict-profile 404.
 //
 // /healthz is intentionally absent: the Express server above answers
-// it directly for Railway's per-service healthcheck.
-const PROXY_PATHS = ['/api', '/auth', '/v1', '/extension', '/erp', '/portal', '/onboard', '/slack', '/teams', '/outlook', '/oauth'];
+// it directly for Railway's per-service healthcheck (so the web-app
+// stays "healthy" to Railway even if the api is briefly down).
+//
+// /health (no z) IS proxied: the SPA footer pings it to render the
+// "All systems operational" indicator, which has to reflect the api's
+// real state. Without this, /health falls through to express.static
+// and returns index.html, the footer sees no { status: "healthy" }
+// JSON, and reports "Partially degraded" even when the api is fine.
+const PROXY_PATHS = ['/api', '/auth', '/v1', '/extension', '/erp', '/portal', '/onboard', '/slack', '/teams', '/outlook', '/oauth', '/health', '/leads'];
 
 const proxy = createProxyMiddleware({
   target: API_TARGET,
