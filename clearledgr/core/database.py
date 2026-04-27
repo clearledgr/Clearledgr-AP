@@ -546,15 +546,36 @@ class _ClearledgrDBBase:
         with self.connect() as conn:
             cur = conn.cursor()
 
-            # Serialize schema init across gunicorn workers. Without this
-            # all N workers hit ~50 CREATE TABLE / TRIGGER / INDEX
-            # statements in parallel, deadlocking on Postgres catalog
-            # rows. pg_advisory_xact_lock auto-releases on COMMIT,
-            # ROLLBACK, or connection drop, so a worker dying mid-init
-            # cannot leak the lock — the next worker just waits, gets it,
-            # and re-runs the (idempotent IF NOT EXISTS) DDL. Lock key is
-            # an arbitrary fixed bigint scoped to schema-init only.
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (7261432901567832145,))
+            # Fast path: if schema_versions exists and has rows, another
+            # worker already finished init for this PG instance. Skip.
+            try:
+                cur.execute("SELECT 1 FROM schema_versions LIMIT 1")
+                if cur.fetchone() is not None:
+                    self._initialized = True
+                    conn.commit()
+                    return
+            except Exception:
+                # Table doesn't exist yet — first deploy, or first worker
+                # to arrive. Roll back the failed query and proceed.
+                conn.rollback()
+                cur = conn.cursor()
+
+            # Try (non-blocking) to acquire the schema-init lock. Only
+            # the holder runs DDL. Followers wait for the holder to
+            # commit, then return without re-running DDL. Auto-released
+            # on COMMIT/ROLLBACK/connection drop, so worker death cannot
+            # leak it. The lock key is an arbitrary fixed bigint scoped
+            # to schema-init only.
+            cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (7261432901567832145,))
+            got_lock = cur.fetchone()[0]
+            if not got_lock:
+                # Block until the holder releases (commits). The
+                # blocking acquisition is bounded by however long the
+                # holder's init takes — typically 5-30s.
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (7261432901567832145,))
+                self._initialized = True
+                conn.commit()
+                return
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_tokens (
