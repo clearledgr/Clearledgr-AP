@@ -5,6 +5,7 @@ import { useSession, refreshSession } from './useSession.js';
 import { api, ApiError } from '../api/client.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
+const MICROSOFT_START_PATH = '/auth/microsoft/start';
 
 export function LoginPage() {
   const { isAuthenticated, isLoading } = useSession();
@@ -37,6 +38,19 @@ export function LoginPage() {
       redirect_path: '/?post_oauth=1',
     });
     window.location.href = `${GOOGLE_START_PATH}?${params.toString()}`;
+  };
+
+  const startMicrosoft = () => {
+    setError('');
+    const params = new URLSearchParams({
+      organization_id: 'default',
+      redirect_path: '/?post_oauth=1',
+    });
+    // The api returns 503 microsoft_oauth_not_configured if the
+    // env vars aren't set on the server. The browser sees that as
+    // a normal page navigation; we surface the error in the URL
+    // bar via ?auth_error= and handle below.
+    window.location.href = `${MICROSOFT_START_PATH}?${params.toString()}`;
   };
 
   const submitPassword = async (e) => {
@@ -80,6 +94,10 @@ export function LoginPage() {
 
         <button class="cl-auth-btn cl-auth-btn-primary" onClick=${startGoogle} disabled=${submitting}>
           Continue with Google
+        </button>
+
+        <button class="cl-auth-btn cl-auth-btn-secondary" onClick=${startMicrosoft} disabled=${submitting}>
+          Continue with Microsoft
         </button>
 
         <div class="cl-auth-divider"><span>or</span></div>

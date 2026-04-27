@@ -444,6 +444,8 @@ STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
     "/auth/google/callback",
     "/auth/google/exchange",
     "/auth/google/start",
+    "/auth/microsoft/start",
+    "/auth/microsoft/callback",
     "/auth/invites/accept",
     "/auth/login",
     "/auth/logout",
@@ -858,6 +860,8 @@ class WorkspaceSessionCSRFMiddleware(BaseHTTPMiddleware):
         "/auth/google/start",
         "/auth/google/callback",
         "/auth/google/exchange",
+        "/auth/microsoft/start",
+        "/auth/microsoft/callback",
         "/auth/invites/accept",
     }
 

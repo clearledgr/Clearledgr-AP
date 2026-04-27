@@ -793,6 +793,223 @@ async def google_web_auth_callback(
     return RedirectResponse(url=redirect_url)
 
 
+# ── Microsoft OAuth (Azure AD) — for SAP-shop / Microsoft 365 customers ──
+#
+# Mirrors the Google OAuth flow but issues against Azure AD's v2.0
+# multi-tenant endpoints. Azure setup required (one-time, before
+# flag flip):
+#   1. Register a new app in https://portal.azure.com → Azure Active
+#      Directory → App registrations → New registration.
+#      Supported account types: "Accounts in any organizational
+#      directory" (multi-tenant).
+#      Redirect URI (Web): https://api.clearledgr.com/auth/microsoft/callback
+#   2. Certificates & secrets → New client secret. Copy the secret VALUE.
+#   3. API permissions → Add permission → Microsoft Graph → Delegated:
+#      openid, email, profile, User.Read. Grant admin consent for the
+#      tenant if you want to bypass per-user consent.
+#   4. Set on the api Railway service:
+#        MICROSOFT_CLIENT_ID=<application_id>
+#        MICROSOFT_CLIENT_SECRET=<secret_value>
+#
+# Endpoint layout intentionally parallel to Google's so the SPA's
+# LoginPage can render both buttons without separate code paths.
+
+
+def _microsoft_oauth_redirect_uri() -> str:
+    return os.getenv(
+        "MICROSOFT_CONSOLE_REDIRECT_URI",
+        f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/auth/microsoft/callback",
+    ).strip()
+
+
+def _microsoft_authorize_url() -> str:
+    return os.getenv(
+        "MICROSOFT_AUTHORIZE_URL",
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    ).strip()
+
+
+def _microsoft_token_url() -> str:
+    return os.getenv(
+        "MICROSOFT_TOKEN_URL",
+        "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    ).strip()
+
+
+@router.get("/microsoft/start")
+async def start_microsoft_web_auth(
+    organization_id: Optional[str] = Query(default=None),
+    redirect_path: str = Query(default="/"),
+    invite_token: Optional[str] = Query(default=None),
+):
+    """Start Microsoft OAuth (Azure AD v2) flow for workspace sign-in."""
+    client_id = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    if not client_id:
+        # Same shape as google_oauth_not_configured so the SPA can
+        # render the same error fallback.
+        raise HTTPException(status_code=503, detail="microsoft_oauth_not_configured")
+
+    safe_redirect_path = _sanitize_redirect_path(redirect_path)
+    if not organization_id:
+        logger.warning("microsoft_oauth_start called without organization_id, falling back to 'default'")
+
+    # Reuse the Google state signer so /microsoft/callback can use the
+    # same _unsign_google_state() helper. Only the surface differs.
+    state = _sign_google_state(
+        {
+            "organization_id": organization_id or "default",
+            "redirect_path": safe_redirect_path,
+            "invite_token": invite_token,
+            "nonce": secrets.token_urlsafe(8),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+            "provider": "microsoft",
+        }
+    )
+    params = {
+        "client_id": client_id,
+        "redirect_uri": _microsoft_oauth_redirect_uri(),
+        "response_type": "code",
+        # User.Read covers the /me Graph call we use to identify the user.
+        "scope": "openid email profile User.Read",
+        "state": state,
+        "response_mode": "query",
+        "prompt": "select_account",
+    }
+    auth_url = f"{_microsoft_authorize_url()}?{urlencode(params)}"
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
+@router.get("/microsoft/callback")
+async def microsoft_web_auth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+):
+    """Handle Microsoft OAuth callback for workspace sign-in."""
+    if error:
+        spa_base = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+        return RedirectResponse(url=f"{spa_base}/login?auth_error={error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="missing_code_or_state")
+
+    state_payload = _unsign_google_state(state)
+    client_id = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="microsoft_oauth_not_configured")
+
+    client = get_http_client()
+    token_resp = await client.post(
+        _microsoft_token_url(),
+        data={
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": _microsoft_oauth_redirect_uri(),
+            "grant_type": "authorization_code",
+            "scope": "openid email profile User.Read",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token_payload = token_resp.json() if token_resp.content else {}
+    if token_resp.status_code >= 400 or "access_token" not in token_payload:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "microsoft_token_exchange_failed", "payload": token_payload},
+        )
+
+    access_token = token_payload["access_token"]
+    profile_resp = await client.get(
+        "https://graph.microsoft.com/v1.0/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    profile = profile_resp.json() if profile_resp.content else {}
+    if profile_resp.status_code >= 400:
+        raise HTTPException(
+            status_code=401,
+            detail={"message": "microsoft_profile_fetch_failed", "payload": profile},
+        )
+
+    # Microsoft Graph returns either `mail` (work email) or
+    # `userPrincipalName` (UPN, e.g. user@tenant.onmicrosoft.com).
+    email = (profile.get("mail") or profile.get("userPrincipalName") or "").strip().lower()
+    ms_user_id = str(profile.get("id") or "")
+    name = profile.get("displayName") or email.split("@")[0] if email else ""
+    if not email or not ms_user_id:
+        raise HTTPException(status_code=400, detail="invalid_microsoft_profile")
+
+    from clearledgr.core.database import get_db
+    from clearledgr.core.auth import (
+        create_user_from_google,
+        get_user_by_email,
+        normalize_user_role,
+        ROLE_AP_CLERK,
+    )
+
+    db = get_db()
+    invite_token = state_payload.get("invite_token")
+    invite = db.get_team_invite_by_token(str(invite_token)) if invite_token else None
+    if invite and invite.get("status") != "pending":
+        invite = None
+
+    if invite:
+        if str(invite.get("email")).lower().strip() != email:
+            raise HTTPException(status_code=403, detail="invite_email_mismatch")
+        org_id = str(invite.get("organization_id"))
+        role = normalize_user_role(invite.get("role")) or ROLE_AP_CLERK
+    else:
+        email_domain = email.split("@")[1].lower() if "@" in email else ""
+        org = db.get_organization_by_domain(email_domain) if email_domain else None
+        if org:
+            org_id = str(org.get("id") or org.get("organization_id"))
+        else:
+            org_id = "default"
+            logger.warning(
+                "No org found for Microsoft user domain %s — placing in default org",
+                email_domain,
+            )
+        role = ROLE_AP_CLERK
+
+    user = get_user_by_email(email)
+    if user is None:
+        # Reuse the Google upsert helper — it's identity-provider-agnostic
+        # in practice; we just don't track ms_user_id separately yet
+        # (acceptable: future calls re-resolve by email).
+        user = create_user_from_google(email=email, google_id=f"ms:{ms_user_id}", organization_id=org_id)
+    else:
+        db.update_user(user.id, is_active=True)
+        user = get_user_by_email(email)
+
+    if user is None:
+        raise HTTPException(status_code=500, detail="failed_to_create_user")
+
+    if invite:
+        db.update_user(user.id, role=role, organization_id=org_id)
+        db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
+        user = get_user_by_email(email) or user
+
+    jwt_token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        organization_id=user.organization_id,
+        role=user.role,
+    )
+    auth_code = _issue_google_auth_code(
+        access_token=jwt_token,
+        refresh_token=None,
+        organization_id=user.organization_id,
+    )
+    redirect_path = _sanitize_redirect_path(state_payload.get("redirect_path"))
+    spa_base = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+    target = (spa_base + redirect_path) if spa_base else redirect_path
+    redirect_url = _append_query_params(
+        target,
+        {"auth_code": auth_code, "org": user.organization_id},
+    )
+    return RedirectResponse(url=redirect_url)
+
+
 @router.post("/google/exchange", response_model=TokenResponse)
 async def exchange_google_auth_code(request: GoogleAuthCodeExchangeRequest, response: Response):
     payload = _consume_google_auth_code(request.auth_code)
