@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:89392c7ff2904fe6fee170f8037ee05c187e2b346b58a6ad85b11fd7f488a6ae */
+/* clearledgr-source-fingerprint:681996e909cb257829e6b29d3f01ae607c127e526b00afa2fd70bb79ddca4931 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -58491,7 +58491,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   // src/utils/workspace-link.js
   var WORKSPACE_URL = (() => {
     const fromConfig = typeof self !== "undefined" && self.CLEARLEDGR_CONFIG?.WORKSPACE_URL || typeof globalThis !== "undefined" && globalThis.CLEARLEDGR_CONFIG?.WORKSPACE_URL;
-    return String(fromConfig || "https://web-app-production-a046.up.railway.app").replace(/\/+$/, "");
+    return String(fromConfig || "https://workspace.clearledgr.com").replace(/\/+$/, "");
   })();
   function workspaceItemUrl(itemId) {
     const id = String(itemId || "").trim();
@@ -62290,3 +62290,5 @@ So do we.
 %chttps://clearledgr.com
 `, "font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;", "font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;", "font-size:14px;color:#6B7280;line-height:1.5;", "font-size:13px;color:#00D67E;font-weight:600;");
 })();
+
+//# debugId=6A6B8C347746FEF264756E2164756E21

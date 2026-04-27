@@ -106,7 +106,6 @@ fixes, but no end-to-end integration test confirms current behaviour.
    - `https://api.clearledgr.com/gmail/callback`
 4. Confirm **Authorized JavaScript origins** includes:
    - `https://workspace.clearledgr.com`
-   - `https://web-app-production-a046.up.railway.app` (until cert clears)
 
 **Verify:**
 - Open https://workspace.clearledgr.com/login in incognito
@@ -147,27 +146,16 @@ listing. Today the extension is dev-mode only.
 
 ---
 
-## 5. workspace.clearledgr.com — Let's Encrypt cert
+## 5. workspace.clearledgr.com — Let's Encrypt cert (RESOLVED 2026-04-27)
 
-**Why:** Currently stuck in `VALIDATING_OWNERSHIP` on Railway despite
-DNS propagated.
+Cert was issued after Railway's TXT-verification flow (CNAME +
+`_railway-verify.workspace` TXT) completed. SPA now serves on
+https://workspace.clearledgr.com with a valid certificate.
 
-**Steps:**
-
-1. Wait 24h after the most recent CNAME change. Let's Encrypt's per-
-   domain rate limit (5 failed validations / hour) often clears
-   overnight without intervention.
-2. If still stuck after 24h, file a Railway support ticket at
-   https://railway.com/help with:
-   - Project ID: `2479d82b-6d89-4f35-8ac7-5a6224dd6943`
-   - Service: `web-app`
-   - Domain: `workspace.clearledgr.com`
-   - Notes: "DNS PROPAGATED across 8.8.8.8 / 1.1.1.1 / authoritative
-     dns1.registrar-servers.com. Cert stuck in VALIDATING_OWNERSHIP
-     for 24h+. Please force re-validation."
-3. While waiting, the Railway-issued
-   `web-app-production-a046.up.railway.app` continues to serve the
-   SPA cleanly.
+If the cert ever needs to be re-issued (renewal, rotation, etc.), the
+two records that need to stay in DNS are:
+- `CNAME workspace -> k3zeg7n7.up.railway.app`
+- `TXT _railway-verify.workspace -> railway-verify=<token from Railway UI>`
 
 ---
 
