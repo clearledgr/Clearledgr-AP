@@ -3,6 +3,7 @@ import { SidebarNav } from './SidebarNav.js';
 import { Topbar } from './Topbar.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { AppFooter } from './AppFooter.js';
+import { CommandK } from './CommandK.js';
 
 export function AppShell({ children }) {
   return html`
@@ -17,6 +18,7 @@ export function AppShell({ children }) {
         </main>
         <${AppFooter} />
       </div>
+      <${CommandK} />
     </div>
   `;
 }

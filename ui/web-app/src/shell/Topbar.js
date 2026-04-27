@@ -3,6 +3,7 @@ import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { useSession, logout } from '../auth/useSession.js';
 import { useBootstrap } from './BootstrapContext.js';
+import { EntitySwitcher } from './EntitySwitcher.js';
 
 /**
  * Topbar — org context (left) + user menu (right).
@@ -66,20 +67,38 @@ export function Topbar() {
 
   return html`
     <header class="cl-topbar">
-      <div
-        class="cl-topbar-org"
-        title="Active workspace — multi-org switcher coming soon"
-        aria-label=${`Active workspace: ${orgName}`}>
-        <div class="cl-topbar-org-stack">
-          <span class="cl-topbar-org-label">Workspace</span>
-          <span class="cl-topbar-org-name">${orgName}</span>
+      <div class="cl-topbar-left">
+        <div
+          class="cl-topbar-org"
+          title="Active workspace — multi-org switcher coming soon"
+          aria-label=${`Active workspace: ${orgName}`}>
+          <div class="cl-topbar-org-stack">
+            <span class="cl-topbar-org-label">Workspace</span>
+            <span class="cl-topbar-org-name">${orgName}</span>
+          </div>
+          ${roleLabel
+            ? html`<span class=${`cl-topbar-role cl-topbar-role-${rawRole}`}>${roleLabel}</span>`
+            : null}
+          <span class="cl-topbar-org-chevron" aria-hidden="true">▾</span>
         </div>
-        ${roleLabel
-          ? html`<span class=${`cl-topbar-role cl-topbar-role-${rawRole}`}>${roleLabel}</span>`
-          : null}
-        <span class="cl-topbar-org-chevron" aria-hidden="true">▾</span>
+        <${EntitySwitcher} />
       </div>
 
+      <button
+        class="cl-topbar-cmdk-hint"
+        title="Open command palette"
+        onClick=${() => {
+          const isMac = typeof navigator !== 'undefined' && navigator.platform?.toLowerCase().includes('mac');
+          const event = new KeyboardEvent('keydown', {
+            key: 'k', code: 'KeyK', bubbles: true,
+            metaKey: isMac, ctrlKey: !isMac,
+          });
+          window.dispatchEvent(event);
+        }}>
+        <span class="cl-topbar-cmdk-icon">⌘</span>
+        <span>Search…</span>
+        <span class="cl-topbar-cmdk-kbd">K</span>
+      </button>
       <div class="cl-topbar-actions" ref=${menuRef}>
         <button
           class="cl-topbar-user"

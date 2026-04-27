@@ -172,6 +172,45 @@
   font-weight: 500;
 }
 
+.cl-topbar-cmdk-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  margin-right: 12px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.cl-topbar-cmdk-hint:hover {
+  border-color: var(--cl-border-strong);
+  color: var(--cl-ink-secondary);
+}
+
+.cl-topbar-cmdk-icon {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+}
+
+.cl-topbar-cmdk-kbd {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--cl-border);
+  border-radius: 3px;
+  font-family: var(--cl-font-mono);
+  font-size: 10px;
+  color: var(--cl-ink-secondary);
+  background: var(--cl-surface);
+  line-height: 14px;
+}
+
 .cl-topbar-actions {
   position: relative;
 }

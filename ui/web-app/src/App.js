@@ -7,6 +7,7 @@ import { AuthGate } from './auth/AuthGate.js';
 import { LoginPage } from './auth/LoginPage.js';
 import { InviteAcceptPage } from './auth/InviteAcceptPage.js';
 import { OnboardingGate } from './shell/OnboardingGate.js';
+import { EntityProvider } from './shell/EntityContext.js';
 import { OnboardingPage } from './routes/pages/OnboardingPage.js';
 import { HomePage } from './routes/pages/HomePage.js';
 import { StatusPage } from './routes/pages/StatusPage.js';
@@ -37,6 +38,7 @@ export function App() {
         <${Route}>
           <${AuthGate}>
             <${BootstrapProvider}>
+              <${EntityProvider}>
               <${ToastProvider}>
                 <${OnboardingGate}>
                 <${AppShell}>
@@ -68,6 +70,7 @@ export function App() {
                   <//>
                 <//>
                 <//>
+              <//>
               <//>
             <//>
           <//>
