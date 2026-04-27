@@ -176,24 +176,34 @@ DNS propagated.
 **Why:** Every enterprise security questionnaire asks for SOC2
 attestation or, at minimum, evidence of controls in lieu of attestation.
 
-**Minimum viable package:**
+**What's shipped:** the full security packet lives in
+[`docs/security/`](security/) and is sales-ready today:
 
-- **Encryption in transit:** TLS 1.3 enforced via HSTS (already
-  shipped — see `ui/web-app/src/server.js` headers middleware)
-- **Encryption at rest:** Postgres-on-Railway uses AES-256 by default
-- **Access controls:** Owner / Admin / AP-Manager / AP-Clerk /
-  Approver / Viewer roles enforced via `clearledgr/core/auth.py`
-- **Audit logging:** All state transitions persisted in `audit_events`
-  with a DB-level append-only trigger
-- **Incident response:** Documented at
-  `docs/INCIDENT_RESPONSE.md` (TODO — stub today)
-- **Backup + recovery:** Postgres-on-Railway 30-day backup retention
-- **Vulnerability scanning:** Dependabot enabled in repo
-- **Code review:** All commits reviewed via PR (when opened by humans)
+- [`README.md`](security/README.md) — entry point + how to use it
+- [`CONTROLS.md`](security/CONTROLS.md) — every TSC control with
+  file:line citations into the source
+- [`SUB_PROCESSORS.md`](security/SUB_PROCESSORS.md) — Railway,
+  Anthropic, Google, Microsoft, Slack, Sentry, Stripe (when active)
+- [`INCIDENT_RESPONSE.md`](security/INCIDENT_RESPONSE.md) — full IR
+  plan with severity tiers, SLAs, and 72-hour breach notification
+- [`VULNERABILITY_DISCLOSURE.md`](security/VULNERABILITY_DISCLOSURE.md)
+  — coordinated-disclosure policy + safe-harbor
+- [`DPA.md`](security/DPA.md) — GDPR-aligned DPA summary
+- [`SECURITY_QUESTIONNAIRE.md`](security/SECURITY_QUESTIONNAIRE.md) —
+  pre-fills for SIG/CAIQ recurring questions
 
-**Path to attestation:** engage a SOC2 auditor (Vanta, Drata, Secureframe
-all start at ~$10K). 6-month observation window for Type 2; Type 1 is
-a point-in-time snapshot achievable in ~6 weeks.
+**Send-to-prospect workflow:**
+
+```
+zip -r clearledgr-security-packet.zip docs/security/
+# attach to email, or drop in shared deal room
+```
+
+**Path to attestation:** engage a SOC2 auditor (Vanta, Drata,
+Secureframe all start at ~$10K). 6-month observation window for Type 2;
+Type 1 is a point-in-time snapshot achievable in ~6 weeks. The control
+implementations cited in `CONTROLS.md` cover every CC area an auditor
+will examine for Type 1.
 
 ---
 
