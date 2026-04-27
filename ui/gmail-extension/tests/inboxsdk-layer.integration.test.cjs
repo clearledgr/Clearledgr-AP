@@ -14,13 +14,14 @@ function read(filePath) {
   return fs.readFileSync(filePath, 'utf8');
 }
 
-test('gmail entrypoint mounts a single AP sidebar and keeps page navigation in Gmail routes', () => {
+test('gmail entrypoint stays branded and never auto-triggers OAuth', () => {
+  // Companion-only Gmail extension. The full-page Gmail routes were ripped
+  // in workstream B.2 — page work lives in the workspace SPA. The sidebar
+  // panel title + the no-auto-auth invariant are the surviving contract.
   const source = read(INBOXSDK_SOURCE);
 
   assert.match(source, /title:\s*'Clearledgr AP'/);
   assert.doesNotMatch(source, /Clearledgr Ops/);
-  assert.match(source, /registerAppMenuAndRoutes\(\)/);
-  assert.match(source, /Router\.handleCustomRoute/);
   assert.doesNotMatch(source, /triggerAutoAuth\(/);
 });
 
