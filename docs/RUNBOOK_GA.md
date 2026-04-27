@@ -256,21 +256,31 @@ ONLY that org. Never run this against a tenant ID with real data.
 the workspace login. Pricing, ICP messaging, "Request a demo" all
 live here.
 
-**Stack recommendation:** Astro or Next.js static site, deploy to
-Vercel or Railway. Separate from the workspace SPA; only shares the
-domain.
+**What's shipped:** the static site lives at [`landing-page/`](../landing-page/)
+with five pages — `index.html` (hero/features), `pricing.html` (three
+tiers + FAQ), `security.html` (controls overview + packet link),
+`about.html` (mission + team), `contact.html` (Netlify-Forms-wired
+demo request). Privacy + Terms point at the workspace SPA.
 
-**Pages required:**
-- `/` — value prop + "Request a demo" CTA
-- `/pricing` — three tiers (Starter / Growth / Enterprise)
-- `/security` — SOC2 status, sub-processors, DPA download
-- `/about` — team, mission, investors (if disclosed)
-- `/customers` — Cowrywise + Booking.com case studies (when ready)
-- `/blog` — content marketing
-- `/contact` — sales contact
+**Steps to deploy:**
 
-**SEO:** title tags, OG images, sitemap.xml. Robots.txt allowing
-indexing.
+1. **Cloudflare Pages** (recommended — free, fastest CDN):
+   - Connect the GitHub repo
+   - Build settings: no build command; output dir = `landing-page`
+   - Add custom domain `clearledgr.com` + `www.clearledgr.com`
+2. **Or Netlify**:
+   - Drag-and-drop the `landing-page/` folder, OR connect the repo
+     with the same publish dir
+   - Netlify Forms picks up the `data-netlify="true"` attribute on
+     contact.html automatically — no extra config
+3. DNS at the registrar: apex A/ALIAS to the provider's IP, `www`
+   CNAME to the provider's hostname, redirect `www` → apex.
+
+**SEO follow-ups (optional polish):**
+- Add `sitemap.xml` and `robots.txt` allowing indexing
+- Per-page OG images (today they all share the homepage hero)
+- `/blog` — defer to Substack or Beehiiv until there's content cadence
+- `/customers` case studies — defer until first reference customers
 
 ---
 
