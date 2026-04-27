@@ -19,11 +19,16 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 
-# Copy sources + config.
+# Copy sources + config. The `public/` directory holds static assets
+# Vite copies verbatim to dist/ root at build time (favicon.png,
+# apple-touch-icon.png, robots.txt, etc). Without this COPY the build
+# silently produces a dist/ with no favicon and the deployed site
+# 404s on /favicon.png + /favicon.ico.
 COPY index.html ./
 COPY vite.config.js ./
 COPY server.js ./
 COPY src ./src
+COPY public ./public
 
 # Produce dist/.
 RUN npm run build

@@ -138,6 +138,16 @@ app.use((req, res, next) => {
 // at startup above so we don't need a deeper probe here.
 app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'web-app' }));
 
+// /favicon.ico is auto-requested by every browser regardless of
+// <link rel="icon"> tags. Map it to the PNG mark we ship so the
+// console doesn't flag a 404 on every page load.
+app.get('/favicon.ico', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile('favicon.png', { root: STATIC_DIR }, (err) => {
+    if (err) res.status(404).end();
+  });
+});
+
 // Paths handled by the api service. Mounting the proxy via a single
 // pathFilter at root preserves the full URL — `app.use('/auth', ...)`
 // would strip the `/auth` prefix and forward `/me` to the api as
