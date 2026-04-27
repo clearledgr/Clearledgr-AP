@@ -546,36 +546,19 @@ class _ClearledgrDBBase:
         with self.connect() as conn:
             cur = conn.cursor()
 
-            # Fast path: if schema_versions exists and has rows, another
-            # worker already finished init for this PG instance. Skip.
-            try:
-                cur.execute("SELECT 1 FROM schema_versions LIMIT 1")
-                if cur.fetchone() is not None:
-                    self._initialized = True
-                    conn.commit()
-                    return
-            except Exception:
-                # Table doesn't exist yet — first deploy, or first worker
-                # to arrive. Roll back the failed query and proceed.
-                conn.rollback()
-                cur = conn.cursor()
-
-            # Try (non-blocking) to acquire the schema-init lock. Only
-            # the holder runs DDL. Followers wait for the holder to
-            # commit, then return without re-running DDL. Auto-released
-            # on COMMIT/ROLLBACK/connection drop, so worker death cannot
-            # leak it. The lock key is an arbitrary fixed bigint scoped
-            # to schema-init only.
-            cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (7261432901567832145,))
-            got_lock = cur.fetchone()[0]
-            if not got_lock:
-                # Block until the holder releases (commits). The
-                # blocking acquisition is bounded by however long the
-                # holder's init takes — typically 5-30s.
-                cur.execute("SELECT pg_advisory_xact_lock(%s)", (7261432901567832145,))
-                self._initialized = True
-                conn.commit()
-                return
+            # Serialize schema init across gunicorn workers. The lock is
+            # auto-released on COMMIT/ROLLBACK/connection drop so worker
+            # death cannot leak it. Workers that arrive while the holder
+            # is mid-init wait briefly, then re-run the (idempotent IF
+            # NOT EXISTS) DDL themselves — re-running is cheap (~1s of
+            # catalog reads) and is essential for incremental schema
+            # changes to land on every worker after a deploy.
+            #
+            # An earlier optimization fast-pathed via "SELECT 1 FROM
+            # schema_versions LIMIT 1" — that broke every future schema
+            # change because workers skipped DDL once any prior init had
+            # left a row in schema_versions. Removed.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (7261432901567832145,))
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_tokens (
