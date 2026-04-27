@@ -115,13 +115,12 @@ export function LoginPage() {
         </form>
 
         <p class="cl-auth-fineprint">
-          Don't have an account yet? Sales onboards new orgs — reach
-          <a href="mailto:hello@clearledgr.com">hello@clearledgr.com</a>.
+          Don't have an account yet? <a href="/request-demo">Request a demo</a>.
           If your team admin sent you an invite link, open it directly.
         </p>
         <p class="cl-auth-fineprint">
-          By continuing you agree to our <a href="https://clearledgr.com/terms">Terms</a>
-          and <a href="https://clearledgr.com/privacy">Privacy Policy</a>.
+          By continuing you agree to our <a href="/terms">Terms</a>
+          and <a href="/privacy">Privacy Policy</a>.
         </p>
       </div>
     </main>

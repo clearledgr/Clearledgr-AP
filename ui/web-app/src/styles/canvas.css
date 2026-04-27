@@ -1,0 +1,100 @@
+/* Wide-canvas overrides for lifted Gmail-extension pages.
+ *
+ * The page components were originally designed for a 344px-wide
+ * sidebar inside Gmail's left rail and inherit those compact widths
+ * + padding from styles.js. On a desktop SPA canvas (1200px+) they
+ * looked cramped and floated awkwardly. This sheet overrides the
+ * inherited extension styles so each page expands to fill the
+ * content area while keeping internal density readable.
+ *
+ * Loaded after every page CSS so its rules win specificity ties.
+ * Scoped via .cl-app-content so we don't bleed into the auth or
+ * onboarding shells.
+ */
+
+.cl-app-content > * {
+  max-width: 1280px;
+}
+
+.cl-app-content {
+  /* Tighter side gutters than the original 40px on phones */
+  padding: 24px clamp(16px, 4vw, 40px) 56px;
+}
+
+/* Lifted-page common containers — match the workspace shell width
+ * rather than collapsing to the extension's 344px sidebar minimum.
+ * Each rule is defensive: if the lifted page didn't use that class,
+ * the rule is harmless. */
+.cl-app-content .pg,
+.cl-app-content .pg-shell,
+.cl-app-content .page,
+.cl-app-content .pipeline,
+.cl-app-content .pipeline-page,
+.cl-app-content .review,
+.cl-app-content .review-page,
+.cl-app-content .vendors,
+.cl-app-content .vendors-page,
+.cl-app-content .exceptions,
+.cl-app-content .activity,
+.cl-app-content .reconciliation,
+.cl-app-content .connections,
+.cl-app-content .settings,
+.cl-app-content .templates,
+.cl-app-content .health {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+/* Tables in lifted pages get to breathe */
+.cl-app-content table {
+  width: 100%;
+}
+
+.cl-app-content thead th {
+  position: sticky;
+  top: 0;
+  background: var(--cl-surface);
+  z-index: 1;
+}
+
+/* Kanban / column lists from lifted PipelinePage / ReviewPage */
+.cl-app-content .kanban,
+.cl-app-content .kanban-board,
+.cl-app-content .columns,
+.cl-app-content .column-list,
+.cl-app-content [class*="kanban"],
+.cl-app-content [class*="column"] {
+  width: 100%;
+}
+
+/* Lifted forms got 100%-width inputs that were sized for narrow
+ * sidebar; cap them at a readable line length. */
+.cl-app-content form input[type="text"],
+.cl-app-content form input[type="email"],
+.cl-app-content form input[type="number"],
+.cl-app-content form select,
+.cl-app-content form textarea {
+  max-width: 480px;
+}
+
+/* Card grids common in lifted pages — auto-fit so the canvas is
+ * actually used. */
+.cl-app-content .grid,
+.cl-app-content .card-grid,
+.cl-app-content [class*="card-grid"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+/* Fix narrow sidebar-style buttons that were min-width: 100% */
+.cl-app-content button[class*="btn-block"],
+.cl-app-content .btn-block {
+  width: auto;
+}
+
+/* Lifted CSS sometimes set body / html overrides — clamp those */
+.cl-app-content {
+  overflow-x: auto; /* if a stray inline style overflows, scroll it */
+}

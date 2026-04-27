@@ -8,6 +8,8 @@ import { LoginPage } from './auth/LoginPage.js';
 import { InviteAcceptPage } from './auth/InviteAcceptPage.js';
 import { OnboardingGate } from './shell/OnboardingGate.js';
 import { OnboardingPage } from './routes/pages/OnboardingPage.js';
+import { HomePage } from './routes/pages/HomePage.js';
+import { PrivacyPage, TermsPage, RequestDemoPage } from './auth/LegalPages.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
 import { PipelineRoute } from './routes/pages/PipelineRoute.js';
@@ -28,6 +30,9 @@ export function App() {
       <${Switch}>
         <${Route} path="/login"><${LoginPage} /><//>
         <${Route} path="/signup/accept"><${InviteAcceptPage} /><//>
+        <${Route} path="/privacy"><${PrivacyPage} /><//>
+        <${Route} path="/terms"><${TermsPage} /><//>
+        <${Route} path="/request-demo"><${RequestDemoPage} /><//>
         <${Route}>
           <${AuthGate}>
             <${BootstrapProvider}>
@@ -36,7 +41,8 @@ export function App() {
                 <${AppShell}>
                   <${Switch}>
                     <${Route} path="/onboarding"><${OnboardingPage} /><//>
-                    <${Route} path="/"><${PlanRoute} /><//>
+                    <${Route} path="/"><${HomePage} /><//>
+                    <${Route} path="/plan"><${PlanRoute} /><//>
                     <${Route} path="/pipeline"><${PipelineRoute} /><//>
                     <${Route} path="/review"><${ReviewRoute} /><//>
                     <${Route} path="/exceptions"><${ExceptionsRoute} /><//>
