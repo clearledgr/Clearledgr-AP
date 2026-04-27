@@ -546,6 +546,16 @@ class _ClearledgrDBBase:
         with self.connect() as conn:
             cur = conn.cursor()
 
+            # Serialize schema init across gunicorn workers. Without this
+            # all N workers hit ~50 CREATE TABLE / TRIGGER / INDEX
+            # statements in parallel, deadlocking on Postgres catalog
+            # rows. pg_advisory_xact_lock auto-releases on COMMIT,
+            # ROLLBACK, or connection drop, so a worker dying mid-init
+            # cannot leak the lock — the next worker just waits, gets it,
+            # and re-runs the (idempotent IF NOT EXISTS) DDL. Lock key is
+            # an arbitrary fixed bigint scoped to schema-init only.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (7261432901567832145,))
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_tokens (
                     id TEXT PRIMARY KEY,
