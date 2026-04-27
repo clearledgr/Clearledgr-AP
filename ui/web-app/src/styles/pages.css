@@ -1,0 +1,451 @@
+/* Workspace SPA — page primitives.
+ *
+ * These classes are referenced by every page lifted from the Gmail
+ * extension (Settings / Pipeline / Vendors / Activity / Templates /
+ * Plan / Health / Reconciliation / Connections / Exceptions /
+ * Onboarding). The JSX came across but the CSS didn't; without these
+ * definitions the pages render against browser defaults.
+ *
+ * Brand-aligned: mint #00D67E + navy #0A1628 + Inter body. Calm,
+ * dense-but-readable, professional — closer to Linear / Mercury than
+ * any Bootstrap-flavoured admin template.
+ */
+
+/* ------------------------------------------------------------ */
+/* Panels — the basic card unit                                  */
+/* ------------------------------------------------------------ */
+
+.panel {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.panel-head.compact {
+  margin-bottom: 12px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.panel-head h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  letter-spacing: -0.01em;
+}
+
+.panel-head .muted,
+.panel-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+}
+
+/* ------------------------------------------------------------ */
+/* Secondary-page top banner (Settings, Vendors, etc.)           */
+/* ------------------------------------------------------------ */
+
+.secondary-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  margin-bottom: 20px;
+}
+
+.secondary-banner.warning {
+  border-color: rgba(180, 83, 9, 0.3);
+  background: linear-gradient(0deg, rgba(180, 83, 9, 0.04), rgba(180, 83, 9, 0.04)), var(--cl-surface);
+}
+
+.secondary-banner-copy h3 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--cl-ink-primary);
+}
+
+.secondary-banner-copy p {
+  margin: 0;
+  color: var(--cl-ink-secondary);
+  font-size: 14px;
+}
+
+.secondary-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.secondary-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ------------------------------------------------------------ */
+/* Summary cards (the row of mini info-tiles)                    */
+/* ------------------------------------------------------------ */
+
+.settings-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-summary-card {
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-summary-card strong {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+}
+
+.settings-summary-card span {
+  font-size: 14px;
+  color: var(--cl-ink-primary);
+  line-height: 1.4;
+}
+
+.settings-section-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 900px) {
+  .settings-section-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ------------------------------------------------------------ */
+/* Form rows                                                     */
+/* ------------------------------------------------------------ */
+
+.secondary-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 700px) {
+  .secondary-form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.secondary-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.secondary-form-grid label,
+.secondary-form-stack label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--cl-ink-secondary);
+  font-weight: 500;
+}
+
+.secondary-form-grid input,
+.secondary-form-grid select,
+.secondary-form-grid textarea,
+.secondary-form-stack input,
+.secondary-form-stack select,
+.secondary-form-stack textarea {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-surface);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.secondary-form-grid textarea,
+.secondary-form-stack textarea {
+  height: auto;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 96px;
+}
+
+.secondary-form-grid input:focus,
+.secondary-form-grid select:focus,
+.secondary-form-grid textarea:focus,
+.secondary-form-stack input:focus,
+.secondary-form-stack select:focus,
+.secondary-form-stack textarea:focus {
+  outline: none;
+  border-color: var(--cl-mint-strong);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+}
+
+.secondary-inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ------------------------------------------------------------ */
+/* Rows (lists of items, e.g. team invites)                      */
+/* ------------------------------------------------------------ */
+
+.secondary-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  overflow: hidden;
+}
+
+.secondary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--cl-surface);
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.secondary-row:last-child {
+  border-bottom: 0;
+}
+
+.secondary-row-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.secondary-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--cl-ink-secondary);
+  font-size: 13px;
+  background: var(--cl-bg);
+  border: 1px dashed var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+}
+
+.secondary-note {
+  font-size: 12px;
+  color: var(--cl-ink-secondary);
+  padding: 8px 0;
+}
+
+/* ------------------------------------------------------------ */
+/* Buttons                                                       */
+/* ------------------------------------------------------------ */
+
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.segmented-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--cl-radius-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--cl-mint);
+  color: var(--cl-navy);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--cl-mint-strong);
+}
+
+.btn-secondary {
+  background: var(--cl-surface);
+  color: var(--cl-ink-primary);
+  border-color: var(--cl-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--cl-border-strong);
+  background: var(--cl-bg);
+}
+
+.btn-danger {
+  background: var(--cl-surface);
+  color: var(--cl-danger);
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: var(--cl-danger);
+}
+
+.segmented-button {
+  background: var(--cl-bg);
+  color: var(--cl-ink-secondary);
+  border-color: var(--cl-border);
+}
+
+.segmented-button:hover:not(:disabled) {
+  background: var(--cl-surface);
+  color: var(--cl-ink-primary);
+  border-color: var(--cl-border-strong);
+}
+
+.segmented-button.is-active {
+  background: var(--cl-navy);
+  color: #fff;
+  border-color: var(--cl-navy);
+}
+
+.btn-sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-danger:disabled,
+.segmented-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------ */
+/* Status pills + badges                                         */
+/* ------------------------------------------------------------ */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: capitalize;
+  background: var(--cl-bg);
+  color: var(--cl-ink-secondary);
+  border: 1px solid var(--cl-border);
+  white-space: nowrap;
+}
+
+.status-badge.connected {
+  background: var(--cl-mint-soft);
+  color: var(--cl-mint-strong);
+  border-color: rgba(0, 214, 126, 0.3);
+}
+
+.status-badge.warning {
+  background: rgba(180, 83, 9, 0.08);
+  color: var(--cl-warning);
+  border-color: rgba(180, 83, 9, 0.3);
+}
+
+.status-badge.danger {
+  background: rgba(220, 38, 38, 0.06);
+  color: var(--cl-danger);
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+/* Status chip helper for "Not connected" → "Connect" CTA pattern.
+ * Use .empty-cta inside .settings-summary-card to render the card as
+ * an action affordance instead of a label-only state. */
+.empty-cta {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--cl-mint-strong);
+  cursor: pointer;
+  font-weight: 500;
+  text-align: left;
+}
+
+.empty-cta:hover {
+  color: var(--cl-mint);
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------ */
+/* Utility                                                       */
+/* ------------------------------------------------------------ */
+
+.muted {
+  color: var(--cl-ink-muted);
+}
+
+/* Mobile: secondary banner stacks; the action row drops below the
+ * heading instead of competing for horizontal space. */
+@media (max-width: 760px) {
+  .secondary-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .secondary-banner-actions {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .panel {
+    padding: 18px;
+  }
+}

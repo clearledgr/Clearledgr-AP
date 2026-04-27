@@ -107,12 +107,18 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   const erp = integrations.find((i) => i.type === 'erp') || {};
   const erpType = (erp.erp_type || '').charAt(0).toUpperCase() + (erp.erp_type || '').slice(1);
 
-  const scrollToSection = (ref) => {
+  const [activeSection, setActiveSection] = useState('erp');
+  const scrollToSection = (ref, key) => {
+    if (key) setActiveSection(key);
     try {
       ref?.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     } catch {
       ref?.current?.scrollIntoView?.();
     }
+  };
+
+  const goToConnections = () => {
+    if (typeof navigate === 'function') navigate('connections');
   };
 
   const [createInvite, creatingInvite] = useAction(async () => {
@@ -345,14 +351,14 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         </p>
       </div>
       <div class="secondary-banner-actions" style="flex-wrap:wrap">
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(erpRef)}>ERP Connection</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(glMappingRef)}>GL Mapping</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(policyRef)}>AP Policy</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(approvalRef)}>Approval Routing</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(vendorPolicyRef)}>Vendor Onboarding</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(autonomyRef)}>Autonomy</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(teamRef)}>Team</button>
-        <button class="segmented-button btn-sm" onClick=${() => scrollToSection(billingRef)}>Billing</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'erp' ? ' is-active' : ''}`} onClick=${() => scrollToSection(erpRef, 'erp')}>ERP Connection</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'gl' ? ' is-active' : ''}`} onClick=${() => scrollToSection(glMappingRef, 'gl')}>GL Mapping</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'policy' ? ' is-active' : ''}`} onClick=${() => scrollToSection(policyRef, 'policy')}>AP Policy</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'approval' ? ' is-active' : ''}`} onClick=${() => scrollToSection(approvalRef, 'approval')}>Approval Routing</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'vendor' ? ' is-active' : ''}`} onClick=${() => scrollToSection(vendorPolicyRef, 'vendor')}>Vendor Onboarding</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'autonomy' ? ' is-active' : ''}`} onClick=${() => scrollToSection(autonomyRef, 'autonomy')}>Autonomy</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'team' ? ' is-active' : ''}`} onClick=${() => scrollToSection(teamRef, 'team')}>Team</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'billing' ? ' is-active' : ''}`} onClick=${() => scrollToSection(billingRef, 'billing')}>Billing</button>
       </div>
     </div>
 
@@ -384,38 +390,38 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             <p class="muted" style="margin:0">Connect your accounting system. Clearledgr posts approved invoices here.</p>
           </div>
         </div>
-        <div class="settings-section-grid">
-          <div>
-            <div class="settings-summary-grid">
-              <div class="settings-summary-card">
-                <strong>ERP</strong>
-                <span>${erp.connected ? erpType || 'Connected' : 'Not connected'}</span>
-              </div>
-              <div class="settings-summary-card">
-                <strong>Gmail</strong>
-                <span>${gmail.connected ? 'Connected' : 'Not connected'}</span>
-              </div>
-              <div class="settings-summary-card">
-                <strong>Approval surface</strong>
-                <span>${slack.connected ? 'Slack' : teams.connected ? 'Teams' : 'Not connected'}</span>
-              </div>
-            </div>
+        <div class="settings-summary-grid">
+          <div class="settings-summary-card">
+            <strong>ERP</strong>
+            ${erp.connected
+              ? html`<span><span class="status-badge connected">${erpType || 'Connected'}</span></span>`
+              : html`<button class="empty-cta" onClick=${goToConnections}>Connect an ERP →</button>`}
           </div>
-          <div style="margin-top:12px;">
-            <div class="settings-summary-grid">
-              <div class="settings-summary-card">
-                <strong>Data scope</strong>
-                <span>PO lines, GRN records, vendor master, chart of accounts</span>
-              </div>
-              <div class="settings-summary-card">
-                <strong>Write permissions</strong>
-                <span>${erp.connected ? 'Auto-post enabled' : 'Not configured'}</span>
-              </div>
-              <div class="settings-summary-card">
-                <strong>Last sync</strong>
-                <span>${erp.last_sync_at ? new Date(erp.last_sync_at).toLocaleString() : 'Never'}</span>
-              </div>
-            </div>
+          <div class="settings-summary-card">
+            <strong>Gmail</strong>
+            ${gmail.connected
+              ? html`<span><span class="status-badge connected">Connected</span></span>`
+              : html`<button class="empty-cta" onClick=${goToConnections}>Connect Gmail →</button>`}
+          </div>
+          <div class="settings-summary-card">
+            <strong>Approval surface</strong>
+            ${slack.connected
+              ? html`<span><span class="status-badge connected">Slack</span></span>`
+              : teams.connected
+                ? html`<span><span class="status-badge connected">Teams</span></span>`
+                : html`<button class="empty-cta" onClick=${goToConnections}>Choose Slack or Teams →</button>`}
+          </div>
+          <div class="settings-summary-card">
+            <strong>Write permissions</strong>
+            <span>${erp.connected ? 'Auto-post enabled' : 'Not configured'}</span>
+          </div>
+          <div class="settings-summary-card">
+            <strong>Data scope</strong>
+            <span>PO lines, GRN records, vendor master, chart of accounts</span>
+          </div>
+          <div class="settings-summary-card">
+            <strong>Last sync</strong>
+            <span>${erp.last_sync_at ? new Date(erp.last_sync_at).toLocaleString() : 'Never'}</span>
           </div>
         </div>
       </div>
