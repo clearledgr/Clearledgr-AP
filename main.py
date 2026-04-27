@@ -59,18 +59,30 @@ async def app_lifespan(app: FastAPI):
     """Canonical app lifecycle — fires slow startup in background so server binds fast."""
     _apply_runtime_surface_profile()
 
-    # Schema init is intentionally LAZY (runs on first DB-touching
-    # request via ClearledgrDB.initialize). Eager init at lifespan was
-    # tried (it makes the first request fast) but caused two problems:
-    # (1) under N gunicorn workers booting at once it serialized via
-    # an advisory lock, blocking the async event loop and triggering
-    # gunicorn SIGABRTs on workers 2..N; (2) Railway's 30s healthcheck
-    # window expired before the first worker finished init, leading to
-    # "1/1 replicas never became healthy". The lazy path is protected
-    # by pg_try_advisory_xact_lock inside initialize() — only one
-    # worker ever runs DDL — and gunicorn's 90s timeout is the budget
-    # for first-request slowness. /health bypasses the DB so the
-    # healthcheck answers immediately even before init runs.
+    # Eager background init: kick off ClearledgrDB.initialize() in a
+    # thread without blocking lifespan. The port binds immediately
+    # (so /health and Railway's 30s healthcheck window are never
+    # impacted) but each worker warms its schema state in parallel.
+    # By the time the first user-facing request arrives, init has
+    # finished and the request runs against a hot worker — no more
+    # "first request after deploy takes 30s" cold-start cliff that
+    # makes sign-in feel like a 2-minute hang.
+    #
+    # Race-safety: if a request arrives while the background task is
+    # still running, the request handler's lazy-init call goes through
+    # the same pg_advisory_xact_lock — at most one DDL pass runs, the
+    # rest wait on the lock and exit cleanly with _initialized=True.
+    async def _warm_db_in_background():
+        import asyncio
+        try:
+            from clearledgr.core.database import get_db
+            await asyncio.to_thread(get_db().initialize)
+            logger.info("Database schema initialized (background)")
+        except Exception as exc:
+            logger.error("Background db init failed: %s", exc)
+
+    import asyncio
+    asyncio.create_task(_warm_db_in_background())
 
     if _should_skip_deferred_startup():
         yield
