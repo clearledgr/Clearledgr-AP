@@ -20,6 +20,9 @@ const ONBOARDING_PASSTHROUGH = new Set([
   '/connections',
   '/settings',
   '/signup/accept',
+  '/status',
+  '/privacy',
+  '/terms',
 ]);
 
 function passthrough(pathname) {

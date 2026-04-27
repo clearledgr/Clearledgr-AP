@@ -9,6 +9,7 @@ import { InviteAcceptPage } from './auth/InviteAcceptPage.js';
 import { OnboardingGate } from './shell/OnboardingGate.js';
 import { OnboardingPage } from './routes/pages/OnboardingPage.js';
 import { HomePage } from './routes/pages/HomePage.js';
+import { StatusPage } from './routes/pages/StatusPage.js';
 import { PrivacyPage, TermsPage, RequestDemoPage } from './auth/LegalPages.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
@@ -59,6 +60,7 @@ export function App() {
                     <//>
                     <${Route} path="/templates"><${TemplatesRoute} /><//>
                     <${Route} path="/health"><${HealthRoute} /><//>
+                    <${Route} path="/status"><${StatusPage} /><//>
                     <${Route} path="/items/:id">
                       ${(params) => html`<${PlaceholderPage} title=${`Item ${params.id}`} lift="record-route" />`}
                     <//>

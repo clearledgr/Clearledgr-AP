@@ -1,0 +1,254 @@
+/* App footer + status page */
+
+.cl-app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px clamp(16px, 4vw, 40px);
+  border-top: 1px solid var(--cl-border);
+  background: var(--cl-surface);
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  flex-wrap: wrap;
+}
+
+.cl-footer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.12s;
+}
+
+.cl-footer-status:hover {
+  background: var(--cl-bg);
+}
+
+.cl-footer-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cl-ink-muted);
+}
+
+.cl-footer-status-ok .cl-footer-status-dot {
+  background: var(--cl-mint-strong);
+  box-shadow: 0 0 0 3px rgba(0, 184, 107, 0.15);
+}
+
+.cl-footer-status-degraded .cl-footer-status-dot {
+  background: var(--cl-warning);
+  box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.15);
+}
+
+.cl-footer-status-down .cl-footer-status-dot {
+  background: var(--cl-danger);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
+}
+
+.cl-footer-status-checking .cl-footer-status-dot {
+  background: var(--cl-ink-muted);
+}
+
+.cl-footer-status-ok { color: var(--cl-mint-strong); }
+.cl-footer-status-degraded { color: var(--cl-warning); }
+.cl-footer-status-down { color: var(--cl-danger); }
+
+.cl-footer-status-label {
+  font-weight: 500;
+}
+
+.cl-footer-links {
+  display: flex;
+  gap: 16px;
+}
+
+.cl-footer-links a {
+  color: var(--cl-ink-secondary);
+  text-decoration: none;
+}
+
+.cl-footer-links a:hover {
+  color: var(--cl-ink-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cl-footer-meta {
+  font-size: 11px;
+  color: var(--cl-ink-muted);
+}
+
+/* Status page */
+
+.cl-status {
+  max-width: 800px;
+}
+
+.cl-status-header {
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.cl-status-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+  margin-bottom: 6px;
+}
+
+.cl-status-title {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 16px;
+}
+
+.cl-status-overall {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cl-status-overall-ok {
+  background: var(--cl-mint-soft);
+  color: var(--cl-mint-strong);
+}
+
+.cl-status-overall-warn {
+  background: rgba(180, 83, 9, 0.1);
+  color: var(--cl-warning);
+}
+
+.cl-status-overall-down {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--cl-danger);
+}
+
+.cl-status-meta {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+}
+
+.cl-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cl-status-components,
+.cl-status-runtime,
+.cl-status-incident {
+  margin-bottom: 28px;
+}
+
+.cl-status-components h2,
+.cl-status-runtime h2,
+.cl-status-incident h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+
+.cl-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  overflow: hidden;
+}
+
+.cl-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.cl-status-row:last-child {
+  border-bottom: 0;
+}
+
+.cl-status-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cl-status-row-label {
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+}
+
+.cl-status-row-state {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.cl-status-row-ok { color: var(--cl-mint-strong); }
+.cl-status-row-warn { color: var(--cl-warning); }
+.cl-status-row-down { color: var(--cl-danger); }
+.cl-status-row-ok .cl-status-row-state { color: var(--cl-mint-strong); }
+.cl-status-row-warn .cl-status-row-state { color: var(--cl-warning); }
+.cl-status-row-down .cl-status-row-state { color: var(--cl-danger); }
+
+.cl-status-dl {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 8px 16px;
+  padding: 16px 18px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  font-size: 13px;
+}
+
+.cl-status-dl dt {
+  color: var(--cl-ink-muted);
+  font-weight: 500;
+}
+
+.cl-status-dl dd {
+  margin: 0;
+  color: var(--cl-ink-primary);
+}
+
+.cl-status-empty {
+  padding: 16px 18px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  color: var(--cl-ink-secondary);
+  font-size: 13px;
+}
+
+/* AppShell adjustments so the footer doesn't compress content */
+.cl-app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.cl-app-content {
+  flex: 1 1 auto;
+}

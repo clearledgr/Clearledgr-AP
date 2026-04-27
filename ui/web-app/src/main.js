@@ -6,6 +6,7 @@ import './styles/onboarding.css';
 import './styles/home.css';
 import './styles/canvas.css';
 import './styles/legal.css';
+import './styles/footer.css';
 
 const rootEl = document.getElementById('app');
 if (!rootEl) {

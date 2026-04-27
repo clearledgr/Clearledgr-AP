@@ -2,6 +2,7 @@ import { html } from '../utils/htm.js';
 import { SidebarNav } from './SidebarNav.js';
 import { Topbar } from './Topbar.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
+import { AppFooter } from './AppFooter.js';
 
 export function AppShell({ children }) {
   return html`
@@ -14,6 +15,7 @@ export function AppShell({ children }) {
         <main class="cl-app-content">
           <${ErrorBoundary}>${children}<//>
         </main>
+        <${AppFooter} />
       </div>
     </div>
   `;
