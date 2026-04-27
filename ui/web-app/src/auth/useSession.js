@@ -8,7 +8,30 @@ function notify() {
   for (const fn of sessionListeners) fn(cachedSession);
 }
 
+// Routes that exist for unauthenticated users. Probing /auth/me on
+// these is wasted work and generates a misleading "401" line in the
+// browser console (Chrome logs every non-2xx fetch as a "Failed to
+// load resource" warning, which is unsuppressible from JS). Skip the
+// probe and short-circuit to "logged out" — anything that needs an
+// authenticated session calls refreshSession() explicitly after the
+// auth flow lands.
+const UNAUTHENTICATED_ROUTES = new Set([
+  '/login',
+  '/privacy',
+  '/terms',
+  '/request-demo',
+  '/status',
+]);
+
 async function loadSession() {
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname || '';
+    if (UNAUTHENTICATED_ROUTES.has(path)) {
+      cachedSession = null;
+      notify();
+      return cachedSession;
+    }
+  }
   try {
     const me = await api('/auth/me', { retry: false });
     cachedSession = me;
