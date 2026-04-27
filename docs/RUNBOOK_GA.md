@@ -209,7 +209,38 @@ point at the third-party service for incident notifications.
 
 ---
 
-## 8. Marketing site at clearledgr.com
+## 8. Demo tenant for sales
+
+**Why:** Outbound demos can't run against real customer data, and a
+brand-new tenant has nothing to show. The demo seed creates an
+"Acme Manufacturing" org with 3 entities, 5 users, 12 vendors, and
+~40 AP items spanning every state.
+
+**Steps:**
+
+1. From a machine with Railway access:
+   ```
+   railway run --service api python scripts/seed_demo_tenant.py
+   # or, to wipe and reseed:
+   railway run --service api python scripts/seed_demo_tenant.py --reset
+   ```
+2. The script prints the demo emails + password at the end. Default is
+   `Demo!2026` — override with `--password XYZ`.
+
+**Verify:**
+- Sign in at https://workspace.clearledgr.com/login as
+  `controller@acme-demo.clearledgr.dev` with the printed password.
+- The home dashboard should show non-zero KPI tiles, the pipeline page
+  should show items in every column, and the entity switcher should
+  list Acme HQ / Acme Europe / Acme APAC.
+
+**Important:** the seed only writes under `organization_id="acme-demo"`,
+so it cannot collide with a real tenant. The `--reset` flag truncates
+ONLY that org. Never run this against a tenant ID with real data.
+
+---
+
+## 9. Marketing site at clearledgr.com
 
 **Why:** Cold prospects from outbound need a destination that isn't
 the workspace login. Pricing, ICP messaging, "Request a demo" all
@@ -237,13 +268,14 @@ indexing.
 
 For fastest time-to-GA:
 
-1. **Microsoft OAuth env vars** (5 min after Azure registration done) — unblocks SAP-shop signin
-2. **Chrome Web Store submit** (30 min + 1–3 days for Google review) — unblocks extension install
-3. **Google OAuth verification** (5 min) — confirms Google signin works
-4. **workspace.clearledgr.com cert wait** (24h) — friendly URL
-5. **Teams adapter env vars + flag flip** (1h after Bot registration)
-6. **Marketing site build** (1–2 weeks part-time)
-7. **SOC2 evidence package** (6 weeks for Type 1; engage auditor)
+1. **Demo tenant seed** (5 min, no external accounts) — unblocks sales demos
+2. **Microsoft OAuth env vars** (5 min after Azure registration done) — unblocks SAP-shop signin
+3. **Chrome Web Store submit** (30 min + 1–3 days for Google review) — unblocks extension install
+4. **Google OAuth verification** (5 min) — confirms Google signin works
+5. **workspace.clearledgr.com cert wait** (24h) — friendly URL
+6. **Teams adapter env vars + flag flip** (1h after Bot registration)
+7. **Marketing site build** (1–2 weeks part-time)
+8. **SOC2 evidence package** (6 weeks for Type 1; engage auditor)
 
-Items 1–5 can ship in parallel since each touches a different external
-account.
+Items 2–6 can ship in parallel since each touches a different external
+account. Item 1 is local-only and can ship today.
