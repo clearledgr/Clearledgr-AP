@@ -4,6 +4,7 @@ import { html } from '../utils/htm.js';
 import { useSession, logout } from '../auth/useSession.js';
 import { useBootstrap } from './BootstrapContext.js';
 import { EntitySwitcher } from './EntitySwitcher.js';
+import { useMobileShell } from './MobileShellContext.js';
 
 /**
  * Topbar — org context (left) + user menu (right).
@@ -37,6 +38,7 @@ export function Topbar() {
   const [, navigate] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const { toggle: toggleSidebar } = useMobileShell();
 
   const email = bootstrap?.current_user?.email || session?.email || '';
   const name = bootstrap?.current_user?.name || session?.name || email;
@@ -67,6 +69,13 @@ export function Topbar() {
 
   return html`
     <header class="cl-topbar">
+      <button
+        class="cl-topbar-hamburger"
+        type="button"
+        aria-label="Open navigation"
+        onClick=${toggleSidebar}>
+        ☰
+      </button>
       <div class="cl-topbar-left">
         <div
           class="cl-topbar-org"

@@ -1,0 +1,242 @@
+/* Mobile responsive pass — collapses the desktop shell at <= 760px and
+   smooths smaller breakpoints at <= 480px. Strategy:
+
+   - Sidebar becomes an off-canvas drawer with a backdrop.
+   - Topbar gets a hamburger button (only visible on mobile).
+   - Topbar org-stack hides its label row, EntitySwitcher hides its
+     "Switch entity" affordance and shows just the active code.
+   - Cmd-K hint button collapses to a single magnifier icon.
+   - App-content padding shrinks 28/40 -> 16/16.
+   - Home grid + quick-actions stack into single column.
+   - Status page + legal pages already wrap because they use
+     max-width on prose; we just shrink their padding.
+   - Footer wraps to two rows. */
+
+/* Hide mobile-only elements on desktop. */
+.cl-mobile-only,
+.cl-topbar-hamburger,
+.cl-sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  /* Shell: sidebar becomes an overlay drawer. */
+  .cl-app {
+    grid-template-columns: 1fr;
+  }
+
+  .cl-app-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 260px;
+    max-width: 80vw;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease-out;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .cl-app-sidebar-open {
+    transform: translateX(0);
+  }
+
+  .cl-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 22, 40, 0.4);
+    z-index: 40;
+    animation: cl-fade-in 0.12s ease-out;
+  }
+
+  @keyframes cl-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Topbar: tighter horizontal padding, show the hamburger. */
+  .cl-topbar {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .cl-topbar-hamburger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--cl-border);
+    border-radius: var(--cl-radius-sm);
+    color: var(--cl-ink-primary);
+    font-size: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .cl-topbar-hamburger:hover {
+    background: var(--cl-bg);
+  }
+
+  /* Org context: hide the eyebrow + chevron, keep just the org name pill. */
+  .cl-topbar-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .cl-topbar-org-label,
+  .cl-topbar-org-chevron {
+    display: none;
+  }
+
+  .cl-topbar-org {
+    gap: 6px;
+    padding: 0;
+  }
+
+  .cl-topbar-org-name {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 30vw;
+  }
+
+  .cl-topbar-role {
+    display: none; /* role pill recovers below 360px never; kept on tablet */
+  }
+
+  /* Cmd-K hint: collapse to icon-only square. */
+  .cl-topbar-cmdk-hint {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    margin-right: 6px;
+    justify-content: center;
+  }
+
+  .cl-topbar-cmdk-hint > span:not(.cl-topbar-cmdk-icon) {
+    display: none;
+  }
+
+  /* User chip: hide the name, keep avatar circle. */
+  .cl-topbar-name {
+    display: none;
+  }
+
+  .cl-topbar-user {
+    padding: 4px;
+  }
+
+  /* Entity switcher: shrink to code-only. */
+  .cl-entity-switcher-trigger-label,
+  .cl-entity-switcher-trigger-chevron {
+    display: none;
+  }
+
+  /* Content area: tighter padding. */
+  .cl-app-content {
+    padding: 16px;
+  }
+
+  /* Home dashboard adjustments. */
+  .cl-home {
+    gap: 18px;
+  }
+
+  .cl-home-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .cl-home-actions {
+    flex-wrap: wrap;
+  }
+
+  .cl-home-title {
+    font-size: 22px;
+  }
+
+  .cl-home-tiles {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .cl-home-tile {
+    padding: 14px 14px 12px;
+  }
+
+  .cl-home-tile-value {
+    font-size: 22px;
+  }
+
+  .cl-home-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cl-home-quick-actions-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Auth shell: keep the card centered but pad less. */
+  .cl-auth-shell {
+    padding: 16px 12px;
+    align-items: flex-start;
+    padding-top: 48px;
+  }
+
+  .cl-auth-card {
+    padding: 28px 22px;
+  }
+
+  /* Footer: stack into two rows, tighten gaps. */
+  .cl-app-footer {
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    padding: 12px 16px;
+  }
+
+  /* Tables on lifted pages: allow horizontal scroll instead of clipping. */
+  .cl-app-content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* Legal/status: tighten padding. */
+  .cl-legal-page,
+  .cl-status-page {
+    padding: 16px 8px;
+  }
+}
+
+/* Phone-narrow breakpoint: even tighter, 1-col tiles. */
+@media (max-width: 480px) {
+  .cl-home-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  .cl-home-title {
+    font-size: 20px;
+  }
+
+  .cl-topbar {
+    height: 52px;
+  }
+
+  /* Toast rail: don't hug the right edge so close-button stays tappable. */
+  .cl-toast-rail {
+    bottom: 12px;
+    right: 8px;
+    left: 8px;
+  }
+
+  .cl-toast {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
