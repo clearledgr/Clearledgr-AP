@@ -277,6 +277,8 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/health",
     "/metrics",
     "/workspace",
+    # Inbound demo-request leads from the marketing site (clearledgr.com).
+    "/leads",
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
     "/erp/xero/callback",
@@ -772,6 +774,9 @@ from clearledgr.api.projections_ops import (  # noqa: E402
 app.include_router(projections_ops_router)
 app.include_router(projections_vendors_router)
 
+from clearledgr.api.leads import router as leads_router  # noqa: E402
+app.include_router(leads_router)
+
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """Inject a correlation ID on every request and echo it back in the response.
 
@@ -1144,6 +1149,9 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
 _default_cors_origins = [
     "https://mail.google.com",
     "https://gmail.google.com",
+    "https://clearledgr.com",
+    "https://www.clearledgr.com",
+    "https://workspace.clearledgr.com",
     "http://localhost:8010",
     "http://127.0.0.1:8010",
 ]

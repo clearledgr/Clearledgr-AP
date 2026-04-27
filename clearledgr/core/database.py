@@ -840,6 +840,26 @@ class _ClearledgrDBBase:
                 )
             """)
 
+            # Inbound demo-request leads from clearledgr.com (post-Netlify
+            # migration). Org-less by design — these are anonymous prospects
+            # who don't yet have a tenant.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS marketing_leads (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    name TEXT,
+                    company TEXT,
+                    role TEXT,
+                    volume TEXT,
+                    message TEXT,
+                    source TEXT,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_marketing_leads_created ON marketing_leads (created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_marketing_leads_email ON marketing_leads (email)")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id TEXT PRIMARY KEY,
