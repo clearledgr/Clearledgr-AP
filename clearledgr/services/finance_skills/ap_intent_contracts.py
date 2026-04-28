@@ -117,6 +117,106 @@ _AUDIT_CONTRACTS: Dict[str, Dict[str, Any]] = {
             "retry_recoverable_failure_failed",
         ],
     },
+    "snooze_invoice": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_snoozed",
+            "invoice_snooze_blocked",
+            "invoice_snooze_failed",
+        ],
+    },
+    "unsnooze_invoice": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_unsnoozed",
+            "invoice_unsnooze_blocked",
+            "invoice_unsnooze_failed",
+        ],
+    },
+    "reverse_invoice_post": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_reversed",
+            "invoice_reverse_blocked",
+            "invoice_reverse_failed",
+        ],
+    },
+    "manually_classify_invoice": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_manually_classified",
+            "invoice_manual_classify_blocked",
+            "invoice_manual_classify_failed",
+        ],
+    },
+    "resubmit_invoice": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_resubmitted",
+            "invoice_resubmit_blocked",
+            "invoice_resubmit_failed",
+        ],
+    },
+    "split_invoice": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_split",
+            "invoice_split_blocked",
+            "invoice_split_failed",
+        ],
+    },
+    "merge_invoices": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoices_merged",
+            "invoices_merge_blocked",
+            "invoices_merge_failed",
+        ],
+    },
+    "resolve_non_invoice_review": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "non_invoice_resolved",
+            "non_invoice_resolve_blocked",
+            "non_invoice_resolve_failed",
+        ],
+    },
+    "resolve_entity_route": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "entity_route_resolved",
+            "entity_route_resolve_blocked",
+            "entity_route_resolve_failed",
+        ],
+    },
+    "update_invoice_fields": {
+        "source": "finance_agent_runtime",
+        "idempotent": True,
+        "mutates_ap_state": True,
+        "events": [
+            "invoice_fields_updated",
+            "invoice_fields_update_blocked",
+            "invoice_fields_update_failed",
+        ],
+    },
 }
 
 _OPERATOR_COPY: Dict[str, Dict[str, str]] = {
@@ -185,6 +285,66 @@ _OPERATOR_COPY: Dict[str, Dict[str, str]] = {
         "why_now": "Recoverable retry prechecks were evaluated before resume execution.",
         "recommended_allowed": "Run recoverable retry.",
         "recommended_blocked": "Resolve the blocking recoverability condition first.",
+    },
+    "snooze_invoice": {
+        "what_happened": "Validated that this invoice can be snoozed from its current state.",
+        "why_now": "Snooze is only allowed from active states (received / validated / needs_info / needs_approval / failed_post).",
+        "recommended_allowed": "Snooze this invoice.",
+        "recommended_blocked": "Move the invoice out of its current state before snoozing.",
+    },
+    "unsnooze_invoice": {
+        "what_happened": "Validated that this invoice is currently snoozed and has a pre-snooze state to restore.",
+        "why_now": "Unsnooze is only valid for items currently in the snoozed state.",
+        "recommended_allowed": "Unsnooze this invoice and restore its prior state.",
+        "recommended_blocked": "Refresh the invoice — it is no longer in the snoozed state.",
+    },
+    "reverse_invoice_post": {
+        "what_happened": "Validated that this invoice has an active override window and can be reversed at the ERP.",
+        "why_now": "Reversal is only allowed inside the override window after a successful ERP post; a reason is mandatory.",
+        "recommended_allowed": "Reverse this ERP post via the override window.",
+        "recommended_blocked": "Provide a reason or refresh — the override window may have expired.",
+    },
+    "manually_classify_invoice": {
+        "what_happened": "Validated that this AP item can accept a manual classification override.",
+        "why_now": "Manual classification feeds the planning engine and updates downstream routing for the new document type.",
+        "recommended_allowed": "Apply the manual classification.",
+        "recommended_blocked": "Provide a valid classification token before re-routing the item.",
+    },
+    "resubmit_invoice": {
+        "what_happened": "Validated that this rejected invoice can be resubmitted as a new linked record.",
+        "why_now": "Resubmission requires the source to be in the rejected state and creates an attributable supersession chain.",
+        "recommended_allowed": "Create the resubmission and link it to the rejected source.",
+        "recommended_blocked": "Source must be in the rejected state with a valid initial state for the new item.",
+    },
+    "split_invoice": {
+        "what_happened": "Validated that this invoice can be split into separate AP items by line.",
+        "why_now": "Splits are only allowed before posting; line totals and remaining state must reconcile.",
+        "recommended_allowed": "Split this invoice into the requested groupings.",
+        "recommended_blocked": "Provide a valid split spec that reconciles to the source totals.",
+    },
+    "merge_invoices": {
+        "what_happened": "Validated that the source and target invoices are eligible for merging.",
+        "why_now": "Merges are only allowed across two compatible AP items in the same organization.",
+        "recommended_allowed": "Merge source into target and suppress the source from the worklist.",
+        "recommended_blocked": "Resolve the eligibility blocker (org mismatch, terminal state, posted source) before merging.",
+    },
+    "resolve_non_invoice_review": {
+        "what_happened": "Validated that this non-invoice document can be resolved with the requested outcome.",
+        "why_now": "Non-invoice resolution requires a recognised document type and an outcome compatible with that type.",
+        "recommended_allowed": "Apply the non-invoice resolution.",
+        "recommended_blocked": "Choose an outcome compatible with the document type and provide any required reference.",
+    },
+    "resolve_entity_route": {
+        "what_happened": "Validated entity-routing selection against this AP item's vendor + entity policy.",
+        "why_now": "Entity routing assigns the bill to the correct legal entity before approval and ERP posting.",
+        "recommended_allowed": "Resolve the entity route with the chosen selection.",
+        "recommended_blocked": "Choose a candidate that matches the vendor + entity policy.",
+    },
+    "update_invoice_fields": {
+        "what_happened": "Validated the proposed field changes against the AP-item column whitelist.",
+        "why_now": "Field updates are clamped to the canonical schema so the ERP post stays well-formed.",
+        "recommended_allowed": "Apply the field updates.",
+        "recommended_blocked": "Remove or rename fields that aren't in the AP-item column whitelist.",
     },
 }
 

@@ -33,6 +33,16 @@ class APFinanceSkill(FinanceSkill):
             "prepare_vendor_followups",
             "route_low_risk_for_approval",
             "retry_recoverable_failures",
+            # Phase 2 audit-P0 intents (workspace SPA actions). These
+            # were previously direct DB writes that bypassed the
+            # runtime; promoting them to first-class intents adds
+            # governance veto + agent memory + learning feedback on
+            # top of the existing state-machine + atomic-audit
+            # guarantees from update_ap_item.
+            "snooze_invoice",
+            "unsnooze_invoice",
+            "reverse_invoice_post",
+            "manually_classify_invoice",
         }
     )
     _MANIFEST = SkillCapabilityManifest(
@@ -119,6 +129,26 @@ class APFinanceSkill(FinanceSkill):
                 "intent": "retry_recoverable_failures",
                 "class": "mutating",
                 "description": "Retry recoverable AP posting failures via canonical resume path.",
+            },
+            {
+                "intent": "snooze_invoice",
+                "class": "mutating",
+                "description": "Snooze an AP item for a fixed duration; the reaper restores the prior state when the window expires.",
+            },
+            {
+                "intent": "unsnooze_invoice",
+                "class": "mutating",
+                "description": "Manually unsnooze an AP item before its timer expires and restore the prior state.",
+            },
+            {
+                "intent": "reverse_invoice_post",
+                "class": "mutating",
+                "description": "Reverse a posted bill via the override-window service before the window expires.",
+            },
+            {
+                "intent": "manually_classify_invoice",
+                "class": "mutating",
+                "description": "Manually re-classify an AP item's document type and re-route via the planning engine.",
             },
         ],
         policy_pack={

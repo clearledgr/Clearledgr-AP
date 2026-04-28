@@ -1932,69 +1932,75 @@ async def reverse_ap_item_post(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    """Reverse a posted bill via the override-window service.
+    """Reverse a posted bill via the ``reverse_invoice_post`` intent.
 
-    Phase 1.4 (DESIGN_THESIS.md §8): the API path for the override-window
-    "Undo post" action. Mirrors the Slack button handler in
-    ``api/slack_invoices.py`` but is callable from any non-Slack surface
-    (Gmail sidebar, ops console, CLI). Requires the ops role and that
-    the AP item belongs to the user's organization.
-
-    The request fails with 404 if no override window exists for the
-    given ap_item_id (the post happened before Phase 1.4 was enabled,
-    or the window was already finalized). It fails with 410 Gone if
-    the window has expired. It fails with 502 if the ERP rejects the
-    reversal.
+    Phase 1.4 (DESIGN_THESIS.md §8) override-window reversal. The
+    handler runs the override-window service through the runtime so
+    governance + agent memory + audit fire alongside the ERP-side
+    reversal call. Slack-card sync is best-effort and runs in the
+    route after the intent settles so a Slack outage never breaks
+    the API contract.
     """
     db = shared.get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
-    window = db.get_override_window_by_ap_item_id(ap_item_id)
-    if not window:
-        raise HTTPException(
-            status_code=404,
-            detail="no_override_window",
-        )
-
-    actor_label = (
-        getattr(user, "email", None)
-        or getattr(user, "user_id", None)
-        or "ops_user"
-    )
-
-    from clearledgr.services import slack_cards
-    from clearledgr.services.override_window import get_override_window_service
-
     org_id_for_service = (
-        window.get("organization_id")
-        or item.get("organization_id")
+        item.get("organization_id")
         or organization_id
         or "default"
     )
-
-    service = get_override_window_service(org_id_for_service, db=db)
-    outcome = await service.attempt_reversal(
-        window_id=str(window.get("id")),
-        actor_id=str(actor_label),
-        reason=request.reason,
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(org_id_for_service),
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "ops_user",
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "reason": request.reason,
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    result = await runtime.execute_intent(
+        "reverse_invoice_post", intent_payload,
+        idempotency_key=f"reverse_invoice_post:{ap_item_id}:{request.reason[:64]}",
     )
 
-    fresh_window = db.get_override_window(str(window.get("id"))) or window
-    fresh_item = db.get_ap_item(ap_item_id) or item
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason == "no_override_window":
+            raise HTTPException(status_code=404, detail="no_override_window")
+        if reason == "reason_required" or reason == "reason_too_long":
+            raise HTTPException(status_code=400, detail=reason)
+        if reason == "state_not_posted":
+            raise HTTPException(status_code=409, detail="state_not_posted")
+        raise HTTPException(status_code=400, detail=reason or "reverse_blocked")
 
-    # Best-effort Slack card sync — same logic as the Slack handler.
+    # Best-effort Slack card sync after the intent settles. Failures
+    # here never break the API contract — Slack-side rendering is a
+    # downstream concern and is reconciled by the override-window reaper.
     try:
-        if outcome.status in {"reversed", "already_reversed"}:
+        from clearledgr.services import slack_cards
+        fresh_item = db.get_ap_item(ap_item_id) or item
+        fresh_window = db.get_override_window((result or {}).get("window_id") or "") or {}
+        actor_label = (
+            getattr(user, "email", None)
+            or getattr(user, "user_id", None)
+            or "ops_user"
+        )
+        if status in {"reversed", "already_reversed"}:
             await slack_cards.update_card_to_reversed(
                 organization_id=org_id_for_service,
                 ap_item=fresh_item,
                 window=fresh_window,
                 actor_id=str(actor_label),
-                reversal_ref=outcome.reversal_ref,
-                reversal_method=outcome.reversal_method,
+                reversal_ref=(result or {}).get("reversal_ref"),
+                reversal_method=(result or {}).get("reversal_method"),
             )
-        elif outcome.status == "expired":
+        elif status == "expired":
             await slack_cards.update_card_to_finalized(
                 organization_id=org_id_for_service,
                 ap_item=fresh_item,
@@ -2006,67 +2012,44 @@ async def reverse_ap_item_post(
                 ap_item=fresh_item,
                 window=fresh_window,
                 actor_id=str(actor_label),
-                failure_reason=outcome.reason or outcome.status,
-                failure_message=outcome.message,
+                failure_reason=(result or {}).get("reason") or status,
+                failure_message=(result or {}).get("message"),
             )
     except Exception:
-        # Never let Slack failures break the API contract.
         pass
 
-    if outcome.status == "reversed":
-        response = {
+    if status == "reversed":
+        return {
             "status": "reversed",
             "ap_item_id": ap_item_id,
-            "window_id": outcome.window_id,
-            "reversal_ref": outcome.reversal_ref,
-            "reversal_method": outcome.reversal_method,
-            "erp": outcome.erp,
+            "window_id": (result or {}).get("window_id"),
+            "reversal_ref": (result or {}).get("reversal_ref"),
+            "reversal_method": (result or {}).get("reversal_method"),
+            "erp": (result or {}).get("erp"),
+            "audit_event_id": (result or {}).get("audit_event_id"),
         }
-        _record_agent_action(
-            user=user, db=db, ap_item=fresh_item, organization_id=org_id_for_service,
-            event_type="reversed",
-            reason=request.reason,
-            response=response,
-            extra={
-                "window_id": outcome.window_id,
-                "reversal_ref": outcome.reversal_ref,
-                "reversal_method": outcome.reversal_method,
-                "erp": outcome.erp,
-            },
-            idempotency_key=f"reverse:{ap_item_id}:{outcome.window_id}",
-        )
-        return response
-    if outcome.status == "already_reversed":
+    if status == "already_reversed":
         return {
             "status": "already_reversed",
             "ap_item_id": ap_item_id,
-            "window_id": outcome.window_id,
-            "reversal_ref": outcome.reversal_ref,
-            "erp": outcome.erp,
+            "window_id": (result or {}).get("window_id"),
+            "reversal_ref": (result or {}).get("reversal_ref"),
+            "erp": (result or {}).get("erp"),
         }
-    if outcome.status == "expired":
-        raise HTTPException(
-            status_code=410,
-            detail="override_window_expired",
-        )
-    if outcome.status == "skipped":
-        raise HTTPException(
-            status_code=400,
-            detail="no_erp_connected",
-        )
-    if outcome.status == "not_found":
-        raise HTTPException(
-            status_code=404,
-            detail="no_override_window",
-        )
-    # status == "failed"
+    if status == "expired":
+        raise HTTPException(status_code=410, detail="override_window_expired")
+    if status == "skipped":
+        raise HTTPException(status_code=400, detail="no_erp_connected")
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail="no_override_window")
+    # status == "failed" / "error"
     raise HTTPException(
         status_code=502,
         detail={
             "error": "reversal_failed",
-            "reason": outcome.reason,
-            "message": outcome.message,
-            "erp": outcome.erp,
+            "reason": (result or {}).get("reason"),
+            "message": (result or {}).get("message"),
+            "erp": (result or {}).get("erp"),
         },
     )
 
@@ -2081,83 +2064,67 @@ async def snooze_ap_item(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    """Snooze an AP item — archive it and return it to the queue after a set time.
+    """Snooze an AP item via the ``snooze_invoice`` intent.
 
     DESIGN_THESIS.md §3: "AP Managers can snooze a vendor email thread —
     archive on email and return it to the top of the queue after a set time.
     Snooze timings surface in the Box context."
-    """
-    from clearledgr.core.database import get_db
-    from clearledgr.core.ap_states import transition_or_raise
 
-    db = get_db()
+    The route is a thin HTTP→intent wrapper. All logic — state-machine
+    validation, metadata mutation, timeline entry, agent runtime audit,
+    governance deliberation — lives in :class:`SnoozeInvoiceHandler` so
+    every surface (workspace, Slack, Gmail extension) shares the same
+    contract and audit shape.
+    """
+    db = shared.get_db()
     verify_org_access(organization_id, user)
+    item = db.get_ap_item(ap_item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
 
     if request.idempotency_key:
         replay = load_idempotent_response(db, request.idempotency_key)
         if replay:
             return replay
 
-    item = db.get_ap_item(ap_item_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="ap_item_not_found")
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(item.get("organization_id") or organization_id or "default"),
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "duration_minutes": request.duration_minutes,
+        "note": request.note,
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    intent_idempotency_key = (
+        request.idempotency_key
+        or f"snooze_invoice:{ap_item_id}:{request.duration_minutes}:{getattr(user, 'email', None) or 'system'}"
+    )
+    result = await runtime.execute_intent(
+        "snooze_invoice", intent_payload, idempotency_key=intent_idempotency_key,
+    )
 
-    current_state = str(item.get("state", "")).lower()
-    transition_or_raise(current_state, "snoozed", ap_item_id)
-
-    now = datetime.now(timezone.utc)
-    from datetime import timedelta
-    snoozed_until = now + timedelta(minutes=request.duration_minutes)
-
-    # Store pre-snooze state so the reaper can restore it. Metadata
-    # comes back as JSON text from SQLite and as a parsed dict from
-    # Postgres; handle both shapes (mirrors bulk_snooze).
-    raw_meta = item.get("metadata")
-    if isinstance(raw_meta, str) and raw_meta.strip():
-        import json as _json
-        try:
-            metadata = dict(_json.loads(raw_meta) or {})
-        except (ValueError, TypeError):
-            metadata = {}
-    elif isinstance(raw_meta, dict):
-        metadata = dict(raw_meta)
-    else:
-        metadata = {}
-    metadata["pre_snooze_state"] = current_state
-    metadata["snoozed_until"] = snoozed_until.isoformat()
-    if request.note:
-        metadata["snooze_note"] = request.note
-
-    db.update_ap_item(ap_item_id, state="snoozed", metadata=metadata)
-
-    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
-    if hasattr(db, "append_ap_item_timeline_entry"):
-        db.append_ap_item_timeline_entry(ap_item_id, {
-            "event_type": "snoozed",
-            "summary": f"Snoozed for {request.duration_minutes} minutes.",
-            "reason": request.note or "",
-            "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
-            "actor": actor_id,
-            "timestamp": now.isoformat(),
-        })
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        raise HTTPException(
+            status_code=409 if (result or {}).get("reason") == "state_not_snoozeable" else 400,
+            detail=(result or {}).get("reason") or "snooze_blocked",
+        )
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "snooze_failed")
 
     response = {
         "status": "snoozed",
-        "snoozed_until": snoozed_until.isoformat(),
-        "pre_snooze_state": current_state,
+        "snoozed_until": (result or {}).get("snoozed_until"),
+        "pre_snooze_state": (result or {}).get("pre_snooze_state"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
-    _record_agent_action(
-        user=user, db=db, ap_item=item, organization_id=organization_id,
-        event_type="snoozed",
-        reason=request.note or f"snoozed_for_{request.duration_minutes}_minutes",
-        response=response,
-        extra={
-            "duration_minutes": request.duration_minutes,
-            "snoozed_until": snoozed_until.isoformat(),
-            "pre_snooze_state": current_state,
-        },
-        idempotency_key=f"snooze:{ap_item_id}:{snoozed_until.isoformat()}",
-    )
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
     save_idempotent_response(
         db, request.idempotency_key, response,
         box_id=ap_item_id, box_type="ap_item",
@@ -2172,42 +2139,44 @@ async def unsnooze_ap_item(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    """Manually unsnooze an AP item before the timer expires."""
-    from clearledgr.core.database import get_db
-
-    db = get_db()
+    """Manually unsnooze an AP item via the ``unsnooze_invoice`` intent."""
+    db = shared.get_db()
     verify_org_access(organization_id, user)
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
 
-    if str(item.get("state", "")).lower() != "snoozed":
-        raise HTTPException(status_code=409, detail="not_snoozed")
-
-    metadata = dict(item.get("metadata") or {})
-    restore_state = metadata.pop("pre_snooze_state", "needs_approval")
-    metadata.pop("snoozed_until", None)
-    metadata.pop("snooze_note", None)
-
-    db.update_ap_item(ap_item_id, state=restore_state, metadata=metadata)
-
-    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "system")
-    db.append_ap_item_timeline_entry(ap_item_id, {
-        "event_type": "unsnoozed",
-        "summary": f"Unsnoozed manually. Restored to {restore_state.replace('_', ' ')}.",
-        "actor": actor_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-
-    response = {"status": "unsnoozed", "restored_state": restore_state}
-    _record_agent_action(
-        user=user, db=db, ap_item=item, organization_id=organization_id,
-        event_type="unsnoozed",
-        reason="manual_unsnooze",
-        response=response,
-        extra={"restored_state": restore_state},
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(item.get("organization_id") or organization_id or "default"),
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
+        actor_email=getattr(user, "email", None),
+        db=db,
     )
-    return response
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    result = await runtime.execute_intent(
+        "unsnooze_invoice", intent_payload,
+        idempotency_key=f"unsnooze_invoice:{ap_item_id}:{getattr(user, 'email', None) or 'system'}",
+    )
+
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail=(result or {}).get("reason") or "unsnooze_blocked",
+        )
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "unsnooze_failed")
+
+    return {
+        "status": "unsnoozed",
+        "restored_state": (result or {}).get("restored_state"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2222,67 +2191,50 @@ async def classify_ap_item(
     organization_id: Optional[str] = Query(default=None),
     user: Any = Depends(require_ops_user),
 ):
-    """§2.2: AP Manager manually classifies a Review Required email.
+    """§2.2: Manual classification via the ``manually_classify_invoice`` intent.
 
-    Enqueues a MANUAL_CLASSIFICATION event so the planning engine
-    produces the appropriate plan for the new classification.
+    Thin HTTP→intent wrapper. The handler enqueues a
+    MANUAL_CLASSIFICATION event so the planning engine re-routes the
+    item, writes the timeline entry, and emits the runtime audit event
+    with full agent context.
     """
-    from clearledgr.api.deps import verify_org_access
-    org_id = verify_org_access(user, organization_id)
-    db = get_db()
-
+    from clearledgr.api.deps import verify_org_access as _verify
+    org_id = _verify(user, organization_id)
+    db = shared.get_db()
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
 
-    # Update the document_type on the item
-    db.update_ap_item(
-        ap_item_id,
-        document_type=classification,
-        _actor_type="user",
-        _actor_id=getattr(user, "email", None) or getattr(user, "user_id", "system"),
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=org_id,
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "classification": classification,
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    result = await runtime.execute_intent(
+        "manually_classify_invoice", intent_payload,
+        idempotency_key=f"manually_classify:{ap_item_id}:{classification}:{getattr(user, 'email', None) or 'system'}",
     )
 
-    # Enqueue MANUAL_CLASSIFICATION event
-    try:
-        from clearledgr.core.events import AgentEvent, AgentEventType
-        from clearledgr.core.event_queue import get_event_queue
-        get_event_queue().enqueue(AgentEvent(
-            type=AgentEventType.MANUAL_CLASSIFICATION,
-            source="ap_manager",
-            payload={
-                "message_id": item.get("message_id") or item.get("thread_id", ""),
-                "classification": classification,
-                "classified_by": getattr(user, "email", None) or getattr(user, "user_id", "system"),
-                "ap_item_id": ap_item_id,
-            },
-            organization_id=org_id,
-        ))
-    except Exception as exc:
-        logger.debug("[classify] Event enqueue failed (non-fatal): %s", exc)
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        raise HTTPException(status_code=400, detail=(result or {}).get("reason") or "classify_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "classify_failed")
 
-    # Record in timeline
-    if hasattr(db, "append_ap_item_timeline_entry"):
-        db.append_ap_item_timeline_entry(ap_item_id, {
-            "type": "human_action",
-            "summary": f"Manually classified as {classification}",
-            "actor": getattr(user, "email", "system"),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-
-    response = {
+    return {
         "status": "classified",
         "ap_item_id": ap_item_id,
         "classification": classification,
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
-    _record_agent_action(
-        user=user, db=db, ap_item=item, organization_id=org_id,
-        event_type="manually_classified",
-        reason=f"manual_classification_to_{classification}",
-        response=response,
-        extra={"classification": classification},
-    )
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -2487,10 +2439,15 @@ async def bulk_snooze_ap_items(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    """Snooze N items for the same duration. Uses the same state-machine
-    path as the single-item snooze endpoint, so the reaper restores them."""
+    """Snooze N items by routing each through the ``snooze_invoice`` intent.
+
+    Per-item routing keeps Rule 1 pre-write, audit emission, runtime
+    governance + memory + learning consistent with the single-item
+    endpoint. Bulk-specific handling: cap on items (pydantic), per-item
+    idempotency derived from a shared ``snoozed_until`` so a re-run
+    replays cleanly.
+    """
     from datetime import timedelta
-    from clearledgr.core.ap_states import transition_or_raise
 
     verify_org_access(organization_id, user)
     db = shared.get_db()
@@ -2500,11 +2457,19 @@ async def bulk_snooze_ap_items(
         if replay:
             return replay
 
-    results: List[Dict[str, Any]] = []
-    succeeded = 0
+    runtime_cls = shared._finance_agent_runtime_cls()
+    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_snooze")
+    runtime = runtime_cls(
+        organization_id=organization_id,
+        actor_id=actor_id,
+        actor_email=getattr(user, "email", None),
+        db=db,
+    )
+
     now = datetime.now(timezone.utc)
     snoozed_until = now + timedelta(minutes=request.duration_minutes)
-    actor_id = getattr(user, "email", None) or getattr(user, "user_id", "bulk_snooze")
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
 
     for ap_item_id in request.ap_item_ids:
         item = _bulk_resolve_item(db, ap_item_id, organization_id)
@@ -2516,64 +2481,17 @@ async def bulk_snooze_ap_items(
             })
             continue
 
-        current_state = str(item.get("state", "")).lower()
+        intent_payload = {
+            "ap_item_id": ap_item_id,
+            "duration_minutes": request.duration_minutes,
+            "note": request.note,
+            "actor_id": actor_id,
+            "actor_email": getattr(user, "email", None),
+            "source_channel": "workspace_spa_bulk",
+        }
         try:
-            transition_or_raise(current_state, "snoozed", ap_item_id)
-        except Exception as exc:
-            results.append({
-                "ap_item_id": ap_item_id,
-                "status": "error",
-                "reason": f"invalid_state_transition:{current_state}",
-            })
-            continue
-
-        # metadata comes back as JSON text from SQLite, parsed dict from Postgres
-        raw_meta = item.get("metadata")
-        if isinstance(raw_meta, str) and raw_meta.strip():
-            import json as _json
-            try:
-                metadata = dict(_json.loads(raw_meta) or {})
-            except (ValueError, TypeError):
-                metadata = {}
-        elif isinstance(raw_meta, dict):
-            metadata = dict(raw_meta)
-        else:
-            metadata = {}
-        metadata["pre_snooze_state"] = current_state
-        metadata["snoozed_until"] = snoozed_until.isoformat()
-        if request.note:
-            metadata["snooze_note"] = request.note
-
-        try:
-            db.update_ap_item(ap_item_id, state="snoozed", metadata=metadata)
-            if hasattr(db, "append_ap_item_timeline_entry"):
-                db.append_ap_item_timeline_entry(ap_item_id, {
-                    "event_type": "snoozed",
-                    "summary": f"Bulk snooze for {request.duration_minutes} minutes.",
-                    "reason": request.note or "bulk_snooze",
-                    "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
-                    "actor": actor_id,
-                    "timestamp": now.isoformat(),
-                })
-            succeeded += 1
-            per_item_response = {
-                "ap_item_id": ap_item_id,
-                "status": "snoozed",
-                "ok": True,
-                "snoozed_until": snoozed_until.isoformat(),
-            }
-            results.append(per_item_response)
-            _record_agent_action(
-                user=user, db=db, ap_item=item, organization_id=organization_id,
-                event_type="snoozed",
-                reason=request.note or f"bulk_snooze_for_{request.duration_minutes}_minutes",
-                response=per_item_response,
-                extra={
-                    "duration_minutes": request.duration_minutes,
-                    "snoozed_until": snoozed_until.isoformat(),
-                    "pre_snooze_state": current_state,
-                    "batch": True,
-                },
+            result = await runtime.execute_intent(
+                "snooze_invoice", intent_payload,
                 idempotency_key=f"bulk_snooze:{ap_item_id}:{snoozed_until.isoformat()}",
             )
         except Exception as exc:
@@ -2582,6 +2500,25 @@ async def bulk_snooze_ap_items(
                 "ap_item_id": ap_item_id,
                 "status": "error",
                 "reason": safe_error(exc, "bulk_snooze"),
+            })
+            continue
+
+        per_status = str((result or {}).get("status") or "").strip().lower()
+        if per_status == "snoozed":
+            succeeded += 1
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": "snoozed",
+                "ok": True,
+                "snoozed_until": (result or {}).get("snoozed_until"),
+                "audit_event_id": (result or {}).get("audit_event_id"),
+            })
+        else:
+            results.append({
+                "ap_item_id": ap_item_id,
+                "status": per_status or "error",
+                "ok": False,
+                "reason": (result or {}).get("reason") or per_status or "snooze_failed",
             })
 
     response = {

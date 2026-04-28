@@ -1718,6 +1718,633 @@ class RetryRecoverableFailuresHandler(APIntentHandler):
         return response
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 audit-P0 handlers — workspace SPA actions previously bypassed
+# the runtime via direct db.update_ap_item writes. These handlers hold the
+# full business logic so the routes can become thin HTTP→intent wrappers.
+# ---------------------------------------------------------------------------
+
+
+_SNOOZEABLE_STATES = frozenset({
+    "received", "validated", "needs_info", "needs_approval", "failed_post",
+})
+
+
+def _import_state_helpers():
+    from clearledgr.core.ap_states import (
+        APState,
+        IllegalTransitionError,
+        normalize_state,
+        validate_transition,
+    )
+    return APState, IllegalTransitionError, normalize_state, validate_transition
+
+
+def _safe_parse_metadata(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        import json as _json
+        try:
+            parsed = _json.loads(raw)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+class SnoozeInvoiceHandler(APIntentHandler):
+    intent = "snooze_invoice"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        state = str(ap_item.get("state") or "").strip().lower()
+        duration = safe_int(context["payload"].get("duration_minutes"), 0)
+        reason_codes = []
+        if state not in _SNOOZEABLE_STATES:
+            reason_codes.append("state_not_snoozeable")
+        if duration <= 0:
+            reason_codes.append("duration_minutes_required")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "state": state,
+            "duration_minutes": duration,
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        from datetime import timedelta
+
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+
+        if not precheck.get("eligible"):
+            reason = (
+                "duration_minutes_required"
+                if "duration_minutes_required" in (precheck.get("reason_codes") or [])
+                else "state_not_snoozeable"
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": reason,
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_snooze_blocked",
+                reason=reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        duration = int(precheck["duration_minutes"])
+        now = datetime.now(timezone.utc)
+        snoozed_until = now + timedelta(minutes=duration)
+        prev_state = precheck["state"]
+
+        metadata = _safe_parse_metadata(ap_item.get("metadata"))
+        metadata["pre_snooze_state"] = prev_state
+        metadata["snoozed_until"] = snoozed_until.isoformat()
+        note = str(payload.get("note") or "").strip()
+        if note:
+            metadata["snooze_note"] = note
+
+        try:
+            runtime.db.update_ap_item(
+                ap_item_id,
+                state="snoozed",
+                metadata=metadata,
+                _actor_type="user",
+                _actor_id=actor["canonical_actor"],
+                _source="snooze_invoice_intent",
+                _decision_reason=note or f"snoozed_for_{duration}_minutes",
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_snooze_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if hasattr(runtime.db, "append_ap_item_timeline_entry"):
+            runtime.db.append_ap_item_timeline_entry(ap_item_id, {
+                "event_type": "snoozed",
+                "summary": f"Snoozed for {duration} minutes.",
+                "reason": note or "",
+                "next_action": f"Returns to queue at {snoozed_until.strftime('%Y-%m-%d %H:%M UTC')}.",
+                "actor": actor["canonical_actor"],
+                "timestamp": now.isoformat(),
+            })
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "snoozed",
+            "snoozed_until": snoozed_until.isoformat(),
+            "pre_snooze_state": prev_state,
+            "email_id": email_id,
+            "ap_item_id": ap_item_id,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "wait_for_unsnooze",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_snoozed",
+            reason=note or f"snoozed_for_{duration}_minutes",
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "duration_minutes": duration,
+                "snoozed_until": snoozed_until.isoformat(),
+                "pre_snooze_state": prev_state,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
+class UnsnoozeInvoiceHandler(APIntentHandler):
+    intent = "unsnooze_invoice"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        state = str(ap_item.get("state") or "").strip().lower()
+        metadata = _safe_parse_metadata(ap_item.get("metadata"))
+        restore_state = str(metadata.get("pre_snooze_state") or "").strip().lower()
+        reason_codes = []
+        if state != "snoozed":
+            reason_codes.append("state_not_snoozed")
+        if not restore_state:
+            # Default fallback restore-state matches the legacy behaviour.
+            restore_state = "needs_approval"
+        # Ensure the implicit transition is legal.
+        _, _, _, validate_transition = _import_state_helpers()
+        if state == "snoozed" and not validate_transition("snoozed", restore_state):
+            reason_codes.append("restore_state_not_reachable")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "state": state,
+            "restore_state": restore_state,
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+
+        if not precheck.get("eligible"):
+            reason = (
+                "restore_state_not_reachable"
+                if "restore_state_not_reachable" in (precheck.get("reason_codes") or [])
+                else "state_not_snoozed"
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": reason,
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_unsnooze_blocked",
+                reason=reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        restore_state = precheck["restore_state"]
+        metadata = _safe_parse_metadata(ap_item.get("metadata"))
+        metadata.pop("pre_snooze_state", None)
+        metadata.pop("snoozed_until", None)
+        metadata.pop("snooze_note", None)
+
+        try:
+            runtime.db.update_ap_item(
+                ap_item_id,
+                state=restore_state,
+                metadata=metadata,
+                _actor_type="user",
+                _actor_id=actor["canonical_actor"],
+                _source="unsnooze_invoice_intent",
+                _decision_reason="manual_unsnooze",
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_unsnooze_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if hasattr(runtime.db, "append_ap_item_timeline_entry"):
+            runtime.db.append_ap_item_timeline_entry(ap_item_id, {
+                "event_type": "unsnoozed",
+                "summary": f"Unsnoozed manually. Restored to {restore_state.replace('_', ' ')}.",
+                "actor": actor["canonical_actor"],
+                "reason": "manual_unsnooze",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "unsnoozed",
+            "restored_state": restore_state,
+            "email_id": email_id,
+            "ap_item_id": ap_item_id,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "resume_active_processing",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_unsnoozed",
+            reason="manual_unsnooze",
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "restored_state": restore_state,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
+class ReverseInvoicePostHandler(APIntentHandler):
+    intent = "reverse_invoice_post"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        state = str(ap_item.get("state") or "").strip().lower()
+        reason = str(context["payload"].get("reason") or "").strip()
+        reason_codes = []
+        if state != "posted_to_erp":
+            reason_codes.append("state_not_posted")
+        if not reason:
+            reason_codes.append("reason_required")
+        if len(reason) > 512:
+            reason_codes.append("reason_too_long")
+        # Override window must exist; load it lazily so the precheck is cheap.
+        window = None
+        try:
+            if context["ap_item_id"]:
+                window = runtime.db.get_override_window_by_ap_item_id(context["ap_item_id"])
+        except Exception:
+            window = None
+        if not window:
+            reason_codes.append("no_override_window")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "state": state,
+            "reason_supplied": bool(reason),
+            "window_id": (window or {}).get("id"),
+        }
+        return {**context, "policy_precheck": precheck, "_window": window}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        window = context.get("_window") or {}
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            blocked_reason = (
+                "no_override_window" if "no_override_window" in reason_codes
+                else ("reason_required" if "reason_required" in reason_codes
+                      else ("reason_too_long" if "reason_too_long" in reason_codes
+                            else "state_not_posted"))
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked_reason,
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_reverse_blocked",
+                reason=blocked_reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        from clearledgr.services.override_window import get_override_window_service
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        org_id = (
+            window.get("organization_id")
+            or ap_item.get("organization_id")
+            or runtime.organization_id
+            or "default"
+        )
+        service = get_override_window_service(org_id, db=runtime.db)
+        try:
+            outcome = await service.attempt_reversal(
+                window_id=str(window.get("id")),
+                actor_id=actor["canonical_actor"],
+                reason=str(payload.get("reason") or "").strip(),
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_reverse_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        succeeded = outcome.status in {"reversed", "already_reversed"}
+        response_status = outcome.status
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": response_status,
+            "ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "window_id": outcome.window_id,
+            "reversal_ref": outcome.reversal_ref,
+            "reversal_method": outcome.reversal_method,
+            "erp": outcome.erp,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "none" if succeeded else "review_blockers",
+        }
+        if outcome.message:
+            response["message"] = outcome.message
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type=(
+                "invoice_reversed"
+                if outcome.status == "reversed"
+                else (
+                    "invoice_reverse_blocked"
+                    if outcome.status in {"expired", "already_reversed"}
+                    else "invoice_reverse_failed"
+                )
+            ),
+            reason=str(payload.get("reason") or "").strip() or outcome.status,
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "outcome": {
+                    "status": outcome.status,
+                    "window_id": outcome.window_id,
+                    "reversal_ref": outcome.reversal_ref,
+                    "reversal_method": outcome.reversal_method,
+                    "erp": outcome.erp,
+                    "message": outcome.message,
+                },
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
+class ManuallyClassifyInvoiceHandler(APIntentHandler):
+    intent = "manually_classify_invoice"
+
+    _ALLOWED_CLASSIFICATIONS = frozenset({
+        "invoice", "credit_note", "payment_query", "vendor_statement", "irrelevant",
+        "purchase_order", "receipt", "statement", "bank_statement", "other",
+    })
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        classification = str(context["payload"].get("classification") or "").strip().lower()
+        reason_codes = []
+        if not classification:
+            reason_codes.append("classification_required")
+        elif classification not in self._ALLOWED_CLASSIFICATIONS:
+            reason_codes.append("classification_not_allowed")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "classification": classification,
+            "current_state": str(context["ap_item"].get("state") or "").strip().lower(),
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+
+        if not precheck.get("eligible"):
+            reason = (
+                "classification_required"
+                if "classification_required" in (precheck.get("reason_codes") or [])
+                else "classification_not_allowed"
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": reason,
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_manual_classify_blocked",
+                reason=reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        classification = precheck["classification"]
+
+        try:
+            runtime.db.update_ap_item(
+                ap_item_id,
+                document_type=classification,
+                _actor_type="user",
+                _actor_id=actor["canonical_actor"],
+                _source="manually_classify_invoice_intent",
+                _decision_reason=f"manual_classification_to_{classification}",
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "email_id": email_id,
+                "ap_item_id": ap_item_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_manual_classify_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        # Enqueue MANUAL_CLASSIFICATION event so the planning engine picks
+        # up the new classification and re-routes downstream.
+        try:
+            from clearledgr.core.events import AgentEvent, AgentEventType
+            from clearledgr.core.event_queue import get_event_queue
+            get_event_queue().enqueue(AgentEvent(
+                type=AgentEventType.MANUAL_CLASSIFICATION,
+                source="ap_manager",
+                payload={
+                    "message_id": ap_item.get("message_id") or ap_item.get("thread_id", ""),
+                    "classification": classification,
+                    "classified_by": actor["canonical_actor"],
+                    "ap_item_id": ap_item_id,
+                },
+                organization_id=runtime.organization_id,
+            ))
+        except Exception as exc:
+            logger.debug("[manually_classify] event enqueue failed (non-fatal): %s", exc)
+
+        if hasattr(runtime.db, "append_ap_item_timeline_entry"):
+            runtime.db.append_ap_item_timeline_entry(ap_item_id, {
+                "type": "human_action",
+                "summary": f"Manually classified as {classification}",
+                "actor": actor["canonical_actor"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "classified",
+            "classification": classification,
+            "ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "planning_engine_reroute",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_manually_classified",
+            reason=f"manual_classification_to_{classification}",
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "classification": classification,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
 _HANDLERS: Dict[str, APIntentHandler] = {
     handler.intent: handler
     for handler in (
@@ -1732,6 +2359,10 @@ _HANDLERS: Dict[str, APIntentHandler] = {
         PrepareVendorFollowupsHandler(),
         RouteLowRiskForApprovalHandler(),
         RetryRecoverableFailuresHandler(),
+        SnoozeInvoiceHandler(),
+        UnsnoozeInvoiceHandler(),
+        ReverseInvoicePostHandler(),
+        ManuallyClassifyInvoiceHandler(),
     )
 }
 
