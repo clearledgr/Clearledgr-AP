@@ -2345,6 +2345,527 @@ class ManuallyClassifyInvoiceHandler(APIntentHandler):
         return response
 
 
+def _import_ap_item_service():
+    """Lazy import of ap_item_service to avoid circular imports at module load."""
+    from clearledgr.services import ap_item_service as _svc
+    return _svc
+
+
+_RESUBMIT_INITIAL_STATES = frozenset({"received", "validated"})
+
+
+class ResubmitInvoiceHandler(APIntentHandler):
+    intent = "resubmit_invoice"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        svc = _import_ap_item_service()
+        source_state = svc._normalized_state_value(ap_item.get("state"))
+        initial_state = svc._normalized_state_value(
+            context["payload"].get("initial_state") or "received"
+        )
+        existing_child_id = str(ap_item.get("superseded_by_ap_item_id") or "").strip()
+        reason = str(context["payload"].get("reason") or "").strip()
+        reason_codes = []
+        if source_state != "rejected":
+            reason_codes.append("state_not_rejected")
+        if initial_state not in _RESUBMIT_INITIAL_STATES:
+            reason_codes.append("invalid_initial_state")
+        if not reason:
+            reason_codes.append("reason_required")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "source_state": source_state,
+            "initial_state": initial_state,
+            "existing_child_id": existing_child_id or None,
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+        db = runtime.db
+
+        # Idempotent already-resubmitted: existing supersession surfaces same response.
+        existing_child_id = precheck.get("existing_child_id")
+        if existing_child_id:
+            existing_child = db.get_ap_item(existing_child_id)
+            if existing_child:
+                response = {
+                    "skill_id": skill.skill_id,
+                    "intent": self.intent,
+                    "status": "already_resubmitted",
+                    "source_ap_item_id": ap_item_id,
+                    "new_ap_item_id": existing_child_id,
+                    "ap_item": svc.build_worklist_item(db, existing_child),
+                    "linkage": {
+                        "supersedes_ap_item_id": ap_item_id,
+                        "supersedes_invoice_key": existing_child.get("supersedes_invoice_key")
+                        or ap_item.get("invoice_key"),
+                        "superseded_by_ap_item_id": existing_child_id,
+                    },
+                    "audit_contract": skill.audit_contract(self.intent),
+                    "policy_precheck": precheck,
+                }
+                audit_row = runtime.append_runtime_audit(
+                    ap_item_id=ap_item_id,
+                    event_type="invoice_resubmitted",
+                    reason="already_resubmitted_replay",
+                    metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                response["audit_event_id"] = (audit_row or {}).get("id")
+                return response
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            blocked_reason = (
+                "reason_required" if "reason_required" in reason_codes
+                else ("invalid_resubmission_initial_state" if "invalid_initial_state" in reason_codes
+                      else "resubmission_requires_rejected_state")
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked_reason,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_resubmit_blocked",
+                reason=blocked_reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        reason = str(payload.get("reason") or "").strip()
+        initial_state = precheck["initial_state"]
+
+        source_meta = svc._parse_json(ap_item.get("metadata"))
+        new_meta = dict(source_meta)
+        for stale_key in (
+            "merged_into",
+            "merge_reason",
+            "merge_status",
+            "suppressed_from_worklist",
+            "confidence_override",
+        ):
+            new_meta.pop(stale_key, None)
+
+        # Build a request-shaped object for invoice_key derivation helpers.
+        from types import SimpleNamespace
+        request_like = SimpleNamespace(
+            invoice_number=payload.get("invoice_number"),
+            invoice_date=payload.get("invoice_date"),
+            actor_id=payload.get("actor_id"),
+            reason=reason,
+        )
+        new_meta["supersedes_ap_item_id"] = ap_item_id
+        new_meta["supersedes_invoice_key"] = svc._superseded_invoice_key(ap_item, request_like)
+        new_meta["resubmission_reason"] = reason
+        new_meta["resubmission"] = {
+            "source_ap_item_id": ap_item_id,
+            "reason": reason,
+            "actor_id": actor_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        requested_actor = str(payload.get("actor_id") or "").strip()
+        if requested_actor and requested_actor != actor_id:
+            new_meta["requested_actor_id"] = requested_actor
+        extra_meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        if extra_meta:
+            new_meta.update(extra_meta)
+
+        create_payload: Dict[str, Any] = {
+            "invoice_key": svc._resubmission_invoice_key(ap_item, request_like),
+            "thread_id": payload.get("thread_id") or ap_item.get("thread_id"),
+            "message_id": payload.get("message_id") or ap_item.get("message_id"),
+            "subject": payload.get("subject") or ap_item.get("subject"),
+            "sender": payload.get("sender") or ap_item.get("sender"),
+            "vendor_name": payload.get("vendor_name") or ap_item.get("vendor_name"),
+            "amount": payload.get("amount") if payload.get("amount") is not None else ap_item.get("amount"),
+            "currency": payload.get("currency") or ap_item.get("currency") or "USD",
+            "invoice_number": payload.get("invoice_number") or ap_item.get("invoice_number"),
+            "invoice_date": payload.get("invoice_date") or ap_item.get("invoice_date"),
+            "due_date": payload.get("due_date") or ap_item.get("due_date"),
+            "state": initial_state,
+            "confidence": ap_item.get("confidence"),
+            "approval_required": bool(ap_item.get("approval_required", True)),
+            "workflow_id": ap_item.get("workflow_id"),
+            "run_id": None,
+            "approval_surface": ap_item.get("approval_surface") or "hybrid",
+            "approval_policy_version": ap_item.get("approval_policy_version"),
+            "post_attempted_at": None,
+            "last_error": None,
+            "organization_id": ap_item.get("organization_id"),
+            "user_id": ap_item.get("user_id"),
+            "po_number": ap_item.get("po_number"),
+            "attachment_url": ap_item.get("attachment_url"),
+            "supersedes_ap_item_id": ap_item_id,
+            "supersedes_invoice_key": svc._superseded_invoice_key(ap_item, request_like),
+            "superseded_by_ap_item_id": None,
+            "resubmission_reason": reason,
+            "metadata": new_meta,
+        }
+
+        try:
+            created = db.create_ap_item(create_payload)
+            db.update_ap_item(
+                ap_item_id,
+                superseded_by_ap_item_id=created["id"],
+                _actor_type="user",
+                _actor_id=actor_id,
+                _decision_reason=reason,
+                _correlation_id=correlation_id,
+            )
+            source_after = db.get_ap_item(ap_item_id) or ap_item
+            source_after_meta = svc._parse_json(source_after.get("metadata"))
+            source_after_meta["superseded_by_ap_item_id"] = created["id"]
+            source_after_meta["resubmission_reason"] = reason
+            db.update_ap_item(
+                ap_item_id,
+                metadata=source_after_meta,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _decision_reason=reason,
+                _correlation_id=correlation_id,
+            )
+            copied_sources = 0
+            if bool(payload.get("copy_sources", True)):
+                copied_sources = svc._copy_item_sources_for_resubmission(
+                    db,
+                    source_ap_item_id=ap_item_id,
+                    target_ap_item_id=created["id"],
+                    actor_id=actor_id,
+                )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_resubmit_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "resubmitted",
+            "source_ap_item_id": ap_item_id,
+            "new_ap_item_id": created["id"],
+            "copied_sources": copied_sources,
+            "linkage": {
+                "supersedes_ap_item_id": ap_item_id,
+                "supersedes_invoice_key": created.get("supersedes_invoice_key")
+                or svc._superseded_invoice_key(ap_item, request_like),
+                "superseded_by_ap_item_id": created["id"],
+                "resubmission_reason": reason,
+            },
+            "ap_item": svc.build_worklist_item(db, created),
+            "audit_contract": skill.audit_contract(self.intent),
+            "policy_precheck": precheck,
+            "next_step": "follow_new_item",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_resubmitted",
+            reason=reason,
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "source_ap_item_id": ap_item_id,
+                "new_ap_item_id": created["id"],
+                "copied_sources": copied_sources,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        # Also write a parallel audit on the new item so its timeline
+        # records its own creation context.
+        try:
+            runtime.append_runtime_audit(
+                ap_item_id=created["id"],
+                event_type="invoice_resubmitted",
+                reason=reason,
+                metadata={
+                    "intent": self.intent,
+                    "source_ap_item_id": ap_item_id,
+                    "new_ap_item_id": created["id"],
+                    "creation_context": True,
+                },
+                correlation_id=correlation_id,
+                idempotency_key=f"{idempotency_key}:new" if idempotency_key else None,
+                skill_id=skill.skill_id,
+            )
+        except Exception as audit_exc:
+            logger.warning("[resubmit_invoice] audit on new item failed: %s", audit_exc)
+        return response
+
+
+class SplitInvoiceHandler(APIntentHandler):
+    intent = "split_invoice"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        sources = context["payload"].get("sources")
+        reason_codes = []
+        if not isinstance(sources, list) or not sources:
+            reason_codes.append("sources_required")
+        else:
+            for entry in sources:
+                if not isinstance(entry, dict):
+                    reason_codes.append("source_entry_invalid")
+                    break
+                if not str(entry.get("source_type") or "").strip():
+                    reason_codes.append("source_type_required")
+                    break
+                if not str(entry.get("source_ref") or "").strip():
+                    reason_codes.append("source_ref_required")
+                    break
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "source_count_requested": len(sources) if isinstance(sources, list) else 0,
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+        db = runtime.db
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            blocked_reason = (
+                "sources_required" if "sources_required" in reason_codes
+                else "source_entry_invalid"
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked_reason,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_split_blocked",
+                reason=blocked_reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        reason = str(payload.get("reason") or "").strip() or "manual_split"
+        sources = payload["sources"]
+        parent_meta = svc._parse_json(ap_item.get("metadata"))
+        now_iso = datetime.now(timezone.utc).isoformat()
+        created_items: list = []
+
+        for source_entry in sources:
+            source_type = str(source_entry.get("source_type") or "").strip()
+            source_ref = str(source_entry.get("source_ref") or "").strip()
+            current_sources = db.list_ap_item_sources(ap_item_id, source_type=source_type)
+            current = next(
+                (row for row in current_sources if row.get("source_ref") == source_ref),
+                None,
+            )
+            if not current:
+                continue
+
+            split_payload = {
+                "invoice_key": f"{ap_item.get('invoice_key') or ap_item_id}#split#{source_type}:{source_ref}",
+                "thread_id": ap_item.get("thread_id"),
+                "message_id": ap_item.get("message_id"),
+                "subject": current.get("subject") or ap_item.get("subject"),
+                "sender": current.get("sender") or ap_item.get("sender"),
+                "vendor_name": ap_item.get("vendor_name"),
+                "amount": ap_item.get("amount"),
+                "currency": ap_item.get("currency") or "USD",
+                "invoice_number": ap_item.get("invoice_number"),
+                "invoice_date": ap_item.get("invoice_date"),
+                "due_date": ap_item.get("due_date"),
+                "state": "needs_info",
+                "confidence": ap_item.get("confidence") or 0,
+                "approval_required": bool(ap_item.get("approval_required", True)),
+                "organization_id": ap_item.get("organization_id") or "default",
+                "user_id": ap_item.get("user_id"),
+                "metadata": {
+                    **parent_meta,
+                    "split_from_ap_item_id": ap_item_id,
+                    "split_reason": reason,
+                    "split_actor_id": actor_id,
+                    "split_source": {"source_type": source_type, "source_ref": source_ref},
+                    "split_at": now_iso,
+                },
+            }
+            try:
+                child = db.create_ap_item(split_payload)
+                db.move_ap_item_source(
+                    from_ap_item_id=ap_item_id,
+                    to_ap_item_id=child["id"],
+                    source_type=source_type,
+                    source_ref=source_ref,
+                )
+                if source_type == "gmail_thread":
+                    db.update_ap_item(child["id"], thread_id=source_ref)
+                if source_type == "gmail_message":
+                    db.update_ap_item(child["id"], message_id=source_ref)
+            except Exception as exc:
+                logger.exception("[split_invoice] child creation failed for %s/%s: %s", source_type, source_ref, exc)
+                continue
+
+            try:
+                runtime.append_runtime_audit(
+                    ap_item_id=child["id"],
+                    event_type="invoice_split",
+                    reason=reason,
+                    metadata={
+                        "intent": self.intent,
+                        "parent_ap_item_id": ap_item_id,
+                        "source_type": source_type,
+                        "source_ref": source_ref,
+                        "creation_context": True,
+                    },
+                    correlation_id=correlation_id,
+                    idempotency_key=(
+                        f"{idempotency_key}:{child['id']}" if idempotency_key else None
+                    ),
+                    skill_id=skill.skill_id,
+                )
+            except Exception as audit_exc:
+                logger.warning("[split_invoice] child audit failed: %s", audit_exc)
+
+            created_items.append(child)
+
+        if not created_items:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": "no_sources_split",
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_split_blocked",
+                reason="no_sources_split",
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        # Update parent metadata source_count.
+        try:
+            parent_meta["source_count"] = len(db.list_ap_item_sources(ap_item_id))
+            db.update_ap_item(
+                ap_item_id,
+                metadata=parent_meta,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _decision_reason=reason,
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            logger.warning("[split_invoice] parent metadata refresh failed for %s: %s", ap_item_id, exc)
+
+        # Track split items against subscription quota (best-effort).
+        try:
+            from clearledgr.services.subscription import get_subscription_service
+            split_org_id = ap_item.get("organization_id") or "default"
+            get_subscription_service().increment_usage(
+                split_org_id, "invoices_this_month", amount=len(created_items),
+            )
+        except Exception:
+            pass
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "split",
+            "parent_ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "created_items": [
+                svc.build_worklist_item(
+                    db,
+                    item,
+                    approval_policy=svc._approval_followup_policy(
+                        str(item.get("organization_id") or ap_item.get("organization_id") or "default")
+                    ),
+                )
+                for item in created_items
+            ],
+            "audit_contract": skill.audit_contract(self.intent),
+            "policy_precheck": precheck,
+            "next_step": "review_children",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_split",
+            reason=reason,
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "child_ids": [child["id"] for child in created_items],
+                "child_count": len(created_items),
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
 _HANDLERS: Dict[str, APIntentHandler] = {
     handler.intent: handler
     for handler in (
@@ -2363,6 +2884,8 @@ _HANDLERS: Dict[str, APIntentHandler] = {
         UnsnoozeInvoiceHandler(),
         ReverseInvoicePostHandler(),
         ManuallyClassifyInvoiceHandler(),
+        ResubmitInvoiceHandler(),
+        SplitInvoiceHandler(),
     )
 }
 

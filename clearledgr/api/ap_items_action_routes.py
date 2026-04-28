@@ -1400,184 +1400,75 @@ def add_ap_item_file_link(
 
 
 @router.post("/{ap_item_id}/resubmit")
-def resubmit_rejected_item(
+async def resubmit_rejected_item(
     ap_item_id: str,
     request: ResubmitRejectedItemRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
+    """Resubmit a rejected AP item via the ``resubmit_invoice`` intent.
+
+    Thin HTTP→intent wrapper. The handler creates the new linked
+    item, updates supersession on the source, optionally copies
+    source links, and emits a runtime audit event on each side of
+    the chain.
+    """
     db = shared.get_db()
-    actor_id = shared._authenticated_actor(_user)
     source = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(source.get("organization_id") or "default", _user)
-    source_state = shared._normalized_state_value(source.get("state"))
-    if source_state != APState.REJECTED.value:
-        raise HTTPException(status_code=400, detail="resubmission_requires_rejected_state")
 
-    existing_child_id = str(source.get("superseded_by_ap_item_id") or "").strip()
-    if existing_child_id:
-        existing_child = db.get_ap_item(existing_child_id)
-        if existing_child:
-            return {
-                "status": "already_resubmitted",
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": existing_child_id,
-                "ap_item": shared.build_worklist_item(db, existing_child),
-                "linkage": {
-                    "supersedes_ap_item_id": source["id"],
-                    "supersedes_invoice_key": existing_child.get("supersedes_invoice_key")
-                    or source.get("invoice_key"),
-                    "superseded_by_ap_item_id": existing_child_id,
-                },
-            }
-
-    initial_state = shared._normalized_state_value(request.initial_state)
-    if initial_state not in {APState.RECEIVED.value, APState.VALIDATED.value}:
-        raise HTTPException(status_code=400, detail="invalid_resubmission_initial_state")
-
-    source_meta = shared._parse_json(source.get("metadata"))
-    new_meta = dict(source_meta)
-    for stale_key in (
-        "merged_into",
-        "merge_reason",
-        "merge_status",
-        "suppressed_from_worklist",
-        "confidence_override",
-    ):
-        new_meta.pop(stale_key, None)
-    new_meta["supersedes_ap_item_id"] = source["id"]
-    new_meta["supersedes_invoice_key"] = shared._superseded_invoice_key(source, request)
-    new_meta["resubmission_reason"] = request.reason
-    new_meta["resubmission"] = {
-        "source_ap_item_id": source["id"],
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(source.get("organization_id") or "default"),
+        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "system",
+        actor_email=getattr(_user, "email", None),
+        db=db,
+    )
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "actor_id": request.actor_id,
         "reason": request.reason,
-        "actor_id": actor_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "initial_state": request.initial_state,
+        "copy_sources": bool(request.copy_sources),
+        "thread_id": request.thread_id,
+        "message_id": request.message_id,
+        "subject": request.subject,
+        "sender": request.sender,
+        "vendor_name": request.vendor_name,
+        "amount": request.amount,
+        "currency": request.currency,
+        "invoice_number": request.invoice_number,
+        "invoice_date": request.invoice_date,
+        "due_date": request.due_date,
+        "metadata": request.metadata or {},
+        "actor_email": getattr(_user, "email", None),
+        "source_channel": "workspace_spa",
     }
-    if request.actor_id and str(request.actor_id).strip() and str(request.actor_id).strip() != actor_id:
-        new_meta["requested_actor_id"] = str(request.actor_id).strip()
-    if request.metadata:
-        new_meta.update(request.metadata)
+    result = await runtime.execute_intent(
+        "resubmit_invoice", intent_payload,
+        idempotency_key=f"resubmit_invoice:{ap_item_id}:{request.reason[:80]}",
+    )
 
-    create_payload: Dict[str, Any] = {
-        "invoice_key": shared._resubmission_invoice_key(source, request),
-        "thread_id": request.thread_id or source.get("thread_id"),
-        "message_id": request.message_id or source.get("message_id"),
-        "subject": request.subject or source.get("subject"),
-        "sender": request.sender or source.get("sender"),
-        "vendor_name": request.vendor_name or source.get("vendor_name"),
-        "amount": request.amount if request.amount is not None else source.get("amount"),
-        "currency": request.currency or source.get("currency") or "USD",
-        "invoice_number": request.invoice_number or source.get("invoice_number"),
-        "invoice_date": request.invoice_date or source.get("invoice_date"),
-        "due_date": request.due_date or source.get("due_date"),
-        "state": initial_state,
-        "confidence": source.get("confidence"),
-        "approval_required": bool(source.get("approval_required", True)),
-        "workflow_id": source.get("workflow_id"),
-        "run_id": None,
-        "approval_surface": source.get("approval_surface") or "hybrid",
-        "approval_policy_version": source.get("approval_policy_version"),
-        "post_attempted_at": None,
-        "last_error": None,
-        "organization_id": source.get("organization_id"),
-        "user_id": source.get("user_id"),
-        "po_number": source.get("po_number"),
-        "attachment_url": source.get("attachment_url"),
-        "supersedes_ap_item_id": source["id"],
-        "supersedes_invoice_key": shared._superseded_invoice_key(source, request),
-        "superseded_by_ap_item_id": None,
-        "resubmission_reason": request.reason,
-        "metadata": new_meta,
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason == "resubmission_requires_rejected_state":
+            raise HTTPException(status_code=400, detail=reason)
+        if reason == "invalid_resubmission_initial_state":
+            raise HTTPException(status_code=400, detail=reason)
+        if reason == "reason_required":
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=400, detail=reason or "resubmit_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "resubmit_failed")
+
+    return {
+        "status": status,
+        "source_ap_item_id": (result or {}).get("source_ap_item_id"),
+        "new_ap_item_id": (result or {}).get("new_ap_item_id"),
+        "copied_sources": (result or {}).get("copied_sources"),
+        "linkage": (result or {}).get("linkage"),
+        "ap_item": (result or {}).get("ap_item"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
-    created = db.create_ap_item(create_payload)
-
-    db.update_ap_item(
-        source["id"],
-        superseded_by_ap_item_id=created["id"],
-        _actor_type="user",
-        _actor_id=actor_id,
-    )
-    source_after = db.get_ap_item(source["id"]) or source
-    source_after_meta = shared._parse_json(source_after.get("metadata"))
-    source_after_meta["superseded_by_ap_item_id"] = created["id"]
-    source_after_meta["resubmission_reason"] = request.reason
-    db.update_ap_item(source["id"], metadata=source_after_meta, _actor_type="user", _actor_id=actor_id)
-
-    copied_sources = 0
-    if request.copy_sources:
-        copied_sources = shared._copy_item_sources_for_resubmission(
-            db,
-            source_ap_item_id=source["id"],
-            target_ap_item_id=created["id"],
-            actor_id=actor_id,
-        )
-
-    audit_key = f"ap_item_resubmission:{source['id']}:{created['id']}"
-    db.append_audit_event(
-        {
-            "ap_item_id": source["id"],
-            "event_type": "ap_item_resubmitted",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": created["id"],
-                "reason": request.reason,
-                "copied_sources": copied_sources,
-            },
-            "organization_id": source.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": audit_key,
-        }
-    )
-    db.append_audit_event(
-        {
-            "ap_item_id": created["id"],
-            "event_type": "ap_item_resubmission_created",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "new_ap_item_id": created["id"],
-                "reason": request.reason,
-                "copied_sources": copied_sources,
-            },
-            "organization_id": created.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"{audit_key}:new",
-        }
-    )
-
-    response = {
-        "status": "resubmitted",
-        "source_ap_item_id": source["id"],
-        "new_ap_item_id": created["id"],
-        "copied_sources": copied_sources,
-        "linkage": {
-            "supersedes_ap_item_id": source["id"],
-            "supersedes_invoice_key": created.get("supersedes_invoice_key")
-            or shared._superseded_invoice_key(source, request),
-            "superseded_by_ap_item_id": created["id"],
-            "resubmission_reason": request.reason,
-        },
-        "ap_item": shared.build_worklist_item(db, created),
-    }
-    _record_agent_action(
-        user=_user, db=db, ap_item=created,
-        organization_id=str(created.get("organization_id") or "default"),
-        event_type="ap_item_resubmitted",
-        reason=request.reason,
-        response=response,
-        extra={
-            "source_ap_item_id": source["id"],
-            "new_ap_item_id": created["id"],
-            "copied_sources": copied_sources,
-        },
-        idempotency_key=f"{audit_key}:agent_runtime",
-    )
-    return response
 
 
 @router.post("/{ap_item_id}/merge")
@@ -1705,108 +1596,59 @@ def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(re
 
 
 @router.post("/{ap_item_id}/split")
-def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
+async def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
+    """Split an AP item via the ``split_invoice`` intent.
+
+    Thin HTTP→intent wrapper. The handler creates one new AP item per
+    requested source-link, moves the source link onto the child,
+    propagates thread/message IDs where applicable, audits each child
+    creation, and tracks subscription quota usage.
+    """
     db = shared.get_db()
-    actor_id = shared._authenticated_actor(_user)
     parent = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(parent.get("organization_id") or "default", _user)
-    if not request.sources:
-        raise HTTPException(status_code=400, detail="sources_required")
 
-    created_items: List[Dict[str, Any]] = []
-    parent_meta = shared._parse_json(parent.get("metadata"))
-    now = datetime.now(timezone.utc).isoformat()
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(parent.get("organization_id") or "default"),
+        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "system",
+        actor_email=getattr(_user, "email", None),
+        db=db,
+    )
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "actor_id": request.actor_id,
+        "reason": request.reason,
+        "sources": [
+            {"source_type": entry.source_type, "source_ref": entry.source_ref}
+            for entry in (request.sources or [])
+        ],
+        "actor_email": getattr(_user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    source_signature = ",".join(
+        f"{entry.source_type}:{entry.source_ref}" for entry in (request.sources or [])
+    )
+    result = await runtime.execute_intent(
+        "split_invoice", intent_payload,
+        idempotency_key=f"split_invoice:{ap_item_id}:{source_signature}",
+    )
 
-    for source in request.sources:
-        current_sources = db.list_ap_item_sources(parent["id"], source_type=source.source_type)
-        current = next((row for row in current_sources if row.get("source_ref") == source.source_ref), None)
-        if not current:
-            continue
-
-        split_payload = {
-            "invoice_key": f"{parent.get('invoice_key') or parent['id']}#split#{source.source_type}:{source.source_ref}",
-            "thread_id": parent.get("thread_id"),
-            "message_id": parent.get("message_id"),
-            "subject": current.get("subject") or parent.get("subject"),
-            "sender": current.get("sender") or parent.get("sender"),
-            "vendor_name": parent.get("vendor_name"),
-            "amount": parent.get("amount"),
-            "currency": parent.get("currency") or "USD",
-            "invoice_number": parent.get("invoice_number"),
-            "invoice_date": parent.get("invoice_date"),
-            "due_date": parent.get("due_date"),
-            "state": "needs_info",
-            "confidence": parent.get("confidence") or 0,
-            "approval_required": bool(parent.get("approval_required", True)),
-            "organization_id": parent.get("organization_id") or "default",
-            "user_id": parent.get("user_id"),
-            "metadata": {
-                **parent_meta,
-                "split_from_ap_item_id": parent["id"],
-                "split_reason": request.reason,
-                "split_actor_id": actor_id,
-                "split_source": {"source_type": source.source_type, "source_ref": source.source_ref},
-                "split_at": now,
-            },
-        }
-        child = db.create_ap_item(split_payload)
-        db.move_ap_item_source(
-            from_ap_item_id=parent["id"],
-            to_ap_item_id=child["id"],
-            source_type=source.source_type,
-            source_ref=source.source_ref,
-        )
-
-        if source.source_type == "gmail_thread":
-            db.update_ap_item(child["id"], thread_id=source.source_ref)
-        if source.source_type == "gmail_message":
-            db.update_ap_item(child["id"], message_id=source.source_ref)
-
-        db.append_audit_event(
-            {
-                "ap_item_id": child["id"],
-                "event_type": "ap_item_split_created",
-                "actor_type": "user",
-                "actor_id": actor_id,
-                "payload_json": {
-                    "parent_ap_item_id": parent["id"],
-                    "source_type": source.source_type,
-                    "source_ref": source.source_ref,
-                    "reason": request.reason,
-                },
-                "organization_id": parent.get("organization_id") or "default",
-                "source": "ap_items_api",
-            }
-        )
-        created_items.append(child)
-
-    if not created_items:
-        raise HTTPException(status_code=400, detail="no_sources_split")
-
-    parent_meta["source_count"] = len(db.list_ap_item_sources(parent["id"]))
-    db.update_ap_item(parent["id"], metadata=parent_meta)
-
-    # D8: Track split items against subscription quota
-    try:
-        from clearledgr.services.subscription import get_subscription_service
-        split_org_id = parent.get("organization_id") or "default"
-        get_subscription_service().increment_usage(split_org_id, "invoices_this_month", amount=len(created_items))
-    except Exception:
-        pass
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason == "no_sources_split":
+            raise HTTPException(status_code=400, detail=reason)
+        if reason in {"sources_required", "source_entry_invalid", "source_type_required", "source_ref_required"}:
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=400, detail=reason or "split_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "split_failed")
 
     return {
         "status": "split",
-        "parent_ap_item_id": parent["id"],
-        "created_items": [
-            shared.build_worklist_item(
-                db,
-                item,
-                approval_policy=shared._approval_followup_policy(
-                    str(item.get("organization_id") or parent.get("organization_id") or "default")
-                ),
-            )
-            for item in created_items
-        ],
+        "parent_ap_item_id": (result or {}).get("parent_ap_item_id") or ap_item_id,
+        "created_items": (result or {}).get("created_items") or [],
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
 
 

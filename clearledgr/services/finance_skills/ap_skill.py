@@ -43,6 +43,8 @@ class APFinanceSkill(FinanceSkill):
             "unsnooze_invoice",
             "reverse_invoice_post",
             "manually_classify_invoice",
+            "resubmit_invoice",
+            "split_invoice",
         }
     )
     _MANIFEST = SkillCapabilityManifest(
@@ -149,6 +151,16 @@ class APFinanceSkill(FinanceSkill):
                 "intent": "manually_classify_invoice",
                 "class": "mutating",
                 "description": "Manually re-classify an AP item's document type and re-route via the planning engine.",
+            },
+            {
+                "intent": "resubmit_invoice",
+                "class": "mutating",
+                "description": "Create a new AP item that supersedes a rejected one, preserving the audit chain.",
+            },
+            {
+                "intent": "split_invoice",
+                "class": "mutating",
+                "description": "Split an AP item into separate items by source link (gmail thread / message / attachment).",
             },
         ],
         policy_pack={
