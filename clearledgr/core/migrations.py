@@ -2565,3 +2565,67 @@ def _v51_audit_exports(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v51] index skipped: %s", exc)
+
+
+@migration(52, "webhook_deliveries table — per-attempt delivery log (Module 7 v1 Pass 3)")
+def _v52_webhook_deliveries(cur, db):
+    """Append-only-ish delivery attempt log for outbound webhooks.
+
+    Module 7 Pass 3 (audit-log SIEM streaming) needs a queryable
+    delivery log so the leader can answer "did Splunk receive last
+    Tuesday's failed-post events?" and "why did our SIEM miss this
+    delivery?"  Every webhook attempt — success OR failure —
+    inserts a row here. Retries on a failed attempt insert a NEW
+    row (not UPDATE), so the chain of attempts for a given
+    (webhook, event) pair is reconstructable.
+
+    Fan-out architecture: ``append_audit_event`` enqueues a Celery
+    task ``dispatch_audit_webhooks(event_id)`` after the canonical
+    audit_events INSERT commits. The task looks up matching
+    webhook_subscriptions, calls ``deliver_webhook`` on each, and
+    writes one row here per attempt. Decouples the audit-write
+    latency from webhook delivery latency.
+
+    Status values: 'success' | 'failed' | 'retrying'.
+    Retention: indefinite for the customer-facing dashboard; ops can
+    add a reaper for >90-day rows when the table grows past comfort.
+
+    Indexed for the most common dashboard queries:
+      * recent deliveries for a given webhook (org + webhook_id + ts)
+      * recent deliveries for a given audit event (audit_event_id)
+      * failure scan (status='failed' partial index)
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            webhook_subscription_id TEXT NOT NULL,
+            audit_event_id TEXT,
+            event_type TEXT NOT NULL,
+            attempt_number INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL,
+            http_status_code INTEGER,
+            response_snippet TEXT,
+            error_message TEXT,
+            request_url TEXT NOT NULL,
+            request_signature_prefix TEXT,
+            payload_size_bytes INTEGER,
+            duration_ms INTEGER,
+            attempted_at TEXT NOT NULL,
+            next_retry_at TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_recent "
+        "ON webhook_deliveries(organization_id, webhook_subscription_id, attempted_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_by_event "
+        "ON webhook_deliveries(audit_event_id) WHERE audit_event_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_failures "
+        "ON webhook_deliveries(organization_id, attempted_at DESC) WHERE status = 'failed'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v52] index skipped: %s", exc)

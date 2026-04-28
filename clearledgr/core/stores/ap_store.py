@@ -1803,6 +1803,27 @@ class APStore:
                 if winner:
                     return winner
             raise
+
+        # Module 7 v1 Pass 3 — webhook fan-out. After the canonical
+        # audit_events INSERT commits, fire-and-forget enqueue a
+        # Celery task that fans this event out to every webhook
+        # subscription matching its event_type. Decouples audit-write
+        # latency from webhook delivery latency: a slow SIEM
+        # endpoint never slows the canonical audit write.
+        #
+        # Best-effort: a Celery dispatch failure (broker outage,
+        # import error during dev) logs + swallows so the audit
+        # write itself stays committed. The audit log is the source
+        # of truth; webhook delivery is downstream observability.
+        try:
+            from clearledgr.services.celery_tasks import dispatch_audit_webhooks
+            dispatch_audit_webhooks.delay(event_id)
+        except Exception as fanout_exc:
+            logger.warning(
+                "[append_audit_event] webhook fan-out enqueue failed for %s: %s",
+                event_id, fanout_exc,
+            )
+
         return self.get_ap_audit_event(event_id)
 
     def get_ap_audit_event(self, event_id: str) -> Optional[Dict[str, Any]]:
@@ -2207,6 +2228,131 @@ class APStore:
         if deleted:
             logger.info("[ap_store] reaped %d expired audit_exports", deleted)
         return int(deleted)
+
+    # ------------------------------------------------------------------
+    # Webhook delivery log (Module 7 v1 Pass 3)
+    # ------------------------------------------------------------------
+
+    def insert_webhook_delivery(
+        self,
+        *,
+        organization_id: str,
+        webhook_subscription_id: str,
+        event_type: str,
+        request_url: str,
+        status: str,
+        attempt_number: int = 1,
+        audit_event_id: Optional[str] = None,
+        http_status_code: Optional[int] = None,
+        response_snippet: Optional[str] = None,
+        error_message: Optional[str] = None,
+        request_signature_prefix: Optional[str] = None,
+        payload_size_bytes: Optional[int] = None,
+        duration_ms: Optional[int] = None,
+        next_retry_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record a single webhook delivery attempt.
+
+        One row per attempt — retries insert NEW rows so the chain
+        of attempts for a given (webhook, event) pair is recoverable.
+        Returns the inserted row.
+        """
+        self.initialize()
+        import uuid as _uuid
+
+        delivery_id = f"WHD-{_uuid.uuid4().hex[:24]}"
+        # Truncate response_snippet defensively — a misbehaving
+        # subscriber's 5MB response body should not bloat our table.
+        if response_snippet and len(response_snippet) > 2000:
+            response_snippet = response_snippet[:2000] + "...[truncated]"
+        if error_message and len(error_message) > 1000:
+            error_message = error_message[:1000] + "...[truncated]"
+
+        sql = (
+            """
+            INSERT INTO webhook_deliveries
+            (id, organization_id, webhook_subscription_id, audit_event_id,
+             event_type, attempt_number, status, http_status_code,
+             response_snippet, error_message, request_url,
+             request_signature_prefix, payload_size_bytes, duration_ms,
+             attempted_at, next_retry_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        attempted_at = datetime.now(timezone.utc).isoformat()
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (
+                    delivery_id, organization_id, webhook_subscription_id,
+                    audit_event_id, event_type, int(attempt_number), status,
+                    http_status_code, response_snippet, error_message,
+                    request_url, request_signature_prefix, payload_size_bytes,
+                    duration_ms, attempted_at, next_retry_at,
+                ),
+            )
+            conn.commit()
+        return {
+            "id": delivery_id,
+            "organization_id": organization_id,
+            "webhook_subscription_id": webhook_subscription_id,
+            "audit_event_id": audit_event_id,
+            "event_type": event_type,
+            "attempt_number": int(attempt_number),
+            "status": status,
+            "http_status_code": http_status_code,
+            "request_url": request_url,
+            "attempted_at": attempted_at,
+            "next_retry_at": next_retry_at,
+        }
+
+    def list_webhook_deliveries(
+        self,
+        *,
+        organization_id: str,
+        webhook_subscription_id: Optional[str] = None,
+        audit_event_id: Optional[str] = None,
+        status: Optional[str] = None,
+        from_ts: Optional[str] = None,
+        to_ts: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Read recent webhook deliveries with filter/scope.
+
+        Tenant-scoped by ``organization_id``. Newest-first.
+        """
+        self.initialize()
+        clauses = ["organization_id = %s"]
+        params: List[Any] = [organization_id]
+        if webhook_subscription_id:
+            clauses.append("webhook_subscription_id = %s")
+            params.append(webhook_subscription_id)
+        if audit_event_id:
+            clauses.append("audit_event_id = %s")
+            params.append(audit_event_id)
+        if status:
+            clauses.append("status = %s")
+            params.append(status)
+        if from_ts:
+            clauses.append("attempted_at >= %s")
+            params.append(from_ts)
+        if to_ts:
+            clauses.append("attempted_at <= %s")
+            params.append(to_ts)
+
+        safe_limit = max(1, min(int(limit or 50), 500))
+        where_clause = " AND ".join(clauses)
+        sql = (
+            f"SELECT * FROM webhook_deliveries WHERE {where_clause} "
+            f"ORDER BY attempted_at DESC, id DESC LIMIT %s"
+        )
+        params.append(safe_limit)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Durable agent retry jobs

@@ -497,6 +497,198 @@ def reap_expired_seats_task() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Module 7 v1 Pass 3 — audit-event SIEM webhook fan-out
+#
+# Fan-out path: ``append_audit_event`` enqueues
+# ``dispatch_audit_webhooks(audit_event_id)`` after the canonical
+# audit_events INSERT commits. The dispatch task looks up matching
+# webhook_subscriptions for the org + event_type, and enqueues
+# ``deliver_audit_webhook(audit_event_id, webhook_id, attempt)``
+# for each. The deliver task does the actual POST, records one row
+# in webhook_deliveries (success OR failure), and retries on failure
+# with exponential backoff.
+#
+# Decoupling rationale: a slow SIEM endpoint should never slow the
+# audit_events INSERT. The audit log is the canonical record; webhook
+# delivery is downstream observability.
+# ---------------------------------------------------------------------------
+
+
+_AUDIT_WEBHOOK_MAX_ATTEMPTS = 6
+# Backoff schedule in seconds: 30s, 2m, 10m, 30m, 2h, 6h.
+# Drains a transient outage within minutes; gives a sustained outage
+# half a day before the chain stops. Past max_attempts, the row stays
+# visible in webhook_deliveries with status='failed' so the leader can
+# triage manually.
+_AUDIT_WEBHOOK_BACKOFF_SECONDS = (30, 120, 600, 1800, 7200, 21600)
+
+
+@app.task(bind=True, max_retries=0)  # we manage retries ourselves so each attempt logs
+def dispatch_audit_webhooks(self, audit_event_id: str) -> dict:
+    """Fan an audit event out to every webhook_subscription that's
+    subscribed to its event_type.
+
+    Called from ``append_audit_event`` after the canonical INSERT
+    commits. For each matching subscription, enqueues a
+    ``deliver_audit_webhook`` task that handles the HTTP delivery +
+    delivery-log write + retry chain.
+    """
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    event = db.get_ap_audit_event(audit_event_id)
+    if not event:
+        # Reaped or never existed; nothing to fan out.
+        return {"status": "skipped", "reason": "event_not_found"}
+    organization_id = str(event.get("organization_id") or "")
+    event_type = str(event.get("event_type") or "")
+    if not organization_id or not event_type:
+        return {"status": "skipped", "reason": "missing_org_or_event_type"}
+
+    try:
+        subs = db.get_active_webhooks_for_event(organization_id, event_type)
+    except Exception as exc:
+        logger.exception("[dispatch_audit_webhooks] subscription lookup failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    if not subs:
+        return {"status": "noop", "subscribers": 0}
+
+    dispatched = 0
+    for sub in subs:
+        sub_id = str(sub.get("id") or "")
+        if not sub_id:
+            continue
+        try:
+            deliver_audit_webhook.delay(audit_event_id, sub_id, 1)
+            dispatched += 1
+        except Exception as exc:
+            logger.warning(
+                "[dispatch_audit_webhooks] enqueue failed for sub=%s event=%s: %s",
+                sub_id, audit_event_id, exc,
+            )
+    return {"status": "dispatched", "subscribers": dispatched, "audit_event_id": audit_event_id}
+
+
+@app.task(bind=True, max_retries=0)
+def deliver_audit_webhook(
+    self,
+    audit_event_id: str,
+    webhook_subscription_id: str,
+    attempt: int = 1,
+) -> dict:
+    """Deliver one audit event to one webhook subscription.
+
+    Records exactly one row in ``webhook_deliveries`` per call —
+    success OR failure. On failure with attempt < max, schedules a
+    retry via ``deliver_audit_webhook.apply_async(countdown=...)``
+    using the exponential backoff schedule above.
+    """
+    from clearledgr.core.database import get_db
+    from clearledgr.services.webhook_delivery import deliver_webhook
+    import asyncio
+    import time as _time
+
+    db = get_db()
+    event = db.get_ap_audit_event(audit_event_id)
+    sub = db.get_webhook_subscription(webhook_subscription_id) if hasattr(db, "get_webhook_subscription") else None
+    if not event or not sub:
+        return {"status": "skipped", "reason": "event_or_sub_not_found"}
+    if sub.get("is_active") in (False, 0):
+        return {"status": "skipped", "reason": "subscription_inactive"}
+
+    organization_id = str(event.get("organization_id") or "")
+    event_type = str(event.get("event_type") or "")
+    url = str(sub.get("url") or "")
+    secret = str(sub.get("secret") or "")
+    payload = {
+        "audit_event": event,
+        "organization_id": organization_id,
+    }
+
+    # Deliver. ``deliver_webhook`` is async, so spin a loop just for
+    # this call. Each Celery worker invocation is its own thread,
+    # so a fresh loop is safe + cheap.
+    started_ms = int(_time.time() * 1000)
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ok = loop.run_until_complete(
+            deliver_webhook(
+                url=url,
+                event_type=event_type,
+                payload=payload,
+                secret=secret,
+                webhook_id=f"audit_{audit_event_id}_{webhook_subscription_id}",
+            )
+        )
+        loop.close()
+        duration_ms = int(_time.time() * 1000) - started_ms
+        status = "success" if ok else "failed"
+        error_message = None if ok else "delivery_returned_false"
+        http_code = None
+    except Exception as exc:
+        duration_ms = int(_time.time() * 1000) - started_ms
+        ok = False
+        status = "failed"
+        error_message = str(exc)
+        http_code = None
+        logger.warning(
+            "[deliver_audit_webhook] exception delivering event=%s sub=%s: %s",
+            audit_event_id, webhook_subscription_id, exc,
+        )
+
+    next_retry_at = None
+    if not ok and attempt < _AUDIT_WEBHOOK_MAX_ATTEMPTS:
+        backoff = _AUDIT_WEBHOOK_BACKOFF_SECONDS[
+            min(attempt - 1, len(_AUDIT_WEBHOOK_BACKOFF_SECONDS) - 1)
+        ]
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        next_retry_dt = _dt.now(_tz.utc) + _td(seconds=backoff)
+        next_retry_at = next_retry_dt.isoformat()
+        try:
+            deliver_audit_webhook.apply_async(
+                args=[audit_event_id, webhook_subscription_id, attempt + 1],
+                countdown=backoff,
+            )
+        except Exception as enqueue_exc:
+            logger.warning(
+                "[deliver_audit_webhook] retry enqueue failed: %s", enqueue_exc,
+            )
+
+    # Always record the attempt — successful, retrying, or terminal-failed.
+    record_status = "retrying" if (not ok and next_retry_at) else status
+    try:
+        db.insert_webhook_delivery(
+            organization_id=organization_id,
+            webhook_subscription_id=webhook_subscription_id,
+            audit_event_id=audit_event_id,
+            event_type=event_type,
+            attempt_number=attempt,
+            status=record_status,
+            http_status_code=http_code,
+            error_message=error_message,
+            request_url=url,
+            request_signature_prefix="sha256=" if secret else None,
+            duration_ms=duration_ms,
+            next_retry_at=next_retry_at,
+        )
+    except Exception as log_exc:
+        logger.exception(
+            "[deliver_audit_webhook] delivery log insert failed: %s", log_exc,
+        )
+
+    return {
+        "status": record_status,
+        "attempt": attempt,
+        "audit_event_id": audit_event_id,
+        "webhook_subscription_id": webhook_subscription_id,
+        "duration_ms": duration_ms,
+        "next_retry_at": next_retry_at,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Module 7 v1 Pass 2 — async audit-log CSV export
 # ---------------------------------------------------------------------------
 

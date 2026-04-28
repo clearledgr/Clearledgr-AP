@@ -597,6 +597,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/workspace/audit/exports/[^/]+$",
         r"^/api/workspace/entities/[^/]+$",
         r"^/api/workspace/webhooks/[^/]+$",
+        r"^/api/workspace/webhooks/[^/]+/deliveries$",
         r"^/api/workspace/webhooks/[^/]+/test$",
         r"^/api/workspace/vendor-intelligence/profiles/[^/]+/aliases$",
         r"^/api/workspace/vendor-intelligence/profiles/[^/]+/aliases/[^/]+$",

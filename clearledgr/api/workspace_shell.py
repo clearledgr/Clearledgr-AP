@@ -2317,6 +2317,57 @@ def search_audit(
 
 
 # ---------------------------------------------------------------------------
+# Module 7 v1 Pass 3 — webhook delivery log endpoint
+#
+# Per-webhook delivery history; each row is one attempt. Backed by
+# webhook_deliveries (migration v52). Used by the SIEM config panel
+# to show "did Splunk receive last Tuesday's events?" + the failure-
+# triage queue for any subscriber having delivery issues.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/webhooks/{webhook_id}/deliveries")
+def list_webhook_deliveries(
+    webhook_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    audit_event_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None, description="success | failed | retrying"),
+    from_ts: Optional[str] = Query(default=None),
+    to_ts: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    user: TokenData = Depends(get_current_user),
+):
+    """List webhook delivery attempts for a given subscription.
+
+    Tenant-scoped + admin-gated. The webhook_id must belong to the
+    caller's org or 404 (same token as missing — no existence leak).
+    Newest-first.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    sub = db.get_webhook_subscription(webhook_id) if hasattr(db, "get_webhook_subscription") else None
+    if not sub or str(sub.get("organization_id") or "") != org_id:
+        raise HTTPException(status_code=404, detail="webhook_not_found")
+
+    rows = db.list_webhook_deliveries(
+        organization_id=org_id,
+        webhook_subscription_id=webhook_id,
+        audit_event_id=audit_event_id,
+        status=status,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        limit=limit,
+    )
+    return {
+        "webhook_id": webhook_id,
+        "organization_id": org_id,
+        "deliveries": rows,
+        "count": len(rows),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Module 7 v1 Pass 2 — async CSV export
 #
 # Mirrors the search/filter contract: the SPA collects the same filters
