@@ -763,3 +763,311 @@
     padding: 18px;
   }
 }
+
+/* ───────────────────────────────────────────────────────────────────
+ * Audit log page (Module 7 v1)
+ *
+ * Two-pane layout: filterable table on the left, detail panel on the
+ * right when a row is selected. On viewports below 900px the detail
+ * panel takes over the full width and hides the table — the audit row
+ * the user clicked on is the focus.
+ * ─────────────────────────────────────────────────────────────────── */
+
+.cl-audit-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cl-audit-filters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) auto;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-bg);
+}
+
+.cl-audit-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.cl-audit-filter-field span {
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.cl-audit-filter-field input,
+.cl-audit-filter-field select {
+  padding: 6px 8px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: white;
+  color: var(--cl-ink-primary);
+  font-size: 13px;
+}
+
+.cl-audit-filter-field input:focus,
+.cl-audit-filter-field select:focus {
+  outline: none;
+  border-color: var(--cl-mint, #00d67e);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+}
+
+.cl-audit-filter-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: end;
+}
+
+.cl-audit-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.cl-audit-layout.has-detail {
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .cl-audit-layout.has-detail {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cl-audit-table-wrap {
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-bg);
+  overflow: hidden;
+}
+
+.cl-audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cl-audit-table thead {
+  background: var(--cl-bg-subtle, #f8f8f8);
+}
+
+.cl-audit-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.cl-audit-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cl-border-subtle, #efefef);
+  vertical-align: middle;
+}
+
+.cl-audit-row {
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.cl-audit-row:hover {
+  background: var(--cl-bg-hover, #f4f4f4);
+}
+
+.cl-audit-row.is-active {
+  background: rgba(0, 214, 126, 0.08);
+}
+
+.cl-audit-cell-ts {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--cl-ink-muted);
+}
+
+.cl-audit-cell-event {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-audit-event-name {
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+}
+
+.cl-audit-cell-actor {
+  font-size: 12px;
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-audit-cell-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.cl-audit-box-type {
+  font-weight: 500;
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-audit-box-id {
+  color: var(--cl-ink-muted);
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 11px;
+}
+
+.cl-audit-state-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.cl-audit-state-arrow {
+  color: var(--cl-ink-muted);
+}
+
+.cl-audit-confidence {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 12px;
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-audit-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--cl-bg-subtle, #eee);
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-audit-verdict-vetoed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.cl-audit-verdict-should_execute {
+  background: rgba(0, 214, 126, 0.15);
+  color: #0a663e;
+}
+
+.cl-audit-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cl-border-subtle, #efefef);
+  background: var(--cl-bg-subtle, #fafafa);
+  font-size: 12px;
+}
+
+/* Detail panel — slides in next to the table on wide viewports, takes
+   over below 1100px. */
+.cl-audit-detail {
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-bg);
+  padding: 16px;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  position: sticky;
+  top: 16px;
+}
+
+.cl-audit-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.cl-audit-detail-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cl-audit-detail-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.cl-audit-detail-grid dt {
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding-top: 2px;
+}
+
+.cl-audit-detail-grid dd {
+  margin: 0;
+  color: var(--cl-ink-primary);
+  word-break: break-word;
+}
+
+.cl-audit-detail-grid dd code {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 12px;
+  background: var(--cl-bg-subtle, #f4f4f4);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.cl-audit-detail-payload {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.cl-audit-detail-payload summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--cl-ink-secondary, #444);
+  margin-bottom: 6px;
+}
+
+.cl-audit-detail-payload pre {
+  margin: 0;
+  padding: 10px;
+  background: var(--cl-bg-subtle, #f8f8f8);
+  border-radius: var(--cl-radius-sm);
+  overflow-x: auto;
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .cl-audit-filters {
+    grid-template-columns: 1fr;
+  }
+  .cl-audit-table th,
+  .cl-audit-table td {
+    padding: 8px;
+    font-size: 12px;
+  }
+}

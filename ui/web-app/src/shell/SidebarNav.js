@@ -15,6 +15,7 @@ export const NAV_ITEMS = [
   { path: '/vendors', label: 'Vendors', group: 'work' },
   { path: '/reconciliation', label: 'Reconciliation', group: 'work' },
   { path: '/activity', label: 'Activity', group: 'ops' },
+  { path: '/audit', label: 'Audit log', group: 'ops' },
   { path: '/connections', label: 'Connections', group: 'ops' },
   { path: '/settings', label: 'Settings', group: 'ops' },
 ];

@@ -1949,6 +1949,110 @@ class APStore:
         return [self._deserialize_audit_event(dict(row)) for row in rows]
 
     # ------------------------------------------------------------------
+    # Org-level audit search (Module 7 v1 — Dashboard build spec)
+    # ------------------------------------------------------------------
+
+    def search_audit_events(
+        self,
+        *,
+        organization_id: str,
+        from_ts: Optional[str] = None,
+        to_ts: Optional[str] = None,
+        event_types: Optional[List[str]] = None,
+        actor_id: Optional[str] = None,
+        box_type: Optional[str] = None,
+        box_id: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[Tuple[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Org-scoped audit-event search with composite-cursor pagination.
+
+        Returns ``{events: [...], next_cursor: (ts, id) | None}``.
+        Newest-first. ``next_cursor`` is None when the page is the last
+        one. Cursor is a (ts, id) pair so two events written at the
+        same millisecond never skip or duplicate across pages.
+
+        Filter semantics:
+          * ``from_ts`` / ``to_ts`` — inclusive at both ends, ISO 8601.
+          * ``event_types`` — IN-list match. Empty list ignored.
+          * ``actor_id`` — exact match on ``actor_id`` column.
+          * ``box_type`` / ``box_id`` — narrow to a single Box's trail.
+
+        Tenant scope is enforced by the ``organization_id`` filter.
+        Cross-tenant rows are excluded at the SQL level — there is no
+        application-side trust.
+        """
+        self.initialize()
+        safe_limit = max(1, min(int(limit or 100), 500))
+        # Fetch one extra so we can detect "is there a next page".
+        sql_limit = safe_limit + 1
+
+        clauses = ["ae.organization_id = %s"]
+        params: List[Any] = [organization_id]
+
+        if from_ts:
+            clauses.append("ae.ts >= %s")
+            params.append(from_ts)
+        if to_ts:
+            clauses.append("ae.ts <= %s")
+            params.append(to_ts)
+        if event_types:
+            placeholders = ",".join(["%s"] * len(event_types))
+            clauses.append(f"ae.event_type IN ({placeholders})")
+            params.extend(event_types)
+        if actor_id:
+            clauses.append("ae.actor_id = %s")
+            params.append(actor_id)
+        if box_type:
+            clauses.append("ae.box_type = %s")
+            params.append(box_type)
+        if box_id:
+            clauses.append("ae.box_id = %s")
+            params.append(box_id)
+
+        # Cursor-based pagination: rows STRICTLY older than (cursor_ts,
+        # cursor_id) come next when sorting newest-first. The composite
+        # comparison `(ts, id) < (cursor_ts, cursor_id)` makes the
+        # window unambiguous when timestamps tie.
+        if cursor and len(cursor) == 2:
+            cursor_ts, cursor_id = cursor
+            clauses.append("(ae.ts, ae.id) < (%s, %s)")
+            params.extend([cursor_ts, cursor_id])
+
+        where_clause = " AND ".join(clauses)
+        sql = f"""
+            SELECT ae.*,
+                   ai.vendor_name AS vendor_name,
+                   ai.amount AS amount,
+                   ai.currency AS currency,
+                   ai.invoice_number AS invoice_number
+              FROM audit_events ae
+              LEFT JOIN ap_items ai
+                     ON ae.box_type = 'ap_item' AND ae.box_id = ai.id
+             WHERE {where_clause}
+             ORDER BY ae.ts DESC, ae.id DESC
+             LIMIT %s
+        """
+        params.append(sql_limit)
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+
+        events = [self._deserialize_audit_event(dict(row)) for row in rows]
+
+        next_cursor: Optional[Tuple[str, str]] = None
+        if len(events) > safe_limit:
+            # Drop the look-ahead row; emit a cursor pointing at the
+            # last row that's actually returned to the caller.
+            events = events[:safe_limit]
+            tail = events[-1]
+            next_cursor = (str(tail.get("ts") or ""), str(tail.get("id") or ""))
+
+        return {"events": events, "next_cursor": next_cursor}
+
+    # ------------------------------------------------------------------
     # Durable agent retry jobs
     # ------------------------------------------------------------------
 

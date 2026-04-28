@@ -21,7 +21,7 @@ import json
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import httpx
@@ -2204,6 +2204,139 @@ async def export_report(
             "Content-Disposition": f"attachment; filename={report_type}_{org_id}.csv",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Module 7 v1 — Audit Trail dashboard surface
+#
+# Admin-gated, org-scoped audit search + single-event detail. Covers the
+# search/filter/pagination/detail half of Module 7; export (CSV/PDF) and
+# SIEM webhook config land in Pass 2 + Pass 3.
+#
+# Backed by audit_events (already shipped, with governance_verdict +
+# agent_confidence columns from migration v50). Append-only Postgres
+# triggers reject UPDATE/DELETE on this table — see
+# clearledgr/core/database.py:374. The dashboard is purely a read
+# surface; nothing mutates the audit log here.
+# ---------------------------------------------------------------------------
+
+
+_AUDIT_SEARCH_MAX_LIMIT = 200
+
+
+def _decode_audit_cursor(raw: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Decode the opaque base64 cursor sent by the SPA.
+
+    Cursor wire format: base64(<ts>|<id>). Two pipe-separated fields
+    keep parsing trivial — the audit_events.id is a UUID hex (no
+    pipes) and ts is an ISO-8601 string (no pipes), so the delimiter
+    is unambiguous. Failed decode falls back to no cursor (start
+    fresh) rather than 400 — corrupt cursors come from copy-pasted
+    URLs, not malice, and the next page request will succeed.
+    """
+    if not raw:
+        return None
+    try:
+        import base64
+        decoded = base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8")
+        ts, _, evt_id = decoded.partition("|")
+        if ts and evt_id:
+            return (ts, evt_id)
+    except Exception:
+        return None
+    return None
+
+
+def _encode_audit_cursor(pair: Optional[Tuple[str, str]]) -> Optional[str]:
+    if not pair:
+        return None
+    import base64
+    raw = f"{pair[0]}|{pair[1]}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+@router.get("/audit/search")
+def search_audit(
+    organization_id: Optional[str] = Query(default=None),
+    from_ts: Optional[str] = Query(default=None, description="ISO 8601; inclusive lower bound."),
+    to_ts: Optional[str] = Query(default=None, description="ISO 8601; inclusive upper bound."),
+    event_type: Optional[str] = Query(default=None, description="Comma-separated event_type tokens."),
+    actor_id: Optional[str] = Query(default=None, description="Exact-match actor (email or user_id)."),
+    box_type: Optional[str] = Query(default=None, description="Narrow to one Box type (ap_item, organization, etc)."),
+    box_id: Optional[str] = Query(default=None, description="Narrow to one Box's trail."),
+    limit: int = Query(default=100, ge=1, le=_AUDIT_SEARCH_MAX_LIMIT),
+    cursor: Optional[str] = Query(default=None, description="Opaque cursor from a prior response."),
+    user: TokenData = Depends(get_current_user),
+):
+    """Org-scoped audit search with composite-cursor pagination.
+
+    Returns ``{events: [...], next_cursor: <opaque>|None, count: N}``.
+    Newest-first. Empty ``next_cursor`` means the page is the last one.
+    Admin-only — the audit log is sensitive data and surfaces actor IDs
+    + reasons that aren't in the operator's normal queue view.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    event_types: Optional[List[str]] = None
+    if event_type:
+        event_types = [t.strip() for t in event_type.split(",") if t.strip()] or None
+
+    decoded_cursor = _decode_audit_cursor(cursor)
+    result = db.search_audit_events(
+        organization_id=org_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        event_types=event_types,
+        actor_id=actor_id,
+        box_type=box_type,
+        box_id=box_id,
+        limit=limit,
+        cursor=decoded_cursor,
+    )
+    events = result.get("events") or []
+    next_cursor = _encode_audit_cursor(result.get("next_cursor"))
+    return {
+        "organization_id": org_id,
+        "events": events,
+        "next_cursor": next_cursor,
+        "count": len(events),
+        "filters": {
+            "from_ts": from_ts,
+            "to_ts": to_ts,
+            "event_type": event_type,
+            "actor_id": actor_id,
+            "box_type": box_type,
+            "box_id": box_id,
+        },
+    }
+
+
+@router.get("/audit/event/{event_id}")
+def get_audit_event_detail(
+    event_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Single-event detail with full payload + tenant-scope check.
+
+    Returns 404 if the event doesn't exist OR if it belongs to a
+    different organization than the calling user. Same response shape
+    in both cases — never leak the existence of a cross-tenant event.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    event = db.get_ap_audit_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="audit_event_not_found")
+    # Tenant scope: org_id mismatch returns the same 404 token so we
+    # never leak that the event exists in another tenant.
+    event_org = str(event.get("organization_id") or "")
+    if event_org and event_org != org_id:
+        raise HTTPException(status_code=404, detail="audit_event_not_found")
+    return {"event": event}
 
 
 @router.get("/webhooks")

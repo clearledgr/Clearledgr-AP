@@ -20,6 +20,7 @@ import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
 import { VendorsRoute } from './routes/pages/VendorsRoute.js';
 import { ReconciliationRoute } from './routes/pages/ReconciliationRoute.js';
 import { ActivityRoute } from './routes/pages/ActivityRoute.js';
+import { AuditLogRoute } from './routes/pages/AuditLogRoute.js';
 import { ConnectionsRoute } from './routes/pages/ConnectionsRoute.js';
 import { SettingsRoute } from './routes/pages/SettingsRoute.js';
 import { TemplatesRoute } from './routes/pages/TemplatesRoute.js';
@@ -55,6 +56,7 @@ export function App() {
                     <//>
                     <${Route} path="/reconciliation"><${ReconciliationRoute} /><//>
                     <${Route} path="/activity"><${ActivityRoute} /><//>
+                    <${Route} path="/audit"><${AuditLogRoute} /><//>
                     <${Route} path="/connections"><${ConnectionsRoute} /><//>
                     <${Route} path="/settings"><${SettingsRoute} /><//>
                     <${Route} path="/settings/:section">
