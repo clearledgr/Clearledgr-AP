@@ -264,3 +264,65 @@ If we have one day to fix the most impactful issues, in order:
 **Architecture is sound** (Preact, file-based routing, modular pages, shell context). The gaps are presentation-layer: missing CSS organization, empty-state patterns, and mobile refinement. Typical 80% → 100% polish.
 
 Day-1 plan: do the P0 + P1 list above (~10h). End state: a workspace that survives a prospect demo without me hand-waving "we're going to fix that."
+
+---
+
+## Round 2 (after pages.css + Settings + Connections + Exceptions shipped)
+
+Audited the four pages I missed in round 1 plus the two shell components (`SidebarNav`, `CommandK`).
+
+### TemplatesPage.js — **P0 STYLING BLOCKER**
+
+Same root cause as Settings was: a whole set of class names (`templates-*`, 32 of them) referenced in JSX with NO CSS defined anywhere. Page renders unstyled. `pages.css` covers a few of its outer classes (`.secondary-banner`, `.panel`, `.btn-*`) but everything inside the layout shell is naked. Empty state copy is good ("No personal templates yet"). API errors silently swallowed at line 125 and 194.
+
+**Fix: ~2h. Create `templates.css` with `.templates-shell`, `.templates-sidebar`, `.templates-main`, `.templates-row`, `.templates-field`, `.templates-pill`, `.templates-preview-card`, etc.**
+
+### PlanPage.js — **P0 STYLING BLOCKER**
+
+Same pattern. 25+ orphaned `billing-*` classes. Layout is correct in markup, completely unstyled in render. Also: no null-safety if `bootstrap.subscription` is undefined — page silently breaks. 11 inline `style=` attributes for layout.
+
+**Fix: ~2h. Create `billing.css` with `.billing-shell`, `.billing-main-stack`, `.billing-side-stack`, `.billing-summary-grid`, `.billing-usage-row`, `.billing-plan-list`, `.billing-plan-option`, `.billing-feature-grid`. Plus a `bootstrap.subscription || fallback` guard.**
+
+### OnboardingPage.js — READY
+
+Has its own complete `onboarding.css`. Clean wizard structure, good error handling (line 105 toast), aria-hidden on decorative pips, responsive by default. No P0/P1.
+
+### HealthPage.js — READY
+
+Uses `pages.css` secondary-* classes correctly (now styled after the shipped CSS). Empty states + error handling fine. 17 inline `style=` for dynamic severity colors — better as `.status-color-${severity}` classes but not a P0. Minor P2: no skeleton in MonitoringPanel while data loads.
+
+### SidebarNav.js — READY
+
+Clean, semantic, `aria-label="Primary"` on nav. Uses shell.css. No P0/P1.
+
+### CommandK.js — READY
+
+Excellent component. Keyboard support complete (↑↓/Enter/Esc), focus management on open, fuzzy scoring, debounced live search. Minor P2: no "searching…" hint between debounce + first results, silent fail on live-search API error.
+
+---
+
+## Updated top-priority list (end of day 2026-04-27)
+
+After today's commits the original P0/P1 list is mostly closed:
+
+✅ Settings page styled (pages.css ship + P0 follow-up — extract inline styles + GL grid mobile collapse + dead code + active tab state + "Not connected" → CTA buttons)
+✅ ConnectionsPage console.warn dropped + inline error UX on webhook URL
+✅ ExceptionsPage `window.prompt()` → proper modal
+✅ /favicon.ico fix (Dockerfile + handler)
+✅ /auth/me 401 silenced on auth-less routes
+✅ Footer "Partially degraded" cause fixed (`/health` proxy)
+✅ API cold-start sign-in latency fixed (background DB warmup)
+
+**New priority list:**
+
+### P0 — last two unstyled pages
+1. `templates.css` — TemplatesPage layout + forms + preview (~2h)
+2. `billing.css` — PlanPage usage + plan-selector + features (~2h) + null-safety on missing subscription
+
+### P1 — error/loading polish
+3. Standardize `<EmptyState>` + `<LoadingSkeleton>` + `<ErrorRetry>` reusable components and apply across Vendors, Activity, Reconciliation, Plan, Health (~2h)
+4. CommandK searching-state hint + error-state differentiation (~30min)
+
+### P2 — code health
+5. Replace HealthPage's 17 inline color styles with `.status-color-${severity}` classes (~1h)
+6. A11y pass: add `aria-label` to status badges across pages (~1h)

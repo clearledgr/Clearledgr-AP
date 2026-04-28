@@ -1,0 +1,333 @@
+/* TemplatesPage — reply-template editor + library + preview.
+ *
+ * Layout (desktop): sidebar (library + fields) | main (editor + preview)
+ * Layout (mobile): single column, library collapses on top.
+ *
+ * Brand-aligned with pages.css; all colors via --cl-* tokens.
+ */
+
+.templates-shell {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .templates-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.templates-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 16px;
+}
+
+@media (max-width: 900px) {
+  .templates-sidebar {
+    position: static;
+  }
+}
+
+.templates-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Library + fields cards in the sidebar */
+
+.templates-library-card,
+.templates-fields-card,
+.templates-editor-card,
+.templates-preview-card {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 18px 20px;
+}
+
+.templates-library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.templates-library-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.templates-library-divider {
+  height: 1px;
+  background: var(--cl-border);
+  margin: 4px 0;
+}
+
+.templates-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.templates-section-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+}
+
+/* Template list items */
+
+.templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.templates-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-surface);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+}
+
+.templates-row:hover {
+  border-color: var(--cl-border-strong);
+  background: var(--cl-bg);
+}
+
+.templates-row.is-active {
+  border-color: var(--cl-mint-strong);
+  background: var(--cl-mint-soft);
+}
+
+.templates-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.templates-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+}
+
+.templates-row-detail {
+  font-size: 12px;
+  color: var(--cl-ink-secondary);
+  line-height: 1.4;
+}
+
+.templates-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.templates-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--cl-ink-secondary);
+  white-space: nowrap;
+}
+
+.templates-empty-copy {
+  font-size: 12px;
+  color: var(--cl-ink-secondary);
+  line-height: 1.5;
+}
+
+/* Editor card + form */
+
+.templates-editor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cl-border);
+}
+
+.templates-editor-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-mint-strong);
+}
+
+.templates-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 700px) {
+  .templates-form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.templates-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.templates-field--full {
+  grid-column: 1 / -1;
+}
+
+.templates-field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cl-ink-secondary);
+}
+
+.templates-field input,
+.templates-field select,
+.templates-field textarea,
+.templates-fields-card input,
+.templates-fields-card select,
+.templates-fields-card textarea {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-surface);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.templates-field textarea,
+.templates-fields-card textarea {
+  height: auto;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 96px;
+  font-family: inherit;
+}
+
+.templates-field input:focus,
+.templates-field select:focus,
+.templates-field textarea:focus,
+.templates-fields-card input:focus,
+.templates-fields-card select:focus,
+.templates-fields-card textarea:focus {
+  outline: none;
+  border-color: var(--cl-mint-strong);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+}
+
+.templates-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Token cloud — clickable variable chips */
+
+.templates-token-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.templates-token {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: 12px;
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  color: var(--cl-ink-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.templates-token:hover {
+  background: var(--cl-mint-soft);
+  color: var(--cl-mint-strong);
+  border-color: rgba(0, 214, 126, 0.3);
+}
+
+/* Preview panel — renders the assembled email */
+
+.templates-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.templates-mail-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+}
+
+.templates-mail-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.templates-mail-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+}
+
+.templates-mail-value {
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  word-break: break-word;
+}
+
+.templates-mail-body {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cl-border);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cl-ink-primary);
+  white-space: pre-wrap;
+}

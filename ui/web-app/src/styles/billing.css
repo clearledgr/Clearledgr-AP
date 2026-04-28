@@ -1,0 +1,222 @@
+/* PlanPage — subscription / usage / plan-selector / feature comparison.
+ *
+ * Layout: main column (current plan summary + usage + plan selector) +
+ * side column (feature highlights). Stacks on mobile.
+ */
+
+.billing-shell {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .billing-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.billing-main-stack,
+.billing-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Hero / current-plan eyebrow row */
+
+.billing-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-mint-strong);
+}
+
+.billing-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.billing-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Snapshot grid — current plan + status + cycle + period */
+
+.billing-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.billing-summary-card {
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billing-summary-card strong {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+}
+
+.billing-summary-card span {
+  font-size: 14px;
+  color: var(--cl-ink-primary);
+  font-weight: 500;
+}
+
+/* Usage list — invoices, AI credits, users — with progress bars */
+
+.billing-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.billing-usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.billing-usage-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.billing-usage-copy {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cl-ink-primary);
+}
+
+.billing-usage-note {
+  font-size: 11px;
+  color: var(--cl-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-usage-bar {
+  position: relative;
+  height: 8px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.billing-usage-bar > .billing-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--cl-mint);
+  transition: width 0.2s;
+}
+
+/* Tone variants for usage bars */
+.billing-usage-bar.is-warning > .billing-usage-fill {
+  background: var(--cl-warning);
+}
+.billing-usage-bar.is-danger > .billing-usage-fill {
+  background: var(--cl-danger);
+}
+
+/* Plan selector — three plan cards in a row */
+
+.billing-plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.billing-plan-option {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.08s, box-shadow 0.12s;
+}
+
+.billing-plan-option:hover {
+  border-color: var(--cl-border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--cl-shadow-sm);
+}
+
+.billing-plan-option.is-current {
+  border-color: var(--cl-mint-strong);
+  background: linear-gradient(0deg, rgba(0, 214, 126, 0.04), rgba(0, 214, 126, 0.04)), var(--cl-surface);
+}
+
+.billing-plan-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.billing-plan-copy {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+  line-height: 1.5;
+}
+
+.billing-plan-price {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--cl-ink-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-plan-price small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--cl-ink-muted);
+  margin-left: 4px;
+}
+
+/* Feature highlight grid — what's included */
+
+.billing-feature-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.billing-feature-card {
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billing-feature-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+}
