@@ -47,11 +47,6 @@ from clearledgr.core.idempotency import (
     save_idempotent_response,
 )
 from clearledgr.api.deps import verify_org_access
-from clearledgr.core.ap_entity_routing import (
-    match_entity_candidate,
-    normalize_entity_candidate,
-    resolve_entity_routing,
-)
 
 
 router = APIRouter()
@@ -73,68 +68,6 @@ class _SharedProxy:
 
 
 shared = _SharedProxy()
-
-
-def _record_agent_action(
-    *,
-    user: Any,
-    db: Any,
-    ap_item: Dict[str, Any],
-    organization_id: str,
-    event_type: str,
-    reason: str,
-    response: Dict[str, Any],
-    extra: Optional[Dict[str, Any]] = None,
-    correlation_id_override: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """Record a state-mutating workspace action through the FinanceAgentRuntime.
-
-    Routes that don't go through ``runtime.execute_intent`` (because no
-    matching intent handler exists yet) still need to emit an
-    agent-runtime audit event so the action is attributable, queryable
-    in agent memory, and feeds the learning loop. Without this, the
-    audit row carries the state transition but no agent-runtime context
-    (no ``skill_id``, no canonical_audit_event, no recall feedback).
-
-    The runtime's ``append_runtime_audit`` writes the audit row, syncs
-    agent memory via ``_sync_agent_memory``, and feeds learning via
-    ``_sync_learning_feedback`` — three side effects in one helper.
-
-    Best-effort: failures are logged and swallowed so audit emission
-    never blocks the user-facing action's success path.
-
-    NOTE: this is the Phase 1 P0 enhancement. Phase 2 will register
-    proper intents for these actions and migrate routes to
-    ``runtime.execute_intent``, which adds governance veto and full
-    deliberation on top of what this helper provides.
-    """
-    try:
-        runtime = shared._finance_agent_runtime_cls()(
-            organization_id=organization_id,
-            actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
-            actor_email=getattr(user, "email", None),
-            db=db,
-        )
-        metadata: Dict[str, Any] = {"response": response}
-        if extra:
-            metadata["context"] = extra
-        correlation_id = correlation_id_override or runtime.correlation_id_for_item(ap_item)
-        return runtime.append_runtime_audit(
-            ap_item_id=str(ap_item.get("id") or ""),
-            event_type=event_type,
-            reason=reason,
-            metadata=metadata,
-            correlation_id=correlation_id,
-            idempotency_key=idempotency_key,
-            skill_id="ap_v1",
-        )
-    except Exception as exc:
-        logger.warning(
-            "[_record_agent_action] failed for %s/%s: %s",
-            ap_item.get("id"), event_type, exc,
-        )
-        return None
 
 
 def _dispatch_mention_notifications(
@@ -443,172 +376,57 @@ async def resolve_non_invoice_review(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
+    """Resolve a non-invoice document via the ``resolve_non_invoice_review`` intent.
+
+    Thin HTTP→intent wrapper. The handler validates outcome against
+    document-type allow-list, resolves linked records, runs the
+    statement-to-reconciliation artifact path when applicable, and
+    audits the resolution with full agent context.
+    """
     db = shared.get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
-    metadata = shared._parse_json(item.get("metadata"))
-    document_type = shared._normalize_document_type_token(
-        item.get("document_type") or "invoice"
-    )
-    if document_type == "invoice":
-        raise HTTPException(status_code=400, detail="invoice_document_not_supported")
-
-    outcome = shared._normalize_non_invoice_outcome(request.outcome)
-    allowed_outcomes = shared._NON_INVOICE_ALLOWED_OUTCOMES.get(document_type) or shared._NON_INVOICE_ALLOWED_OUTCOMES["other"]
-    if outcome not in allowed_outcomes:
-        raise HTTPException(status_code=400, detail="invalid_non_invoice_outcome")
-
-    related_reference = str(request.related_reference or "").strip() or None
-    related_ap_item_id = str(request.related_ap_item_id or "").strip() or None
-    if outcome in {"apply_to_invoice", "link_to_payment"} and not (related_reference or related_ap_item_id):
-        raise HTTPException(status_code=400, detail="related_reference_required")
-
-    resolved_related_item, link_status = shared._resolve_related_ap_item_for_non_invoice(
-        db,
+    runtime = shared._finance_agent_runtime_cls()(
         organization_id=str(item.get("organization_id") or organization_id or "default"),
-        source_ap_item_id=ap_item_id,
-        related_ap_item_id=related_ap_item_id,
-        related_reference=related_reference,
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
+        actor_email=getattr(user, "email", None),
+        db=db,
     )
-    if resolved_related_item and not related_ap_item_id:
-        related_ap_item_id = str(resolved_related_item.get("id") or "").strip() or related_ap_item_id
-
-    actor_id = shared._authenticated_actor(user)
-    resolved_at = datetime.now(timezone.utc).isoformat()
-    next_state = shared._non_invoice_resolution_state(
-        current_state=str(item.get("state") or "").strip().lower() or APState.RECEIVED.value,
-        outcome=outcome,
-        close_record=bool(request.close_record),
-    )
-
-    resolution = {
-        "document_type": document_type,
-        "outcome": outcome,
-        "related_reference": related_reference,
-        "related_ap_item_id": related_ap_item_id,
-        "note": str(request.note or "").strip() or None,
-        "resolved_at": resolved_at,
-        "resolved_by": actor_id,
-        "closed_record": bool(request.close_record),
-        "link_status": link_status,
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "outcome": request.outcome,
+        "related_reference": request.related_reference,
+        "related_ap_item_id": request.related_ap_item_id,
+        "note": request.note,
+        "close_record": bool(request.close_record),
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
     }
-    resolution.update(
-        shared._non_invoice_resolution_semantics(
-            document_type=document_type,
-            outcome=outcome,
-            close_record=bool(request.close_record),
-        )
+    result = await runtime.execute_intent(
+        "resolve_non_invoice_review", intent_payload,
+        idempotency_key=f"resolve_non_invoice_review:{ap_item_id}:{request.outcome}:{getattr(user, 'email', None) or 'system'}",
     )
-    if resolved_related_item:
-        resolution["linked_record"] = shared._summarize_related_item(
-            shared.build_worklist_item(db, resolved_related_item)
-        )
-    if document_type in {"statement", "bank_statement"} and outcome == "send_to_reconciliation":
-        resolution.update(
-            shared._create_statement_reconciliation_artifact(
-                db,
-                item=item,
-                document_type=document_type,
-                organization_id=str(item.get("organization_id") or organization_id or "default"),
-                resolution=resolution,
-                related_item=resolved_related_item,
-            )
-        )
-    metadata["non_invoice_resolution"] = resolution
-    metadata["non_invoice_review_required"] = False
 
-    current_state = str(item.get("state") or "").strip().lower() or APState.RECEIVED.value
-    update_payload: Dict[str, Any] = {
-        "metadata": metadata,
-    }
-    if next_state != current_state:
-        update_payload["state"] = next_state
-    if outcome != "needs_followup":
-        update_payload["exception_code"] = None
-        update_payload["exception_severity"] = None
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason in {"invoice_document_not_supported", "invalid_non_invoice_outcome", "related_reference_required"}:
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=400, detail=reason or "non_invoice_resolve_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "non_invoice_resolve_failed")
 
-    db.update_ap_item(
-        ap_item_id,
-        **shared._filter_allowed_ap_item_updates(db, update_payload),
-        _actor_type="user",
-        _actor_id=actor_id,
-        _source="non_invoice_review_resolution",
-        _decision_reason=outcome,
-    )
-    db.append_audit_event(
-        {
-            "ap_item_id": ap_item_id,
-            "event_type": "non_invoice_review_resolved",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "organization_id": str(item.get("organization_id") or organization_id or "default"),
-            "source": "ap_item_non_invoice_review_resolution",
-            "reason": outcome,
-            "metadata": resolution,
-        }
-    )
-    if resolved_related_item:
-        linked_related = shared._link_related_item_for_non_invoice_resolution(
-            db,
-            source_item={**item, "document_type": document_type},
-            source_document_type=document_type,
-            resolution=resolution,
-            related_item=resolved_related_item,
-            actor_id=actor_id,
-            organization_id=str(item.get("organization_id") or organization_id or "default"),
-        )
-        follow_on_result = await shared._execute_non_invoice_erp_follow_on(
-            db,
-            source_item={**item, "document_type": document_type},
-            related_item=resolved_related_item,
-            document_type=document_type,
-            outcome=outcome,
-            actor_id=actor_id,
-            organization_id=str(item.get("organization_id") or organization_id or "default"),
-        )
-        if isinstance(follow_on_result, dict) and isinstance(follow_on_result.get("related_item"), dict):
-            linked_related = follow_on_result.get("related_item")
-        metadata = shared._parse_json((shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))).get("metadata"))
-        non_invoice_resolution = metadata.get("non_invoice_resolution")
-        if isinstance(non_invoice_resolution, dict):
-            non_invoice_resolution["linked_record"] = shared._summarize_related_item(linked_related)
-            metadata["non_invoice_resolution"] = non_invoice_resolution
-            db.update_ap_item(
-                ap_item_id,
-                **shared._filter_allowed_ap_item_updates(db, {"metadata": metadata}),
-                _actor_type="user",
-                _actor_id=actor_id,
-                _source="non_invoice_link_refresh",
-                _decision_reason=outcome,
-            )
-
-    refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
-    normalized_item = shared.build_worklist_item(db, refreshed)
-    response = {
+    return {
         "status": "resolved",
         "ap_item_id": ap_item_id,
-        "document_type": document_type,
-        "outcome": outcome,
-        "state": next_state,
-        "ap_item": normalized_item,
+        "document_type": (result or {}).get("document_type"),
+        "outcome": (result or {}).get("outcome"),
+        "state": (result or {}).get("state"),
+        "ap_item": (result or {}).get("ap_item"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
-    _record_agent_action(
-        user=user, db=db, ap_item=refreshed,
-        organization_id=str(refreshed.get("organization_id") or organization_id or "default"),
-        event_type="non_invoice_review_resolved",
-        reason=outcome,
-        response=response,
-        extra={
-            "document_type": document_type,
-            "outcome": outcome,
-            "next_state": next_state,
-            "related_ap_item_id": related_ap_item_id,
-            "close_record": bool(request.close_record),
-        },
-        idempotency_key=f"non_invoice_resolve:{ap_item_id}:{outcome}:{resolved_at}",
-    )
-    return response
 
 
 @router.post("/{ap_item_id}/entity-route/resolve")
@@ -618,111 +436,56 @@ async def resolve_ap_item_entity_route(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
+    """Resolve an entity-routing selection via the ``resolve_entity_route`` intent.
+
+    Thin HTTP→intent wrapper. The handler resolves the candidate set,
+    matches the operator's selection against it, mutates entity_*
+    metadata, and audits the decision with full agent context.
+    """
     db = shared.get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
-    metadata = shared._parse_json(item.get("metadata"))
-    document_type = shared._normalize_document_type_token(
-        item.get("document_type")
-        or metadata.get("document_type")
-        or metadata.get("email_type")
-    )
-    if document_type != "invoice":
-        raise HTTPException(status_code=400, detail="entity_route_not_supported")
-
-    organization_settings = shared._load_org_settings_for_item(
-        db,
-        item.get("organization_id") or organization_id or "default",
-    )
-    routing = resolve_entity_routing(metadata, item, organization_settings=organization_settings)
-    candidates = routing.get("candidates") if isinstance(routing.get("candidates"), list) else []
-    selected = match_entity_candidate(
-        candidates,
-        selection=request.selection,
-        entity_id=request.entity_id,
-        entity_code=request.entity_code,
-        entity_name=request.entity_name,
-    )
-    if not selected and len(candidates) == 1:
-        selected = dict(candidates[0])
-    if not selected:
-        selected = normalize_entity_candidate(
-            {
-                "entity_id": request.entity_id,
-                "entity_code": request.entity_code or request.selection,
-                "entity_name": request.entity_name or request.selection,
-            }
-        )
-    if not selected:
-        raise HTTPException(status_code=400, detail="entity_selection_required")
-
-    actor_id = shared._authenticated_actor(user)
-    resolved_at = datetime.now(timezone.utc).isoformat()
-    note = str(request.note or "").strip() or None
-    updated_routing = {
-        **(metadata.get("entity_routing") if isinstance(metadata.get("entity_routing"), dict) else {}),
-        "status": "resolved",
-        "selected": selected,
-        "candidates": candidates,
-        "resolved_at": resolved_at,
-        "resolved_by": actor_id,
-        "reason": str(routing.get("reason") or note or "").strip() or None,
-    }
-    if note:
-        updated_routing["note"] = note
-
-    metadata.update(
-        {
-            "entity_routing": updated_routing,
-            "entity_route_review_required": False,
-            "entity_selection": selected,
-            "entity_id": selected.get("entity_id") or metadata.get("entity_id"),
-            "entity_code": selected.get("entity_code") or metadata.get("entity_code"),
-            "entity_name": selected.get("entity_name") or metadata.get("entity_name"),
-        }
-    )
-    db.update_ap_item(
-        ap_item_id,
-        metadata=metadata,
-        _actor_type="user",
-        _actor_id=actor_id,
-        _source="ap_items_entity_route",
-        _decision_reason="manual_entity_route_resolution",
-    )
-
-    refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
-    normalized_item = shared.build_worklist_item(
-        db,
-        refreshed,
-        organization_settings=organization_settings,
-    )
-    response = {
-        "status": "resolved",
-        "ap_item_id": ap_item_id,
-        "entity_selection": selected,
-        "entity_routing_status": normalized_item.get("entity_routing_status"),
-        "ap_item": normalized_item,
-    }
     runtime = shared._finance_agent_runtime_cls()(
         organization_id=str(item.get("organization_id") or organization_id or "default"),
-        actor_id=actor_id,
+        actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
         actor_email=getattr(user, "email", None),
         db=db,
     )
-    audit_row = runtime.append_runtime_audit(
-        ap_item_id=ap_item_id,
-        event_type="entity_route_resolved",
-        reason="manual_entity_route_resolution",
-        metadata={
-            "entity_selection": selected,
-            "response": response,
-        },
-        correlation_id=runtime.correlation_id_for_item(refreshed),
-        skill_id="ap_v1",
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "selection": request.selection,
+        "entity_id": request.entity_id,
+        "entity_code": request.entity_code,
+        "entity_name": request.entity_name,
+        "note": request.note,
+        "actor_id": getattr(user, "user_id", None) or getattr(user, "email", None),
+        "actor_email": getattr(user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    sel_signature = request.entity_id or request.entity_code or request.selection or "_"
+    result = await runtime.execute_intent(
+        "resolve_entity_route", intent_payload,
+        idempotency_key=f"resolve_entity_route:{ap_item_id}:{sel_signature}",
     )
-    response["audit_event_id"] = (audit_row or {}).get("id")
-    return response
+
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason in {"entity_route_not_supported", "entity_selection_required"}:
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=400, detail=reason or "entity_route_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "entity_route_failed")
+
+    return {
+        "status": "resolved",
+        "ap_item_id": ap_item_id,
+        "entity_selection": (result or {}).get("entity_selection"),
+        "entity_routing_status": (result or {}).get("entity_routing_status"),
+        "ap_item": (result or {}).get("ap_item"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
+    }
 
 
 @router.post("/{ap_item_id}/sources/link")
@@ -1047,79 +810,69 @@ def create_compose_record(
 
 
 @router.patch("/{ap_item_id}/fields")
-def update_ap_item_fields(
+async def update_ap_item_fields(
     ap_item_id: str,
     request: UpdateApItemFieldsRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
+    """Update AP item header fields via the ``update_invoice_fields`` intent.
+
+    Thin HTTP→intent wrapper. The handler diffs the requested fields
+    against the current AP item, applies only the actual changes
+    through the column-whitelisted ``update_ap_item`` path, and audits
+    the diff with full agent context.
+    """
     db = shared.get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
-    actor_id = shared._authenticated_actor(_user)
 
-    updates: Dict[str, Any] = {}
-    changes: List[Dict[str, Any]] = []
-    field_map = {
-        "vendor_name": "vendor_name",
-        "invoice_number": "invoice_number",
-        "invoice_date": "invoice_date",
-        "due_date": "due_date",
-        "po_number": "po_number",
-        "amount": "amount",
-        "currency": "currency",
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(item.get("organization_id") or "default"),
+        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "system",
+        actor_email=getattr(_user, "email", None),
+        db=db,
+    )
+
+    # Carry every set field — including explicit-None — into the intent
+    # payload so the handler's precheck can compute the real diff itself.
+    field_payload: Dict[str, Any] = {
+        "ap_item_id": ap_item_id,
+        "actor_id": getattr(_user, "user_id", None) or getattr(_user, "email", None),
+        "actor_email": getattr(_user, "email", None),
+        "source_channel": "workspace_spa",
+        "note": request.note,
     }
+    for field_name in ("vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "amount", "currency"):
+        value = getattr(request, field_name, None)
+        if value is not None:
+            field_payload[field_name] = value
 
-    for request_field, column_name in field_map.items():
-        value = getattr(request, request_field)
-        if value is None:
-            continue
-        normalized = value
-        if isinstance(value, str):
-            normalized = value.strip() or None
-        if request_field == "currency" and normalized:
-            normalized = str(normalized).upper()
-        current_value = item.get(column_name)
-        if normalized == current_value:
-            continue
-        updates[column_name] = normalized
-        changes.append(
-            {
-                "field": request_field,
-                "previous_value": current_value,
-                "new_value": normalized,
-            }
-        )
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="no_field_changes")
-
-    db.update_ap_item(
-        ap_item_id,
-        **updates,
-        _actor_type="user",
-        _actor_id=actor_id,
-        _source="ap_items_api",
-        _decision_reason="sidebar_record_edit",
+    # Idempotency: a stable key keyed on the diff signature so repeated
+    # edits with the same payload return the same audit row.
+    diff_signature = ",".join(
+        f"{k}={field_payload.get(k)}"
+        for k in sorted(field_payload.keys())
+        if k not in {"ap_item_id", "actor_id", "actor_email", "source_channel", "note"}
     )
-    db.append_audit_event(
-        {
-            "ap_item_id": ap_item_id,
-            "event_type": "record_fields_updated",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "organization_id": item.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "payload_json": {
-                "changes": changes,
-                "note": str(request.note or "").strip() or None,
-            },
-        }
+    result = await runtime.execute_intent(
+        "update_invoice_fields", field_payload,
+        idempotency_key=f"update_invoice_fields:{ap_item_id}:{diff_signature}",
     )
-    updated = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
+
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason == "no_field_changes":
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=400, detail=reason or "update_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "update_failed")
+
     return {
         "status": "updated",
-        "changes": changes,
-        "ap_item": shared.build_worklist_item(db, updated),
+        "changes": (result or {}).get("changes") or [],
+        "ap_item": (result or {}).get("ap_item"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
 
 

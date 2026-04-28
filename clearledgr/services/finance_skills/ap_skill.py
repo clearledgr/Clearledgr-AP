@@ -46,6 +46,9 @@ class APFinanceSkill(FinanceSkill):
             "resubmit_invoice",
             "split_invoice",
             "merge_invoices",
+            "resolve_non_invoice_review",
+            "resolve_entity_route",
+            "update_invoice_fields",
         }
     )
     _MANIFEST = SkillCapabilityManifest(
@@ -167,6 +170,21 @@ class APFinanceSkill(FinanceSkill):
                 "intent": "merge_invoices",
                 "class": "mutating",
                 "description": "Merge a source AP item into a target, moving source links and suppressing the source from the worklist.",
+            },
+            {
+                "intent": "resolve_non_invoice_review",
+                "class": "mutating",
+                "description": "Resolve a non-invoice document with a type-aware outcome (apply / link / send to reconciliation / etc).",
+            },
+            {
+                "intent": "resolve_entity_route",
+                "class": "mutating",
+                "description": "Assign an AP item to a specific legal entity from the entity-routing candidates.",
+            },
+            {
+                "intent": "update_invoice_fields",
+                "class": "mutating",
+                "description": "Update header fields (vendor / number / amount / etc) with a column whitelist.",
             },
         ],
         policy_pack={

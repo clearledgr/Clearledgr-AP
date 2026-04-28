@@ -3120,6 +3120,629 @@ class MergeInvoicesHandler(APIntentHandler):
         return response
 
 
+class ResolveNonInvoiceReviewHandler(APIntentHandler):
+    intent = "resolve_non_invoice_review"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        metadata = svc._parse_json(ap_item.get("metadata"))
+        document_type = svc._normalize_document_type_token(
+            ap_item.get("document_type") or "invoice"
+        )
+        outcome = svc._normalize_non_invoice_outcome(context["payload"].get("outcome"))
+        allowed = (
+            svc._NON_INVOICE_ALLOWED_OUTCOMES.get(document_type)
+            or svc._NON_INVOICE_ALLOWED_OUTCOMES["other"]
+        )
+        related_reference = str(context["payload"].get("related_reference") or "").strip() or None
+        related_ap_item_id = str(context["payload"].get("related_ap_item_id") or "").strip() or None
+        reason_codes = []
+        if document_type == "invoice":
+            reason_codes.append("invoice_document_not_supported")
+        if outcome not in allowed:
+            reason_codes.append("invalid_non_invoice_outcome")
+        if outcome in {"apply_to_invoice", "link_to_payment"} and not (related_reference or related_ap_item_id):
+            reason_codes.append("related_reference_required")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "document_type": document_type,
+            "outcome": outcome,
+            "allowed_outcomes": list(allowed),
+            "related_reference": related_reference,
+            "related_ap_item_id": related_ap_item_id,
+        }
+        return {**context, "policy_precheck": precheck, "_metadata": metadata}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        metadata = context.get("_metadata") or svc._parse_json(ap_item.get("metadata"))
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+        db = runtime.db
+        organization_id = str(ap_item.get("organization_id") or runtime.organization_id or "default")
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            if "invoice_document_not_supported" in reason_codes:
+                blocked = "invoice_document_not_supported"
+            elif "invalid_non_invoice_outcome" in reason_codes:
+                blocked = "invalid_non_invoice_outcome"
+            else:
+                blocked = "related_reference_required"
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="non_invoice_resolve_blocked",
+                reason=blocked,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        document_type = precheck["document_type"]
+        outcome = precheck["outcome"]
+        related_reference = precheck["related_reference"]
+        related_ap_item_id = precheck["related_ap_item_id"]
+        close_record = bool(payload.get("close_record"))
+        note = str(payload.get("note") or "").strip() or None
+        resolved_at = datetime.now(timezone.utc).isoformat()
+
+        try:
+            resolved_related_item, link_status = svc._resolve_related_ap_item_for_non_invoice(
+                db,
+                organization_id=organization_id,
+                source_ap_item_id=ap_item_id,
+                related_ap_item_id=related_ap_item_id,
+                related_reference=related_reference,
+            )
+        except Exception as exc:
+            logger.warning("[non_invoice_resolve] related-item resolution failed: %s", exc)
+            resolved_related_item, link_status = None, "lookup_failed"
+
+        if resolved_related_item and not related_ap_item_id:
+            related_ap_item_id = str(resolved_related_item.get("id") or "").strip() or related_ap_item_id
+
+        next_state = svc._non_invoice_resolution_state(
+            current_state=str(ap_item.get("state") or "").strip().lower() or "received",
+            outcome=outcome,
+            close_record=close_record,
+        )
+
+        resolution = {
+            "document_type": document_type,
+            "outcome": outcome,
+            "related_reference": related_reference,
+            "related_ap_item_id": related_ap_item_id,
+            "note": note,
+            "resolved_at": resolved_at,
+            "resolved_by": actor_id,
+            "closed_record": close_record,
+            "link_status": link_status,
+        }
+        try:
+            resolution.update(
+                svc._non_invoice_resolution_semantics(
+                    document_type=document_type,
+                    outcome=outcome,
+                    close_record=close_record,
+                )
+            )
+        except Exception as exc:
+            logger.warning("[non_invoice_resolve] semantics lookup failed: %s", exc)
+        if resolved_related_item:
+            try:
+                resolution["linked_record"] = svc._summarize_related_item(
+                    svc.build_worklist_item(db, resolved_related_item)
+                )
+            except Exception:
+                pass
+        if document_type in {"statement", "bank_statement"} and outcome == "send_to_reconciliation":
+            try:
+                resolution.update(
+                    svc._create_statement_reconciliation_artifact(
+                        db,
+                        item=ap_item,
+                        document_type=document_type,
+                        organization_id=organization_id,
+                        resolution=resolution,
+                        related_item=resolved_related_item,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("[non_invoice_resolve] reconciliation artifact failed: %s", exc)
+        metadata["non_invoice_resolution"] = resolution
+        metadata["non_invoice_review_required"] = False
+
+        current_state = str(ap_item.get("state") or "").strip().lower() or "received"
+        update_payload: Dict[str, Any] = {"metadata": metadata}
+        if next_state != current_state:
+            update_payload["state"] = next_state
+        if outcome != "needs_followup":
+            update_payload["exception_code"] = None
+            update_payload["exception_severity"] = None
+
+        try:
+            db.update_ap_item(
+                ap_item_id,
+                **svc._filter_allowed_ap_item_updates(db, update_payload),
+                _actor_type="user",
+                _actor_id=actor_id,
+                _source="non_invoice_review_resolution",
+                _decision_reason=outcome,
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="non_invoice_resolve_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        if resolved_related_item:
+            try:
+                linked_related = svc._link_related_item_for_non_invoice_resolution(
+                    db,
+                    source_item={**ap_item, "document_type": document_type},
+                    source_document_type=document_type,
+                    resolution=resolution,
+                    related_item=resolved_related_item,
+                    actor_id=actor_id,
+                    organization_id=organization_id,
+                )
+                follow_on_result = await svc._execute_non_invoice_erp_follow_on(
+                    db,
+                    source_item={**ap_item, "document_type": document_type},
+                    related_item=resolved_related_item,
+                    document_type=document_type,
+                    outcome=outcome,
+                    actor_id=actor_id,
+                    organization_id=organization_id,
+                )
+                if isinstance(follow_on_result, dict) and isinstance(follow_on_result.get("related_item"), dict):
+                    linked_related = follow_on_result.get("related_item")
+                refreshed = db.get_ap_item(ap_item_id) or ap_item
+                refreshed_metadata = svc._parse_json(refreshed.get("metadata"))
+                non_invoice_resolution = refreshed_metadata.get("non_invoice_resolution")
+                if isinstance(non_invoice_resolution, dict):
+                    non_invoice_resolution["linked_record"] = svc._summarize_related_item(linked_related)
+                    refreshed_metadata["non_invoice_resolution"] = non_invoice_resolution
+                    db.update_ap_item(
+                        ap_item_id,
+                        **svc._filter_allowed_ap_item_updates(db, {"metadata": refreshed_metadata}),
+                        _actor_type="user",
+                        _actor_id=actor_id,
+                        _source="non_invoice_link_refresh",
+                        _decision_reason=outcome,
+                        _correlation_id=correlation_id,
+                    )
+            except Exception as exc:
+                logger.warning("[non_invoice_resolve] follow-on refresh failed: %s", exc)
+
+        refreshed = db.get_ap_item(ap_item_id) or ap_item
+        normalized_item = svc.build_worklist_item(db, refreshed)
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "resolved",
+            "ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "document_type": document_type,
+            "outcome": outcome,
+            "state": next_state,
+            "ap_item": normalized_item,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "follow_resolved_outcome",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="non_invoice_resolved",
+            reason=outcome,
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "resolution": resolution,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
+class ResolveEntityRouteHandler(APIntentHandler):
+    intent = "resolve_entity_route"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        metadata = svc._parse_json(ap_item.get("metadata"))
+        document_type = svc._normalize_document_type_token(
+            ap_item.get("document_type")
+            or metadata.get("document_type")
+            or metadata.get("email_type")
+        )
+        reason_codes = []
+        if document_type != "invoice":
+            reason_codes.append("entity_route_not_supported")
+        # Route requires at least one of selection / entity_id / entity_code / entity_name.
+        sel_fields = ("selection", "entity_id", "entity_code", "entity_name")
+        if not any(str(context["payload"].get(field) or "").strip() for field in sel_fields):
+            reason_codes.append("entity_selection_required")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "document_type": document_type,
+        }
+        return {**context, "policy_precheck": precheck, "_metadata": metadata}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        from clearledgr.core.ap_entity_routing import (
+            match_entity_candidate,
+            normalize_entity_candidate,
+            resolve_entity_routing,
+        )
+
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        metadata = context.get("_metadata") or svc._parse_json(ap_item.get("metadata"))
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+        db = runtime.db
+        organization_id = str(ap_item.get("organization_id") or runtime.organization_id or "default")
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            blocked = (
+                "entity_route_not_supported"
+                if "entity_route_not_supported" in reason_codes
+                else "entity_selection_required"
+            )
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="entity_route_resolve_blocked",
+                reason=blocked,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        organization_settings = svc._load_org_settings_for_item(db, organization_id)
+        routing = resolve_entity_routing(metadata, ap_item, organization_settings=organization_settings)
+        candidates = routing.get("candidates") if isinstance(routing.get("candidates"), list) else []
+        selected = match_entity_candidate(
+            candidates,
+            selection=payload.get("selection"),
+            entity_id=payload.get("entity_id"),
+            entity_code=payload.get("entity_code"),
+            entity_name=payload.get("entity_name"),
+        )
+        if not selected and len(candidates) == 1:
+            selected = dict(candidates[0])
+        if not selected:
+            selected = normalize_entity_candidate(
+                {
+                    "entity_id": payload.get("entity_id"),
+                    "entity_code": payload.get("entity_code") or payload.get("selection"),
+                    "entity_name": payload.get("entity_name") or payload.get("selection"),
+                }
+            )
+        if not selected:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": "entity_selection_required",
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="entity_route_resolve_blocked",
+                reason="entity_selection_required",
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        resolved_at = datetime.now(timezone.utc).isoformat()
+        note = str(payload.get("note") or "").strip() or None
+        updated_routing = {
+            **(metadata.get("entity_routing") if isinstance(metadata.get("entity_routing"), dict) else {}),
+            "status": "resolved",
+            "selected": selected,
+            "candidates": candidates,
+            "resolved_at": resolved_at,
+            "resolved_by": actor_id,
+            "reason": str(routing.get("reason") or note or "").strip() or None,
+        }
+        if note:
+            updated_routing["note"] = note
+
+        metadata.update(
+            {
+                "entity_routing": updated_routing,
+                "entity_route_review_required": False,
+                "entity_selection": selected,
+                "entity_id": selected.get("entity_id") or metadata.get("entity_id"),
+                "entity_code": selected.get("entity_code") or metadata.get("entity_code"),
+                "entity_name": selected.get("entity_name") or metadata.get("entity_name"),
+            }
+        )
+        try:
+            db.update_ap_item(
+                ap_item_id,
+                metadata=metadata,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _source="ap_items_entity_route",
+                _decision_reason="manual_entity_route_resolution",
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="entity_route_resolve_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        refreshed = db.get_ap_item(ap_item_id) or ap_item
+        normalized_item = svc.build_worklist_item(db, refreshed, organization_settings=organization_settings)
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "resolved",
+            "ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "entity_selection": selected,
+            "entity_routing_status": normalized_item.get("entity_routing_status"),
+            "ap_item": normalized_item,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "advance_to_approval",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="entity_route_resolved",
+            reason="manual_entity_route_resolution",
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "entity_selection": selected,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
+class UpdateInvoiceFieldsHandler(APIntentHandler):
+    intent = "update_invoice_fields"
+
+    _FIELD_MAP = {
+        "vendor_name": "vendor_name",
+        "invoice_number": "invoice_number",
+        "invoice_date": "invoice_date",
+        "due_date": "due_date",
+        "po_number": "po_number",
+        "amount": "amount",
+        "currency": "currency",
+    }
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = _base_context(self.intent, runtime, payload)
+        ap_item = context["ap_item"]
+        proposed_changes: list = []
+        updates: Dict[str, Any] = {}
+        for request_field, column_name in self._FIELD_MAP.items():
+            if request_field not in context["payload"]:
+                continue
+            value = context["payload"].get(request_field)
+            if value is None:
+                continue
+            normalized = value
+            if isinstance(value, str):
+                normalized = value.strip() or None
+            if request_field == "currency" and normalized:
+                normalized = str(normalized).upper()
+            current_value = ap_item.get(column_name)
+            if normalized == current_value:
+                continue
+            updates[column_name] = normalized
+            proposed_changes.append(
+                {
+                    "field": request_field,
+                    "previous_value": current_value,
+                    "new_value": normalized,
+                }
+            )
+        reason_codes = []
+        if not updates:
+            reason_codes.append("no_field_changes")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "proposed_changes": proposed_changes,
+            "updates": updates,
+        }
+        return {**context, "policy_precheck": precheck}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        ap_item = context["ap_item"]
+        ap_item_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        correlation_id = runtime.correlation_id_for_item(ap_item)
+        db = runtime.db
+
+        if not precheck.get("eligible"):
+            blocked = "no_field_changes"
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked,
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_fields_update_blocked",
+                reason=blocked,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        updates = precheck["updates"]
+        note = str(payload.get("note") or "").strip() or None
+
+        try:
+            db.update_ap_item(
+                ap_item_id,
+                **updates,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _source="update_invoice_fields_intent",
+                _decision_reason=note or "sidebar_record_edit",
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "ap_item_id": ap_item_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=ap_item_id,
+                event_type="invoice_fields_update_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        refreshed = db.get_ap_item(ap_item_id) or ap_item
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "updated",
+            "ap_item_id": ap_item_id,
+            "email_id": email_id,
+            "changes": precheck["proposed_changes"],
+            "ap_item": svc.build_worklist_item(db, refreshed),
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "review_updated",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=ap_item_id,
+            event_type="invoice_fields_updated",
+            reason=note or "sidebar_record_edit",
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "changes": precheck["proposed_changes"],
+                "note": note,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        return response
+
+
 _HANDLERS: Dict[str, APIntentHandler] = {
     handler.intent: handler
     for handler in (
@@ -3141,6 +3764,9 @@ _HANDLERS: Dict[str, APIntentHandler] = {
         ResubmitInvoiceHandler(),
         SplitInvoiceHandler(),
         MergeInvoicesHandler(),
+        ResolveNonInvoiceReviewHandler(),
+        ResolveEntityRouteHandler(),
+        UpdateInvoiceFieldsHandler(),
     )
 }
 
