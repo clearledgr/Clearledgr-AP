@@ -137,6 +137,79 @@
   line-height: 1.4;
 }
 
+.settings-summary-card .muted.small {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  margin-top: 2px;
+}
+
+/* Inline-edit primitive — used for the Workspace card name field today,
+   reusable for any single-field rename pattern (vendor display name,
+   policy display name, etc.). The display row shows the value with a
+   text "Rename" trigger; the edit row swaps in an input + Save/Cancel
+   buttons. */
+.cl-inline-edit-display {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cl-inline-edit-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  line-height: 1.4;
+}
+
+.cl-inline-edit-trigger {
+  background: transparent;
+  border: none;
+  color: var(--cl-mint, #00d67e);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.cl-inline-edit-trigger:hover {
+  text-decoration: underline;
+}
+
+.cl-inline-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.cl-inline-edit-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 14px;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-bg);
+  color: var(--cl-ink-primary);
+}
+
+.cl-inline-edit-input:focus {
+  outline: none;
+  border-color: var(--cl-mint, #00d67e);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+}
+
+.cl-inline-edit-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cl-inline-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .settings-section-grid {
   display: grid;
   grid-template-columns: 1fr;

@@ -1771,39 +1771,171 @@ def get_org_settings(
     return {"organization_id": org_id, "settings": _load_org_settings(org)}
 
 
+_ORG_NAME_MIN_LEN = 1
+_ORG_NAME_MAX_LEN = 128
+_ORG_DOMAIN_MAX_LEN = 253  # RFC 1035 hostname cap
+
+
+def _normalise_org_name(raw: Any) -> str:
+    """Trim + sanity-check an organization display name.
+
+    Returns the cleaned value. Raises HTTPException with a deterministic
+    detail token on validation failure so the SPA can map the failure to
+    inline form copy.
+    """
+    if raw is None:
+        raise HTTPException(status_code=422, detail="organization_name_required")
+    text = str(raw).strip()
+    if len(text) < _ORG_NAME_MIN_LEN:
+        raise HTTPException(status_code=422, detail="organization_name_required")
+    if len(text) > _ORG_NAME_MAX_LEN:
+        raise HTTPException(status_code=422, detail="organization_name_too_long")
+    # Reject control characters — they break UI rendering and CSV export
+    # and never represent legitimate company-name input.
+    if any(ord(ch) < 0x20 for ch in text):
+        raise HTTPException(status_code=422, detail="organization_name_invalid_characters")
+    return text
+
+
+def _normalise_org_domain(raw: Any) -> Optional[str]:
+    """Trim a domain field; allow empty (returns None) to clear it."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if len(text) > _ORG_DOMAIN_MAX_LEN:
+        raise HTTPException(status_code=422, detail="organization_domain_too_long")
+    if any(ord(ch) < 0x20 for ch in text):
+        raise HTTPException(status_code=422, detail="organization_domain_invalid_characters")
+    return text
+
+
 @router.patch("/org/settings")
 def patch_org_settings(
     request: OrgSettingsPatchRequest,
     user: TokenData = Depends(get_current_user),
 ):
+    """Update top-level org fields (name / domain / integration_mode) plus
+    arbitrary settings_json keys. Admin-only, tenant-scoped, validates
+    inputs, and emits a per-field ``organization_*`` audit event for any
+    top-level change so the rename trail is queryable from the timeline.
+    """
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
     db = get_db()
-    org = db.ensure_organization(org_id, organization_name=org_id)
-    settings = _load_org_settings(org)
+    org_before = db.ensure_organization(org_id, organization_name=org_id)
+    settings = _load_org_settings(org_before)
     patch = request.patch or {}
 
     org_updates: Dict[str, Any] = {}
-    if "organization_name" in patch:
-        org_updates["name"] = patch.get("organization_name")
-    if "name" in patch:
-        org_updates["name"] = patch.get("name")
+    # Track previous values so we can emit precise rename audits and
+    # short-circuit no-op writes (saves a round-trip to the DB +
+    # avoids an audit row that would just say "Acme → Acme").
+    prev_name = str(org_before.get("name") or "")
+    prev_domain = str(org_before.get("domain") or "")
+    prev_integration_mode = str(org_before.get("integration_mode") or "shared")
+
+    new_name: Optional[str] = None
+    if "organization_name" in patch or "name" in patch:
+        raw_name = patch.get("organization_name", patch.get("name"))
+        new_name = _normalise_org_name(raw_name)
+        if new_name != prev_name:
+            org_updates["name"] = new_name
+
+    new_domain: Optional[str] = None
+    domain_changed = False
     if "domain" in patch:
-        org_updates["domain"] = patch.get("domain")
+        new_domain = _normalise_org_domain(patch.get("domain"))
+        if (new_domain or "") != prev_domain:
+            org_updates["domain"] = new_domain
+            domain_changed = True
+
+    new_mode: Optional[str] = None
     if "integration_mode" in patch:
         mode = str(patch.get("integration_mode") or "").strip().lower()
         if mode not in {"shared", "per_org"}:
             raise HTTPException(status_code=422, detail="invalid_integration_mode")
-        org_updates["integration_mode"] = mode
+        new_mode = mode
+        if new_mode != prev_integration_mode:
+            org_updates["integration_mode"] = new_mode
 
     if org_updates:
         db.update_organization(org_id, **org_updates)
 
+    # Apply the rest of the patch onto settings_json verbatim.
     for key, value in patch.items():
         if key in {"organization_name", "name", "domain", "integration_mode"}:
             continue
         settings[key] = value
     _save_org_settings(org_id, settings)
+
+    # Per-field audit emission. ``audit_events`` is keyed on
+    # ``(box_id, box_type)`` — using ``box_type='organization'`` extends
+    # the timeline pattern from AP boxes to tenant-level mutations
+    # without inventing a parallel audit table. Best-effort: failures
+    # log + swallow so the user-facing PATCH never returns 500 on an
+    # audit-side hiccup.
+    actor_id = (
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or "system"
+    )
+    if "name" in org_updates and new_name is not None:
+        try:
+            db.append_audit_event({
+                "box_id": org_id,
+                "box_type": "organization",
+                "event_type": "organization_renamed",
+                "from_state": prev_name or None,
+                "to_state": new_name,
+                "actor_type": "user",
+                "actor_id": actor_id,
+                "organization_id": org_id,
+                "source": "workspace_shell.patch_org_settings",
+                "decision_reason": "manual_org_rename",
+                "payload_json": {"prev_name": prev_name, "new_name": new_name},
+                "idempotency_key": f"organization_renamed:{org_id}:{prev_name}->{new_name}",
+            })
+        except Exception as exc:
+            logger.warning("[org_rename] audit emit failed for %s: %s", org_id, exc)
+
+    if domain_changed:
+        try:
+            db.append_audit_event({
+                "box_id": org_id,
+                "box_type": "organization",
+                "event_type": "organization_domain_changed",
+                "from_state": prev_domain or None,
+                "to_state": new_domain or None,
+                "actor_type": "user",
+                "actor_id": actor_id,
+                "organization_id": org_id,
+                "source": "workspace_shell.patch_org_settings",
+                "payload_json": {"prev_domain": prev_domain, "new_domain": new_domain},
+                "idempotency_key": f"organization_domain_changed:{org_id}:{prev_domain}->{new_domain}",
+            })
+        except Exception as exc:
+            logger.warning("[org_domain_change] audit emit failed for %s: %s", org_id, exc)
+
+    if "integration_mode" in org_updates and new_mode is not None:
+        try:
+            db.append_audit_event({
+                "box_id": org_id,
+                "box_type": "organization",
+                "event_type": "organization_integration_mode_changed",
+                "from_state": prev_integration_mode,
+                "to_state": new_mode,
+                "actor_type": "user",
+                "actor_id": actor_id,
+                "organization_id": org_id,
+                "source": "workspace_shell.patch_org_settings",
+                "payload_json": {"prev_mode": prev_integration_mode, "new_mode": new_mode},
+                "idempotency_key": f"organization_integration_mode_changed:{org_id}:{prev_integration_mode}->{new_mode}",
+            })
+        except Exception as exc:
+            logger.warning("[org_mode_change] audit emit failed for %s: %s", org_id, exc)
+
     updated_org = db.get_organization(org_id) or {}
     return {
         "success": True,

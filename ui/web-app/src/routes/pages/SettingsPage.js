@@ -144,6 +144,63 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     onRefresh?.();
   });
 
+  // ── Workspace name inline edit ──
+  // Backed by PATCH /api/workspace/org/settings with patch.organization_name.
+  // Server-side: admin role gate, length 1-128, no control chars, audit_event
+  // emitted with event_type='organization_renamed'. Topbar picks up the new
+  // name on the next bootstrap fetch we trigger via onRefresh().
+  const [editingOrgName, setEditingOrgName] = useState(false);
+  const [orgNameDraft, setOrgNameDraft] = useState(org.name || '');
+  // Map server validation tokens back to inline form copy.
+  const _ORG_RENAME_ERROR_COPY = {
+    organization_name_required: 'Workspace name is required.',
+    organization_name_too_long: 'Workspace name is too long (max 128 characters).',
+    organization_name_invalid_characters: 'Workspace name contains invalid characters.',
+    admin_required: 'Only owners and admins can rename the workspace.',
+    org_mismatch: 'Cross-organization rename is not allowed.',
+  };
+
+  const beginEditOrgName = () => {
+    if (!canManageCompany) return;
+    setOrgNameDraft(org.name || '');
+    setEditingOrgName(true);
+  };
+  const cancelEditOrgName = () => {
+    setEditingOrgName(false);
+    setOrgNameDraft(org.name || '');
+  };
+
+  const [saveOrgName, savingOrgName] = useAction(async () => {
+    if (!canManageCompany) return;
+    const next = String(orgNameDraft || '').trim();
+    if (!next) {
+      toast?.('Workspace name is required.', 'error');
+      return;
+    }
+    if (next === (org.name || '').trim()) {
+      // No-op edit. Close the editor without round-tripping.
+      setEditingOrgName(false);
+      return;
+    }
+    try {
+      await api('/api/workspace/org/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          organization_id: orgId,
+          patch: { organization_name: next },
+        }),
+      });
+    } catch (err) {
+      const detail = err?.detail || err?.body?.detail;
+      const copy = _ORG_RENAME_ERROR_COPY[detail] || 'Could not save workspace name.';
+      toast?.(copy, 'error');
+      return;
+    }
+    toast?.(`Workspace renamed to ${next}.`, 'success');
+    setEditingOrgName(false);
+    onRefresh?.();
+  });
+
   // --- Approval Rules state ---
   const [approvalRules, setApprovalRules] = useState([]);
   const [billingSummary, setBillingSummary] = useState(null);
@@ -351,7 +408,50 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       </div>
       <div class="settings-summary-card">
         <strong>Workspace</strong>
-        <span>${org.domain || 'Domain not set'} · ${org.integration_mode === 'per_org' ? 'Per organization' : 'Shared workspace'}</span>
+        ${editingOrgName
+          ? html`
+            <div class="cl-inline-edit">
+              <input
+                type="text"
+                class="cl-inline-edit-input"
+                value=${orgNameDraft}
+                maxLength=${128}
+                disabled=${savingOrgName}
+                onInput=${(e) => setOrgNameDraft(e.target.value)}
+                onKeyDown=${(e) => {
+                  if (e.key === 'Enter') saveOrgName();
+                  if (e.key === 'Escape') cancelEditOrgName();
+                }}
+                aria-label="Workspace display name" />
+              <div class="cl-inline-edit-actions">
+                <button
+                  class="btn btn-sm btn-primary"
+                  onClick=${saveOrgName}
+                  disabled=${savingOrgName}>
+                  ${savingOrgName ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  class="btn btn-sm btn-tertiary"
+                  onClick=${cancelEditOrgName}
+                  disabled=${savingOrgName}>
+                  Cancel
+                </button>
+              </div>
+            </div>`
+          : html`
+            <span class="cl-inline-edit-display">
+              <span class="cl-inline-edit-value">${org.name || 'Untitled'}</span>
+              ${canManageCompany
+                ? html`<button
+                    class="cl-inline-edit-trigger"
+                    type="button"
+                    onClick=${beginEditOrgName}
+                    aria-label="Rename workspace">
+                    Rename
+                  </button>`
+                : null}
+            </span>
+            <span class="muted small">${org.domain || 'Domain not set'} · ${org.integration_mode === 'per_org' ? 'Per organization' : 'Shared workspace'}</span>`}
       </div>
       <div class="settings-summary-card">
         <strong>Plan</strong>
