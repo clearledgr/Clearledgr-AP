@@ -2504,3 +2504,64 @@ def _v50_agent_decision_reasoning(cur, db):
         )
     except Exception as exc:
         logger.warning("[Migration v50] governance_verdict index skipped: %s", exc)
+
+
+@migration(51, "audit_exports table — async CSV export jobs (Module 7 v1 Pass 2)")
+def _v51_audit_exports(cur, db):
+    """Async-export job tracking + content storage for the audit log.
+
+    Module 7 Pass 2 (docs/Clearledgr_Workspace_Scope_GA.md): the
+    leader hits "Export" with the same filters the search bar has,
+    a Celery worker streams the matching ``audit_events`` rows into
+    a CSV, and stores the rendered file inline on this table for the
+    SPA to download.
+
+    Why bytea + 24h retention rather than S3 / R2:
+      * No object-storage env wired in the project today (no bucket,
+        no IAM, no boto3). Adding it for a single feature is over-
+        engineering for v1.
+      * CSVs at typical scale stay small — 10K events × 200 bytes
+        each = 2 MB. Postgres handles this comfortably; bytea is
+        TOASTed transparently.
+      * 24h retention via ``expires_at`` + a reaper means we don't
+        balloon the DB. Customers re-export if they need the file
+        later.
+      * If/when a customer hits a multi-million-row year-export, the
+        same job table + Celery task swap content storage from
+        bytea to a presigned URL field — same wire contract for the
+        SPA.
+
+    Status lifecycle: ``queued`` → ``running`` → ``done`` | ``failed``.
+    Terminal rows stay until expires_at; the reaper deletes after.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_exports (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            filters_json TEXT NOT NULL DEFAULT '{}',
+            format TEXT NOT NULL DEFAULT 'csv',
+            status TEXT NOT NULL DEFAULT 'queued',
+            total_rows INTEGER,
+            content BYTEA,
+            content_filename TEXT,
+            content_size_bytes INTEGER,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            expires_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_audit_exports_org_created "
+        "ON audit_exports(organization_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_exports_expiry "
+        "ON audit_exports(expires_at) WHERE status IN ('done', 'failed')",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v51] index skipped: %s", exc)

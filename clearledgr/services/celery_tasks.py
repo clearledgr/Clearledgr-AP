@@ -494,3 +494,146 @@ def reap_expired_seats_task() -> dict:
 ## clearledgr/api/ap_audit.py, not a reaper — audit_events is
 ## architecturally append-only (§7.6 audit trail as evidence of trust).
 ## See list_recent_ap_audit_events_with_retention on the AP store.
+
+
+# ---------------------------------------------------------------------------
+# Module 7 v1 Pass 2 — async audit-log CSV export
+# ---------------------------------------------------------------------------
+
+
+@app.task(bind=True, max_retries=2, default_retry_delay=10)
+def generate_audit_export(self, export_id: str) -> dict:
+    """Render the audit-log CSV for a queued export job.
+
+    Pulled by ``POST /api/workspace/audit/export`` (which creates the
+    audit_exports row with status='queued'). The task:
+      1. Loads the row (fails-soft if it's been reaped).
+      2. Flips status to 'running' + stamps started_at.
+      3. Streams matching audit_events through ``search_audit_events``
+         in pages of 500 — keeps memory bounded for large exports.
+      4. Writes a CSV in-memory and stores it on the row's content
+         column. Status flips to 'done' + stamps completed_at.
+      5. On any exception: status 'failed' + error_message recorded.
+
+    Retries on transient failures (DB pool blip etc) up to 2 times
+    with 10s backoff. Hard failures past the retry budget land in
+    'failed' state with the error captured for the SPA to show.
+    """
+    from clearledgr.core.database import get_db
+    from datetime import datetime, timezone
+    import csv as _csv
+    import io as _io
+    import json as _json
+
+    db = get_db()
+    export = db.get_audit_export(export_id, include_content=False)
+    if not export:
+        # Reaped or never existed. Nothing to do; don't retry.
+        logger.warning("[generate_audit_export] export %s not found", export_id)
+        return {"status": "skipped", "export_id": export_id, "reason": "not_found"}
+
+    # Defensive: if a retry fires after the row has already moved
+    # past 'queued', don't re-render. The first attempt's content
+    # stands.
+    if export.get("status") not in ("queued", "running"):
+        return {"status": "noop", "export_id": export_id, "current_status": export.get("status")}
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    db.update_audit_export_status(export_id, status="running", started_at=started_at)
+
+    try:
+        filters = _json.loads(export.get("filters_json") or "{}")
+        # CSV column order: stable contract for downstream consumers
+        # (customer scripts, SIEM ingestors). Adding columns is fine;
+        # reordering would silently break parsers.
+        columns = [
+            "id", "ts", "event_type", "box_type", "box_id",
+            "prev_state", "new_state", "actor_type", "actor_id",
+            "decision_reason", "governance_verdict", "agent_confidence",
+            "source", "correlation_id", "workflow_id", "run_id",
+            "idempotency_key", "organization_id",
+            "payload_json", "external_refs",
+        ]
+        buf = _io.StringIO()
+        writer = _csv.writer(buf, quoting=_csv.QUOTE_MINIMAL)
+        writer.writerow(columns)
+
+        total_rows = 0
+        cursor = None
+        page_size = 500
+        # Hard cap so a misconfigured filter can't OOM the worker
+        # exporting a year of org-wide events. 250K rows is plenty
+        # for the demo + most enterprise spot-exports.
+        max_rows = 250_000
+
+        while True:
+            page = db.search_audit_events(
+                organization_id=export.get("organization_id"),
+                from_ts=filters.get("from_ts") or None,
+                to_ts=filters.get("to_ts") or None,
+                event_types=filters.get("event_types") or None,
+                actor_id=filters.get("actor_id") or None,
+                box_type=filters.get("box_type") or None,
+                box_id=filters.get("box_id") or None,
+                limit=page_size,
+                cursor=cursor,
+            )
+            events = page.get("events") or []
+            for evt in events:
+                row = []
+                for col in columns:
+                    value = evt.get(col)
+                    if isinstance(value, (dict, list)):
+                        value = _json.dumps(value, separators=(",", ":"))
+                    elif value is None:
+                        value = ""
+                    row.append(value)
+                writer.writerow(row)
+            total_rows += len(events)
+            if total_rows >= max_rows:
+                logger.warning(
+                    "[generate_audit_export] export %s hit max_rows cap at %d",
+                    export_id, max_rows,
+                )
+                break
+            cursor = page.get("next_cursor")
+            if not cursor:
+                break
+
+        csv_bytes = buf.getvalue().encode("utf-8")
+        org_id = str(export.get("organization_id") or "default")
+        date_part = started_at.replace(":", "").replace("-", "")[:15]
+        filename = f"audit-{org_id}-{date_part}.csv"
+        db.set_audit_export_content(
+            export_id, content=csv_bytes, content_filename=filename,
+        )
+        db.update_audit_export_status(
+            export_id,
+            status="done",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            total_rows=total_rows,
+        )
+        logger.info(
+            "[generate_audit_export] export %s done: rows=%d size=%d",
+            export_id, total_rows, len(csv_bytes),
+        )
+        return {
+            "status": "done",
+            "export_id": export_id,
+            "rows": total_rows,
+            "bytes": len(csv_bytes),
+        }
+    except Exception as exc:
+        logger.exception("[generate_audit_export] export %s failed: %s", export_id, exc)
+        try:
+            db.update_audit_export_status(
+                export_id,
+                status="failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                error_message=str(exc)[:500],
+            )
+        except Exception as inner:
+            logger.exception("[generate_audit_export] also failed to mark failed: %s", inner)
+        # Let Celery retry on transient errors; status 'failed' is
+        # also set so the UI shows a clear failure even mid-retry.
+        raise self.retry(exc=exc, countdown=10, max_retries=2) from exc

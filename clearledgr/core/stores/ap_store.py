@@ -2053,6 +2053,162 @@ class APStore:
         return {"events": events, "next_cursor": next_cursor}
 
     # ------------------------------------------------------------------
+    # Audit-export jobs (Module 7 v1 Pass 2)
+    # ------------------------------------------------------------------
+
+    def create_audit_export(
+        self,
+        *,
+        organization_id: str,
+        requested_by: str,
+        filters_json: str,
+        export_format: str = "csv",
+        retention_hours: int = 24,
+    ) -> Dict[str, Any]:
+        """Create an audit_exports row in 'queued' state.
+
+        Returns the row dict including a generated UUID-based id.
+        Caller dispatches the Celery task with ``id`` after; the task
+        flips status to 'running' → 'done' / 'failed' as it runs.
+        """
+        self.initialize()
+        import uuid as _uuid
+
+        export_id = f"AEX-{_uuid.uuid4().hex[:24]}"
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(hours=int(retention_hours))).isoformat()
+        sql = (
+            """
+            INSERT INTO audit_exports
+            (id, organization_id, requested_by, filters_json, format, status,
+             created_at, expires_at)
+            VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s)
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (export_id, organization_id, requested_by, filters_json,
+                 export_format, now, expires_at),
+            )
+            conn.commit()
+        return self.get_audit_export(export_id) or {
+            "id": export_id,
+            "organization_id": organization_id,
+            "requested_by": requested_by,
+            "filters_json": filters_json,
+            "format": export_format,
+            "status": "queued",
+            "created_at": now,
+            "expires_at": expires_at,
+        }
+
+    def get_audit_export(
+        self,
+        export_id: str,
+        *,
+        include_content: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch an audit_exports row.
+
+        ``include_content=False`` (default) skips the ``content`` BYTEA
+        column so the status-poll endpoint doesn't ship multi-MB
+        payloads on every refresh. The download endpoint passes
+        ``True`` to actually serve the file.
+        """
+        self.initialize()
+        cols = (
+            "id, organization_id, requested_by, filters_json, format, status, "
+            "total_rows, content_filename, content_size_bytes, error_message, "
+            "created_at, started_at, completed_at, expires_at"
+        )
+        if include_content:
+            cols = cols + ", content"
+        sql = f"SELECT {cols} FROM audit_exports WHERE id = %s"
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (export_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def update_audit_export_status(
+        self,
+        export_id: str,
+        *,
+        status: str,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+        error_message: Optional[str] = None,
+        total_rows: Optional[int] = None,
+    ) -> bool:
+        """Atomic status transition: queued → running → done | failed.
+
+        Only the columns the caller passes are updated — the SQL
+        builds a SET clause from non-None kwargs. Audit_exports are
+        durable but ephemeral (24h retention); we don't write an
+        audit_event for status transitions because the export job
+        itself isn't a Box-mutating action.
+        """
+        self.initialize()
+        updates: Dict[str, Any] = {"status": status}
+        if started_at is not None:
+            updates["started_at"] = started_at
+        if completed_at is not None:
+            updates["completed_at"] = completed_at
+        if error_message is not None:
+            updates["error_message"] = error_message
+        if total_rows is not None:
+            updates["total_rows"] = int(total_rows)
+        set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
+        sql = f"UPDATE audit_exports SET {set_clause} WHERE id = %s"
+        params = (*updates.values(), export_id)
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+
+    def set_audit_export_content(
+        self,
+        export_id: str,
+        *,
+        content: bytes,
+        content_filename: str,
+    ) -> bool:
+        """Attach the rendered CSV bytes to a 'done' export row."""
+        self.initialize()
+        sql = (
+            "UPDATE audit_exports "
+            "SET content = %s, content_filename = %s, content_size_bytes = %s "
+            "WHERE id = %s"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (content, content_filename, len(content), export_id))
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+
+    def reap_expired_audit_exports(self) -> int:
+        """Delete export rows past their expires_at. Idempotent.
+
+        Called by the same orphan-task-runs sweeper at startup
+        (clearledgr/services/app_startup.py). Returns count deleted.
+        """
+        self.initialize()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = "DELETE FROM audit_exports WHERE expires_at < %s"
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (now_iso,))
+            deleted = cur.rowcount or 0
+            conn.commit()
+        if deleted:
+            logger.info("[ap_store] reaped %d expired audit_exports", deleted)
+        return int(deleted)
+
+    # ------------------------------------------------------------------
     # Durable agent retry jobs
     # ------------------------------------------------------------------
 

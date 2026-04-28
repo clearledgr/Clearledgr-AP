@@ -45,8 +45,19 @@ const COMMON_BOX_TYPES = [
 ];
 
 
-function FilterBar({ filters, setFilters, onApply, onReset, busy }) {
+function FilterBar({ filters, setFilters, onApply, onReset, onExport, exportState, busy }) {
   const setField = (key, value) => setFilters({ ...filters, [key]: value });
+  const exportLabel = (() => {
+    if (!exportState) return 'Export CSV';
+    switch (exportState.status) {
+      case 'queued': return 'Queued…';
+      case 'running': return 'Building…';
+      case 'done': return 'Download CSV';
+      case 'failed': return 'Export failed';
+      default: return 'Export CSV';
+    }
+  })();
+  const exportBusy = exportState && (exportState.status === 'queued' || exportState.status === 'running');
 
   return html`
     <div class="cl-audit-filters">
@@ -109,6 +120,15 @@ function FilterBar({ filters, setFilters, onApply, onReset, busy }) {
       <div class="cl-audit-filter-actions">
         <button class="btn btn-sm btn-primary" onClick=${onApply} disabled=${busy}>
           ${busy ? 'Searching…' : 'Search'}
+        </button>
+        <button
+          class=${`btn btn-sm ${exportState?.status === 'failed' ? 'btn-danger' : 'btn-secondary'}`}
+          onClick=${onExport}
+          disabled=${busy || exportBusy}
+          title=${exportState?.status === 'failed' && exportState?.error_message
+            ? exportState.error_message
+            : 'Download the current filter set as CSV'}>
+          ${exportLabel}
         </button>
         <button class="btn btn-sm btn-tertiary" onClick=${onReset} disabled=${busy}>
           Reset
@@ -267,6 +287,11 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Export state machine: null (idle) | {job_id, status, error_message?}.
+  // The poll loop below rewrites this whenever the server status
+  // changes; the FilterBar's button reads it to render the right
+  // label (Queued… / Building… / Download CSV / Export failed).
+  const [exportState, setExportState] = useState(null);
 
   const buildQuery = useCallback((cur) => {
     const params = new URLSearchParams();
@@ -335,6 +360,99 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
     fetchPage({ append: false });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Export flow ────────────────────────────────────────────────
+  // Click → POST starts a job. While the job runs, poll status every
+  // 2s. When status flips to 'done', the next button click (label
+  // becomes "Download CSV") triggers a fresh GET ?download=true that
+  // the browser handles as a file download via Content-Disposition.
+  const onExport = useCallback(async () => {
+    if (!api || !orgId) return;
+
+    // Already done? Trigger the download.
+    if (exportState && exportState.status === 'done' && exportState.job_id) {
+      const url = `/api/workspace/audit/exports/${encodeURIComponent(exportState.job_id)}?organization_id=${encodeURIComponent(orgId)}&download=true`;
+      // Same-origin fetch + manual blob handoff so cookies + the
+      // download attribute work uniformly. Plain <a href> would
+      // navigate; we want a download trigger.
+      try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) {
+          throw new Error(`download failed: ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const filename = exportState.content_filename || `audit-${orgId}-${Date.now()}.csv`;
+        const a = document.createElement('a');
+        a.href = objUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(objUrl);
+      } catch (exc) {
+        setExportState({ ...exportState, status: 'failed', error_message: String(exc?.message || exc) });
+      }
+      return;
+    }
+
+    // Otherwise kick off a new job.
+    const filtersPayload = {
+      organization_id: orgId,
+      from_ts: filters.from_ts ? new Date(filters.from_ts).toISOString() : null,
+      to_ts: filters.to_ts ? new Date(filters.to_ts).toISOString() : null,
+      event_types: filters.event_type_preset
+        ? filters.event_type_preset.split(',').map((s) => s.trim()).filter(Boolean)
+        : null,
+      actor_id: filters.actor_id?.trim() || null,
+      box_type: filters.box_type || null,
+      box_id: filters.box_id?.trim() || null,
+    };
+    try {
+      const resp = await api('/api/workspace/audit/export', {
+        method: 'POST',
+        body: JSON.stringify(filtersPayload),
+      });
+      setExportState({
+        job_id: resp.job_id,
+        status: resp.status || 'queued',
+      });
+    } catch (exc) {
+      setExportState({ status: 'failed', error_message: String(exc?.message || exc) });
+    }
+  }, [api, orgId, exportState, filters]);
+
+  // Poll loop. Runs while the export is queued/running; cleans up
+  // the timer on every state change so a finished/failed job stops
+  // hammering the server. No polling = no timer.
+  useEffect(() => {
+    if (!exportState || !exportState.job_id) return undefined;
+    if (exportState.status !== 'queued' && exportState.status !== 'running') return undefined;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const resp = await api(
+          `/api/workspace/audit/exports/${encodeURIComponent(exportState.job_id)}?organization_id=${encodeURIComponent(orgId)}`
+        );
+        if (cancelled) return;
+        setExportState((prev) => {
+          if (!prev || prev.job_id !== exportState.job_id) return prev;
+          return { ...prev, ...resp };
+        });
+      } catch (exc) {
+        if (cancelled) return;
+        setExportState((prev) => prev && prev.job_id === exportState.job_id
+          ? { ...prev, status: 'failed', error_message: String(exc?.message || exc) }
+          : prev,
+        );
+      }
+    };
+    const id = setInterval(tick, 2000);
+    // Fire once immediately so a fast 'done' flip isn't waiting 2s.
+    tick();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [api, orgId, exportState?.job_id, exportState?.status]);
+
   const empty = !loading && !err && pages.length === 0;
 
   return html`
@@ -348,7 +466,14 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
         </div>
       </div>
 
-      <${FilterBar} filters=${filters} setFilters=${setFilters} onApply=${onApply} onReset=${onReset} busy=${loading} />
+      <${FilterBar}
+        filters=${filters}
+        setFilters=${setFilters}
+        onApply=${onApply}
+        onReset=${onReset}
+        onExport=${onExport}
+        exportState=${exportState}
+        busy=${loading} />
 
       <div class=${`cl-audit-layout${selected ? ' has-detail' : ''}`}>
         <div class="cl-audit-table-wrap">

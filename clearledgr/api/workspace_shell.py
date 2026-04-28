@@ -18,11 +18,14 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from clearledgr.core.http_client import get_http_client
@@ -2310,6 +2313,157 @@ def search_audit(
             "box_type": box_type,
             "box_id": box_id,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Module 7 v1 Pass 2 — async CSV export
+#
+# Mirrors the search/filter contract: the SPA collects the same filters
+# the user already typed into the search bar, POSTs them here to start
+# a job, then polls the GET endpoint until status='done' and downloads
+# the CSV. Backed by:
+#   * audit_exports table (migration v51)
+#   * generate_audit_export Celery task (services/celery_tasks.py)
+# ---------------------------------------------------------------------------
+
+
+class AuditExportRequest(BaseModel):
+    """Filters mirror GET /api/workspace/audit/search exactly so the
+    SPA can submit the same query that produced the on-screen results."""
+    organization_id: Optional[str] = None
+    from_ts: Optional[str] = None
+    to_ts: Optional[str] = None
+    event_types: Optional[List[str]] = None
+    actor_id: Optional[str] = None
+    box_type: Optional[str] = None
+    box_id: Optional[str] = None
+
+
+@router.post("/audit/export")
+def start_audit_export(
+    request: AuditExportRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Kick off an async CSV export of the audit log with the given filters.
+
+    Returns ``{job_id, status: 'queued'}``. The SPA polls
+    ``GET /api/workspace/audit/exports/{job_id}`` for status, then
+    downloads via ``GET /api/workspace/audit/exports/{job_id}?download=true``
+    when status flips to ``done``. 24h retention; the row + content
+    are reaped after that.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+
+    actor = (
+        getattr(user, "email", None)
+        or getattr(user, "user_id", None)
+        or "system"
+    )
+    import json as _json
+    filters_payload = {
+        "from_ts": request.from_ts,
+        "to_ts": request.to_ts,
+        "event_types": request.event_types,
+        "actor_id": request.actor_id,
+        "box_type": request.box_type,
+        "box_id": request.box_id,
+    }
+    export_row = db.create_audit_export(
+        organization_id=org_id,
+        requested_by=actor,
+        filters_json=_json.dumps(filters_payload, separators=(",", ":")),
+        export_format="csv",
+        retention_hours=24,
+    )
+
+    # Dispatch the Celery task. If Celery is unreachable (broker
+    # outage, dev env without worker), fail soft — flip the row to
+    # 'failed' with a clear message rather than letting the SPA poll
+    # forever.
+    try:
+        from clearledgr.services.celery_tasks import generate_audit_export
+        generate_audit_export.delay(export_row["id"])
+    except Exception as exc:
+        logger.exception("[audit/export] dispatch failed: %s", exc)
+        db.update_audit_export_status(
+            export_row["id"],
+            status="failed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            error_message=f"dispatch_failed: {exc}",
+        )
+        export_row = db.get_audit_export(export_row["id"]) or export_row
+
+    return {
+        "job_id": export_row["id"],
+        "status": export_row.get("status", "queued"),
+        "created_at": export_row.get("created_at"),
+        "expires_at": export_row.get("expires_at"),
+    }
+
+
+@router.get("/audit/exports/{job_id}")
+def get_audit_export_status(
+    job_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    download: bool = Query(default=False),
+    user: TokenData = Depends(get_current_user),
+):
+    """Poll status (default) or download the rendered CSV (download=true).
+
+    The status payload omits the ``content`` BYTEA so the SPA's
+    poll loop stays cheap regardless of CSV size. Cross-tenant
+    requests 404 with the same token as truly-missing — never leak
+    that another tenant's export exists.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    export = db.get_audit_export(job_id, include_content=download)
+    if not export:
+        raise HTTPException(status_code=404, detail="audit_export_not_found")
+    if str(export.get("organization_id") or "") != org_id:
+        raise HTTPException(status_code=404, detail="audit_export_not_found")
+
+    if download:
+        if export.get("status") != "done":
+            raise HTTPException(
+                status_code=409,
+                detail={"reason": "export_not_ready", "status": export.get("status")},
+            )
+        content = export.get("content")
+        if content is None:
+            raise HTTPException(status_code=410, detail="audit_export_content_expired")
+        filename = export.get("content_filename") or f"audit-{job_id}.csv"
+        from fastapi.responses import Response
+        # Convert memoryview / bytes from psycopg cleanly.
+        if isinstance(content, memoryview):
+            content = bytes(content)
+        return Response(
+            content=content,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "private, no-store",
+            },
+        )
+
+    # Status-only response (default poll path) — strip large columns
+    # so the SPA's 2-second polling stays cheap.
+    return {
+        "job_id": export.get("id"),
+        "status": export.get("status"),
+        "format": export.get("format"),
+        "total_rows": export.get("total_rows"),
+        "content_size_bytes": export.get("content_size_bytes"),
+        "content_filename": export.get("content_filename"),
+        "error_message": export.get("error_message"),
+        "created_at": export.get("created_at"),
+        "started_at": export.get("started_at"),
+        "completed_at": export.get("completed_at"),
+        "expires_at": export.get("expires_at"),
     }
 
 
