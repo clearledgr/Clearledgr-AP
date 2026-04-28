@@ -19,6 +19,7 @@ export default function ExceptionsPage({ api }) {
   const [resolvingId, setResolvingId] = useState(null);
   const [severityFilter, setSeverityFilter] = useState('');
   const [boxTypeFilter, setBoxTypeFilter] = useState('');
+  const [resolveDialog, setResolveDialog] = useState(null); // { id, note } | null
 
   const load = useCallback(async () => {
     if (!api) return;
@@ -41,9 +42,17 @@ export default function ExceptionsPage({ api }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const onResolve = async (exceptionId) => {
-    if (!api) return;
-    const note = window.prompt('Resolution note (optional):') || '';
+  const openResolveDialog = (exceptionId) => {
+    setResolveDialog({ id: exceptionId, note: '' });
+  };
+
+  const cancelResolveDialog = () => setResolveDialog(null);
+
+  const submitResolveDialog = async () => {
+    if (!api || !resolveDialog?.id) return;
+    const exceptionId = resolveDialog.id;
+    const note = String(resolveDialog.note || '').trim();
+    setResolveDialog(null);
     setResolvingId(exceptionId);
     try {
       await api(`/api/admin/box/exceptions/${exceptionId}/resolve`, {
@@ -111,9 +120,8 @@ export default function ExceptionsPage({ api }) {
                           <span class="status-badge" style="color:${SEVERITY_COLORS[row.severity] || '#6B7280'};font-weight:700">${row.severity}</span>
                           <button
                             disabled=${resolvingId === row.id}
-                            onClick=${() => onResolve(row.id)}
-                            class="cl-btn cl-btn-primary"
-                            style="padding:4px 10px;font-size:12px"
+                            onClick=${() => openResolveDialog(row.id)}
+                            class="btn-primary btn-sm"
                           >
                             ${resolvingId === row.id ? 'Resolving…' : 'Resolve'}
                           </button>
@@ -157,5 +165,37 @@ export default function ExceptionsPage({ api }) {
         </div>
       </div>
     </div>
+
+    ${resolveDialog ? html`
+      <div class="cl-modal-overlay" onClick=${cancelResolveDialog}>
+        <div
+          class="cl-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cl-resolve-title"
+          onClick=${(e) => e.stopPropagation()}
+        >
+          <h3 id="cl-resolve-title" class="cl-modal-title">Resolve exception</h3>
+          <div class="cl-modal-body">
+            Add an optional note explaining how this was resolved. The note is
+            written to the audit log and visible to other admins.
+          </div>
+          <div class="field-row">
+            <label for="cl-resolve-note">Resolution note (optional)</label>
+            <textarea
+              id="cl-resolve-note"
+              autofocus
+              value=${resolveDialog.note}
+              onInput=${(e) => setResolveDialog((prev) => ({ ...prev, note: e.target.value }))}
+              placeholder="e.g. Vendor confirmed the corrected IBAN; resubmitted invoice."
+            ></textarea>
+          </div>
+          <div class="cl-modal-actions">
+            <button class="btn-secondary btn-sm" onClick=${cancelResolveDialog}>Cancel</button>
+            <button class="btn-primary btn-sm" onClick=${submitResolveDialog}>Resolve</button>
+          </div>
+        </div>
+      </div>
+    ` : null}
   `;
 }

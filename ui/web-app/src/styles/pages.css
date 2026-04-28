@@ -524,6 +524,60 @@
   color: var(--cl-ink-muted);
 }
 
+/* ------------------------------------------------------------ */
+/* Modal — used for in-page dialogs (resolve note, confirm, etc) */
+/* ------------------------------------------------------------ */
+
+.cl-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 22, 40, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 60;
+  animation: cl-modal-fade 0.12s ease-out;
+}
+
+@keyframes cl-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cl-modal {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  box-shadow: 0 12px 40px rgba(10, 22, 40, 0.18);
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+.cl-modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  letter-spacing: -0.01em;
+}
+
+.cl-modal-body {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+  line-height: 1.5;
+}
+
+.cl-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* Mobile: secondary banner stacks; the action row drops below the
  * heading instead of competing for horizontal space. */
 @media (max-width: 760px) {

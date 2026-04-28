@@ -285,7 +285,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
           </div>
         </div>
 
-        <${WebhooksPanel} api=${api} canManage=${canEditConnections} />
+        <${WebhooksPanel} api=${api} canManage=${canEditConnections} toast=${toast} />
       </div>
     </div>
   `;
@@ -392,32 +392,57 @@ function ERPConnectionCard({
   </div>`;
 }
 
-function WebhooksPanel({ api, canManage }) {
+function WebhooksPanel({ api, canManage, toast }) {
   const [webhooks, setWebhooks] = useState([]);
   const [url, setUrl] = useState('');
   const [events, setEvents] = useState('*');
   const [adding, setAdding] = useState(false);
+  const [error, setError] = useState('');
+
   useEffect(() => {
     api('/api/workspace/webhooks').then((d) => setWebhooks(d?.webhooks || [])).catch(() => {});
   }, []);
+
+  const isValidUrl = (raw) => {
+    try {
+      const u = new URL(String(raw || '').trim());
+      return u.protocol === 'https:' || u.protocol === 'http:';
+    } catch {
+      return false;
+    }
+  };
+
   const addWebhook = async () => {
-    if (!url.trim()) return;
+    setError('');
+    const trimmed = url.trim();
+    if (!trimmed) {
+      setError('Webhook URL is required.');
+      return;
+    }
+    if (!isValidUrl(trimmed)) {
+      setError('Enter a valid http(s):// URL.');
+      return;
+    }
     setAdding(true);
     try {
       const result = await api('/api/workspace/webhooks', {
         method: 'POST',
-        body: JSON.stringify({ url: url.trim(), event_types: events.split(',').map((e) => e.trim()).filter(Boolean) }),
+        body: JSON.stringify({ url: trimmed, event_types: events.split(',').map((e) => e.trim()).filter(Boolean) }),
       });
       if (result?.id) setWebhooks((prev) => [...prev, result]);
       setUrl('');
-    } catch (e) { console.warn('Add webhook failed:', e); }
+    } catch (e) {
+      setError(e?.message || 'Could not add webhook. Check the URL and try again.');
+    }
     setAdding(false);
   };
   const removeWebhook = async (id) => {
     try {
       await api(`/api/workspace/webhooks/${id}`, { method: 'DELETE' });
       setWebhooks((prev) => prev.filter((w) => w.id !== id));
-    } catch (e) { console.warn('Remove webhook failed:', e); }
+    } catch (e) {
+      toast?.(e?.message || 'Could not remove webhook.', 'error');
+    }
   };
   return html`
     <div class="panel">
@@ -453,6 +478,7 @@ function WebhooksPanel({ api, canManage }) {
             <span class="templates-field-label">Events</span>
             <input type="text" placeholder="* or invoice.approved, invoice.posted_to_erp" value=${events} onInput=${(e) => setEvents(e.target.value)} />
           </label>
+          ${error && html`<div class="form-error">${error}</div>`}
           <div class="secondary-inline-actions">
             <button class="btn-secondary btn-sm" onClick=${addWebhook} disabled=${adding || !url.trim()}>${adding ? 'Adding…' : 'Add webhook'}</button>
           </div>
