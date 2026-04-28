@@ -222,6 +222,44 @@ def drain_event_stream() -> dict:
         return {"status": "error", "error": str(exc)}
 
 
+@app.task(bind=True, max_retries=3, default_retry_delay=10)
+def process_gmail_push(self, email_address: str, history_id: str) -> dict:
+    """Process a Gmail Pub/Sub push notification on the worker fleet.
+
+    The /gmail/push endpoint on the api service used to run this work
+    inline via FastAPI BackgroundTasks. That blocked the uvicorn event
+    loop on every push (synchronous LLM classification + Gmail history
+    fetch + per-message processing), causing gunicorn WORKER TIMEOUT
+    spirals and 502s on unrelated requests like /auth/google/callback.
+
+    The right architecture: web enqueues, worker drains. The api now
+    calls `process_gmail_push.delay(email_address, history_id)` and
+    returns 200 to Google. This Celery task picks it up, fetches the
+    history, classifies messages, and enqueues per-message events
+    onto the same Redis stream that drain_event_stream consumes.
+    """
+    import asyncio
+
+    from clearledgr.api.gmail_webhooks import process_gmail_notification
+
+    try:
+        asyncio.run(process_gmail_notification(email_address, history_id))
+        return {
+            "status": "completed",
+            "email_address": email_address,
+            "history_id": history_id,
+        }
+    except Exception as exc:
+        logger.error(
+            "[CeleryTask] process_gmail_push failed (%s history=%s): %s",
+            email_address, history_id, exc,
+        )
+        # Retry up to max_retries with exponential-ish backoff (default
+        # 10s × attempt). A poison push (e.g., revoked Gmail token) will
+        # error consistently; after 3 retries Celery drops it.
+        raise self.retry(exc=exc)
+
+
 @app.task
 def fire_pending_timers() -> dict:
     """§4.3: Check for timer-fired events and enqueue them.

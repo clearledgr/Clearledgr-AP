@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -853,18 +853,24 @@ class GmailCallbackRequest(BaseModel):
 # ============================================================================
 
 @router.post("/push")
-async def gmail_push_notification(
-    request: Request,
-    background_tasks: BackgroundTasks,
-):
+async def gmail_push_notification(request: Request):
     """
     Receive Gmail push notifications from Google Cloud Pub/Sub.
-    
-    This endpoint is called by Google whenever a new email arrives in a watched inbox.
-    Processing happens in the background to respond quickly to Google.
+
+    Architecture: web enqueues, worker drains.
+
+    The push payload is handed off to the Celery worker fleet via
+    `process_gmail_push.delay(...)`. The web worker returns 200 to
+    Google immediately and goes back to handling HTTP requests. The
+    actual Gmail history fetch + per-message classification + LLM
+    extraction runs on the dedicated worker service (which has the
+    concurrency model and time budget for it).
+
+    Previously the work ran inline via FastAPI BackgroundTasks. Sync
+    LLM calls inside the pipeline blocked the uvicorn event loop,
+    causing gunicorn WORKER TIMEOUT and 502s on unrelated requests
+    (most visibly /auth/google/callback during a sign-in attempt).
     """
-    import time as _time
-    _push_receipt_ts = _time.monotonic()
     body = await request.json()
     _enforce_push_verifier(request)
     payload = _validate_push_payload(body)
@@ -872,12 +878,19 @@ async def gmail_push_notification(
     history_id = payload["history_id"]
 
     logger.info("Received Gmail push notification for %s history=%s", email_address, history_id)
-    background_tasks.add_task(
-        process_gmail_notification,
-        email_address,
-        history_id,
-        _push_receipt_ts,
-    )
+
+    try:
+        from clearledgr.services.celery_tasks import process_gmail_push
+
+        process_gmail_push.delay(email_address, history_id)
+    except Exception as exc:
+        # Celery / Redis hiccup — log and let Google retry the push.
+        # Returning 5xx here triggers Google's automatic Pub/Sub retry,
+        # which is exactly the behaviour we want when the worker fleet
+        # is unreachable.
+        logger.error("Failed to enqueue Gmail push for %s: %s", email_address, exc)
+        raise HTTPException(status_code=503, detail="gmail_push_queue_unavailable") from exc
+
     return {"status": "ok"}
 
 
