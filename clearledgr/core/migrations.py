@@ -2449,3 +2449,58 @@ def _v49_projections(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v49] vendor_summary index skipped: %s", exc)
+
+
+@migration(50, "agent decision reasoning columns on audit_events (governance_verdict, agent_confidence)")
+def _v50_agent_decision_reasoning(cur, db):
+    """Lift agent decision reasoning out of payload_json into queryable columns.
+
+    Audit P4 finding (docs/AGENT_HARNESS_AUDIT_2026_04_28.md): the
+    agent's reasoning — whether governance vetoed an action, the
+    confidence score behind the decision — was buried inside
+    ``audit_events.payload_json`` blobs. That answers a single-invoice
+    "what happened?" trace, but it's useless for product analytics or
+    post-hoc model evaluation. "How many decisions did doctrine block
+    last week?" required JSON-extract per row instead of a SQL WHERE.
+
+    This migration adds two structured columns:
+
+    * ``governance_verdict`` (TEXT, nullable) — short canonical token
+      from the deliberation: ``should_execute`` / ``vetoed`` /
+      ``warned`` / NULL when not applicable. Populated by
+      ``finance_agent_loop._emit_plan_observed`` and by
+      ``runtime._append_runtime_audit`` when a deliberation context
+      is in scope.
+
+    * ``agent_confidence`` (REAL, nullable) — agent's confidence in
+      the decision at the time it was recorded, on [0, 1]. NULL for
+      events that don't carry a confidence (state transitions
+      driven by humans, system events, etc).
+
+    Both nullable so existing rows are valid; backfill is unnecessary
+    because the columns describe new analytics surface, not a
+    correctness invariant. The ap_items.confidence column already
+    exists for the per-row "best confidence" view; this is the
+    per-event audit confidence which is a strictly different signal.
+    """
+    for ddl in (
+        "ALTER TABLE audit_events ADD COLUMN governance_verdict TEXT",
+        "ALTER TABLE audit_events ADD COLUMN agent_confidence REAL",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            # Already exists on a re-run, or the column landed via an older path.
+            logger.debug("[Migration v50] column-add skipped: %s", exc)
+
+    # Index governance_verdict so analytics queries can scan
+    # quickly. Partial index keeps the index small (most events
+    # don't carry a verdict).
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_governance_verdict "
+            "ON audit_events(organization_id, governance_verdict, ts) "
+            "WHERE governance_verdict IS NOT NULL"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v50] governance_verdict index skipped: %s", exc)

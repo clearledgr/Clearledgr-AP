@@ -200,9 +200,17 @@ Initial framing claimed every AP item action was a bypass. Closer inspection of 
 
 Synchronous skills get governance; async events get planning + coordination + governance; workspace SPA actions get neither. Three reliability profiles is two too many. Severity: **P3 — architectural debt, not a bug.**
 
+**Remediation status (2026-04-28):** [finance_agent_loop.py:`_emit_plan_observed`](../clearledgr/services/finance_agent_loop.py) now emits a `plan_observed` audit event on every synchronous skill request, mirroring the implicit `plan_step_*` records the async coordination engine writes. Captures intent, skill_id, governance verdict, recall depth, preview status, and confidence. Both paths now share the same observability surface — analytics can ask "what plans did the agent observe / veto / execute?" against `event_type='plan_observed'` regardless of which path produced the row.
+
 ### P4 — Agent reasoning is JSON-blob, not queryable
 
 `payload_json` holds the why; columns hold the what. Fine for individual-invoice trace; insufficient for analytics, model evaluation, or audit at scale. Severity: **P4 — design choice with cost; not urgent.**
+
+**Remediation status (2026-04-28):** migration v50 (`_v50_agent_decision_reasoning` in [migrations.py](../clearledgr/core/migrations.py)) adds two structured columns to `audit_events`:
+- `governance_verdict` (TEXT, nullable) — canonical token: `should_execute` / `vetoed` / `warned` / NULL.
+- `agent_confidence` (REAL, nullable) — agent confidence at decision time, on [0, 1].
+
+Plus a partial index on `(organization_id, governance_verdict, ts)` for analytics scans. Both writers (`ap_store.append_audit_event` and `finance_agent_loop._emit_plan_observed`) now populate these. "How many decisions did doctrine block last week?" is now a SQL `WHERE`, not a JSON-extract.
 
 ### P5 — *withdrawn after close-read*
 

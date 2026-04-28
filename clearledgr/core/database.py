@@ -861,6 +861,8 @@ class _ClearledgrDBBase:
                     workflow_id TEXT,
                     run_id TEXT,
                     decision_reason TEXT,
+                    governance_verdict TEXT,
+                    agent_confidence REAL,
                     organization_id TEXT,
                     ts TEXT
                 )

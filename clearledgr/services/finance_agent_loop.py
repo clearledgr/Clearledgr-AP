@@ -95,6 +95,86 @@ class FinanceAgentLoopService:
             "deliberation": deliberation,
         }
 
+    def _emit_plan_observed(
+        self,
+        request: SkillRequest,
+        action: ActionExecution,
+        observed: Dict[str, Any],
+        deliberation: Dict[str, Any],
+    ) -> None:
+        """Emit a ``plan_observed`` audit event for the synchronous skill path.
+
+        The async event drain (Celery → DeterministicPlanningEngine →
+        CoordinationEngine) writes a per-step ``plan_step_*`` audit
+        record via Rule 1. The synchronous skill path has no such
+        record; this method adds the equivalent so both paths converge
+        on the same observability primitive.
+
+        Best-effort: failures are logged + swallowed. The skill
+        request still runs even if the audit emit fails — observability
+        is not load-bearing for correctness.
+        """
+        ap_item_id = observed.get("ap_item_id")
+        if not ap_item_id:
+            return
+        try:
+            should_execute = bool(deliberation.get("should_execute", True)) if deliberation else True
+            stop_reason = (
+                str(deliberation.get("stop_reason") or "").strip()
+                if isinstance(deliberation, dict)
+                else ""
+            )
+            preview = observed.get("preview") if isinstance(observed.get("preview"), dict) else {}
+            profile = observed.get("profile") if isinstance(observed.get("profile"), dict) else {}
+            # P4 (audit 2026-04-28): pass governance_verdict + confidence
+            # explicitly so they land on the new structured columns
+            # (audit_events.governance_verdict, audit_events.agent_confidence)
+            # added by migration v50, not just inside payload_json.
+            confidence_value: Optional[float] = None
+            preview_confidence = preview.get("confidence") if isinstance(preview, dict) else None
+            if preview_confidence is not None:
+                try:
+                    confidence_value = float(preview_confidence)
+                except (TypeError, ValueError):
+                    confidence_value = None
+
+            self.runtime.append_runtime_audit(
+                ap_item_id=str(ap_item_id),
+                event_type="plan_observed",
+                reason=stop_reason or f"sync_skill:{request.task_type}",
+                metadata={
+                    "intent": request.task_type,
+                    "skill_id": request.skill_id,
+                    "plan_kind": "synchronous_skill",
+                    "step_count": 1,
+                    "governance_verdict": {
+                        "should_execute": should_execute,
+                        "verdict": "vetoed" if not should_execute else "should_execute",
+                        "stop_reason": stop_reason or None,
+                        "doctrine_version": profile.get("doctrine_version"),
+                        "risk_posture": profile.get("risk_posture"),
+                        "autonomy_level": profile.get("autonomy_level"),
+                    },
+                    "agent_confidence": confidence_value,
+                    "preview_status": str(preview.get("status") or "").strip() or None,
+                    "recall_count": len(observed.get("recall") or []),
+                    "belief_available": bool(observed.get("belief")),
+                    "action": action.to_dict() if action else None,
+                },
+                correlation_id=request.correlation_id,
+                idempotency_key=(
+                    f"plan_observed:{ap_item_id}:{request.task_type}:{action.idempotency_key}"
+                    if action and action.idempotency_key
+                    else None
+                ),
+                skill_id=request.skill_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[finance_agent_loop] plan_observed emit failed for %s/%s: %s",
+                ap_item_id, request.task_type, exc,
+            )
+
     async def run_skill_request(
         self,
         request: SkillRequest,
@@ -103,6 +183,21 @@ class FinanceAgentLoopService:
     ) -> Dict[str, Any]:
         observed = self.observe(request, action)
         deliberation = observed.get("deliberation") if isinstance(observed.get("deliberation"), dict) else {}
+
+        # P3 (audit 2026-04-28): emit a `plan_observed` audit event on
+        # every synchronous skill request, mirroring the planning step
+        # the async event drain (Celery → DeterministicPlanningEngine
+        # → CoordinationEngine) emits implicitly. Without this, the
+        # synchronous path's "what plan ran here, why, and was it
+        # vetoed" is invisible in audit_events. With it, both paths
+        # share the same observability surface.
+        #
+        # The plan is a single step (the skill itself); the audit
+        # captures intent, skill_id, governance verdict, recall depth,
+        # and preview status so post-hoc you can reconstruct what the
+        # agent saw + decided before the side effect ran.
+        self._emit_plan_observed(request, action, observed, deliberation)
+
         if deliberation and not deliberation.get("should_execute", True):
             blocked_response = {
                 "status": "blocked",

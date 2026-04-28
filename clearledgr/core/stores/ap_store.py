@@ -1730,13 +1730,38 @@ class APStore:
                 "append_audit_event requires (box_id, box_type) or ap_item_id"
             )
 
+        # P4 (audit 2026-04-28): governance_verdict + agent_confidence are
+        # structured columns now (migration v50). Callers can pass them
+        # at the top level of ``payload`` OR nested in ``payload_json`` —
+        # accept either so writers don't have to re-thread the kwarg.
+        governance_verdict = payload.get("governance_verdict")
+        agent_confidence = payload.get("agent_confidence")
+        if governance_verdict is None and isinstance(payload_json, dict):
+            verdict_block = payload_json.get("governance_verdict")
+            if isinstance(verdict_block, dict):
+                if verdict_block.get("should_execute") is False:
+                    governance_verdict = "vetoed"
+                elif "should_execute" in verdict_block:
+                    governance_verdict = "should_execute"
+        if agent_confidence is None and isinstance(payload_json, dict):
+            for key in ("agent_confidence", "confidence_score", "confidence"):
+                value = payload_json.get(key)
+                if value is None:
+                    continue
+                try:
+                    agent_confidence = float(value)
+                    break
+                except (TypeError, ValueError):
+                    continue
+
         sql = """
             INSERT INTO audit_events
             (id, box_id, box_type, event_type, prev_state, new_state,
              actor_type, actor_id, payload_json, external_refs,
              idempotency_key, source, correlation_id, workflow_id, run_id,
-             decision_reason, organization_id, ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             decision_reason, governance_verdict, agent_confidence,
+             organization_id, ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
             with self.connect() as conn:
@@ -1758,6 +1783,8 @@ class APStore:
                     payload.get("workflow_id"),
                     payload.get("run_id"),
                     payload.get("decision_reason") or payload.get("reason"),
+                    governance_verdict,
+                    agent_confidence,
                     payload.get("organization_id"),
                     now,
                 ))
