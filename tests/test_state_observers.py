@@ -58,7 +58,13 @@ def test_event_default_metadata_is_empty():
 
 
 def test_registry_dispatches_to_all_observers():
-    """All registered observers should receive the event."""
+    """All registered observers should receive the event.
+
+    Uses inline mode — outbox mode (production default) enqueues to a
+    DB-backed queue and the observers fire asynchronously through the
+    OutboxWorker, which is a separate concern. Inline mode tests the
+    fan-out semantics directly.
+    """
     calls = []
 
     class TrackingObserver(StateObserver):
@@ -68,7 +74,7 @@ def test_registry_dispatches_to_all_observers():
         async def on_transition(self, event):
             calls.append(self.name)
 
-    registry = StateObserverRegistry()
+    registry = StateObserverRegistry(inline=True)
     registry.register(TrackingObserver("a"))
     registry.register(TrackingObserver("b"))
     registry.register(TrackingObserver("c"))
@@ -78,7 +84,12 @@ def test_registry_dispatches_to_all_observers():
 
 
 def test_registry_isolates_observer_failures():
-    """A failing observer must not prevent others from running."""
+    """A failing observer must not prevent others from running.
+
+    Same inline-mode rationale as ``test_registry_dispatches_to_all_observers``:
+    outbox mode handles failure isolation via per-row retry, but the
+    inline fan-out is what this test guards.
+    """
     calls = []
 
     class GoodObserver(StateObserver):
@@ -89,7 +100,7 @@ def test_registry_isolates_observer_failures():
         async def on_transition(self, event):
             raise RuntimeError("boom")
 
-    registry = StateObserverRegistry()
+    registry = StateObserverRegistry(inline=True)
     registry.register(GoodObserver())
     registry.register(BadObserver())
     registry.register(GoodObserver())
@@ -100,7 +111,7 @@ def test_registry_isolates_observer_failures():
 
 def test_registry_no_observers_is_noop():
     """Empty registry should not error."""
-    registry = StateObserverRegistry()
+    registry = StateObserverRegistry(inline=True)
     _run(registry.notify(_make_event()))
 
 
@@ -299,6 +310,14 @@ def test_observer_fires_on_workflow_transition(postgres_test_db):
     # Verify observer registry exists
     assert svc._observer_registry is not None
     assert len(svc._observer_registry._observers) >= 1
+
+    # Force inline observer dispatch for this test. Production uses
+    # outbox mode (durable + retried via OutboxWorker), but the
+    # contract under test here is "transition fans out to observers" —
+    # outbox round-trip is a separate concern handled in the outbox
+    # tests. Without flipping inline=True the audit observer is
+    # enqueued instead of called, and audit_calls stays empty.
+    svc._observer_registry._inline = True
 
     # Patch the audit observer to track calls
     audit_calls = []

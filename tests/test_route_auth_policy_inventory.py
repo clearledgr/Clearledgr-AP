@@ -18,12 +18,27 @@ SENSITIVE_PREFIXES = (
     "/extension",
 )
 
-# Public callbacks/health probes that are intentionally unauthenticated.
+# Public callbacks/health probes that are intentionally unauthenticated
+# OR use a non-Clearledgr auth scheme (NetSuite Suitelet HMAC, SAP XSUAA
+# JWT). The latter group is enforced INSIDE the handler against
+# platform-specific signing keys, not via the standard ``get_current_user``
+# / ``require_ops_user`` deps this test scans for. Listing them here
+# makes the allowlist explicit so a regression that drops the platform-
+# native auth check still trips the test (the route would still appear
+# in this set, but the handler itself would be naked).
 EXPECTED_UNAUTHENTICATED_SENSITIVE_ROUTES = {
     ("POST", "/extension/gmail/register-token"),
     ("POST", "/extension/gmail/exchange-code"),
     ("GET", "/extension/health"),
     ("GET", "/api/workspace/integrations/slack/install/callback"),
+    # SAP Fiori extension — XSUAA JWT exchange + per-tenant lookup.
+    # See clearledgr/api/sap_extension.py — auth is XSUAA JWKS verify
+    # against the JWT's ``iss`` claim, resolved per-tenant.
+    ("POST", "/extension/sap/exchange"),
+    ("GET", "/extension/ap-items/by-sap-invoice"),
+    # NetSuite SuiteApp panel — Suitelet-minted HMAC JWT verified by
+    # the handler. See clearledgr/api/netsuite_panel.py.
+    ("GET", "/extension/ap-items/by-netsuite-bill/{ns_internal_id}"),
 }
 
 

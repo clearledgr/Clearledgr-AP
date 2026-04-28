@@ -26,10 +26,14 @@ import pytest
 class _FakeResponse:
     """Stand-in for httpx.Response that lets tests dictate status/body."""
 
-    def __init__(self, status_code: int, body: Any, *, text: str = "") -> None:
+    def __init__(self, status_code: int, body: Any, *, text: str = "", headers: dict | None = None) -> None:
         self.status_code = status_code
         self._body = body
         self.text = text or (body if isinstance(body, str) else "")
+        # ``exchange_code_for_tokens`` reads ``response.headers`` for its
+        # diagnostic log. Default to an empty dict so the test fixture
+        # stays usable without per-test setup.
+        self.headers = headers if headers is not None else {}
 
     def json(self):
         if isinstance(self._body, Exception):
@@ -75,14 +79,36 @@ async def test_exchange_code_surfaces_google_error_description(monkeypatch, capl
         body={"error": "invalid_grant", "error_description": "Bad Request"},
     )
     client = _FakeHttpClient(fake_response)
+    # ``clearledgr/services/logging.py`` sets ``propagate=False`` on the
+    # ``clearledgr`` logger when imported, which means warnings from
+    # child loggers (``clearledgr.services.gmail_api``) never reach the
+    # root logger. pytest's ``caplog`` captures via root, so the assertion
+    # below would silently fail in any test ordering where that module
+    # is already imported. Attach our own list-handler directly to the
+    # gmail_api logger to bypass propagation entirely.
+    import logging as _logging
+    captured_records: list = []
+
+    class _CaptureHandler(_logging.Handler):
+        def emit(self, record):
+            captured_records.append(record)
+
+    capture = _CaptureHandler(level=_logging.WARNING)
     with patch("clearledgr.services.gmail_api.get_http_client", return_value=client):
         from clearledgr.services import gmail_api
-        with caplog.at_level("WARNING", logger=gmail_api.__name__):
+        gm_logger = _logging.getLogger(gmail_api.__name__)
+        prior_level = gm_logger.level
+        gm_logger.setLevel(_logging.WARNING)
+        gm_logger.addHandler(capture)
+        try:
             with pytest.raises(RuntimeError) as exc_info:
                 await gmail_api.exchange_code_for_tokens(
                     "fake-code",
                     redirect_uri="https://ext.test/redirect",
                 )
+        finally:
+            gm_logger.removeHandler(capture)
+            gm_logger.setLevel(prior_level)
 
     err = str(exc_info.value)
     assert "google_token_exchange_400" in err
@@ -90,8 +116,9 @@ async def test_exchange_code_surfaces_google_error_description(monkeypatch, capl
     assert "Bad Request" in err
     # Worker log must include the redirect URI so post-mortem grep
     # can correlate the failure with the OAuth flow that triggered it.
-    assert any("redirect_uri='https://ext.test/redirect'" in m for m in caplog.messages)
-    assert any("invalid_grant" in m for m in caplog.messages)
+    formatted_msgs = [r.getMessage() for r in captured_records]
+    assert any("redirect_uri='https://ext.test/redirect'" in m for m in formatted_msgs)
+    assert any("invalid_grant" in m for m in formatted_msgs)
 
 
 @pytest.mark.asyncio

@@ -230,9 +230,15 @@ def test_approval_link_sap_full_metadata():
     assert _source_link_label(inv) == "Open in SAP"
 
 
-def test_approval_link_falls_back_to_clearledgr_when_metadata_missing():
+def test_approval_link_falls_back_to_clearledgr_when_metadata_missing(monkeypatch):
     """A NetSuite bill missing its ns_account_id should not produce a
-    dead link — fall back to the Clearledgr app."""
+    dead link — fall back to the Clearledgr workspace SPA.
+
+    Pin APP_BASE_URL to the canonical workspace host so the test is
+    self-contained and doesn't depend on whatever the local ``.env`` /
+    Railway env has it set to.
+    """
+    monkeypatch.setenv("APP_BASE_URL", "https://workspace.clearledgr.com")
     from clearledgr.services.approval_card_builder import (
         _build_source_link, _source_link_label,
     )
@@ -243,7 +249,10 @@ def test_approval_link_falls_back_to_clearledgr_when_metadata_missing():
         erp_metadata={"ns_internal_id": "5135"},  # account_id missing
     )
     link = _build_source_link(inv)
-    assert "app.clearledgr.com" in link
+    # The fallback uses APP_BASE_URL + /items/<id>; verify both halves
+    # so a future re-route (e.g. /ap/items/<id>) still trips the test.
+    assert "workspace.clearledgr.com" in link
+    assert "/items/5135" in link
     assert _source_link_label(inv) == "Open in Clearledgr"
 
 

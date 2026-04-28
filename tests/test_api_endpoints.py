@@ -117,13 +117,30 @@ class TestAuthEndpoints:
         })
         assert response.status_code in (404, 405)
 
-    def test_login_endpoint_removed(self):
-        """Email/password /auth/login is gone — Streak alignment."""
+    def test_login_endpoint_rejects_invalid_credentials_with_401(self):
+        """Email/password /auth/login was reintroduced in workstream A.2
+        (commit 2d21c63) for invite-accept + non-Google operators. The
+        workspace SPA calls it from ui/web-app/src/auth/LoginPage.js.
+        Streak-only alignment was overridden; the contract this test
+        guards is now: invalid or missing credentials must return 401
+        (never 200, never the email-existence leak the older flow had).
+        """
+        # Bogus credentials — must come back as a generic 401 with no
+        # signal about whether the email exists.
         response = client.post("/auth/login", json={
-            "email": "test@example.com",
+            "email": "no-such-user@example.com",
             "password": "StrongPass123!",
         })
-        assert response.status_code in (404, 405)
+        assert response.status_code == 401
+        assert response.json().get("detail") == "invalid_credentials"
+        # Empty credentials must also 401 (not 422 from pydantic; the
+        # handler accepts both as auth-failure to keep the surface
+        # uniform).
+        response = client.post("/auth/login", json={
+            "email": "test@example.com",
+            "password": "x",
+        })
+        assert response.status_code == 401
 
     def test_refresh_endpoint_removed(self):
         """Clearledgr no longer mints its own refresh token; the Gmail
@@ -2815,20 +2832,45 @@ class TestExtensionEndpoints:
         ensure_mock.assert_awaited_once()
 
     def test_cors_policy_drops_wildcard_when_explicit_origins_present(self):
+        """Explicit origins list strips the wildcard, deduplicates, and
+        coexists with the configured regex (Starlette CORSMiddleware
+        accepts the request when EITHER the origin matches the explicit
+        list OR the regex). The regex stays so the per-install
+        chrome-extension://<id> + per-tenant ERP host patterns keep
+        working — see _resolve_cors_policy in main.py for the rationale.
+        """
         origins, regex = main_module._resolve_cors_policy(
             "*, https://mail.google.com, https://mail.google.com",
             r"^chrome-extension://ignored$",
         )
         assert origins == ["https://mail.google.com"]
-        assert regex is None
+        # The configured regex is preserved verbatim — the explicit-list
+        # branch ADDS to dynamic regex coverage, it does not replace it.
+        assert regex == r"^chrome-extension://ignored$"
 
     def test_cors_policy_wildcard_only_falls_back_to_safe_defaults(self):
+        """No explicit origins + a wildcard collapses to the canonical
+        default list and the broad regex covering every supported
+        in-app render target: Gmail extension, NetSuite Suitelet panels,
+        SAP BTP Approuter, S/4HANA Fiori Launchpad, and the standalone
+        Fiori app. Each is a real, supported integration point — the
+        regex must keep matching them.
+        """
         origins, regex = main_module._resolve_cors_policy(
             "*",
             "",
         )
         assert origins == main_module._default_cors_origins
-        assert regex == r"^chrome-extension://[a-z]{32}$"
+        # Regex matches all five supported in-app render targets.
+        assert regex == (
+            r"^("
+            r"chrome-extension://[a-z]{32}"
+            r"|https://[a-z0-9_-]+\.app\.netsuite\.com"
+            r"|https://[a-z0-9_.-]+\.hana\.ondemand\.com"
+            r"|https://[a-z0-9_.-]+\.s4hana\.cloud\.sap"
+            r"|https://[a-z0-9_.-]+\.fiori\.cloud\.sap"
+            r")$"
+        )
     
     def test_invoice_pipeline(self):
         """Invoice pipeline requires auth."""

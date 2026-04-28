@@ -219,7 +219,13 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # (/erp/webhooks/{qbo|xero|netsuite|sap}/{org_id}) — each does
         # HMAC signature verification before any processing; cap raised
         # 230 → 240 to accommodate them.
-        assert len(paths) <= 240
+        # 2026-04-28: cap raised 240 → 275 to cover ERP-native panel
+        # surfaces (NetSuite Suitelet panel + SAP Fiori extension —
+        # ~10 endpoints across /extension/*), Box-exception admin
+        # console (3 endpoints), agent-intents API surface (3 endpoints),
+        # and assorted recent additions including /api/leads, plan-
+        # observability hooks, and field-review batch routes.
+        assert len(paths) <= 275
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -249,6 +255,13 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             # pattern) — box exception queue + resolve. Org-scoped +
             # admin-role gated in the handlers.
             "/api/admin/box",
+            # 2026-04-20+ hardening: append-only ops surfaces.
+            # /api/policies — versioned policy snapshots (org-scoped).
+            # /api/ops/projections — read-side projection refresh.
+            # /api/ops/outbox — outbox queue inspection.
+            "/api/policies",
+            "/api/ops/projections",
+            "/api/ops/outbox",
         }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.

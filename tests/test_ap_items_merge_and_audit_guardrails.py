@@ -282,6 +282,15 @@ def test_illegal_state_transition_is_rejected_and_audited(db):
 
 
 def test_postgres_append_only_guard_ddl_is_installed_without_live_db(db):
+    """The append-only DDL uses ``CREATE OR REPLACE TRIGGER`` (Postgres
+    14+, atomic, race-free) instead of the prior DROP-then-CREATE
+    pattern. The latter took ``AccessExclusiveLock`` on the table and
+    deadlocked when two gunicorn workers booted in parallel — the
+    rewrite is documented in
+    ``ClearledgrDB._install_audit_append_only_guards``. This test
+    verifies the new shape so a future refactor can't silently
+    regress to the deadlock-prone DROP+CREATE.
+    """
     class _FakeCursor:
         def __init__(self):
             self.statements: list[str] = []
@@ -295,8 +304,14 @@ def test_postgres_append_only_guard_ddl_is_installed_without_live_db(db):
 
     joined = "\n".join(cur.statements)
     assert "CREATE OR REPLACE FUNCTION clearledgr_prevent_append_only_mutation" in joined
-    assert "DROP TRIGGER IF EXISTS trg_audit_events_no_update ON audit_events" in joined
-    assert "DROP TRIGGER IF EXISTS trg_audit_events_no_delete ON audit_events" in joined
-    assert "CREATE TRIGGER trg_audit_events_no_update" in joined
+    # CREATE OR REPLACE TRIGGER is atomic and avoids the AccessExclusiveLock
+    # deadlock the prior DROP+CREATE pattern caused; both audit tables get
+    # an UPDATE-blocker and a DELETE-blocker.
+    assert "CREATE OR REPLACE TRIGGER trg_audit_events_no_update" in joined
+    assert "CREATE OR REPLACE TRIGGER trg_audit_events_no_delete" in joined
     assert "BEFORE UPDATE ON audit_events" in joined
-    assert "CREATE TRIGGER trg_ap_policy_audit_events_no_delete" in joined
+    assert "BEFORE DELETE ON audit_events" in joined
+    assert "CREATE OR REPLACE TRIGGER trg_ap_policy_audit_events_no_update" in joined
+    assert "CREATE OR REPLACE TRIGGER trg_ap_policy_audit_events_no_delete" in joined
+    # No DROP TRIGGER calls — the rewrite eliminated them deliberately.
+    assert "DROP TRIGGER" not in joined
