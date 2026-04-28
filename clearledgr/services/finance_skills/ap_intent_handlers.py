@@ -2866,6 +2866,260 @@ class SplitInvoiceHandler(APIntentHandler):
         return response
 
 
+class MergeInvoicesHandler(APIntentHandler):
+    intent = "merge_invoices"
+
+    def policy_precheck(self, skill, runtime, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # Target is the canonical AP item (resolved by _base_context).
+        # Source is supplied as ``source_ap_item_id`` in the payload.
+        context = _base_context(self.intent, runtime, payload)
+        target = context["ap_item"]
+        target_id = context["ap_item_id"]
+        source_id = str(context["payload"].get("source_ap_item_id") or "").strip()
+        reason = str(context["payload"].get("reason") or "").strip()
+        reason_codes = []
+        source_item: Optional[Dict[str, Any]] = None
+        if not source_id:
+            reason_codes.append("source_ap_item_id_required")
+        elif source_id == target_id:
+            reason_codes.append("cannot_merge_same_item")
+        else:
+            try:
+                source_item = runtime.db.get_ap_item(source_id)
+            except Exception:
+                source_item = None
+            if not source_item:
+                reason_codes.append("source_not_found")
+            else:
+                if str(target.get("organization_id") or "default") != str(source_item.get("organization_id") or "default"):
+                    reason_codes.append("organization_mismatch")
+        if not reason:
+            reason_codes.append("reason_required")
+        precheck = {
+            "eligible": not reason_codes,
+            "reason_codes": reason_codes,
+            "target_id": target_id,
+            "source_id": source_id or None,
+        }
+        return {**context, "policy_precheck": precheck, "_source_item": source_item}
+
+    async def execute(self, skill, runtime, context: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        svc = _import_ap_item_service()
+        target = context["ap_item"]
+        target_id = context["ap_item_id"]
+        email_id = context["email_id"]
+        precheck = context["policy_precheck"]
+        payload = context["payload"]
+        source_item = context.get("_source_item") or {}
+        correlation_id = runtime.correlation_id_for_item(target)
+        db = runtime.db
+
+        if not precheck.get("eligible"):
+            reason_codes = set(precheck.get("reason_codes") or [])
+            if "source_ap_item_id_required" in reason_codes:
+                blocked_reason = "source_ap_item_id_required"
+            elif "cannot_merge_same_item" in reason_codes:
+                blocked_reason = "cannot_merge_same_item"
+            elif "organization_mismatch" in reason_codes:
+                blocked_reason = "organization_mismatch"
+            elif "source_not_found" in reason_codes:
+                blocked_reason = "source_not_found"
+            else:
+                blocked_reason = "reason_required"
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "blocked",
+                "reason": blocked_reason,
+                "ap_item_id": target_id,
+                "source_ap_item_id": precheck.get("source_id"),
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=target_id,
+                event_type="invoices_merge_blocked",
+                reason=blocked_reason,
+                metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        actor = _resolve_actor_fields(runtime, payload, fallback="workspace_spa")
+        actor_id = actor["canonical_actor"]
+        reason = str(payload.get("reason") or "").strip()
+        source_id = str(source_item.get("id") or precheck["source_id"])
+
+        # Move source links from source → target.
+        moved_count = 0
+        try:
+            for source_link in db.list_ap_item_sources(source_id):
+                moved = db.move_ap_item_source(
+                    from_ap_item_id=source_id,
+                    to_ap_item_id=target_id,
+                    source_type=source_link.get("source_type"),
+                    source_ref=source_link.get("source_ref"),
+                )
+                if moved:
+                    moved_count += 1
+        except Exception as exc:
+            logger.warning("[merge_invoices] move sources failed for %s→%s: %s", source_id, target_id, exc)
+
+        # Carry over thread + message identifiers from source as merge-origin links.
+        try:
+            if source_item.get("thread_id"):
+                db.link_ap_item_source(
+                    {
+                        "ap_item_id": target_id,
+                        "source_type": "gmail_thread",
+                        "source_ref": source_item.get("thread_id"),
+                        "subject": source_item.get("subject"),
+                        "sender": source_item.get("sender"),
+                        "detected_at": source_item.get("created_at"),
+                        "metadata": {"merge_origin": source_id},
+                    }
+                )
+            if source_item.get("message_id"):
+                db.link_ap_item_source(
+                    {
+                        "ap_item_id": target_id,
+                        "source_type": "gmail_message",
+                        "source_ref": source_item.get("message_id"),
+                        "subject": source_item.get("subject"),
+                        "sender": source_item.get("sender"),
+                        "detected_at": source_item.get("created_at"),
+                        "metadata": {"merge_origin": source_id},
+                    }
+                )
+        except Exception as exc:
+            logger.warning("[merge_invoices] origin link backfill failed for %s→%s: %s", source_id, target_id, exc)
+
+        # Target metadata: append merge history + counts.
+        target_meta = svc._parse_json(target.get("metadata"))
+        merge_history = target_meta.get("merge_history")
+        if not isinstance(merge_history, list):
+            merge_history = []
+        merged_at = datetime.now(timezone.utc).isoformat()
+        merge_history.append(
+            {
+                "source_ap_item_id": source_id,
+                "reason": reason,
+                "actor_id": actor_id,
+                "merged_at": merged_at,
+            }
+        )
+        target_meta["merge_history"] = merge_history
+        target_meta["merge_reason"] = reason
+        target_meta["has_context_conflict"] = False
+        try:
+            target_meta["source_count"] = len(db.list_ap_item_sources(target_id))
+        except Exception:
+            target_meta["source_count"] = target_meta.get("source_count")
+
+        # Source metadata: mark merged, suppress from worklist.
+        source_meta = svc._parse_json(source_item.get("metadata"))
+        source_meta["merged_into"] = target_id
+        source_meta["merge_reason"] = reason
+        source_meta["merged_at"] = merged_at
+        source_meta["merged_by"] = actor_id
+        source_meta["merge_status"] = "merged_source"
+        source_meta["source_count"] = 0
+        source_meta["suppressed_from_worklist"] = True
+        if source_item.get("state"):
+            source_meta["merge_source_state"] = source_item.get("state")
+
+        try:
+            db.update_ap_item(
+                target_id,
+                metadata=target_meta,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _decision_reason=reason,
+                _correlation_id=correlation_id,
+            )
+            db.update_ap_item(
+                source_id,
+                metadata=source_meta,
+                _actor_type="user",
+                _actor_id=actor_id,
+                _decision_reason=reason,
+                _correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            response = {
+                "skill_id": skill.skill_id,
+                "intent": self.intent,
+                "status": "error",
+                "reason": str(exc),
+                "ap_item_id": target_id,
+                "source_ap_item_id": source_id,
+                "email_id": email_id,
+                "policy_precheck": precheck,
+                "audit_contract": skill.audit_contract(self.intent),
+            }
+            audit_row = runtime.append_runtime_audit(
+                ap_item_id=target_id,
+                event_type="invoices_merge_failed",
+                reason=str(exc),
+                metadata={"intent": self.intent, "response": response},
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+            )
+            response["audit_event_id"] = (audit_row or {}).get("id")
+            return response
+
+        response = {
+            "skill_id": skill.skill_id,
+            "intent": self.intent,
+            "status": "merged",
+            "target_ap_item_id": target_id,
+            "source_ap_item_id": source_id,
+            "moved_sources": moved_count,
+            "ap_item_id": target_id,
+            "email_id": email_id,
+            "policy_precheck": precheck,
+            "audit_contract": skill.audit_contract(self.intent),
+            "next_step": "review_target",
+        }
+        audit_row = runtime.append_runtime_audit(
+            ap_item_id=target_id,
+            event_type="invoices_merged",
+            reason=reason,
+            metadata={
+                "intent": self.intent,
+                "policy_precheck": precheck,
+                "target_ap_item_id": target_id,
+                "source_ap_item_id": source_id,
+                "moved_sources": moved_count,
+                "response": response,
+            },
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        response["audit_event_id"] = (audit_row or {}).get("id")
+        try:
+            runtime.append_runtime_audit(
+                ap_item_id=source_id,
+                event_type="invoices_merged",
+                reason=reason,
+                metadata={
+                    "intent": self.intent,
+                    "target_ap_item_id": target_id,
+                    "source_ap_item_id": source_id,
+                    "side": "source",
+                },
+                correlation_id=correlation_id,
+                idempotency_key=f"{idempotency_key}:source" if idempotency_key else None,
+                skill_id=skill.skill_id,
+            )
+        except Exception as audit_exc:
+            logger.warning("[merge_invoices] source-side audit failed: %s", audit_exc)
+        return response
+
+
 _HANDLERS: Dict[str, APIntentHandler] = {
     handler.intent: handler
     for handler in (
@@ -2886,6 +3140,7 @@ _HANDLERS: Dict[str, APIntentHandler] = {
         ManuallyClassifyInvoiceHandler(),
         ResubmitInvoiceHandler(),
         SplitInvoiceHandler(),
+        MergeInvoicesHandler(),
     )
 }
 

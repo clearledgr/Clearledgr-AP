@@ -45,6 +45,7 @@ class APFinanceSkill(FinanceSkill):
             "manually_classify_invoice",
             "resubmit_invoice",
             "split_invoice",
+            "merge_invoices",
         }
     )
     _MANIFEST = SkillCapabilityManifest(
@@ -161,6 +162,11 @@ class APFinanceSkill(FinanceSkill):
                 "intent": "split_invoice",
                 "class": "mutating",
                 "description": "Split an AP item into separate items by source link (gmail thread / message / attachment).",
+            },
+            {
+                "intent": "merge_invoices",
+                "class": "mutating",
+                "description": "Merge a source AP item into a target, moving source links and suppressing the source from the worklist.",
             },
         ],
         policy_pack={

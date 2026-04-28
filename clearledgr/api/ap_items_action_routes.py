@@ -1472,126 +1472,55 @@ async def resubmit_rejected_item(
 
 
 @router.post("/{ap_item_id}/merge")
-def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
+async def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depends(require_ops_user)) -> Dict[str, Any]:
+    """Merge two AP items via the ``merge_invoices`` intent.
+
+    Thin HTTP→intent wrapper. The handler validates the source/target
+    pair, moves source links onto the target, backfills gmail-origin
+    links with merge_origin metadata, mutates both items' metadata
+    (target → merge_history; source → suppressed_from_worklist), and
+    audits both sides.
+    """
     db = shared.get_db()
-    actor_id = shared._authenticated_actor(_user)
     target = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(target.get("organization_id") or "default", _user)
-    source = shared._require_item(db, request.source_ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
 
-    if target.get("id") == source.get("id"):
-        raise HTTPException(status_code=400, detail="cannot_merge_same_item")
-    if str(target.get("organization_id") or "default") != str(source.get("organization_id") or "default"):
-        raise HTTPException(status_code=400, detail="organization_mismatch")
-
-    moved_count = 0
-    for source_link in db.list_ap_item_sources(source["id"]):
-        moved = db.move_ap_item_source(
-            from_ap_item_id=source["id"],
-            to_ap_item_id=target["id"],
-            source_type=source_link.get("source_type"),
-            source_ref=source_link.get("source_ref"),
-        )
-        if moved:
-            moved_count += 1
-
-    if source.get("thread_id"):
-        db.link_ap_item_source(
-            {
-                "ap_item_id": target["id"],
-                "source_type": "gmail_thread",
-                "source_ref": source.get("thread_id"),
-                "subject": source.get("subject"),
-                "sender": source.get("sender"),
-                "detected_at": source.get("created_at"),
-                "metadata": {"merge_origin": source.get("id")},
-            }
-        )
-    if source.get("message_id"):
-        db.link_ap_item_source(
-            {
-                "ap_item_id": target["id"],
-                "source_type": "gmail_message",
-                "source_ref": source.get("message_id"),
-                "subject": source.get("subject"),
-                "sender": source.get("sender"),
-                "detected_at": source.get("created_at"),
-                "metadata": {"merge_origin": source.get("id")},
-            }
-        )
-
-    target_meta = shared._parse_json(target.get("metadata"))
-    merge_history = target_meta.get("merge_history")
-    if not isinstance(merge_history, list):
-        merge_history = []
-    merged_at = datetime.now(timezone.utc).isoformat()
-    merge_history.append(
-        {
-            "source_ap_item_id": source["id"],
-            "reason": request.reason,
-            "actor_id": actor_id,
-            "merged_at": merged_at,
-        }
+    runtime = shared._finance_agent_runtime_cls()(
+        organization_id=str(target.get("organization_id") or "default"),
+        actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "system",
+        actor_email=getattr(_user, "email", None),
+        db=db,
     )
-    target_meta["merge_history"] = merge_history
-    target_meta["merge_reason"] = request.reason
-    target_meta["has_context_conflict"] = False
-    target_meta["source_count"] = len(db.list_ap_item_sources(target["id"]))
-    db.update_ap_item(target["id"], metadata=target_meta)
-
-    source_meta = shared._parse_json(source.get("metadata"))
-    source_meta["merged_into"] = target["id"]
-    source_meta["merge_reason"] = request.reason
-    source_meta["merged_at"] = merged_at
-    source_meta["merged_by"] = actor_id
-    source_meta["merge_status"] = "merged_source"
-    source_meta["source_count"] = 0
-    source_meta["suppressed_from_worklist"] = True
-    if source.get("state"):
-        source_meta["merge_source_state"] = source.get("state")
-    db.update_ap_item(source["id"], metadata=source_meta)
-
-    db.append_audit_event(
-        {
-            "ap_item_id": target["id"],
-            "event_type": "ap_item_merged",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "target_ap_item_id": target["id"],
-                "source_ap_item_id": source["id"],
-                "reason": request.reason,
-                "moved_sources": moved_count,
-            },
-            "organization_id": target.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"merge:{target['id']}:{source['id']}",
-        }
+    intent_payload = {
+        "ap_item_id": ap_item_id,
+        "source_ap_item_id": request.source_ap_item_id,
+        "actor_id": request.actor_id,
+        "reason": request.reason,
+        "actor_email": getattr(_user, "email", None),
+        "source_channel": "workspace_spa",
+    }
+    result = await runtime.execute_intent(
+        "merge_invoices", intent_payload,
+        idempotency_key=f"merge_invoices:{ap_item_id}:{request.source_ap_item_id}",
     )
-    db.append_audit_event(
-        {
-            "ap_item_id": source["id"],
-            "event_type": "ap_item_merged_into",
-            "actor_type": "user",
-            "actor_id": actor_id,
-            "payload_json": {
-                "source_ap_item_id": source["id"],
-                "target_ap_item_id": target["id"],
-                "reason": request.reason,
-            },
-            "organization_id": source.get("organization_id") or "default",
-            "source": "ap_items_api",
-            "decision_reason": request.reason,
-            "idempotency_key": f"merge-source:{source['id']}:{target['id']}",
-        }
-    )
+
+    status = str((result or {}).get("status") or "").strip().lower()
+    if status == "blocked":
+        reason = str((result or {}).get("reason") or "")
+        if reason in {"cannot_merge_same_item", "organization_mismatch", "reason_required", "source_ap_item_id_required"}:
+            raise HTTPException(status_code=400, detail=reason)
+        if reason == "source_not_found":
+            raise HTTPException(status_code=404, detail="source_ap_item_not_found")
+        raise HTTPException(status_code=400, detail=reason or "merge_blocked")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=(result or {}).get("reason") or "merge_failed")
 
     return {
         "status": "merged",
-        "target_ap_item_id": target["id"],
-        "source_ap_item_id": source["id"],
-        "moved_sources": moved_count,
+        "target_ap_item_id": (result or {}).get("target_ap_item_id") or ap_item_id,
+        "source_ap_item_id": (result or {}).get("source_ap_item_id") or request.source_ap_item_id,
+        "moved_sources": (result or {}).get("moved_sources"),
+        "audit_event_id": (result or {}).get("audit_event_id"),
     }
 
 
