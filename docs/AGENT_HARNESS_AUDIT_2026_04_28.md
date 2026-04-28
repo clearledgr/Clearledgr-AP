@@ -167,11 +167,26 @@ Not directly queryable: agent reasoning summary, governance verdict, plan snapsh
 
 ## Top findings, ranked by severity
 
-### P0 — Workspace SPA AP item actions bypass the harness
+### P0 — A subset of workspace SPA actions bypass the harness (corrected scope)
 
-The biggest customer-facing surface (every approve / reject / snooze / retry / reverse / merge / split / field-review button in the workspace) writes via direct `db.update_ap_item` calls instead of routing through `runtime.execute_intent`. Data integrity is preserved (the store enforces state machine and writes audit events atomically), but **the runtime, the agent loop, the governance gate, planning, coordination, and agent memory are all skipped** for these actions.
+Initial framing claimed every AP item action was a bypass. Closer inspection of [ap_items_action_routes.py](../clearledgr/api/ap_items_action_routes.py) shows the picture is more nuanced:
 
-That means: governance can't veto a borderline approval, the agent has no memory of what it did, planning rules don't apply, and the audit row records the *transition* but not the *agent reasoning* (no `decision_reason`, no governance verdict, no confidence). Severity: **P0 because the moat claim — "every action goes through the agent" — is false on the most-used customer surface.** Not a data-integrity defect, but the load-bearing weakness in the architecture.
+**Already routed through `runtime.execute_intent` (4 routes — correct):**
+- `/bulk-approve` (L2178), `/bulk-reject` (L2268), `/bulk-retry-post` (L2454), `/{id}/retry-post` (L1722)
+
+**State-mutating bypasses (the actual P0 list — 10 routes):**
+- `/{id}/snooze`, `/{id}/unsnooze`, `/bulk-snooze` — change `state` to/from `snoozed`
+- `/{id}/reverse` — change `state` to `reversed`
+- `/{id}/classify` — re-classify document type (mutates state when re-routing)
+- `/{id}/resubmit` — creates supersession + new item
+- `/{id}/merge`, `/{id}/split` — Box-level operations
+- `/{id}/non-invoice/resolve` — change state via direct `update_ap_item`
+- `/{id}/entity-route/resolve` — *partial* — already calls `runtime.append_runtime_audit`, but no `execute_intent` and no governance gate
+- `/{id}/fields` (PATCH) — field-level changes including invoice_number, amount
+
+**Non-mutating routes (correctly skip runtime):** field-review/resolve, sources/link, gmail-link, compose-link, compose/create, tasks/*, notes, comments, files. These don't mutate Box state — runtime gating is unnecessary.
+
+**Why this matters:** for the 10 bypass routes, data integrity is still preserved (the store enforces state machine and writes audit atomically), but **governance can't veto, agent memory has no record, and the audit row carries no `decision_reason` or governance verdict**. Severity: **P0 — the moat claim ("every state-mutating action goes through the agent") is false for these 10 routes**, but the count and risk are smaller than first claimed.
 
 ### P1 — Silent `IllegalTransitionError` swallow at one site
 

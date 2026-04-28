@@ -75,6 +75,68 @@ class _SharedProxy:
 shared = _SharedProxy()
 
 
+def _record_agent_action(
+    *,
+    user: Any,
+    db: Any,
+    ap_item: Dict[str, Any],
+    organization_id: str,
+    event_type: str,
+    reason: str,
+    response: Dict[str, Any],
+    extra: Optional[Dict[str, Any]] = None,
+    correlation_id_override: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Record a state-mutating workspace action through the FinanceAgentRuntime.
+
+    Routes that don't go through ``runtime.execute_intent`` (because no
+    matching intent handler exists yet) still need to emit an
+    agent-runtime audit event so the action is attributable, queryable
+    in agent memory, and feeds the learning loop. Without this, the
+    audit row carries the state transition but no agent-runtime context
+    (no ``skill_id``, no canonical_audit_event, no recall feedback).
+
+    The runtime's ``append_runtime_audit`` writes the audit row, syncs
+    agent memory via ``_sync_agent_memory``, and feeds learning via
+    ``_sync_learning_feedback`` — three side effects in one helper.
+
+    Best-effort: failures are logged and swallowed so audit emission
+    never blocks the user-facing action's success path.
+
+    NOTE: this is the Phase 1 P0 enhancement. Phase 2 will register
+    proper intents for these actions and migrate routes to
+    ``runtime.execute_intent``, which adds governance veto and full
+    deliberation on top of what this helper provides.
+    """
+    try:
+        runtime = shared._finance_agent_runtime_cls()(
+            organization_id=organization_id,
+            actor_id=getattr(user, "user_id", None) or getattr(user, "email", None) or "system",
+            actor_email=getattr(user, "email", None),
+            db=db,
+        )
+        metadata: Dict[str, Any] = {"response": response}
+        if extra:
+            metadata["context"] = extra
+        correlation_id = correlation_id_override or runtime.correlation_id_for_item(ap_item)
+        return runtime.append_runtime_audit(
+            ap_item_id=str(ap_item.get("id") or ""),
+            event_type=event_type,
+            reason=reason,
+            metadata=metadata,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            skill_id="ap_v1",
+        )
+    except Exception as exc:
+        logger.warning(
+            "[_record_agent_action] failed for %s/%s: %s",
+            ap_item.get("id"), event_type, exc,
+        )
+        return None
+
+
 def _dispatch_mention_notifications(
     *, body: str, ap_item_id: str, item: Dict[str, Any], actor_id: str
 ) -> None:
@@ -523,7 +585,7 @@ async def resolve_non_invoice_review(
 
     refreshed = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     normalized_item = shared.build_worklist_item(db, refreshed)
-    return {
+    response = {
         "status": "resolved",
         "ap_item_id": ap_item_id,
         "document_type": document_type,
@@ -531,6 +593,22 @@ async def resolve_non_invoice_review(
         "state": next_state,
         "ap_item": normalized_item,
     }
+    _record_agent_action(
+        user=user, db=db, ap_item=refreshed,
+        organization_id=str(refreshed.get("organization_id") or organization_id or "default"),
+        event_type="non_invoice_review_resolved",
+        reason=outcome,
+        response=response,
+        extra={
+            "document_type": document_type,
+            "outcome": outcome,
+            "next_state": next_state,
+            "related_ap_item_id": related_ap_item_id,
+            "close_record": bool(request.close_record),
+        },
+        idempotency_key=f"non_invoice_resolve:{ap_item_id}:{outcome}:{resolved_at}",
+    )
+    return response
 
 
 @router.post("/{ap_item_id}/entity-route/resolve")
@@ -1472,7 +1550,7 @@ def resubmit_rejected_item(
         }
     )
 
-    return {
+    response = {
         "status": "resubmitted",
         "source_ap_item_id": source["id"],
         "new_ap_item_id": created["id"],
@@ -1486,6 +1564,20 @@ def resubmit_rejected_item(
         },
         "ap_item": shared.build_worklist_item(db, created),
     }
+    _record_agent_action(
+        user=_user, db=db, ap_item=created,
+        organization_id=str(created.get("organization_id") or "default"),
+        event_type="ap_item_resubmitted",
+        reason=request.reason,
+        response=response,
+        extra={
+            "source_ap_item_id": source["id"],
+            "new_ap_item_id": created["id"],
+            "copied_sources": copied_sources,
+        },
+        idempotency_key=f"{audit_key}:agent_runtime",
+    )
+    return response
 
 
 @router.post("/{ap_item_id}/merge")
@@ -1922,7 +2014,7 @@ async def reverse_ap_item_post(
         pass
 
     if outcome.status == "reversed":
-        return {
+        response = {
             "status": "reversed",
             "ap_item_id": ap_item_id,
             "window_id": outcome.window_id,
@@ -1930,6 +2022,20 @@ async def reverse_ap_item_post(
             "reversal_method": outcome.reversal_method,
             "erp": outcome.erp,
         }
+        _record_agent_action(
+            user=user, db=db, ap_item=fresh_item, organization_id=org_id_for_service,
+            event_type="reversed",
+            reason=request.reason,
+            response=response,
+            extra={
+                "window_id": outcome.window_id,
+                "reversal_ref": outcome.reversal_ref,
+                "reversal_method": outcome.reversal_method,
+                "erp": outcome.erp,
+            },
+            idempotency_key=f"reverse:{ap_item_id}:{outcome.window_id}",
+        )
+        return response
     if outcome.status == "already_reversed":
         return {
             "status": "already_reversed",
@@ -2040,6 +2146,18 @@ async def snooze_ap_item(
         "snoozed_until": snoozed_until.isoformat(),
         "pre_snooze_state": current_state,
     }
+    _record_agent_action(
+        user=user, db=db, ap_item=item, organization_id=organization_id,
+        event_type="snoozed",
+        reason=request.note or f"snoozed_for_{request.duration_minutes}_minutes",
+        response=response,
+        extra={
+            "duration_minutes": request.duration_minutes,
+            "snoozed_until": snoozed_until.isoformat(),
+            "pre_snooze_state": current_state,
+        },
+        idempotency_key=f"snooze:{ap_item_id}:{snoozed_until.isoformat()}",
+    )
     save_idempotent_response(
         db, request.idempotency_key, response,
         box_id=ap_item_id, box_type="ap_item",
@@ -2081,7 +2199,15 @@ async def unsnooze_ap_item(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
-    return {"status": "unsnoozed", "restored_state": restore_state}
+    response = {"status": "unsnoozed", "restored_state": restore_state}
+    _record_agent_action(
+        user=user, db=db, ap_item=item, organization_id=organization_id,
+        event_type="unsnoozed",
+        reason="manual_unsnooze",
+        response=response,
+        extra={"restored_state": restore_state},
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -2144,11 +2270,19 @@ async def classify_ap_item(
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-    return {
+    response = {
         "status": "classified",
         "ap_item_id": ap_item_id,
         "classification": classification,
     }
+    _record_agent_action(
+        user=user, db=db, ap_item=item, organization_id=org_id,
+        event_type="manually_classified",
+        reason=f"manual_classification_to_{classification}",
+        response=response,
+        extra={"classification": classification},
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -2422,12 +2556,26 @@ async def bulk_snooze_ap_items(
                     "timestamp": now.isoformat(),
                 })
             succeeded += 1
-            results.append({
+            per_item_response = {
                 "ap_item_id": ap_item_id,
                 "status": "snoozed",
                 "ok": True,
                 "snoozed_until": snoozed_until.isoformat(),
-            })
+            }
+            results.append(per_item_response)
+            _record_agent_action(
+                user=user, db=db, ap_item=item, organization_id=organization_id,
+                event_type="snoozed",
+                reason=request.note or f"bulk_snooze_for_{request.duration_minutes}_minutes",
+                response=per_item_response,
+                extra={
+                    "duration_minutes": request.duration_minutes,
+                    "snoozed_until": snoozed_until.isoformat(),
+                    "pre_snooze_state": current_state,
+                    "batch": True,
+                },
+                idempotency_key=f"bulk_snooze:{ap_item_id}:{snoozed_until.isoformat()}",
+            )
         except Exception as exc:
             logger.exception("[BatchOps] bulk-snooze failure for %s", ap_item_id)
             results.append({
