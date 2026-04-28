@@ -2,6 +2,7 @@ import { createContext, h } from 'preact';
 import { useCallback, useContext, useEffect, useMemo, useState } from 'preact/hooks';
 import { html } from '../utils/htm.js';
 import { api } from '../api/client.js';
+import { setFaviconBadge } from '../lib/faviconBadge.js';
 
 /**
  * Bootstrap = the per-session payload extension pages used to receive
@@ -37,6 +38,17 @@ export function BootstrapProvider({ children }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Status-aware favicon: whenever the bootstrap payload changes,
+  // re-paint the workspace favicon so the browser tab reflects how
+  // many AP items are waiting on operator approval. ``pending_approval``
+  // is the count derived in workspace_shell._safe_dashboard_stats —
+  // see clearledgr/api/workspace_shell.py L1113. Setting count=0
+  // restores the unbadged Clearledgr mark.
+  useEffect(() => {
+    const count = Number(state.data?.dashboard_stats?.pending_approval || 0);
+    void setFaviconBadge(count);
+  }, [state.data]);
 
   const value = useMemo(() => ({ data: state.data, refresh: load }), [state.data, load]);
 
