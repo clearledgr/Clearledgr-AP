@@ -760,7 +760,11 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
     assert second["status"] == "pending_approval"
     assert second["idempotency_replayed"] is True
     assert second["agent_loop"]["idempotency_replayed"] is True
-    assert len(db.audit_rows) == 1
+    # Filter out the P3 plan_observed audit (audit 2026-04-28) — that
+    # event fires once per sync skill request and is unrelated to the
+    # skill's own idempotent audit emission this test guards.
+    skill_rows = [r for r in db.audit_rows if r.get("event_type") != "plan_observed"]
+    assert len(skill_rows) == 1
 
 
 def test_execute_route_low_risk_for_approval_returns_success_when_audit_append_fails():
@@ -1351,7 +1355,11 @@ def test_execute_prepare_vendor_followups_prepares_draft_and_replays_idempotent_
     assert second["idempotency_replayed"] is True
     assert db.items["ap-followup-1"]["metadata"]["needs_info_draft_id"] == "draft-runtime-followup-1"
     assert db.items["ap-followup-1"]["metadata"]["followup_next_action"] == "await_vendor_response"
-    assert len(db.audit_rows) == 1
+    # Filter out the P3 plan_observed audit (audit 2026-04-28) — that
+    # event fires once per sync skill request and is unrelated to the
+    # skill's own idempotent audit emission this test guards.
+    skill_rows = [r for r in db.audit_rows if r.get("event_type") != "plan_observed"]
+    assert len(skill_rows) == 1
 
 
 def test_execute_retry_recoverable_failures_blocked_by_precheck():
@@ -1412,7 +1420,11 @@ def test_execute_retry_recoverable_failures_success_and_replay():
     assert first["audit_event_id"]
     assert second["status"] == "posted"
     assert second["idempotency_replayed"] is True
-    assert len(db.audit_rows) == 1
+    # Filter out the P3 plan_observed audit (audit 2026-04-28) — that
+    # event fires once per sync skill request and is unrelated to the
+    # skill's own idempotent audit emission this test guards.
+    skill_rows = [r for r in db.audit_rows if r.get("event_type") != "plan_observed"]
+    assert len(skill_rows) == 1
 
 
 def test_preview_retry_recoverable_failures_returns_precheck():

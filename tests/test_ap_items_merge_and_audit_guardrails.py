@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import sys
@@ -82,11 +83,11 @@ def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(db):
         }
     )
 
-    response = merge_ap_items(
+    response = asyncio.run(merge_ap_items(
         target["id"],
         MergeItemsRequest(source_ap_item_id=source["id"], actor_id="user-1", reason="duplicate_invoice"),
         _user=_mock_user(user_id="user-1", organization_id="default"),
-    )
+    ))
 
     assert response["status"] == "merged"
     assert response["target_ap_item_id"] == target["id"]
@@ -176,7 +177,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(d
         }
     )
 
-    response = resubmit_rejected_item(
+    response = asyncio.run(resubmit_rejected_item(
         rejected["id"],
         ResubmitRejectedItemRequest(
             actor_id="ap-user-1",
@@ -186,7 +187,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(d
             amount=125.50,
         ),
         _user=_mock_user(user_id="ap-user-1", organization_id="default"),
-    )
+    ))
 
     assert response["status"] == "resubmitted"
     new_ap_item_id = response["new_ap_item_id"]
@@ -235,11 +236,11 @@ def test_resubmission_requires_rejected_state(db):
     item = _create_ap_item(db, item_id="AP-NOT-REJECTED-1", thread_id="thread-not-rej", state="needs_approval")
 
     with pytest.raises(HTTPException) as exc:
-        resubmit_rejected_item(
+        asyncio.run(resubmit_rejected_item(
             item["id"],
             ResubmitRejectedItemRequest(actor_id="ap-user-1", reason="should_fail"),
             _user=_mock_user(user_id="ap-user-1", organization_id="default"),
-        )
+        ))
     assert exc.value.status_code == 400
     assert exc.value.detail == "resubmission_requires_rejected_state"
 

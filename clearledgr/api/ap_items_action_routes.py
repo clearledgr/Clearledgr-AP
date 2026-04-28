@@ -2038,11 +2038,23 @@ async def bulk_snooze_ap_items(
                 "audit_event_id": (result or {}).get("audit_event_id"),
             })
         else:
+            # Per-item failures collapse to status="error" so the bulk
+            # response stays consistent with bulk-approve / bulk-reject /
+            # bulk-retry-post. The intent's blocked-reason becomes the
+            # legacy ``invalid_state_transition:<current_state>`` token
+            # when the block was a state-machine rejection so existing
+            # consumers keep working.
+            intent_reason = str((result or {}).get("reason") or per_status or "snooze_failed")
+            if per_status == "blocked" and intent_reason in {"state_not_snoozeable", "duration_minutes_required"}:
+                current_state = str(item.get("state") or "").strip().lower()
+                reason_text = f"invalid_state_transition:{current_state}"
+            else:
+                reason_text = intent_reason
             results.append({
                 "ap_item_id": ap_item_id,
-                "status": per_status or "error",
+                "status": "error",
                 "ok": False,
-                "reason": (result or {}).get("reason") or per_status or "snooze_failed",
+                "reason": reason_text,
             })
 
     response = {

@@ -161,8 +161,14 @@ _AUDIT_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "source": "finance_agent_runtime",
         "idempotent": True,
         "mutates_ap_state": True,
+        # Legacy event tokens for the success path are preserved so
+        # operator-audit timeline rendering (clearledgr/services/
+        # ap_operator_audit.py) keeps recognising them. The
+        # blocked/failed tokens are new since no legacy code keys
+        # off them.
         "events": [
-            "invoice_resubmitted",
+            "ap_item_resubmitted",
+            "ap_item_resubmission_created",
             "invoice_resubmit_blocked",
             "invoice_resubmit_failed",
         ],
@@ -171,7 +177,10 @@ _AUDIT_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "source": "finance_agent_runtime",
         "idempotent": True,
         "mutates_ap_state": True,
+        # Legacy ``ap_item_split_created`` for the child-creation event;
+        # parent-side ``invoice_split`` rollup is new (no legacy consumer).
         "events": [
+            "ap_item_split_created",
             "invoice_split",
             "invoice_split_blocked",
             "invoice_split_failed",
@@ -181,8 +190,12 @@ _AUDIT_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "source": "finance_agent_runtime",
         "idempotent": True,
         "mutates_ap_state": True,
+        # Legacy tokens for the two sides of the merge are preserved so
+        # operator-audit timeline rendering keeps the existing
+        # "received from" / "merged into" wording.
         "events": [
-            "invoices_merged",
+            "ap_item_merged",
+            "ap_item_merged_into",
             "invoices_merge_blocked",
             "invoices_merge_failed",
         ],
@@ -191,8 +204,10 @@ _AUDIT_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "source": "finance_agent_runtime",
         "idempotent": True,
         "mutates_ap_state": True,
+        # Legacy ``non_invoice_review_resolved`` token preserved for
+        # operator timeline + test wire compat.
         "events": [
-            "non_invoice_resolved",
+            "non_invoice_review_resolved",
             "non_invoice_resolve_blocked",
             "non_invoice_resolve_failed",
         ],

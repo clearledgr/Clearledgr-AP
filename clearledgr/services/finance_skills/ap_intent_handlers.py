@@ -2158,12 +2158,15 @@ class ReverseInvoicePostHandler(APIntentHandler):
             "reversal_ref": outcome.reversal_ref,
             "reversal_method": outcome.reversal_method,
             "erp": outcome.erp,
+            # Carry outcome.reason + outcome.message verbatim so the
+            # route can re-emit the structured 502 detail consumers
+            # (Slack-card-failed-reason, ops dashboard) expect.
+            "reason": outcome.reason,
+            "message": outcome.message,
             "policy_precheck": precheck,
             "audit_contract": skill.audit_contract(self.intent),
             "next_step": "none" if succeeded else "review_blockers",
         }
-        if outcome.message:
-            response["message"] = outcome.message
         audit_row = runtime.append_runtime_audit(
             ap_item_id=ap_item_id,
             event_type=(
@@ -2416,7 +2419,7 @@ class ResubmitInvoiceHandler(APIntentHandler):
                 }
                 audit_row = runtime.append_runtime_audit(
                     ap_item_id=ap_item_id,
-                    event_type="invoice_resubmitted",
+                    event_type="ap_item_resubmitted",
                     reason="already_resubmitted_replay",
                     metadata={"intent": self.intent, "policy_precheck": precheck, "response": response},
                     correlation_id=correlation_id,
@@ -2470,12 +2473,25 @@ class ResubmitInvoiceHandler(APIntentHandler):
             new_meta.pop(stale_key, None)
 
         # Build a request-shaped object for invoice_key derivation helpers.
+        # The helpers (_superseded_invoice_key / _resubmission_invoice_key)
+        # access vendor_name, invoice_number, amount, currency, message_id,
+        # and thread_id — pass them all so attribute access never trips.
         from types import SimpleNamespace
         request_like = SimpleNamespace(
             invoice_number=payload.get("invoice_number"),
             invoice_date=payload.get("invoice_date"),
+            due_date=payload.get("due_date"),
+            vendor_name=payload.get("vendor_name"),
+            amount=payload.get("amount"),
+            currency=payload.get("currency"),
+            thread_id=payload.get("thread_id"),
+            message_id=payload.get("message_id"),
+            subject=payload.get("subject"),
+            sender=payload.get("sender"),
             actor_id=payload.get("actor_id"),
             reason=reason,
+            metadata=payload.get("metadata") or {},
+            copy_sources=bool(payload.get("copy_sources", True)),
         )
         new_meta["supersedes_ap_item_id"] = ap_item_id
         new_meta["supersedes_invoice_key"] = svc._superseded_invoice_key(ap_item, request_like)
@@ -2596,9 +2612,14 @@ class ResubmitInvoiceHandler(APIntentHandler):
             "policy_precheck": precheck,
             "next_step": "follow_new_item",
         }
+        # Use the legacy event_type tokens recognised by
+        # clearledgr/services/ap_operator_audit.py — source side is
+        # ``ap_item_resubmitted``, new-item side is
+        # ``ap_item_resubmission_created``. Operator timeline rendering
+        # keys off these names; renaming would silently drop entries.
         audit_row = runtime.append_runtime_audit(
             ap_item_id=ap_item_id,
-            event_type="invoice_resubmitted",
+            event_type="ap_item_resubmitted",
             reason=reason,
             metadata={
                 "intent": self.intent,
@@ -2617,12 +2638,13 @@ class ResubmitInvoiceHandler(APIntentHandler):
         try:
             runtime.append_runtime_audit(
                 ap_item_id=created["id"],
-                event_type="invoice_resubmitted",
+                event_type="ap_item_resubmission_created",
                 reason=reason,
                 metadata={
                     "intent": self.intent,
                     "source_ap_item_id": ap_item_id,
                     "new_ap_item_id": created["id"],
+                    "copied_sources": copied_sources,
                     "creation_context": True,
                 },
                 correlation_id=correlation_id,
@@ -2760,9 +2782,15 @@ class SplitInvoiceHandler(APIntentHandler):
                 continue
 
             try:
+                # Legacy token recognised by
+                # clearledgr/services/ap_operator_audit.py — keep
+                # ``ap_item_split_created`` for the child item so the
+                # operator timeline picks it up. The parent-side rollup
+                # below uses the new ``invoice_split`` token (no legacy
+                # consumer for parent-side rollups).
                 runtime.append_runtime_audit(
                     ap_item_id=child["id"],
-                    event_type="invoice_split",
+                    event_type="ap_item_split_created",
                     reason=reason,
                     metadata={
                         "intent": self.intent,
@@ -3084,9 +3112,15 @@ class MergeInvoicesHandler(APIntentHandler):
             "audit_contract": skill.audit_contract(self.intent),
             "next_step": "review_target",
         }
+        # Use the legacy event_type tokens recognised by
+        # clearledgr/services/ap_operator_audit.py — target side is
+        # ``ap_item_merged`` (the receiver), source side is
+        # ``ap_item_merged_into`` (the absorbed). Operator timeline
+        # rendering keys off these names; renaming would silently drop
+        # entries from the operator UI.
         audit_row = runtime.append_runtime_audit(
             ap_item_id=target_id,
-            event_type="invoices_merged",
+            event_type="ap_item_merged",
             reason=reason,
             metadata={
                 "intent": self.intent,
@@ -3103,7 +3137,7 @@ class MergeInvoicesHandler(APIntentHandler):
         try:
             runtime.append_runtime_audit(
                 ap_item_id=source_id,
-                event_type="invoices_merged",
+                event_type="ap_item_merged_into",
                 reason=reason,
                 metadata={
                     "intent": self.intent,
@@ -3369,9 +3403,12 @@ class ResolveNonInvoiceReviewHandler(APIntentHandler):
             "audit_contract": skill.audit_contract(self.intent),
             "next_step": "follow_resolved_outcome",
         }
+        # Use the legacy event_type token consumed by tests + the
+        # operator audit timeline. The tokens above (blocked / failed)
+        # are new since no legacy code keys off them.
         audit_row = runtime.append_runtime_audit(
             ap_item_id=ap_item_id,
-            event_type="non_invoice_resolved",
+            event_type="non_invoice_review_resolved",
             reason=outcome,
             metadata={
                 "intent": self.intent,
