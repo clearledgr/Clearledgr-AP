@@ -144,23 +144,6 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     onRefresh?.();
   });
 
-  const [saveOrg, savingOrg] = useAction(async () => {
-    if (!canManageCompany) return;
-    await api('/api/workspace/org/settings', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        organization_id: orgId,
-        patch: {
-          organization_name: document.getElementById('cl-org-name')?.value?.trim(),
-          domain: document.getElementById('cl-org-domain')?.value?.trim(),
-          integration_mode: document.getElementById('cl-org-mode')?.value,
-        },
-      }),
-    });
-    toast?.('Workspace details saved.', 'success');
-    onRefresh?.();
-  });
-
   // --- Approval Rules state ---
   const [approvalRules, setApprovalRules] = useState([]);
   const [billingSummary, setBillingSummary] = useState(null);
@@ -323,7 +306,6 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     await saveApprovalRules(updated);
   };
 
-  const activeAlias = String(routeId || '').trim();
   const billingPreview = [
     { label: 'Plan', value: planName },
     { label: 'Status', value: sub.status || 'Active' },
@@ -386,8 +368,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${erpRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">ERP Connection</h3>
-            <p class="muted" style="margin:0">Connect your accounting system. Clearledgr posts approved invoices here.</p>
+            <h3 >ERP Connection</h3>
+            <p class="muted" >Connect your accounting system. Clearledgr posts approved invoices here.</p>
           </div>
         </div>
         <div class="settings-summary-grid">
@@ -430,8 +412,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${glMappingRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">GL Account Mapping</h3>
-            <p class="muted" style="margin:0">
+            <h3 >GL Account Mapping</h3>
+            <p class="muted" >
               Map Clearledgr's AP categories to the GL codes in your ${erpType || 'ERP'}. Bills post to these accounts when approved.
             </p>
           </div>
@@ -447,9 +429,9 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         </div>
 
         ${!erp.connected ? html`
-          <div class="muted" style="font-size:12px;padding:8px 0;">Connect your ERP above, then return here to map accounts.</div>
+          <div class="secondary-empty">Connect your ERP above, then return here to map accounts.</div>
         ` : html`
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 12px;">
+          <div class="secondary-form-grid">
             ${AP_GL_CATEGORIES.map((cat) => {
               const currentValue = glMap[cat.key] || '';
               const matchingAccounts = chartAccounts.filter((a) => {
@@ -458,14 +440,13 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                 return t.includes(cat.accountType);
               });
               return html`
-                <div>
-                  <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">
-                    ${cat.label}${cat.required ? html`<span style="color:#DC2626;margin-left:4px">*</span>` : null}
+                <div class="field-row">
+                  <label>
+                    ${cat.label}${cat.required ? html`<span class="required">*</span>` : null}
                   </label>
                   ${chartAccounts.length ? html`
                     <select
                       value=${currentValue}
-                      style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;background:#fff;"
                       onChange=${(e) => updateGlMap(cat.key, e.target.value)}
                     >
                       <option value="">— Select account —</option>
@@ -483,24 +464,23 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                       type="text"
                       value=${currentValue}
                       placeholder=${cat.placeholder}
-                      style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
                       onChange=${(e) => updateGlMap(cat.key, e.target.value)}
                     />
                   `}
-                  <div class="muted" style="font-size:11px;margin-top:4px;">${cat.help}</div>
+                  <div class="form-help">${cat.help}</div>
                 </div>
               `;
             })}
           </div>
 
-          <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;padding-top:4px;">
-            <div class="muted" style="font-size:12px">
+          <div class="form-actions-row">
+            <div class="form-help">
               ${(() => {
                 const required = AP_GL_CATEGORIES.filter((c) => c.required);
                 const requiredSet = required.filter((c) => glMap[c.key]).length;
                 const totalSet = AP_GL_CATEGORIES.filter((c) => glMap[c.key]).length;
                 if (requiredSet < required.length) {
-                  return html`<span style="color:#DC2626">⚠ ${required.length - requiredSet} required category still unmapped.</span>`;
+                  return html`<span class="form-error">⚠ ${required.length - requiredSet} required category still unmapped.</span>`;
                 }
                 return `${totalSet} of ${AP_GL_CATEGORIES.length} categories mapped.`;
               })()}
@@ -520,50 +500,46 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${policyRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">AP Policy</h3>
-            <p class="muted" style="margin:0">These controls reflect your documented finance policy, not generic defaults.</p>
+            <h3 >AP Policy</h3>
+            <p class="muted" >These controls reflect your documented finance policy, not generic defaults.</p>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
-          <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Auto-approve threshold</label>
+        <div class="secondary-form-grid">
+          <div class="field-row">
+            <label>Auto-approve threshold</label>
             <input
               type="number" step="100" min="0" placeholder="500"
               value=${bootstrap?.organization?.settings?.auto_approve_amount_threshold || ''}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
               onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ auto_approve_amount_threshold: parseFloat(e.target.value) || 0 }) }).then(() => toast('Threshold saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">Invoices below this amount with passed 3-way match auto-approve. Default: £0 (all require approval).</div>
+            <div class="form-help">Invoices below this amount with passed 3-way match auto-approve. Default: £0 (all require approval).</div>
           </div>
-          <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Match tolerance</label>
+          <div class="field-row">
+            <label>Match tolerance</label>
             <input
               type="number" step="0.5" min="0" max="10" placeholder="2"
               value=${bootstrap?.organization?.settings?.match_tolerance_pct || ''}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
               onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ match_tolerance_pct: parseFloat(e.target.value) || 2 }) }).then(() => toast('Tolerance saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">% delta between invoice and GRN before exception is raised. Default: 2%.</div>
+            <div class="form-help">% delta between invoice and GRN before exception is raised. Default: 2%.</div>
           </div>
-          <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Duplicate detection window</label>
+          <div class="field-row">
+            <label>Duplicate detection window</label>
             <input
               type="number" step="10" min="30" max="365" placeholder="90"
               value=${bootstrap?.organization?.settings?.duplicate_window_days || ''}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
               onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ duplicate_window_days: parseInt(e.target.value) || 90 }) }).then(() => toast('Window saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">Days to look back for vendor+amount+reference duplicate matches. Default: 90.</div>
+            <div class="form-help">Days to look back for vendor+amount+reference duplicate matches. Default: 90.</div>
           </div>
-          <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Payment ceiling</label>
+          <div class="field-row">
+            <label>Payment ceiling</label>
             <input
               type="number" step="1000" min="0" placeholder="10000"
               value=${bootstrap?.organization?.settings?.payment_ceiling || ''}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
               onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ payment_ceiling: parseFloat(e.target.value) || 10000 }) }).then(() => toast('Ceiling saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">No autonomous payment above this amount without CFO approval. Default: £10,000.</div>
+            <div class="form-help">No autonomous payment above this amount without CFO approval. Default: £10,000.</div>
           </div>
         </div>
       </div>
@@ -572,30 +548,30 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${vendorPolicyRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Vendor Onboarding Policy</h3>
-            <p class="muted" style="margin:0">Control how the agent chases and verifies new vendors.</p>
+            <h3 >Vendor Onboarding Policy</h3>
+            <p class="muted" >Control how the agent chases and verifies new vendors.</p>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
+        <div class="secondary-form-grid">
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">First chase delay</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">24 hours</div>
-            <div class="muted" style="font-size:11px;">Agent chases unresponsive vendors after 24h. Preview shown in Slack before sending.</div>
+            <label >First chase delay</label>
+            <div class="field-value">24 hours</div>
+            <div class="muted" >Agent chases unresponsive vendors after 24h. Preview shown in Slack before sending.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Escalation window</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">72 hours</div>
-            <div class="muted" style="font-size:11px;">Escalates to AP Manager after 72h with no vendor response.</div>
+            <label >Escalation window</label>
+            <div class="field-value">72 hours</div>
+            <div class="muted" >Escalates to AP Manager after 72h with no vendor response.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Bank verification</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">Open banking</div>
-            <div class="muted" style="font-size:11px;">Vendor confirms ownership through the configured open banking provider via the onboarding portal.</div>
+            <label >Bank verification</label>
+            <div class="field-value">Open banking</div>
+            <div class="muted" >Vendor confirms ownership through the configured open banking provider via the onboarding portal.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Abandonment</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">30 days</div>
-            <div class="muted" style="font-size:11px;">Sessions with no activity for 30 days are automatically abandoned.</div>
+            <label >Abandonment</label>
+            <div class="field-value">30 days</div>
+            <div class="muted" >Sessions with no activity for 30 days are automatically abandoned.</div>
           </div>
         </div>
       </div>
@@ -604,44 +580,42 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${autonomyRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Autonomy Configuration</h3>
-            <p class="muted" style="margin:0">Controls how much the agent does on its own.</p>
+            <h3 >Autonomy Configuration</h3>
+            <p class="muted" >Controls how much the agent does on its own.</p>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 0 8px;">
+        <div class="secondary-form-grid">
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Processing tier</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">
+            <label >Processing tier</label>
+            <div class="field-value">
               ${bootstrap?.trust_arc?.phase === 'week1_observation' ? 'Supervised (Week 1)' : bootstrap?.trust_arc?.phase === 'ongoing_weekly_signal' ? 'Autonomous' : 'Supervised'}
             </div>
-            <div class="muted" style="font-size:11px;">Progresses through the trust-building arc. Day 30 tier expansion recommendation.</div>
+            <div class="muted" >Progresses through the trust-building arc. Day 30 tier expansion recommendation.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Override window</label>
+            <label >Override window</label>
             <input
               type="number" step="5" min="5" max="60" placeholder="15"
               value=${bootstrap?.organization?.settings?.workflow_controls?.override_window_minutes?.default || ''}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
-              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ workflow_controls: { override_window_minutes: { default: parseInt(e.target.value) || 15 } } }) }).then(() => toast('Window saved', 'success')).catch(() => toast('Save failed', 'error'))}
+                            onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ workflow_controls: { override_window_minutes: { default: parseInt(e.target.value) || 15 } } }) }).then(() => toast('Window saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">Minutes to undo an autonomous ERP post. Default: 15.</div>
+            <div class="muted" >Minutes to undo an autonomous ERP post. Default: 15.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Confidence threshold</label>
+            <label >Confidence threshold</label>
             <input
               type="number" step="1" min="50" max="100" placeholder="95"
               value=${Math.round((bootstrap?.organization?.settings?.auto_approve_confidence_threshold || 0.95) * 100)}
-              style="width:100%;padding:8px 10px;border:1px solid var(--border,#E2E8F0);border-radius:6px;font:500 13px/1 'Geist Mono',monospace;"
-              onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ auto_approve_confidence_threshold: (parseInt(e.target.value) || 95) / 100 }) }).then(() => toast('Threshold saved', 'success')).catch(() => toast('Save failed', 'error'))}
+                            onChange=${(e) => api(`/settings/${encodeURIComponent(orgId)}`, { method: 'PUT', body: JSON.stringify({ auto_approve_confidence_threshold: (parseInt(e.target.value) || 95) / 100 }) }).then(() => toast('Threshold saved', 'success')).catch(() => toast('Save failed', 'error'))}
             />
-            <div class="muted" style="font-size:11px;margin-top:4px;">% extraction confidence required for autonomous action. Default: 95%.</div>
+            <div class="muted" >% extraction confidence required for autonomous action. Default: 95%.</div>
           </div>
           <div>
-            <label style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;display:block;margin-bottom:6px;">Migration status</label>
-            <div style="font:500 13px/1 'Geist Mono',monospace;padding:8px 0;color:#0A1628;">
+            <label >Migration status</label>
+            <div class="field-value">
               ${bootstrap?.organization?.settings?.migration_status || 'Live'}
             </div>
-            <div class="muted" style="font-size:11px;">Parallel mode suppresses autonomous actions for comparison with existing AP system.</div>
+            <div class="muted" >Parallel mode suppresses autonomous actions for comparison with existing AP system.</div>
           </div>
         </div>
       </div>
@@ -649,8 +623,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${teamRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Team${!canManageTeam ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Invite the people who need to work or monitor finance operations.</p>
+            <h3 >Team${!canManageTeam ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <p class="muted" >Invite the people who need to work or monitor finance operations.</p>
           </div>
         </div>
         <div class="settings-section-grid">
@@ -687,8 +661,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${billingRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Billing${!canManagePlan ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Plan, usage, and subscription — managed here inside Gmail.</p>
+            <h3 >Billing${!canManagePlan ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <p class="muted" >Plan, usage, and subscription — managed here inside Gmail.</p>
           </div>
         </div>
 
@@ -764,8 +738,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         <div class="panel">
           <div class="panel-head compact">
             <div>
-              <h3 style="margin-top:0">Implementation checklist</h3>
-              <p class="muted" style="margin:0">${implStatus.completed_count || 0} of ${implStatus.total_count || 0} steps complete</p>
+              <h3 >Implementation checklist</h3>
+              <p class="muted" >${implStatus.completed_count || 0} of ${implStatus.total_count || 0} steps complete</p>
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
@@ -800,8 +774,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       <div class="panel" ref=${approvalRef}>
         <div class="panel-head compact">
           <div>
-            <h3 style="margin-top:0">Approval rules${!canManageCompany ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
-            <p class="muted" style="margin:0">Define who approves invoices based on amount, GL code, department, or vendor.</p>
+            <h3 >Approval rules${!canManageCompany ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+            <p class="muted" >Define who approves invoices based on amount, GL code, department, or vendor.</p>
           </div>
           <div class="row-actions">
             ${canManageCompany ? html`
