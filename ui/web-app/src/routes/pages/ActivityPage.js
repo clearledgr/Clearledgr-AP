@@ -5,6 +5,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { eventBadge, fmtDateTime, useAction } from '../route-helpers.js';
+import { EmptyState } from '../../components/StatePrimitives.js';
 
 const html = htm.bind(h);
 
@@ -47,7 +48,12 @@ export default function ActivityPage({ bootstrap, onRefresh, navigate }) {
         </div>
       </div>
       ${events.length === 0
-        ? html`<p class="muted" style="margin:0">No recent activity yet.</p>`
+        ? html`<${EmptyState}
+            title="No recent activity yet."
+            description="Approvals, ERP posts, and exception updates will appear here as your team works the queue."
+            ctaLabel="Open invoices →"
+            onCtaClick=${() => navigate?.('clearledgr/invoices')}
+          />`
         : html`<div class="secondary-card-list">
             ${events.map((event, index) => {
               const badge = eventBadge(event.event_type || event.new_state || 'activity');

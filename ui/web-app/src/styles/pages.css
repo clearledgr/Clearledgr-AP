@@ -525,6 +525,99 @@
 }
 
 /* ------------------------------------------------------------ */
+/* State primitives — empty / loading / error fallbacks         */
+/* ------------------------------------------------------------ */
+
+.cl-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 36px 24px;
+  border: 1px dashed var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  background: var(--cl-bg);
+  text-align: center;
+}
+
+.cl-state--dense {
+  padding: 18px 16px;
+}
+
+.cl-state--error {
+  border-style: solid;
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.04);
+}
+
+.cl-state--loading {
+  align-items: stretch;
+  border-style: solid;
+  background: var(--cl-surface);
+  padding: 18px 16px;
+}
+
+.cl-state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  letter-spacing: -0.01em;
+}
+
+.cl-state-body {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.cl-state--error .cl-state-title {
+  color: var(--cl-danger);
+}
+
+/* Visually hidden but readable by screen readers */
+.cl-state-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cl-skeleton-row {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgba(10, 22, 40, 0.06) 0%,
+    rgba(10, 22, 40, 0.10) 50%,
+    rgba(10, 22, 40, 0.06) 100%
+  );
+  background-size: 200% 100%;
+  animation: cl-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.cl-skeleton-row + .cl-skeleton-row {
+  margin-top: 8px;
+}
+
+.cl-skeleton-row:nth-child(1) { width: 70%; }
+.cl-skeleton-row:nth-child(2) { width: 90%; }
+.cl-skeleton-row:nth-child(3) { width: 60%; }
+.cl-skeleton-row:nth-child(4) { width: 80%; }
+.cl-skeleton-row:nth-child(5) { width: 75%; }
+
+@keyframes cl-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ------------------------------------------------------------ */
 /* Modal — used for in-page dialogs (resolve note, confirm, etc) */
 /* ------------------------------------------------------------ */
 

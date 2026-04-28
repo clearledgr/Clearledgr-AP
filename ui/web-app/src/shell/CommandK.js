@@ -87,12 +87,19 @@ export function CommandK() {
     }
   }, [open]);
 
+  const [searchPending, setSearchPending] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+
   // Debounced live search against /api/ap/items/search.
   useEffect(() => {
     if (!open || !query || query.length < 2) {
       setLiveResults([]);
+      setSearchPending(false);
+      setSearchError(false);
       return undefined;
     }
+    setSearchPending(true);
+    setSearchError(false);
     const handle = setTimeout(async () => {
       try {
         const data = await api(
@@ -107,8 +114,12 @@ export function CommandK() {
           path: `/items/${encodeURIComponent(item.id)}`,
         }));
         setLiveResults(items);
+        setSearchError(false);
       } catch {
         setLiveResults([]);
+        setSearchError(true);
+      } finally {
+        setSearchPending(false);
       }
     }, 200);
     return () => clearTimeout(handle);
@@ -164,7 +175,11 @@ export function CommandK() {
         />
         <div class="cl-cmdk-results">
           ${ranked.length === 0
-            ? html`<div class="cl-cmdk-empty">No matches.</div>`
+            ? (searchPending && query.length >= 2
+                ? html`<div class="cl-cmdk-empty">Searching…</div>`
+                : searchError
+                  ? html`<div class="cl-cmdk-empty">Search failed. Try again or pick from the menu.</div>`
+                  : html`<div class="cl-cmdk-empty">No matches.</div>`)
             : ranked.map((entry, idx) => html`
                 <button
                   class=${`cl-cmdk-row ${idx === activeIdx ? 'is-active' : ''}`}

@@ -9,6 +9,7 @@ import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferen
 import { writeReviewPreferences } from '../review-preferences.js';
 import { navigateToVendorRecord } from '../../utils/vendor-route.js';
 import { getExceptionLabel } from '../../utils/formatters.js';
+import { EmptyState, LoadingSkeleton, ErrorRetry } from '../../components/StatePrimitives.js';
 
 const html = htm.bind(h);
 
@@ -16,15 +17,18 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
   const pipelineScope = useMemo(() => ({ orgId, userEmail }), [orgId, userEmail]);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [search, setSearch] = useState('');
 
   const loadVendors = async ({ silent = false } = {}) => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api(`/api/ap/items/vendors?organization_id=${encodeURIComponent(orgId)}&limit=200`, { silent });
       setVendors(Array.isArray(data?.vendors) ? data.vendors : []);
-    } catch {
+    } catch (exc) {
       setVendors([]);
+      setLoadError(exc?.message || 'Could not load vendors.');
       if (!silent) toast?.('Could not load vendors.', 'error');
     } finally {
       setLoading(false);
@@ -78,7 +82,15 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
   };
 
   if (loading) {
-    return html`<div class="panel" style="text-align:center;padding:48px"><p class="muted">Loading vendor directory…</p></div>`;
+    return html`<div class="panel"><${LoadingSkeleton} rows=${5} label="Loading vendor directory" /></div>`;
+  }
+
+  if (loadError) {
+    return html`<div class="panel"><${ErrorRetry}
+      message="Couldn't load the vendor directory."
+      detail=${loadError}
+      onRetry=${() => loadVendors()}
+    /></div>`;
   }
 
   return html`
