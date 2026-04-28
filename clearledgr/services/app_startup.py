@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict
 
 from clearledgr.services.logging import logger
+
+# Maximum reasonable in-flight age for a task_run before we treat it as
+# orphaned by an api crash. The longest legitimate single task is bounded
+# by Celery hard timeouts (low single digit minutes) plus a safety margin
+# for retries; 30 min is well past any normal completion. Anything older
+# is almost certainly an orphan from a redeploy or worker SIGKILL.
+_TASK_RUN_ORPHAN_THRESHOLD = timedelta(minutes=30)
 
 _DEFERRED_STARTUP_TASK_ATTR = "deferred_startup_task"
 _DEFERRED_STARTUP_HANDLE_ATTR = "deferred_startup_handle"
@@ -89,6 +97,18 @@ async def run_deferred_startup(app: Any) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Finance agent runtime not started: %s", exc)
 
+    # P2 (audit 2026-04-28): resume_pending_agent_tasks() above drains
+    # agent_retry_jobs, which is a different table from task_runs. A
+    # process that crashed mid-CoordinationEngine run leaves a task_runs
+    # row in 'pending' or 'running' forever — nothing reaps it. Sweep
+    # those orphans now so they don't pile up across redeploys.
+    try:
+        await asyncio.wait_for(_reap_orphan_task_runs(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Orphan task_runs sweep timed out (10s) — skipping")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Orphan task_runs sweep not started: %s", exc)
+
     # AgentPlanningEngine (Claude tool-use loop) retired. The deterministic
     # DeterministicPlanningEngine in clearledgr.core.planning_engine is the
     # only planning engine; it does not need skill registration at startup
@@ -106,6 +126,65 @@ async def run_deferred_startup(app: Any) -> None:
         logger.warning("ERP follow-on reconciliation check timed out (10s) — skipping")
     except Exception as exc:  # noqa: BLE001
         logger.warning("ERP follow-on reconciliation check not started: %s", exc)
+
+
+async def _reap_orphan_task_runs() -> None:
+    """Mark stale in-flight task_runs as failed with reason ``api_crash_orphan``.
+
+    A task_run is considered orphaned when its ``status`` is still
+    ``pending`` or ``running`` and its ``updated_at`` is older than
+    :data:`_TASK_RUN_ORPHAN_THRESHOLD`. The threshold is chosen well
+    past any legitimate single-task duration so we don't race
+    in-flight rows from sibling workers.
+
+    The sweep is fail-safe: if the DB is unavailable, parsing fails,
+    or the threshold isn't met, the row is left alone for the next
+    boot to retry.
+    """
+
+    def _do_sweep() -> Dict[str, int]:  # type: ignore[name-defined]
+        from clearledgr.core.database import get_db
+
+        db = get_db()
+        rows = db.list_pending_task_runs(statuses=("pending", "running"))
+        cutoff = datetime.now(timezone.utc) - _TASK_RUN_ORPHAN_THRESHOLD
+        marked = 0
+        skipped = 0
+        for row in rows:
+            updated_at_raw = row.get("updated_at") or row.get("created_at")
+            if not updated_at_raw:
+                skipped += 1
+                continue
+            try:
+                # ISO-format strings persisted by _now() include tzinfo.
+                updated_at = datetime.fromisoformat(str(updated_at_raw))
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+            if updated_at >= cutoff:
+                # In-flight on another worker; leave alone.
+                skipped += 1
+                continue
+            try:
+                db.fail_task_run(
+                    row["id"],
+                    error="api_crash_orphan: task_run was in-flight when api stopped; no resume path. Re-trigger via the originating event if still relevant.",
+                    retry_count=int(row.get("retry_count") or 0),
+                )
+                marked += 1
+            except Exception as exc:
+                logger.warning("[task_runs sweep] fail_task_run %s failed: %s", row.get("id"), exc)
+        return {"marked": marked, "skipped": skipped, "total": len(rows)}
+
+    result = await asyncio.to_thread(_do_sweep)
+    logger.info(
+        "Orphan task_runs sweep complete (marked_failed=%d in_flight_skipped=%d total_pending=%d)",
+        result.get("marked", 0),
+        result.get("skipped", 0),
+        result.get("total", 0),
+    )
 
 
 def schedule_deferred_startup(app: Any) -> None:
