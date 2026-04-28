@@ -396,6 +396,7 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
+    "/api/workspace/audit/search",
     "/api/workspace/bootstrap",
     "/api/workspace/dashboard",
     "/api/workspace/ga-readiness",
@@ -590,6 +591,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/extension/workflow/[^/]+$",
         r"^/extension/by-thread/[^/]+$",
         r"^/gmail/status/[^/]+$",
+        r"^/api/workspace/audit/event/[^/]+$",
         r"^/api/workspace/webhooks/[^/]+$",
         r"^/api/workspace/webhooks/[^/]+/test$",
         r"^/api/workspace/vendor-intelligence/profiles/[^/]+/aliases$",
