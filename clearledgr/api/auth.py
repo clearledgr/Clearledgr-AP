@@ -701,6 +701,23 @@ async def google_web_auth_callback(
     )
     token_payload = token_resp.json() if token_resp.content else {}
     if token_resp.status_code >= 400 or "access_token" not in token_payload:
+        # Log everything we sent + everything Google returned so the
+        # actual cause of invalid_grant is recoverable from the logs.
+        # Code prefix only — never log the full code (it's a credential).
+        # Client secret is read from env and never logged here.
+        logger.error(
+            "google_token_exchange_failed: status=%s response=%s | "
+            "request: redirect_uri=%s code_prefix=%s code_len=%s "
+            "client_id=%s scope_in_state=%s state_iat=%s",
+            token_resp.status_code,
+            token_payload,
+            _google_oauth_redirect_uri(),
+            (code or "")[:8],
+            len(code or ""),
+            client_id[:20] + "..." if client_id else "MISSING",
+            state_payload.get("scope"),
+            state_payload.get("iat"),
+        )
         raise HTTPException(status_code=400, detail={"message": "google_token_exchange_failed", "payload": token_payload})
 
     access_token = token_payload["access_token"]
