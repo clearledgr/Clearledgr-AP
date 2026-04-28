@@ -4,14 +4,17 @@
  * Org-scoped, admin-gated audit search. Backed by:
  *   GET /api/workspace/audit/search?from_ts=&to_ts=&event_type=&actor_id=&box_type=&box_id=&limit=&cursor=
  *   GET /api/workspace/audit/event/{event_id}
+ *   GET/POST/DELETE /api/workspace/webhooks (Pass 3 SIEM panel)
+ *   POST /api/workspace/webhooks/{id}/test (test ping)
+ *   GET /api/workspace/webhooks/{id}/deliveries (per-webhook attempt log)
  *
  * Append-only at the database level (Postgres triggers in
  * clearledgr/core/database.py:374). The dashboard is a pure read
- * surface — no mutations.
+ * surface — no mutations of audit events themselves.
  *
  * Pass 1 ships search + filter + pagination + detail panel.
- * Pass 2 (separate commit) adds async CSV export.
- * Pass 3 (separate commit) adds SIEM webhook config + delivery log.
+ * Pass 2 ships async CSV export.
+ * Pass 3 ships SIEM webhook config + delivery log.
  */
 import { h } from 'preact';
 import { useState, useEffect, useCallback } from 'preact/hooks';
@@ -270,6 +273,461 @@ function DetailPanel({ event, onClose, api, orgId }) {
 }
 
 
+// ─── SIEM webhook section (Pass 3) ──────────────────────────────────
+// Curated event-type bundles a SIEM operator typically wants to forward
+// to a downstream collector (Splunk, Datadog Cloud SIEM, Sumo, etc).
+// "*" means every audit event — useful for compliance ingestion that
+// can't pre-filter at the source. Operators can also paste a custom
+// comma-separated list via the form's free-text field.
+const SIEM_EVENT_BUNDLES = [
+  { value: '*', label: 'All audit events (compliance feed)' },
+  {
+    value: 'state_transition,invoice_approved,invoice_rejected,erp_post_completed,erp_post_failed',
+    label: 'AP workflow (states + decisions + ERP posts)',
+  },
+  {
+    value: 'organization_renamed,organization_domain_changed,organization_integration_mode_changed',
+    label: 'Org config changes',
+  },
+  {
+    value: 'illegal_transition_blocked,invoice_reverse_blocked,invoice_snooze_blocked',
+    label: 'Blocked actions (security / governance)',
+  },
+];
+
+const DELIVERY_STATUS_LABELS = {
+  success: { label: 'Delivered', cls: 'cl-audit-delivery-ok' },
+  failed: { label: 'Failed', cls: 'cl-audit-delivery-fail' },
+  retrying: { label: 'Retrying', cls: 'cl-audit-delivery-retry' },
+};
+
+
+function SiemWebhookForm({ onSubmit, onCancel, busy }) {
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [bundlePreset, setBundlePreset] = useState(SIEM_EVENT_BUNDLES[0].value);
+  const [customEvents, setCustomEvents] = useState('');
+  const [description, setDescription] = useState('');
+  const [err, setErr] = useState(null);
+
+  const submit = useCallback(async (e) => {
+    e?.preventDefault?.();
+    setErr(null);
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl.startsWith('https://') && !trimmedUrl.startsWith('http://')) {
+      setErr('URL must start with https:// (or http:// for local testing).');
+      return;
+    }
+    const eventTypesString = customEvents.trim() || bundlePreset;
+    const eventTypes = eventTypesString
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (eventTypes.length === 0) {
+      setErr('Pick a bundle or enter at least one event type.');
+      return;
+    }
+    try {
+      await onSubmit({
+        url: trimmedUrl,
+        secret: secret.trim(),
+        event_types: eventTypes,
+        description: description.trim(),
+      });
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    }
+  }, [url, secret, bundlePreset, customEvents, description, onSubmit]);
+
+  return html`
+    <form class="cl-siem-form" onSubmit=${submit}>
+      <label class="cl-audit-filter-field">
+        <span>Endpoint URL</span>
+        <input
+          type="url"
+          placeholder="https://siem.example.com/clearledgr/ingest"
+          value=${url}
+          onInput=${(e) => setUrl(e.target.value)}
+          disabled=${busy}
+          required />
+      </label>
+      <label class="cl-audit-filter-field">
+        <span>HMAC secret (optional)</span>
+        <input
+          type="text"
+          placeholder="leave blank for no signing"
+          value=${secret}
+          onInput=${(e) => setSecret(e.target.value)}
+          disabled=${busy} />
+      </label>
+      <label class="cl-audit-filter-field">
+        <span>Event bundle</span>
+        <select
+          value=${bundlePreset}
+          onChange=${(e) => setBundlePreset(e.target.value)}
+          disabled=${busy || customEvents.trim().length > 0}>
+          ${SIEM_EVENT_BUNDLES.map((opt) => html`
+            <option value=${opt.value}>${opt.label}</option>
+          `)}
+        </select>
+      </label>
+      <label class="cl-audit-filter-field cl-siem-form-wide">
+        <span>Custom event types (comma-separated, overrides bundle)</span>
+        <input
+          type="text"
+          placeholder="state_transition, plan_observed, ..."
+          value=${customEvents}
+          onInput=${(e) => setCustomEvents(e.target.value)}
+          disabled=${busy} />
+      </label>
+      <label class="cl-audit-filter-field cl-siem-form-wide">
+        <span>Description (optional)</span>
+        <input
+          type="text"
+          placeholder="Splunk HEC — production"
+          value=${description}
+          onInput=${(e) => setDescription(e.target.value)}
+          disabled=${busy} />
+      </label>
+      ${err ? html`<div class="cl-siem-form-error">${err}</div>` : null}
+      <div class="cl-siem-form-actions">
+        <button type="submit" class="btn btn-sm btn-primary" disabled=${busy}>
+          ${busy ? 'Saving…' : 'Register webhook'}
+        </button>
+        <button type="button" class="btn btn-sm btn-tertiary" onClick=${onCancel} disabled=${busy}>
+          Cancel
+        </button>
+      </div>
+    </form>`;
+}
+
+
+function SiemDeliveriesPanel({ api, orgId, webhook, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = useCallback(async () => {
+    if (!api || !orgId || !webhook?.id) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('organization_id', orgId);
+      params.set('limit', '50');
+      if (statusFilter) params.set('status', statusFilter);
+      const resp = await api(
+        `/api/workspace/webhooks/${encodeURIComponent(webhook.id)}/deliveries?${params.toString()}`
+      );
+      setRows(Array.isArray(resp?.deliveries) ? resp.deliveries : []);
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    } finally {
+      setLoading(false);
+    }
+  }, [api, orgId, webhook?.id, statusFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Failures-last-24h counter — derived from the rows we already have.
+  // For >50 attempts this is a lower bound (newest 50 only); we annotate
+  // the UI accordingly so an SRE doesn't read it as canonical.
+  const failuresLast24h = (() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return rows.filter((r) => {
+      if (r.status !== 'failed') return false;
+      const ts = r.attempted_at ? new Date(r.attempted_at).getTime() : 0;
+      return ts >= cutoff;
+    }).length;
+  })();
+
+  return html`
+    <section class="cl-siem-deliveries">
+      <header class="cl-siem-deliveries-head">
+        <div>
+          <h4>Deliveries — <code>${webhook.url}</code></h4>
+          <p class="muted">
+            Latest 50 attempts (newest first). Retries appear as separate rows.
+            ${rows.length === 50 ? ' Showing the most recent 50; older attempts may exist.' : ''}
+          </p>
+        </div>
+        <div class="cl-siem-deliveries-actions">
+          <label class="cl-audit-filter-field">
+            <span>Status</span>
+            <select
+              value=${statusFilter}
+              onChange=${(e) => setStatusFilter(e.target.value)}
+              disabled=${loading}>
+              <option value="">All</option>
+              <option value="success">Delivered</option>
+              <option value="retrying">Retrying</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+          <button class="btn btn-sm btn-tertiary" onClick=${load} disabled=${loading}>
+            ${loading ? 'Loading…' : 'Refresh'}
+          </button>
+          <button class="btn btn-sm btn-tertiary" onClick=${onClose}>Close</button>
+        </div>
+      </header>
+
+      <div class="cl-siem-deliveries-summary">
+        <span class=${`cl-audit-chip ${failuresLast24h > 0 ? 'cl-audit-delivery-fail' : 'cl-audit-delivery-ok'}`}>
+          ${failuresLast24h} failure${failuresLast24h === 1 ? '' : 's'} (last 24h, in window)
+        </span>
+        <span class="muted">${rows.length} attempt${rows.length === 1 ? '' : 's'} loaded.</span>
+      </div>
+
+      ${err ? html`<${ErrorRetry} message=${err} onRetry=${load} />` : null}
+      ${loading && rows.length === 0 ? html`<${LoadingSkeleton} rows=${5} />` : null}
+      ${!loading && !err && rows.length === 0 ? html`
+        <${EmptyState}
+          title="No delivery attempts yet"
+          body="Deliveries appear here once matching audit events are emitted." />
+      ` : null}
+      ${rows.length > 0 ? html`
+        <table class="cl-audit-table cl-siem-deliveries-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Event</th>
+              <th>Attempt</th>
+              <th>Status</th>
+              <th>HTTP</th>
+              <th>Duration</th>
+              <th>Error / signature</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((d) => {
+              const meta = DELIVERY_STATUS_LABELS[d.status] || { label: d.status, cls: '' };
+              return html`
+                <tr key=${d.id}>
+                  <td class="cl-audit-cell-ts">${fmtDateTime(d.attempted_at)}</td>
+                  <td>
+                    <span class="cl-audit-event-name">${d.event_type || '—'}</span>
+                    ${d.audit_event_id
+                      ? html`<div class="cl-audit-box-id">${d.audit_event_id}</div>`
+                      : null}
+                  </td>
+                  <td class="cl-audit-confidence">#${d.attempt_number ?? 1}</td>
+                  <td>
+                    <span class=${`cl-audit-chip ${meta.cls}`}>${meta.label}</span>
+                  </td>
+                  <td class="cl-audit-confidence">${d.http_status_code ?? '—'}</td>
+                  <td class="cl-audit-confidence">${d.duration_ms != null ? `${d.duration_ms}ms` : '—'}</td>
+                  <td class="cl-audit-cell-error">
+                    ${d.error_message
+                      ? html`<span class="cl-siem-error">${d.error_message}</span>`
+                      : (d.request_signature_prefix
+                          ? html`<code class="cl-audit-box-id">${d.request_signature_prefix}…</code>`
+                          : html`<span class="muted">—</span>`)}
+                  </td>
+                </tr>`;
+            })}
+          </tbody>
+        </table>
+      ` : null}
+    </section>`;
+}
+
+
+function SiemSection({ api, orgId, refreshTrigger }) {
+  const [expanded, setExpanded] = useState(false);
+  const [webhooks, setWebhooks] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [activeWebhookId, setActiveWebhookId] = useState(null);
+  const [testStatus, setTestStatus] = useState({}); // { [webhookId]: 'ok' | 'failed' | 'sending' }
+
+  const load = useCallback(async () => {
+    if (!api || !orgId) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const resp = await api(
+        `/api/workspace/webhooks?organization_id=${encodeURIComponent(orgId)}&active_only=false`
+      );
+      setWebhooks(Array.isArray(resp?.webhooks) ? resp.webhooks : []);
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    } finally {
+      setLoading(false);
+    }
+  }, [api, orgId]);
+
+  // Initial load only when expanded — keeps the audit page snappy for
+  // the common case (operator opening to search, not to manage SIEM).
+  useEffect(() => {
+    if (expanded) load();
+  }, [expanded, load, refreshTrigger]);
+
+  const handleCreate = useCallback(async (payload) => {
+    setSubmitting(true);
+    try {
+      await api(
+        `/api/workspace/webhooks?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: JSON.stringify(payload) }
+      );
+      setShowForm(false);
+      await load();
+    } finally {
+      setSubmitting(false);
+    }
+  }, [api, orgId, load]);
+
+  const handleDelete = useCallback(async (webhook) => {
+    if (!window.confirm(`Delete webhook ${webhook.url}?\n\nDelivery history is preserved.`)) return;
+    try {
+      await api(`/api/workspace/webhooks/${encodeURIComponent(webhook.id)}`, { method: 'DELETE' });
+      if (activeWebhookId === webhook.id) setActiveWebhookId(null);
+      await load();
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    }
+  }, [api, activeWebhookId, load]);
+
+  const handleTest = useCallback(async (webhook) => {
+    setTestStatus((s) => ({ ...s, [webhook.id]: 'sending' }));
+    try {
+      const resp = await api(
+        `/api/workspace/webhooks/${encodeURIComponent(webhook.id)}/test`,
+        { method: 'POST' }
+      );
+      setTestStatus((s) => ({ ...s, [webhook.id]: resp?.delivered ? 'ok' : 'failed' }));
+    } catch (exc) {
+      setTestStatus((s) => ({ ...s, [webhook.id]: 'failed' }));
+    } finally {
+      // Auto-clear the chip after 6s so it doesn't linger.
+      setTimeout(() => setTestStatus((s) => {
+        const next = { ...s };
+        delete next[webhook.id];
+        return next;
+      }), 6000);
+    }
+  }, [api]);
+
+  const activeWebhook = webhooks.find((w) => w.id === activeWebhookId);
+
+  return html`
+    <section class=${`cl-siem-section${expanded ? ' is-expanded' : ''}`}>
+      <header class="cl-siem-head">
+        <button
+          type="button"
+          class="cl-siem-toggle"
+          onClick=${() => setExpanded((v) => !v)}
+          aria-expanded=${expanded}>
+          <span class="cl-siem-chevron">${expanded ? '▾' : '▸'}</span>
+          <span class="cl-siem-title">SIEM webhooks</span>
+          <span class="muted">
+            ${expanded ? '' : (webhooks.length > 0
+                ? `${webhooks.length} configured`
+                : 'forward audit events to Splunk, Datadog, Sumo, etc.')}
+          </span>
+        </button>
+        ${expanded ? html`
+          <div class="cl-siem-head-actions">
+            <button
+              class="btn btn-sm btn-primary"
+              onClick=${() => setShowForm((v) => !v)}
+              disabled=${submitting}>
+              ${showForm ? 'Hide form' : '+ Add webhook'}
+            </button>
+            <button class="btn btn-sm btn-tertiary" onClick=${load} disabled=${loading}>
+              ${loading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        ` : null}
+      </header>
+
+      ${expanded ? html`
+        <div class="cl-siem-body">
+          ${showForm ? html`
+            <${SiemWebhookForm}
+              onSubmit=${handleCreate}
+              onCancel=${() => setShowForm(false)}
+              busy=${submitting} />
+          ` : null}
+
+          ${err ? html`<${ErrorRetry} message=${err} onRetry=${load} />` : null}
+          ${loading && webhooks.length === 0 ? html`<${LoadingSkeleton} rows=${3} />` : null}
+          ${!loading && !err && webhooks.length === 0 ? html`
+            <${EmptyState}
+              title="No SIEM webhooks configured"
+              body="Add one to forward audit events to your security pipeline." />
+          ` : null}
+
+          ${webhooks.length > 0 ? html`
+            <table class="cl-audit-table cl-siem-table">
+              <thead>
+                <tr>
+                  <th>URL</th>
+                  <th>Events</th>
+                  <th>Status</th>
+                  <th>Description</th>
+                  <th class="cl-siem-actions-col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${webhooks.map((w) => {
+                  const eventTypes = Array.isArray(w.event_types) ? w.event_types : [];
+                  const eventLabel = eventTypes.includes('*')
+                    ? 'All events'
+                    : (eventTypes.length <= 2 ? eventTypes.join(', ') : `${eventTypes.length} types`);
+                  const status = testStatus[w.id];
+                  return html`
+                    <tr key=${w.id} class=${activeWebhookId === w.id ? 'is-active' : ''}>
+                      <td><code class="cl-siem-url">${w.url}</code></td>
+                      <td title=${eventTypes.join(', ')}>${eventLabel}</td>
+                      <td>
+                        <span class=${`cl-audit-chip ${w.is_active ? 'cl-audit-delivery-ok' : ''}`}>
+                          ${w.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        ${status === 'sending' ? html`<span class="cl-audit-chip">Testing…</span>` : null}
+                        ${status === 'ok' ? html`<span class="cl-audit-chip cl-audit-delivery-ok">Test OK</span>` : null}
+                        ${status === 'failed' ? html`<span class="cl-audit-chip cl-audit-delivery-fail">Test failed</span>` : null}
+                      </td>
+                      <td class="cl-audit-cell-actor">${w.description || '—'}</td>
+                      <td class="cl-siem-actions-col">
+                        <button
+                          class="btn btn-sm btn-tertiary"
+                          onClick=${() => handleTest(w)}
+                          disabled=${status === 'sending'}>
+                          Test
+                        </button>
+                        <button
+                          class="btn btn-sm btn-tertiary"
+                          onClick=${() => setActiveWebhookId(activeWebhookId === w.id ? null : w.id)}>
+                          ${activeWebhookId === w.id ? 'Hide log' : 'View log'}
+                        </button>
+                        <button
+                          class="btn btn-sm btn-danger"
+                          onClick=${() => handleDelete(w)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>`;
+                })}
+              </tbody>
+            </table>
+          ` : null}
+
+          ${activeWebhook ? html`
+            <${SiemDeliveriesPanel}
+              api=${api}
+              orgId=${orgId}
+              webhook=${activeWebhook}
+              onClose=${() => setActiveWebhookId(null)} />
+          ` : null}
+        </div>
+      ` : null}
+    </section>`;
+}
+
+
 export default function AuditLogPage({ api, orgId, bootstrap }) {
   // Filter state. ``event_type_preset`` is the dropdown value (which
   // is a comma-separated string per COMMON_EVENT_TYPES); the API
@@ -465,6 +923,8 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
           </p>
         </div>
       </div>
+
+      <${SiemSection} api=${api} orgId=${orgId} />
 
       <${FilterBar}
         filters=${filters}
