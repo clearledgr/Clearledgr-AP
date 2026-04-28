@@ -1341,18 +1341,28 @@ async def classify_email_with_llm(
 ) -> Dict[str, Any]:
     """
     Classify an email for AP workflow.
-    
+
     Returns:
         Dict with 'type' (INVOICE | PAYMENT_REQUEST | NOISE) and 'confidence'
+
+    The underlying classify_ap_email() is synchronous and makes a Claude
+    API call that can take 5-30 seconds. Called inline from an async
+    context (the Gmail-push BackgroundTasks pipeline), it would block
+    the uvicorn event loop for the full LLM round-trip — which means
+    the worker stops heart-beating to gunicorn's master and gets killed
+    with WORKER TIMEOUT / SIGABRT after 90s. Running in to_thread keeps
+    the event loop free so /health and other requests still answer.
     """
+    import asyncio as _asyncio
     from clearledgr.services.ap_classifier import classify_ap_email
 
-    return classify_ap_email(
-        subject=subject or "",
-        sender=sender or "",
-        snippet=snippet or "",
-        body=body or "",
-        attachments=attachments or [],
+    return await _asyncio.to_thread(
+        classify_ap_email,
+        subject or "",
+        sender or "",
+        snippet or "",
+        body or "",
+        attachments or [],
     )
 
 
