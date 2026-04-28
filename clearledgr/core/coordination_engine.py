@@ -589,11 +589,72 @@ class CoordinationEngine:
             self._post_write(box_id, action, step + 100, timeline_id, status, "")
 
     def _move_to_exception(self, box_id: str, action_name: str, error: str) -> None:
-        """Move Box to exception stage on persistent failure."""
+        """Move Box to exception stage on persistent failure.
+
+        Failure modes recorded explicitly so nothing slips through:
+
+        * Legal transition to ``needs_info`` → state moves; ``update_ap_item``
+          writes the ``state_transition`` audit row atomically. Done.
+        * Illegal transition (e.g. box is already terminal) → ``IllegalTransitionError``
+          is caught here, audited as ``illegal_transition_blocked``, and
+          raised as a ``box_exception`` so the operator queue surfaces a
+          stuck-terminal box. The caller still gets normal control flow
+          back so its outer failure path runs.
+        * Any other DB error → logged with stack so the orchestrator
+          surfaces a real diagnostic instead of a swallowed ``pass``.
+        """
+        from clearledgr.core.ap_states import IllegalTransitionError
+
         try:
             self.db.update_ap_item(box_id, state="needs_info", exception_reason=f"{action_name}: {error[:200]}")
-        except Exception:
-            pass
+            return
+        except IllegalTransitionError as exc:
+            logger.error(
+                "[CoordinationEngine] cannot move %s to needs_info from %s after %s failure: %s",
+                box_id, exc.current, action_name, error,
+            )
+            org_id = ""
+            try:
+                item = self.db.get_ap_item(box_id) or {}
+                org_id = str(item.get("organization_id") or "")
+            except Exception:
+                pass
+            try:
+                self.db.append_audit_event({
+                    "box_id": box_id,
+                    "box_type": "ap_item",
+                    "event_type": "illegal_transition_blocked",
+                    "actor_type": "agent",
+                    "actor_id": "coordination_engine",
+                    "organization_id": org_id,
+                    "payload_json": {
+                        "from_state": exc.current,
+                        "to_state": exc.target,
+                        "trigger": action_name,
+                        "underlying_error": error[:500],
+                    },
+                })
+            except Exception as audit_exc:
+                logger.exception("[CoordinationEngine] failed to audit illegal transition: %s", audit_exc)
+            try:
+                if hasattr(self.db, "raise_box_exception"):
+                    self.db.raise_box_exception(
+                        box_id=box_id,
+                        box_type="ap_item",
+                        organization_id=org_id,
+                        exception_type="illegal_state_transition",
+                        severity="high",
+                        reason=f"{action_name} failed and box is in terminal state {exc.current}: {error[:200]}",
+                        raised_by="coordination_engine",
+                        raised_actor_type="agent",
+                    )
+            except Exception as raise_exc:
+                logger.exception("[CoordinationEngine] failed to raise box_exception: %s", raise_exc)
+        except Exception as exc:
+            logger.exception(
+                "[CoordinationEngine] _move_to_exception unexpected failure for %s after %s: %s",
+                box_id, action_name, exc,
+            )
 
     # ------------------------------------------------------------------
     # Action Handlers — each wraps an actual service method
