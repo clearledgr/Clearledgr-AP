@@ -3093,6 +3093,78 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    65,
+    "data_subject_requests + retention_policy_runs (Wave 3 E3)",
+)
+def _v65_gdpr_tables(cur, db):
+    """GDPR Articles 15/17/20 + automated retention.
+
+    ``data_subject_requests`` — every access / erasure / portability
+    request a vendor (or their representative) lodges. The 'pending'
+    -> 'in_progress' -> 'completed' / 'rejected' lifecycle leaves a
+    timestamp trail so the org can prove they responded within the
+    one-month statutory window.
+
+    ``retention_policy_runs`` — history of automated purge/anonymize
+    runs. Records counts per entity category + the cutoff used so an
+    auditor can reconstruct what got reaped on which date.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS data_subject_requests (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            request_type TEXT NOT NULL,
+            subject_kind TEXT NOT NULL,
+            subject_identifier TEXT NOT NULL,
+            requestor_email TEXT,
+            requestor_relationship TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            received_at TEXT NOT NULL,
+            due_at TEXT,
+            processed_at TEXT,
+            processed_by TEXT,
+            processing_notes TEXT,
+            outcome_summary_json TEXT,
+            export_payload_json TEXT
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS retention_policy_runs (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            run_kind TEXT NOT NULL,
+            cutoff_at TEXT NOT NULL,
+            ap_items_anonymized INTEGER NOT NULL DEFAULT 0,
+            vendor_profiles_anonymized INTEGER NOT NULL DEFAULT 0,
+            attachments_purged INTEGER NOT NULL DEFAULT 0,
+            errors_count INTEGER NOT NULL DEFAULT 0,
+            run_at TEXT NOT NULL,
+            run_by TEXT,
+            details_json TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_dsr_org_status "
+        "ON data_subject_requests(organization_id, status, received_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_dsr_org_due "
+        "ON data_subject_requests(organization_id, due_at) "
+        "WHERE status NOT IN ('completed', 'rejected')",
+        "CREATE INDEX IF NOT EXISTS idx_retention_runs_org "
+        "ON retention_policy_runs(organization_id, run_at DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v65] gdpr index skipped: %s", exc,
+            )
+
+
+@migration(
     64,
     "ap_items VAT columns + vat_returns table (Wave 3 E2)",
 )

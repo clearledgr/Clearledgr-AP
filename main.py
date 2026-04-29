@@ -1353,6 +1353,10 @@ app.include_router(sanctions_router)
 from clearledgr.api.vat import router as vat_router
 app.include_router(vat_router)
 
+# Wave 3 / E3: GDPR retention + right-to-erasure
+from clearledgr.api.gdpr import router as gdpr_router
+app.include_router(gdpr_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
