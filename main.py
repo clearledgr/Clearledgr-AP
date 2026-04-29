@@ -1407,6 +1407,10 @@ from clearledgr.api.cycle_time_metrics import (
 )
 app.include_router(cycle_time_metrics_router)
 
+# Wave 6 / H1: dual approval (two-person rule)
+from clearledgr.api.dual_approval import router as dual_approval_router
+app.include_router(dual_approval_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)

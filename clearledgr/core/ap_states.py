@@ -45,6 +45,13 @@ class APState(str, Enum):
     VALIDATED = "validated"
     NEEDS_INFO = "needs_info"
     NEEDS_APPROVAL = "needs_approval"
+    # Wave 6 / H1 — dual-approval (two-person) state. High-value
+    # bills (above ``settings_json[routing_thresholds]
+    # [dual_approval_threshold]``) land here after the first
+    # signature. A second, distinct approver is required to advance
+    # to APPROVED. Self-approval is enforced by the apply layer
+    # (first_approver != second_approver).
+    NEEDS_SECOND_APPROVAL = "needs_second_approval"
     APPROVED = "approved"
     REJECTED = "rejected"
     READY_TO_POST = "ready_to_post"
@@ -75,7 +82,22 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.RECEIVED: frozenset({APState.VALIDATED, APState.CLOSED, APState.REJECTED}),
     APState.VALIDATED: frozenset({APState.NEEDS_APPROVAL, APState.NEEDS_INFO, APState.SNOOZED, APState.CLOSED}),
     APState.NEEDS_INFO: frozenset({APState.VALIDATED, APState.SNOOZED, APState.CLOSED}),
-    APState.NEEDS_APPROVAL: frozenset({APState.APPROVED, APState.REJECTED, APState.NEEDS_INFO, APState.SNOOZED, APState.CLOSED}),
+    # Wave 6 / H1 — needs_approval can either advance to APPROVED
+    # (single-signature path, low-value) or to NEEDS_SECOND_APPROVAL
+    # (dual-signature path, above the org's threshold).
+    APState.NEEDS_APPROVAL: frozenset({
+        APState.APPROVED, APState.NEEDS_SECOND_APPROVAL,
+        APState.REJECTED, APState.NEEDS_INFO, APState.SNOOZED,
+        APState.CLOSED,
+    }),
+    # Wave 6 / H1 — second-approval state. Second approver advances
+    # to APPROVED, or rejects, or sends back for info. A revoke of
+    # the first approver's signature returns to NEEDS_APPROVAL.
+    APState.NEEDS_SECOND_APPROVAL: frozenset({
+        APState.APPROVED, APState.NEEDS_APPROVAL,
+        APState.REJECTED, APState.NEEDS_INFO, APState.SNOOZED,
+        APState.CLOSED,
+    }),
     APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO, APState.CLOSED}),
     APState.REJECTED: frozenset({APState.CLOSED}),
     APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST, APState.CLOSED}),
@@ -87,7 +109,11 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     }),
     APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.SNOOZED, APState.CLOSED}),
     # Snoozed can return to any pre-snooze state (stored in metadata).
-    APState.SNOOZED: frozenset({APState.VALIDATED, APState.NEEDS_INFO, APState.NEEDS_APPROVAL, APState.FAILED_POST, APState.CLOSED}),
+    APState.SNOOZED: frozenset({
+        APState.VALIDATED, APState.NEEDS_INFO,
+        APState.NEEDS_APPROVAL, APState.NEEDS_SECOND_APPROVAL,
+        APState.FAILED_POST, APState.CLOSED,
+    }),
     # Wave 2 / C1 — payment lifecycle.
     # awaiting_payment: bill is posted, customer's ERP / payment-rail
     # process owns the next move. We sit and listen for ERP webhooks
