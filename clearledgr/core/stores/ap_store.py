@@ -95,6 +95,13 @@ class APStore:
         # archive table is append-only at the trigger level so the
         # link is never invalidated by a mutation.
         "attachment_content_hash",
+        # Wave 1 / A2 — auditor-traceable GL journal entry id.
+        # Distinct from ``erp_reference`` (bill id) in ERPs where
+        # bill and JE are separate records (SAP B1, Xero). For
+        # QBO/NetSuite the bill IS the journal record, so the two
+        # values coincide — but we still store under this column
+        # so callers query one field uniformly.
+        "erp_journal_entry_id",
     })
 
     # ------------------------------------------------------------------

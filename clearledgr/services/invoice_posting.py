@@ -533,11 +533,22 @@ class InvoicePostingMixin:
                 or result.get("reference_id")
                 or result.get("doc_num")
             )
+            # Wave 1 / A2 — auditor-traceable JE id. Each ERP adapter
+            # surfaces ``erp_journal_entry_id`` on success (see
+            # erp_quickbooks / erp_xero / erp_netsuite / erp_sap). For
+            # QBO + NetSuite the JE id coincides with the bill id by
+            # the ERP's data model; for SAP B1 + Xero it's a distinct
+            # value retrieved from the create response or via a
+            # follow-up GET. None on legacy paths is acceptable —
+            # the column is optional and back-fill happens via the
+            # erp_follow_on_reconciliation pass.
+            erp_journal_entry_id = result.get("erp_journal_entry_id")
             self._transition_invoice_state(
                 gmail_id=gmail_id,
                 target_state="posted_to_erp",
                 correlation_id=correlation_id,
                 erp_reference=erp_reference,
+                erp_journal_entry_id=erp_journal_entry_id,
                 erp_posted_at=post_attempted_at,
                 post_attempted_at=post_attempted_at,
                 last_error=None,

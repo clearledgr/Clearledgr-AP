@@ -312,13 +312,24 @@ async def post_bill_to_quickbooks(
         result = response.json()
 
         bill_data = result.get("Bill", {})
-        logger.info("Posted Bill to QuickBooks: %s", bill_data.get("Id"))
+        bill_id = bill_data.get("Id")
+        # Wave 1 / A2 — journal entry traceability. QBO's data model
+        # treats a Bill as the journal-creating transaction itself —
+        # there is no separate "JournalEntry" record for a Bill the
+        # way SAP B1 does. Auditor queries against QBO's JournalReport
+        # use the Bill Id as the transaction identifier (Tx + TxType=
+        # 'Bill'). For uniformity across ERPs we expose the bill id
+        # ALSO under ``erp_journal_entry_id`` so callers can persist
+        # one column regardless of ERP and the audit chain stays
+        # explicit.
+        logger.info("Posted Bill to QuickBooks: %s", bill_id)
         return {
             "status": "success",
             "erp": "quickbooks",
-            "bill_id": bill_data.get("Id"),
+            "bill_id": bill_id,
             "doc_number": bill_data.get("DocNumber"),
             "sync_token": bill_data.get("SyncToken"),
+            "erp_journal_entry_id": (str(bill_id) if bill_id is not None else None),
         }
 
     except httpx.HTTPStatusError as e:

@@ -386,12 +386,31 @@ async def post_bill_to_sap(
         result = response.json()
 
         doc_entry = result.get("DocEntry")
-        logger.info("Posted A/P Invoice to SAP: %s", doc_entry)
+        # Wave 1 / A2 — journal entry traceability. SAP B1 separates
+        # the AP invoice DocEntry (this is ``bill_id``) from the
+        # auto-created journal entry header (OJDT.DocEntry). The
+        # PurchaseInvoice POST response carries the JE DocEntry as
+        # ``JournalMemo`` / ``JournalEntry`` depending on B1 version
+        # — both forms checked. Auditor traceability requires the
+        # JE id, not just the bill id.
+        je_id = (
+            result.get("JournalEntry")
+            or result.get("JournalMemo")
+            # Some B1 versions surface it as a nested object
+            or (
+                result.get("JournalEntryReplica") or {}
+            ).get("DocEntry")
+        )
+        logger.info(
+            "Posted A/P Invoice to SAP: bill=%s je=%s",
+            doc_entry, je_id,
+        )
         return {
             "status": "success",
             "erp": "sap",
             "bill_id": doc_entry,
             "doc_num": result.get("DocNum"),
+            "erp_journal_entry_id": (str(je_id) if je_id is not None else None),
         }
 
     except httpx.HTTPStatusError as e:

@@ -2925,3 +2925,53 @@ def _v57_invoice_originals(cur, db):
             logger.warning(
                 "[Migration v57] %s trigger skipped: %s", trigger_name, exc,
             )
+
+
+@migration(
+    58,
+    "ap_items.erp_journal_entry_id — auditor JE traceability column (Wave 1 A2)"
+)
+def _v58_ap_items_journal_entry_id(cur, db):
+    """Add the auditor-traceable journal-entry id column on ap_items.
+
+    Per AP cycle reference doc Stage 8 + AICPA traceability assertion:
+    every posted bill must be traceable to its general-ledger journal
+    entry. ERPs differ on whether bill and JE are the same record:
+
+      * QuickBooks Online — Bill IS the journal-creating transaction
+        (no separate JE record). ``erp_journal_entry_id`` = bill id.
+      * NetSuite — Vendor Bill IS the source transaction; GL JE is
+        derived. ``erp_journal_entry_id`` = bill internalid.
+      * SAP B1 — PurchaseInvoice creates a SEPARATE OJDT row. The
+        POST response carries ``JournalEntry`` (the JE DocEntry).
+        ``erp_journal_entry_id`` = that DocEntry, distinct from
+        ``erp_reference``.
+      * Xero — Invoice has a separate Journal entity with a
+        ``JournalID`` retrievable via /Journals?invoiceID=<id>.
+        ``erp_journal_entry_id`` = that JournalID.
+
+    Nullable: legacy AP items (posted before this column existed)
+    don't have the data and the field is best-effort even on new
+    posts. The column going from NULL to populated marks the
+    moment the JE-id back-fill ran.
+
+    Indexed for the auditor query "find me the AP item for JE id X"
+    via a partial index on the non-null subset.
+    """
+    try:
+        cur.execute(
+            "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS "
+            "erp_journal_entry_id TEXT"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Migration v58] erp_journal_entry_id column skipped: %s", exc,
+        )
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ap_items_je_id "
+            "ON ap_items(organization_id, erp_journal_entry_id) "
+            "WHERE erp_journal_entry_id IS NOT NULL"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v58] JE-id index skipped: %s", exc)

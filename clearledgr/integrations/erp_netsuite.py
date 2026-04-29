@@ -493,11 +493,21 @@ async def post_bill_to_netsuite(
                         poll_result = poll_resp.json()
                         bill_id = poll_result.get("id") or poll_result.get("internalId")
                         logger.info("Posted Vendor Bill to NetSuite (async): %s", bill_id)
+                        # Wave 1 / A2 — NetSuite's Vendor Bill IS the
+                        # source transaction record; the GL JE is
+                        # auto-derived from this transaction at the
+                        # GL layer. Auditor traceability uses the
+                        # bill internalid as the journal source id,
+                        # the same way ``tran:<id>`` shows up in
+                        # NetSuite saved-search journal queries.
                         return {
                             "status": "success",
                             "erp": "netsuite",
                             "bill_id": bill_id,
                             "tran_id": poll_result.get("tranId"),
+                            "erp_journal_entry_id": (
+                                str(bill_id) if bill_id is not None else None
+                            ),
                         }
                     if poll_resp.status_code != 202:
                         break
@@ -515,6 +525,10 @@ async def post_bill_to_netsuite(
             "erp": "netsuite",
             "bill_id": bill_id,
             "tran_id": result.get("tranId"),
+            # Wave 1 / A2 — see async branch above for rationale.
+            "erp_journal_entry_id": (
+                str(bill_id) if bill_id is not None else None
+            ),
         }
 
     except httpx.HTTPStatusError as e:

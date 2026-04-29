@@ -335,12 +335,52 @@ async def post_bill_to_xero(
         invoices = result.get("Invoices", [])
         if invoices:
             inv = invoices[0]
-            logger.info("Posted Bill to Xero: %s", inv.get("InvoiceID"))
+            invoice_id = inv.get("InvoiceID")
+            logger.info("Posted Bill to Xero: %s", invoice_id)
+
+            # Wave 1 / A2 — Xero genuinely has a separate Journal
+            # entity from the Invoice. The Journal record has a
+            # ``JournalID`` that auditors trace independently. Fetch
+            # it via /api.xro/2.0/Journals?invoiceID=<id> and persist
+            # alongside the InvoiceID.
+            #
+            # Best-effort: a follow-up GET failure does not roll back
+            # the post — the InvoiceID is still durable, and the
+            # background reconciliation pass (Wave 5 work) will fill
+            # in any missing JournalIDs from the Journals stream.
+            journal_id = None
+            try:
+                if invoice_id:
+                    journal_resp = await client.get(
+                        f"https://api.xero.com/api.xro/2.0/Journals",
+                        params={"invoiceID": invoice_id},
+                        headers={
+                            "Authorization": f"Bearer {connection.access_token}",
+                            "Xero-tenant-id": connection.tenant_id,
+                            "Accept": "application/json",
+                        },
+                        timeout=15,
+                    )
+                    if journal_resp.status_code == 200:
+                        journals = (journal_resp.json() or {}).get("Journals") or []
+                        if journals:
+                            journal_id = journals[0].get("JournalID")
+            except Exception as exc:
+                # Soft fail — the audit chain has the InvoiceID; JE
+                # follow-up reconciliation will retry.
+                logger.warning(
+                    "[xero] JournalID fetch failed for invoice %s: %s",
+                    invoice_id, exc,
+                )
+
             return {
                 "status": "success",
                 "erp": "xero",
-                "bill_id": inv.get("InvoiceID"),
+                "bill_id": invoice_id,
                 "invoice_number": inv.get("InvoiceNumber"),
+                "erp_journal_entry_id": (
+                    str(journal_id) if journal_id else None
+                ),
             }
 
         return {"status": "error", "erp": "xero", "reason": "no_invoice_returned"}
