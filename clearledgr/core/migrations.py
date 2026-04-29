@@ -3093,6 +3093,74 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    67,
+    "accrual_je_runs — month-end accrual posting + reversal ledger (G5 carry-over)",
+)
+def _v67_accrual_je_runs(cur, db):
+    """One row per month-end accrual JE posted to an ERP.
+
+    Lifecycle:
+      pending          — proposal computed, awaiting operator approval
+                         (or scheduler activation)
+      posted           — JE landed in the ERP; provider_reference is
+                         the ERP's JE id
+      reversal_posted  — reversal JE landed; reversal_provider_reference
+                         is the reversal JE id
+      failed           — ERP refused; error_reason recorded; operator
+                         retries via a new accrual_je_runs row
+
+    Idempotency: composite unique on (org, period_start, period_end,
+    jurisdiction) WHERE status != 'failed' so a successful post for
+    a period blocks duplicates. Failed runs leave the slot open for
+    retry.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS accrual_je_runs (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            jurisdiction TEXT NOT NULL DEFAULT 'GB',
+            erp_type TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            accrual_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            line_count INTEGER NOT NULL DEFAULT 0,
+            proposal_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            provider_reference TEXT,
+            provider_response_json TEXT,
+            posted_at TEXT,
+            reversal_date TEXT NOT NULL,
+            reversal_provider_reference TEXT,
+            reversal_response_json TEXT,
+            reversal_posted_at TEXT,
+            error_reason TEXT,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_accrual_runs_org_status "
+        "ON accrual_je_runs(organization_id, status, period_end DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_accrual_runs_pending_reversal "
+        "ON accrual_je_runs(reversal_date) "
+        "WHERE status = 'posted' AND reversal_posted_at IS NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accrual_runs_period_unique "
+        "ON accrual_je_runs(organization_id, period_start, period_end, jurisdiction) "
+        "WHERE status != 'failed'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v67] accrual_je_runs index skipped: %s", exc,
+            )
+
+
+@migration(
     66,
     "tax_authority_submissions — Africa e-invoice transmission ledger (F4 carry-over)",
 )

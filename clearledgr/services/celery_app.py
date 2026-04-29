@@ -15,6 +15,7 @@ import logging
 import os
 
 from celery import Celery
+from celery.schedules import crontab as _crontab
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,26 @@ app.config_from_object(
             "poll-sap-b1-payments": {
                 "task": "clearledgr.services.celery_tasks.poll_sap_b1_payments_all_orgs",
                 "schedule": 5 * 60.0,  # Every 5 minutes
+            },
+            # Wave 5 / G5 carry-over: month-end accrual close.
+            # Walks every active org on the 1st of the month at
+            # 02:00 UTC, builds the prior-month accrual JE proposal,
+            # posts to each org's connected ERP. Idempotent at the
+            # DB layer — partial unique index on accrual_je_runs
+            # blocks duplicate successful posts for the same period.
+            "post-month-end-accruals": {
+                "task": "clearledgr.services.celery_tasks.post_month_end_accruals_all_orgs",
+                "schedule": _crontab(
+                    minute=0, hour=2, day_of_month="1",
+                ),
+            },
+            # Wave 5 / G5 carry-over: daily reversal sweep.
+            # Walks accrual_je_runs WHERE status='posted' AND
+            # reversal_posted_at IS NULL AND reversal_date <= today;
+            # posts the reversal entry. Daily at 03:00 UTC.
+            "post-pending-accrual-reversals": {
+                "task": "clearledgr.services.celery_tasks.post_pending_accrual_reversals",
+                "schedule": _crontab(minute=0, hour=3),
             },
         },
     }

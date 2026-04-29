@@ -497,6 +497,152 @@ def reap_expired_seats_task() -> dict:
 
 
 @app.task
+def post_month_end_accruals_all_orgs() -> dict:
+    """Wave 5 / G5 carry-over — month-end close run.
+
+    Runs once per month (1st of the month, 02:00 UTC) via Celery Beat.
+    Walks every active org, builds the prior month's accrual JE
+    proposal, posts to each org's connected ERP. Idempotent at the
+    DB layer (partial unique index on accrual_je_runs blocks a
+    second successful post for the same period)."""
+    from datetime import datetime, timedelta, timezone
+
+    from clearledgr.core.database import get_db
+    from clearledgr.services.accrual_journal_entry_post import (
+        run_month_end_close,
+    )
+
+    db = get_db()
+    db.initialize()
+
+    # Just-closed period = first day of current month minus 1
+    # day = last day of prior month.
+    today = datetime.now(timezone.utc).date()
+    period_end_date = today.replace(day=1) - timedelta(days=1)
+    period_start_date = period_end_date.replace(day=1)
+    period_start = period_start_date.isoformat()
+    period_end = period_end_date.isoformat()
+
+    summary = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "orgs_processed": 0,
+        "posted": 0,
+        "failed": 0,
+        "no_op": 0,
+        "details": [],
+    }
+
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT organization_id FROM erp_connections"
+            )
+            org_ids = [dict(r)["organization_id"] for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("[CeleryBeat] month-end accrual: org enum failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    for org_id in org_ids:
+        # Resolve the org's primary ERP for entry shape selection.
+        erp_type = "xero"
+        try:
+            with db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT erp_type FROM erp_connections "
+                    "WHERE organization_id = %s "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (org_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    erp_type = str(dict(row).get("erp_type") or "xero").lower()
+        except Exception:
+            pass
+
+        try:
+            outcome = run_month_end_close(
+                db,
+                organization_id=org_id,
+                period_start=period_start,
+                period_end=period_end,
+                erp_type=erp_type,
+                actor_id="celery_month_end_accrual",
+            )
+        except ValueError as exc:
+            # Duplicate period run — skip without counting as failure.
+            summary["details"].append({
+                "org": org_id, "status": "skipped",
+                "reason": str(exc)[:200],
+            })
+            continue
+        except Exception as exc:
+            logger.warning(
+                "[CeleryBeat] month-end accrual failed org=%s: %s",
+                org_id, exc,
+            )
+            summary["failed"] += 1
+            summary["details"].append({
+                "org": org_id, "status": "failed",
+                "reason": str(exc)[:200],
+            })
+            continue
+
+        summary["orgs_processed"] += 1
+        if outcome.status == "posted" and not outcome.accrual_run_id:
+            summary["no_op"] += 1
+            summary["details"].append({
+                "org": org_id, "status": "no_op",
+                "reason": "no_received_not_billed_for_period",
+            })
+        elif outcome.status == "posted":
+            summary["posted"] += 1
+            summary["details"].append({
+                "org": org_id, "status": "posted",
+                "run_id": outcome.accrual_run_id,
+                "provider_reference": outcome.provider_reference,
+            })
+        else:
+            summary["failed"] += 1
+            summary["details"].append({
+                "org": org_id, "status": outcome.status,
+                "error_reason": outcome.error_reason,
+                "run_id": outcome.accrual_run_id,
+            })
+    return summary
+
+
+@app.task
+def post_pending_accrual_reversals() -> dict:
+    """Wave 5 / G5 carry-over — daily reversal sweep.
+
+    Walks accrual_je_runs WHERE status='posted' AND
+    reversal_posted_at IS NULL AND reversal_date <= today; posts
+    the reversal entry to the org's ERP."""
+    from clearledgr.core.database import get_db
+    from clearledgr.services.accrual_journal_entry_post import (
+        post_pending_reversals,
+    )
+
+    db = get_db()
+    try:
+        result = post_pending_reversals(db)
+    except Exception as exc:
+        logger.error(
+            "[CeleryBeat] accrual reversal sweep failed: %s", exc,
+        )
+        return {"status": "error", "error": str(exc)}
+    return {
+        "swept": result.swept,
+        "reversed_ok": result.reversed_ok,
+        "failed": result.failed,
+        "details": result.details[:50],  # bound for log size
+    }
+
+
+@app.task
 def poll_sap_b1_payments_all_orgs() -> dict:
     """Walk every org with a SAP connection and poll for cleared
     outgoing payments (Wave 2 / C3 carry-over).
