@@ -59,6 +59,16 @@ class APState(str, Enum):
     # was posted and then reversed at the ERP level within the window.
     REVERSED = "reversed"
     CLOSED = "closed"
+    # Wave 2 / C1 — payment-tracking lifecycle. Per AP cycle reference
+    # doc Stage 7-9 + Mo's brief: "we don't execute payment but we
+    # track it to complete the process". Auditor traceability needs
+    # the chain bill posted → payment scheduled → payment executed →
+    # workflow closed visible in our Box, even when payment execution
+    # is the customer's ERP/bank doing the work.
+    AWAITING_PAYMENT = "awaiting_payment"
+    PAYMENT_IN_FLIGHT = "payment_in_flight"
+    PAYMENT_EXECUTED = "payment_executed"
+    PAYMENT_FAILED = "payment_failed"
 
 
 VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
@@ -69,12 +79,52 @@ VALID_TRANSITIONS: Dict[APState, FrozenSet[APState]] = {
     APState.APPROVED: frozenset({APState.READY_TO_POST, APState.NEEDS_INFO, APState.CLOSED}),
     APState.REJECTED: frozenset({APState.CLOSED}),
     APState.READY_TO_POST: frozenset({APState.POSTED_TO_ERP, APState.FAILED_POST, APState.CLOSED}),
-    # posted_to_erp can either close directly (window expires without
-    # incident) or be reversed inside the override window.
-    APState.POSTED_TO_ERP: frozenset({APState.CLOSED, APState.REVERSED}),
+    # posted_to_erp can advance to AWAITING_PAYMENT (payment-tracking
+    # enabled — Wave 2 default), close directly (legacy / disabled
+    # path), or be reversed inside the override window.
+    APState.POSTED_TO_ERP: frozenset({
+        APState.AWAITING_PAYMENT, APState.CLOSED, APState.REVERSED,
+    }),
     APState.FAILED_POST: frozenset({APState.READY_TO_POST, APState.SNOOZED, APState.CLOSED}),
     # Snoozed can return to any pre-snooze state (stored in metadata).
     APState.SNOOZED: frozenset({APState.VALIDATED, APState.NEEDS_INFO, APState.NEEDS_APPROVAL, APState.FAILED_POST, APState.CLOSED}),
+    # Wave 2 / C1 — payment lifecycle.
+    # awaiting_payment: bill is posted, customer's ERP / payment-rail
+    # process owns the next move. We sit and listen for ERP webhooks
+    # OR a manual confirmation from the operator.
+    APState.AWAITING_PAYMENT: frozenset({
+        APState.PAYMENT_IN_FLIGHT,
+        # Some webhooks / manual confirmations skip the in-flight
+        # window (e.g. SAP B1 polling fires only on the cleared
+        # outgoing payment).
+        APState.PAYMENT_EXECUTED,
+        APState.PAYMENT_FAILED,
+        # Operator can override-close (cash sale, no-payment-needed,
+        # vendor wrote off the invoice). Audit captures the override.
+        APState.CLOSED,
+        APState.REVERSED,
+    }),
+    APState.PAYMENT_IN_FLIGHT: frozenset({
+        APState.PAYMENT_EXECUTED,
+        APState.PAYMENT_FAILED,
+        APState.REVERSED,
+    }),
+    APState.PAYMENT_EXECUTED: frozenset({
+        # After remittance advice is sent + bank-rec matched, the
+        # workflow closes. Reversed is allowed for clawback /
+        # vendor-disputed-after-payment cases (rare but the doc
+        # Stage 9 "post-payment dispute" path needs it).
+        APState.CLOSED,
+        APState.REVERSED,
+    }),
+    APState.PAYMENT_FAILED: frozenset({
+        # Operator decides: retry (back to awaiting), give up
+        # (reverse), or close without payment. Hard-recovery paths
+        # are explicit in the audit log.
+        APState.AWAITING_PAYMENT,
+        APState.REVERSED,
+        APState.CLOSED,
+    }),
     # Reversed is terminal. An item that was posted then reversed is a
     # distinct outcome from an item that was posted and successfully
     # paid out — they should not share the ``closed`` bucket. Keeping

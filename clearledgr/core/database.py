@@ -452,23 +452,33 @@ class _ClearledgrDBBase:
         from clearledgr.core.ap_states import VALID_STATE_VALUES
 
         states_list = ", ".join(f"'{s}'" for s in sorted(VALID_STATE_VALUES))
+        # CREATE OR REPLACE the function unconditionally so the embedded
+        # state list refreshes whenever the APState enum gains new
+        # entries. Wrapping the whole thing in `IF NOT EXISTS trigger`
+        # would freeze the function body to the first-ever install — a
+        # newly-added state (e.g. Wave 2's awaiting_payment) would be
+        # rejected on existing tenants until the trigger was manually
+        # dropped. Function-replace is safe + race-free.
         cur.execute(f"""
+            CREATE OR REPLACE FUNCTION clearledgr_check_ap_state()
+            RETURNS TRIGGER AS $t$
+            BEGIN
+                IF NEW.state NOT IN ({states_list}) THEN
+                    RAISE EXCEPTION 'Invalid AP item state: %', NEW.state;
+                END IF;
+                RETURN NEW;
+            END;
+            $t$ LANGUAGE plpgsql;
+        """)
+        # Trigger is idempotent — if it already exists, leave it.
+        # The function it references just got refreshed above.
+        cur.execute("""
             DO $$
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_trigger
                     WHERE tgname = 'enforce_valid_ap_state'
                 ) THEN
-                    CREATE OR REPLACE FUNCTION clearledgr_check_ap_state()
-                    RETURNS TRIGGER AS $t$
-                    BEGIN
-                        IF NEW.state NOT IN ({states_list}) THEN
-                            RAISE EXCEPTION 'Invalid AP item state: %', NEW.state;
-                        END IF;
-                        RETURN NEW;
-                    END;
-                    $t$ LANGUAGE plpgsql;
-
                     CREATE TRIGGER enforce_valid_ap_state
                     BEFORE INSERT OR UPDATE OF state ON ap_items
                     FOR EACH ROW
