@@ -418,6 +418,11 @@ class _ClearledgrDBBase:
             ("audit_events", "trg_audit_events_no_delete", "DELETE"),
             ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_update", "UPDATE"),
             ("ap_policy_audit_events", "trg_ap_policy_audit_events_no_delete", "DELETE"),
+            # Note: ``invoice_originals`` triggers are installed inside
+            # migration v57 itself, since the table doesn't exist at
+            # _initialize_ time. Trigger ownership stays with the
+            # migration that creates the table — see
+            # `_v57_invoice_originals` in migrations.py.
         )
         for table, trigger_name, operation in triggers:
             # CREATE OR REPLACE TRIGGER is atomic and race-free

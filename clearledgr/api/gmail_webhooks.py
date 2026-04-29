@@ -1457,14 +1457,47 @@ async def process_invoice_email(
                 )
                 
                 if attachment_bytes:
+                    # Wave 1 / A1 — SOX immutable archive. Persist
+                    # the raw bytes to invoice_originals before the
+                    # base64 / vision step. The hash is the durable
+                    # primary identifier; AP item linkage happens
+                    # after the workflow creates the AP item below.
+                    archived_hash: Optional[str] = None
+                    try:
+                        from clearledgr.services.invoice_archive import archive_pdf
+                        from clearledgr.core.database import get_db
+                        archived = archive_pdf(
+                            get_db(),
+                            organization_id=organization_id,
+                            content=attachment_bytes,
+                            content_type=content_type or "application/pdf",
+                            filename=attachment.get("filename") or attachment.get("name"),
+                            uploaded_by=user_id or "gmail_intake",
+                            source="gmail_intake",
+                        )
+                        archived_hash = archived.content_hash
+                    except Exception as archive_exc:
+                        # Archive failure is logged but does NOT block
+                        # the rest of the pipeline — operator + audit
+                        # team can re-archive on demand. The audit
+                        # trail will show the gap so it isn't silent.
+                        logger.warning(
+                            "[invoice_archive] failed to archive attachment %s for org=%s: %s",
+                            attachment.get("filename"), organization_id, archive_exc,
+                        )
+
                     # Convert bytes to base64 for Claude Vision
                     import base64
                     content_base64 = base64.b64encode(attachment_bytes).decode("utf-8")
-                    
+
                     attachments_with_content.append({
                         "filename": attachment.get("filename") or attachment.get("name"),
                         "content_type": content_type,
                         "content_base64": content_base64,
+                        # Carry the hash forward so the workflow can
+                        # link the eventual AP item to the archive row
+                        # without re-hashing the bytes.
+                        "content_hash": archived_hash,
                     })
                     logger.info(f"Fetched attachment for vision: {attachment.get('filename')}")
         except Exception as e:
@@ -1597,6 +1630,19 @@ async def process_invoice_email(
     # Combine all text for discount detection
     invoice_text = f"{message.subject}\n{message.snippet}\n{message.body_text or ''}"
     
+    # Wave 1 / A1 — pull the archived hash from the first attachment
+    # that carries one. ``attachments_with_content`` was populated by
+    # the loop above; the ``content_hash`` key only appears on rows
+    # where the SOX archive succeeded. We pick the first match —
+    # multi-attachment invoices link via list_originals_for_ap_item
+    # against the shared ap_item_id which is set after AP item
+    # creation.
+    archived_hash: Optional[str] = None
+    for entry in attachments_with_content:
+        if entry.get("content_hash"):
+            archived_hash = str(entry["content_hash"])
+            break
+
     # Build invoice data object
     invoice = InvoiceData(
         gmail_id=message.id,
@@ -1612,6 +1658,7 @@ async def process_invoice_email(
         organization_id=organization_id,
         invoice_text=invoice_text,  # For discount detection
         line_items=extraction.get("line_items") if isinstance(extraction.get("line_items"), list) else None,
+        attachment_content_hash=archived_hash,
     )
     
     if extracted_document_type != "invoice":

@@ -610,6 +610,8 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/extension/workflow/[^/]+$",
         r"^/extension/by-thread/[^/]+$",
         r"^/gmail/status/[^/]+$",
+        r"^/api/workspace/ap/items/[^/]+/originals$",
+        r"^/api/workspace/ap/items/originals/[a-f0-9]{64}$",
         r"^/api/workspace/audit/event/[^/]+$",
         r"^/api/workspace/audit/exports/[^/]+$",
         r"^/api/workspace/entities/[^/]+$",

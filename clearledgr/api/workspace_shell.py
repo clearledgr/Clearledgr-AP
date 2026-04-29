@@ -4606,3 +4606,113 @@ def get_effective_permissions_for_user(
             str(resolved.approval_ceiling) if resolved.approval_ceiling is not None else None
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Wave 1 / A1 — SOX immutable original-PDF storage download surface
+#
+# The intake path archives every attachment to ``invoice_originals`` with
+# trigger-enforced append-only semantics (see migration v57 +
+# database._install_audit_append_only_guards). Auditors and operators
+# need a tenant-scoped read path; this is it.
+#
+# Two endpoints:
+#   * GET /api/ap/items/{ap_item_id}/originals
+#       Lists every archived original linked to the AP item — used by
+#       the detail page to render a "View original" affordance.
+#   * GET /api/ap/items/originals/{content_hash}
+#       Streams the bytes back. Tenant-scoped (a hash from another
+#       org returns 404 — no existence leak).
+#
+# Audit emit on every download so an audit-trail-of-the-audit-trail
+# exists; SOC 2 controls expect this kind of access logging.
+# ---------------------------------------------------------------------------
+
+from clearledgr.services.invoice_archive import (  # noqa: E402
+    fetch_pdf as _fetch_archived_pdf,
+    list_originals_for_ap_item as _list_originals_for_ap_item,
+)
+
+
+@router.get("/ap/items/{ap_item_id}/originals")
+def list_ap_item_originals(
+    ap_item_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the archived originals linked to one AP item.
+
+    Tenant-scoped via ``_resolve_org_id``. The list excludes the
+    bytes themselves — clients fetch each via the
+    ``/originals/{content_hash}`` endpoint.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    rows = _list_originals_for_ap_item(
+        db, organization_id=org_id, ap_item_id=ap_item_id,
+    )
+    return {
+        "organization_id": org_id,
+        "ap_item_id": ap_item_id,
+        "originals": rows,
+        "count": len(rows),
+    }
+
+
+@router.get("/ap/items/originals/{content_hash}")
+def download_ap_item_original(
+    content_hash: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Stream the archived bytes back to an authorised client.
+
+    Tenant-scoped: a hash that exists in another tenant returns 404,
+    not 403, to avoid existence leaks across tenants.
+
+    Audit-emit ``invoice_original_downloaded`` so SOC 2 access
+    auditing has a trail. The audit row carries the requesting
+    user's email + the content hash + the AP item id (when the
+    archive is linked).
+    """
+    from fastapi.responses import Response
+
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    row = _fetch_archived_pdf(db, organization_id=org_id, content_hash=content_hash)
+    if not row:
+        raise HTTPException(status_code=404, detail="archive_not_found")
+
+    # Best-effort audit emit; the download itself succeeds even if
+    # the audit write hiccups.
+    try:
+        db.append_audit_event({
+            "event_type": "invoice_original_downloaded",
+            "actor_type": "user",
+            "actor_id": str(getattr(user, "user_id", "") or "unknown"),
+            "organization_id": org_id,
+            "box_id": row.get("ap_item_id") or content_hash,
+            "box_type": "ap_item" if row.get("ap_item_id") else "invoice_original",
+            "source": "workspace",
+            "payload_json": {
+                "actor_email": getattr(user, "email", None),
+                "content_hash": content_hash,
+                "filename": row.get("filename"),
+                "size_bytes": row.get("size_bytes"),
+            },
+        })
+    except Exception as exc:
+        logger.warning(
+            "[invoice_archive] download audit failed for org=%s hash=%s: %s",
+            org_id, content_hash[:16], exc,
+        )
+
+    filename = row.get("filename") or f"invoice-{content_hash[:12]}.pdf"
+    return Response(
+        content=row.get("content") or b"",
+        media_type=row.get("content_type") or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Hash": content_hash,
+        },
+    )

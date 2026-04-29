@@ -710,6 +710,13 @@ class FinanceAgentRuntime:
                 "invoice_number": invoice_number,
                 "due_date": due_date,
                 "attachment_url": attachment_url,
+                # Wave 1 / A1 — link to SOX-archived original PDF.
+                # The intake path archives the bytes before this AP
+                # item is created and threads the hash through the
+                # invoice payload; we persist it here so the audit
+                # chain lands on first INSERT rather than a follow-up
+                # update.
+                "attachment_content_hash": invoice.get("attachment_content_hash"),
                 "state": self._initial_state_for_document(invoice),
                 "document_type": str(invoice.get("document_type") or "invoice").strip().lower(),
                 "confidence": confidence,
@@ -725,6 +732,13 @@ class FinanceAgentRuntime:
             except Exception as exc:
                 logger.warning("[FinanceAgentRuntime] failed to seed AP item for invoice: %s", exc)
                 item = None
+            # Wave 1 / A1 — the AP item now carries the canonical link
+            # to the archived original via ``attachment_content_hash``.
+            # We do NOT back-fill ``invoice_originals.ap_item_id`` here:
+            # the archive table is append-only at the trigger level by
+            # design. The reverse lookup ("which originals belong to
+            # this AP item?") goes through the AP item's hash column,
+            # not the archive row's nullable ap_item_id column.
 
         if item and hasattr(self.db, "link_ap_item_source"):
             ap_item_id = str(item.get("id") or "").strip()

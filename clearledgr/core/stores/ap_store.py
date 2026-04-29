@@ -90,6 +90,11 @@ class APStore:
         "waiting_condition",
         "fraud_flags",
         "payment_reference",
+        # Wave 1 / A1 — link to the SOX-archived original-PDF row.
+        # Foreign reference to invoice_originals.content_hash; the
+        # archive table is append-only at the trigger level so the
+        # link is never invalidated by a mutation.
+        "attachment_content_hash",
     })
 
     # ------------------------------------------------------------------
@@ -176,10 +181,10 @@ class APStore:
              approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
              supersedes_ap_item_id, supersedes_invoice_key, superseded_by_ap_item_id, resubmission_reason, erp_reference,
              erp_posted_at, workflow_id, run_id, approval_surface, approval_policy_version, post_attempted_at,
-             last_error, po_number, attachment_url, exception_code, exception_severity,
+             last_error, po_number, attachment_url, attachment_content_hash, exception_code, exception_severity,
              organization_id, user_id, entity_id, created_at, updated_at, metadata, field_confidences, document_type,
              bank_details_encrypted)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         values = (
             item_id,
@@ -216,6 +221,7 @@ class APStore:
             payload.get("last_error"),
             payload.get("po_number"),
             payload.get("attachment_url"),
+            payload.get("attachment_content_hash"),
             payload.get("exception_code"),
             payload.get("exception_severity"),
             payload.get("organization_id"),

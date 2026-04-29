@@ -55,6 +55,12 @@ class InvoiceData:
     po_number: Optional[str] = None
     confidence: float = 0.0
     attachment_url: Optional[str] = None
+    # Wave 1 / A1 — content-addressed hash of the SOX-archived
+    # original PDF in invoice_originals. Set by the intake path
+    # before InvoiceData is constructed, propagated to the AP item
+    # row at create_ap_item time so the audit chain links from
+    # ``ap_items.attachment_content_hash`` to the immutable archive.
+    attachment_content_hash: Optional[str] = None
     organization_id: Optional[str] = None
     user_id: Optional[str] = None
     # Raw invoice text for discount detection

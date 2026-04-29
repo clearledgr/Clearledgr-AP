@@ -2814,3 +2814,114 @@ def _v55_team_invites_entity_restrictions(cur, db):
         )
     except Exception as exc:
         logger.warning("[Migration v55] column add skipped: %s", exc)
+
+
+@migration(
+    57,
+    "invoice_originals table — SOX-immutable original-PDF storage (Wave 1 A1)"
+)
+def _v57_invoice_originals(cur, db):
+    """Content-addressed storage for the original invoice file.
+
+    Per AP cycle reference doc Stage 1: 'For audit purposes, the
+    original invoice file must be retained immutably. Tampering with
+    the original is a SOX violation in scope and an audit finding in
+    any jurisdiction.'
+
+    Today: an AP item carries ``attachment_url`` pointing back to the
+    customer's Gmail. If the user revokes OAuth or Gmail enforces
+    retention, the original is unreachable and the audit chain breaks.
+
+    This table is the immutable archive:
+      * ``content_hash`` is SHA-256 of the file bytes — primary key
+        AND deduplicator (same PDF arriving twice → one row).
+      * ``content`` is BYTEA. Postgres handles up to 1GB; AP invoices
+        are <10MB in practice. When the operator wants S3 they swap
+        the storage backend in ``invoice_archive.py`` without an
+        API change.
+      * Triggers reject UPDATE + DELETE (registered in
+        ``database._install_audit_append_only_guards``). Hard delete
+        is reserved for the retention reaper after
+        ``retention_until``.
+      * ``retention_until`` defaults to 7 years post-upload (SOX).
+        Per-tenant override via ``settings_json["retention_years"]``
+        is read at archive time.
+
+    Indexed for the read paths the dashboard actually uses:
+      * (organization_id, content_hash) — the typical fetch
+      * (organization_id, ap_item_id) — list originals for an item
+      * (retention_until) WHERE retention_until < now — reaper scan
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS invoice_originals (
+            content_hash TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            ap_item_id TEXT,
+            content BYTEA NOT NULL,
+            content_type TEXT NOT NULL,
+            filename TEXT,
+            size_bytes INTEGER NOT NULL,
+            uploaded_at TEXT NOT NULL,
+            uploaded_by TEXT,
+            retention_until TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'gmail_intake',
+            PRIMARY KEY (organization_id, content_hash)
+        )
+        """
+    )
+    for ddl in (
+        # Per-AP-item lookup so the detail page can list every original
+        # archived against this AP item (an item can have multiple
+        # attachments — invoice + supporting docs).
+        "CREATE INDEX IF NOT EXISTS idx_invoice_originals_org_item "
+        "ON invoice_originals(organization_id, ap_item_id) "
+        "WHERE ap_item_id IS NOT NULL",
+        # Retention reaper scan — partial index keeps the hot scan
+        # cheap when the table grows past a few million rows.
+        "CREATE INDEX IF NOT EXISTS idx_invoice_originals_retention "
+        "ON invoice_originals(retention_until) "
+        "WHERE retention_until IS NOT NULL",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v57] index skipped: %s", exc)
+
+    # Link from AP items to the archived original. Nullable for
+    # legacy items (we only archive going forward, no backfill in
+    # this migration; a separate one-shot script can backfill from
+    # Gmail for existing items if the operator wants).
+    try:
+        cur.execute(
+            "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS "
+            "attachment_content_hash TEXT"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Migration v57] attachment_content_hash column skipped: %s", exc,
+        )
+
+    # Trigger ownership: the SOX-immutable invoice_originals table
+    # is append-only. Same plpgsql function as audit_events; we just
+    # wire two more triggers against it. This must run AFTER the
+    # CREATE TABLE above — that's why the trigger lives in this
+    # migration rather than in `_install_audit_append_only_guards`
+    # (which runs before migrations on first init).
+    for trigger_name, operation in (
+        ("trg_invoice_originals_no_update", "UPDATE"),
+        ("trg_invoice_originals_no_delete", "DELETE"),
+    ):
+        try:
+            cur.execute(
+                f"""
+                CREATE OR REPLACE TRIGGER {trigger_name}
+                BEFORE {operation} ON invoice_originals
+                FOR EACH ROW
+                EXECUTE FUNCTION clearledgr_prevent_append_only_mutation()
+                """
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Migration v57] %s trigger skipped: %s", trigger_name, exc,
+            )
