@@ -3992,3 +3992,59 @@ async def update_erp_field_mappings(
         "erp_type": erp_key,
         "mappings": cleaned,
     }
+
+
+# ---------------------------------------------------------------------------
+# Module 5 Pass B — Connection health.
+#
+# Per scope §Module 5 acceptance: "Connection errors surface to leader
+# within 10 minutes of detection." This endpoint is the dashboard's
+# read surface for that — derived state from the existing audit-event
+# stream + organization_integrations + webhook_deliveries. No new
+# persistence layer.
+# ---------------------------------------------------------------------------
+
+from clearledgr.services.connection_health import (  # noqa: E402
+    build_connection_health as _build_connection_health,
+)
+
+
+@router.get("/connections/health")
+def get_connection_health(
+    organization_id: Optional[str] = Query(default=None),
+    window_hours: int = Query(default=24, ge=1, le=168),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return per-integration health summary for the dashboard.
+
+    Response shape::
+
+        {
+          "organization_id": "org_xyz",
+          "window_hours": 24,
+          "computed_at": "2026-04-29T...",
+          "integrations": [
+            {
+              "integration_type": "gmail",
+              "label": "Gmail",
+              "status": "healthy" | "degraded" | "down" | "not_configured",
+              "raw_status": "connected",
+              "last_sync_at": "2026-04-29T...",
+              "events_24h": 142,
+              "errors_24h": 0,
+              "latest_event_at": "...",
+              "latest_error": null | {"ts", "event_type", "message"}
+            },
+            ...
+          ],
+          "webhooks": {"delivered": 4, "failed": 0, "retrying": 0}
+        }
+
+    Window is configurable (1-168 hours). Default 24h matches the
+    "errors surface in 10 minutes" target — narrower windows would
+    miss intermittent failures that cleared up; wider windows would
+    let stale events linger past their relevance.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    return _build_connection_health(db, org_id, window_hours=int(window_hours))

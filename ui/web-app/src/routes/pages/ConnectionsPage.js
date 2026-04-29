@@ -2,9 +2,9 @@
  * Connections Page — occasional setup surface for AP blockers.
  */
 import { h } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useCallback } from 'preact/hooks';
 import htm from 'htm';
-import { hasCapability, integrationByName, humanizeStatus, humanizeMode, useAction } from '../route-helpers.js';
+import { hasCapability, integrationByName, humanizeStatus, humanizeMode, useAction, fmtDateTime } from '../route-helpers.js';
 
 const html = htm.bind(h);
 const ERP_OPTIONS = [
@@ -159,6 +159,8 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
 
     <div class="secondary-shell">
       <div class="secondary-main">
+        <${ConnectionHealthPanel} api=${api} orgId=${orgId} />
+
         <div class="panel">
           <h3 style="margin-top:0">Workspace connections</h3>
           <p class="muted" style="margin:0 0 14px">Keep Gmail, approvals, and ERP ready. If one of these drops, work eventually stalls.</p>
@@ -747,6 +749,195 @@ function FieldMappingPanel({ api, orgId, erpType, erpConnected, canManage, toast
           </div>
         `}
       ` : null}
+    </div>
+  `;
+}
+
+
+// ─── Module 5 Pass B — Connection health panel ───────────────────────
+// Lives at the top of secondary-main on the Connections page so a
+// leader landing here gets the live signal first, before the static
+// connect/disconnect rows below.
+//
+// Backed by:
+//   GET /api/workspace/connections/health?organization_id=&window_hours=
+//
+// Auto-refreshes every 30s. The 30s cadence is a tradeoff between
+// "leader sees breakage in 10 min" (the scope's acceptance criterion)
+// and not hammering the api endpoint for an open tab.
+function ConnectionHealthPanel({ api, orgId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [windowHours, setWindowHours] = useState(24);
+  const [expandedKey, setExpandedKey] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!api || !orgId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('organization_id', orgId);
+      params.set('window_hours', String(windowHours));
+      const resp = await api(`/api/workspace/connections/health?${params.toString()}`);
+      setData(resp);
+    } catch (exc) {
+      setError(String(exc?.message || exc));
+    } finally {
+      setLoading(false);
+    }
+  }, [api, orgId, windowHours]);
+
+  // Auto-refresh loop. Cleans up on unmount + on window-hours change
+  // (the new request fires immediately via the load() in the deps).
+  useEffect(() => {
+    let cancelled = false;
+    load();
+    const id = setInterval(() => {
+      if (!cancelled) load();
+    }, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [load]);
+
+  const integrations = data?.integrations || [];
+  const webhooks = data?.webhooks || { delivered: 0, failed: 0, retrying: 0 };
+  const computedAt = data?.computed_at;
+
+  // Derive the rollup status — the worst per-integration status
+  // wins so the panel header tells the leader the overall picture
+  // without making them scan every tile.
+  const rollup = (() => {
+    if (integrations.some((i) => i.status === 'down')) return 'down';
+    if (integrations.some((i) => i.status === 'degraded')) return 'degraded';
+    if (integrations.some((i) => i.status === 'healthy')) return 'healthy';
+    return 'not_configured';
+  })();
+
+  return html`
+    <div class="panel cl-conn-health-panel">
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin:0">Connection health</h3>
+          <p class="muted" style="margin:4px 0 0;font-size:12px">
+            Live signal from the agent's audit log. Refreshes every 30 seconds.
+            ${computedAt ? html` Last update <span class="cl-conn-health-ts">${fmtDateTime(computedAt)}</span>.` : null}
+          </p>
+        </div>
+        <div class="cl-conn-health-controls">
+          <span class=${`cl-conn-health-chip cl-conn-health-${rollup}`}>
+            ${rollup === 'down' ? 'Action needed'
+              : rollup === 'degraded' ? 'Investigating'
+              : rollup === 'healthy' ? 'All systems go'
+              : 'Not configured'}
+          </span>
+          <select
+            value=${windowHours}
+            onChange=${(e) => setWindowHours(parseInt(e.target.value, 10))}
+            disabled=${loading}>
+            <option value="1">Last 1h</option>
+            <option value="24">Last 24h</option>
+            <option value="72">Last 72h</option>
+            <option value="168">Last 7d</option>
+          </select>
+          <button
+            class="btn-ghost btn-sm"
+            onClick=${load}
+            disabled=${loading}>
+            ${loading ? '…' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      ${error ? html`<div class="form-error" style="margin-top:8px">${error}</div>` : null}
+
+      ${integrations.length > 0 ? html`
+        <div class="cl-conn-health-grid">
+          ${integrations.map((row) => {
+            const expanded = expandedKey === row.integration_type;
+            const hasError = !!row.latest_error;
+            return html`
+              <div
+                class=${`cl-conn-health-tile cl-conn-health-${row.status}`}
+                key=${row.integration_type}>
+                <div class="cl-conn-health-tile-head">
+                  <div class="cl-conn-health-tile-meta">
+                    <strong>${row.label}</strong>
+                    <span class=${`cl-conn-health-chip cl-conn-health-${row.status}`}>
+                      ${row.status === 'healthy' ? 'Healthy'
+                        : row.status === 'degraded' ? 'Degraded'
+                        : row.status === 'down' ? 'Down'
+                        : 'Not configured'}
+                    </span>
+                  </div>
+                  ${hasError ? html`
+                    <button
+                      class="btn-ghost btn-sm"
+                      onClick=${() => setExpandedKey(expanded ? null : row.integration_type)}>
+                      ${expanded ? 'Hide error' : 'View error'}
+                    </button>
+                  ` : null}
+                </div>
+                <div class="cl-conn-health-tile-stats">
+                  <div>
+                    <span class="muted">Last sync</span>
+                    <span>${row.last_sync_at ? fmtDateTime(row.last_sync_at) : '—'}</span>
+                  </div>
+                  <div>
+                    <span class="muted">Events</span>
+                    <span>${row.events_24h.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span class="muted">Errors</span>
+                    <span class=${row.errors_24h > 0 ? 'cl-conn-health-errors' : ''}>
+                      ${row.errors_24h.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                ${expanded && hasError ? html`
+                  <div class="cl-conn-health-error-detail">
+                    <div class="cl-conn-health-error-head">
+                      <code>${row.latest_error.event_type}</code>
+                      <span class="muted">${fmtDateTime(row.latest_error.ts)}</span>
+                    </div>
+                    ${row.latest_error.message ? html`
+                      <div class="cl-conn-health-error-msg">${row.latest_error.message}</div>
+                    ` : null}
+                  </div>
+                ` : null}
+              </div>`;
+          })}
+
+          <div class="cl-conn-health-tile cl-conn-health-webhooks">
+            <div class="cl-conn-health-tile-head">
+              <div class="cl-conn-health-tile-meta">
+                <strong>Outgoing webhooks</strong>
+                <span class=${`cl-conn-health-chip ${webhooks.failed > 0 ? 'cl-conn-health-degraded' : 'cl-conn-health-healthy'}`}>
+                  ${webhooks.failed > 0 ? 'Failures' : 'OK'}
+                </span>
+              </div>
+            </div>
+            <div class="cl-conn-health-tile-stats">
+              <div>
+                <span class="muted">Delivered</span>
+                <span>${webhooks.delivered.toLocaleString()}</span>
+              </div>
+              <div>
+                <span class="muted">Retrying</span>
+                <span>${webhooks.retrying.toLocaleString()}</span>
+              </div>
+              <div>
+                <span class="muted">Failed</span>
+                <span class=${webhooks.failed > 0 ? 'cl-conn-health-errors' : ''}>
+                  ${webhooks.failed.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ` : (loading ? null : html`
+        <div class="muted" style="padding:12px 0">No integrations to summarise yet.</div>
+      `)}
     </div>
   `;
 }

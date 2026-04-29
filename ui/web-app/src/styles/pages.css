@@ -1382,3 +1382,188 @@
     gap: 6px;
   }
 }
+
+/* ─── Module 5 Pass B — Connection health panel ────────────────────────
+ * Sits at the top of secondary-main on the Connections page. Per-
+ * integration tile grid (gmail/slack/teams/erp + a webhooks tile).
+ * Status colors are the single source of truth — chip + tile border
+ * + tile bg all derive from the same .cl-conn-health-{status} class.
+ * ─────────────────────────────────────────────────────────────────── */
+
+.cl-conn-health-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cl-conn-health-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-conn-health-controls select {
+  padding: 4px 8px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  font-size: 12px;
+  background: white;
+}
+
+.cl-conn-health-ts {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 11px;
+}
+
+.cl-conn-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.cl-conn-health-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--cl-radius-sm, 6px);
+  border: 1px solid var(--cl-border, #e5e7eb);
+  background: white;
+}
+
+.cl-conn-health-tile-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cl-conn-health-tile-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cl-conn-health-tile-meta strong {
+  font-size: 13px;
+  color: var(--cl-ink-primary, #111);
+}
+
+.cl-conn-health-tile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  font-size: 12px;
+}
+
+.cl-conn-health-tile-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cl-conn-health-tile-stats .muted {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted, #666);
+}
+
+.cl-conn-health-errors {
+  color: #991b1b;
+  font-weight: 600;
+}
+
+.cl-conn-health-error-detail {
+  border-top: 1px dashed var(--cl-border, #e5e7eb);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.cl-conn-health-error-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cl-conn-health-error-head code {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 11px;
+  background: var(--cl-bg-subtle, #f4f4f4);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.cl-conn-health-error-msg {
+  color: #991b1b;
+  word-break: break-word;
+  background: #fef2f2;
+  border-radius: var(--cl-radius-sm, 6px);
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.cl-conn-health-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--cl-bg-subtle, #f4f4f4);
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-conn-health-healthy.cl-conn-health-chip,
+.cl-conn-health-tile.cl-conn-health-healthy {
+  background: rgba(0, 214, 126, 0.10);
+  color: #0a663e;
+  border-color: rgba(0, 214, 126, 0.35);
+}
+
+.cl-conn-health-degraded.cl-conn-health-chip,
+.cl-conn-health-tile.cl-conn-health-degraded {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.cl-conn-health-down.cl-conn-health-chip,
+.cl-conn-health-tile.cl-conn-health-down {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.cl-conn-health-not_configured.cl-conn-health-chip,
+.cl-conn-health-tile.cl-conn-health-not_configured {
+  background: var(--cl-bg-subtle, #f4f4f4);
+  color: var(--cl-ink-muted, #666);
+}
+
+/* The tile body keeps the white background even when the wrapper
+ * borders pick up the status color, otherwise red/green tiles look
+ * alarmingly intense. Re-apply white inside the tile content. */
+.cl-conn-health-tile.cl-conn-health-down,
+.cl-conn-health-tile.cl-conn-health-degraded,
+.cl-conn-health-tile.cl-conn-health-healthy {
+  background: white;
+}
+
+.cl-conn-health-webhooks {
+  /* Distinguished from integration tiles by a subtle dashed border. */
+  border-style: dashed;
+}
+
+@media (max-width: 720px) {
+  .cl-conn-health-tile-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+}

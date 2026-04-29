@@ -399,6 +399,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/audit/export",
     "/api/workspace/audit/search",
     "/api/workspace/bootstrap",
+    "/api/workspace/connections/health",
     "/api/workspace/dashboard",
     "/api/workspace/entities",
     "/api/workspace/erp/field-mappings",

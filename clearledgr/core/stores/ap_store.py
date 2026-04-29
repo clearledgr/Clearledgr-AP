@@ -2230,6 +2230,158 @@ class APStore:
         return int(deleted)
 
     # ------------------------------------------------------------------
+    # Connection health (Module 5 Pass B)
+    # ------------------------------------------------------------------
+    #
+    # Derived view over the existing audit_events + webhook_deliveries
+    # tables. No new persistence — health is a function of recent
+    # observations. The derivation classifies every audit event by
+    # which integration kind it belongs to (gmail/slack/teams/erp)
+    # using source + event_type heuristics, then aggregates counts
+    # over a configurable window (default 24h).
+
+    def get_connection_health_aggregates(
+        self,
+        *,
+        organization_id: str,
+        window_hours: int = 24,
+    ) -> Dict[str, Any]:
+        """Return per-integration audit-event aggregates for the window.
+
+        Output shape::
+
+            {
+              "window_hours": 24,
+              "by_kind": {
+                "gmail":  {"events": 142, "errors": 0,  "latest_event_at": "..."},
+                "slack":  {"events": 14,  "errors": 0,  "latest_event_at": "..."},
+                "teams":  {"events": 0,   "errors": 0,  "latest_event_at": null},
+                "erp":    {"events": 12,  "errors": 1,  "latest_event_at": "..."},
+              },
+              "latest_error_by_kind": {
+                "erp": {"ts": "...", "event_type": "erp_post_failed",
+                        "payload_json": {...}}
+              },
+              "webhooks": {"delivered": 4, "failed": 0, "retrying": 0}
+            }
+
+        The classifier is deliberately permissive — anything that doesn't
+        match a known integration prefix lands in "other" and is dropped
+        from the response. This avoids a Module-7-renamed-it-tomorrow
+        regression silently zeroing out gmail counts.
+        """
+        self.initialize()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=int(window_hours))).isoformat()
+
+        # Single CASE expression so PG can use the index on (organization_id, ts).
+        # event_type LIKE patterns expanded explicitly so the tier of which-kind
+        # is auditable from the SQL alone — no Python pre/post-processing.
+        # Note: psycopg3 requires literal `%` to be doubled in any query that
+        # also carries `%s` placeholders, otherwise the parser tries to read
+        # the `%` as the start of a placeholder name.
+        kind_expr = (
+            "CASE "
+            "  WHEN source LIKE 'gmail%%' OR event_type LIKE 'gmail\\_%%' ESCAPE '\\' THEN 'gmail' "
+            "  WHEN source LIKE 'slack%%' OR event_type LIKE 'slack\\_%%' ESCAPE '\\' THEN 'slack' "
+            "  WHEN source LIKE 'teams%%' OR event_type LIKE 'teams\\_%%' ESCAPE '\\' THEN 'teams' "
+            "  WHEN event_type LIKE 'erp\\_%%' ESCAPE '\\' OR source LIKE 'erp\\_%%' ESCAPE '\\' THEN 'erp' "
+            "  ELSE 'other' "
+            "END"
+        )
+
+        aggregate_sql = (
+            f"SELECT {kind_expr} AS kind, "
+            "       COUNT(*) AS events, "
+            "       COUNT(*) FILTER ("
+            "          WHERE event_type LIKE '%%failed%%' OR event_type LIKE '%%error%%'"
+            "       ) AS errors, "
+            "       MAX(ts) AS latest_event_at "
+            "FROM audit_events "
+            "WHERE organization_id = %s AND ts >= %s "
+            "GROUP BY kind"
+        )
+
+        # Latest-error per kind via DISTINCT ON. Only events where
+        # event_type itself signals failure count — we want the actual
+        # error row, not the latest event of any sort.
+        latest_error_sql = (
+            f"SELECT DISTINCT ON (kind_col) "
+            f"       {kind_expr} AS kind_col, "
+            "        ts, event_type, source, payload_json "
+            "FROM audit_events "
+            "WHERE organization_id = %s AND ts >= %s "
+            "  AND (event_type LIKE '%%failed%%' OR event_type LIKE '%%error%%') "
+            f"ORDER BY kind_col, ts DESC"
+        )
+
+        webhook_sql = (
+            "SELECT status, COUNT(*) AS n "
+            "FROM webhook_deliveries "
+            "WHERE organization_id = %s AND attempted_at >= %s "
+            "GROUP BY status"
+        )
+
+        by_kind: Dict[str, Dict[str, Any]] = {
+            k: {"events": 0, "errors": 0, "latest_event_at": None}
+            for k in ("gmail", "slack", "teams", "erp")
+        }
+        latest_error_by_kind: Dict[str, Dict[str, Any]] = {}
+        webhooks = {"delivered": 0, "failed": 0, "retrying": 0}
+
+        with self.connect() as conn:
+            cur = conn.cursor()
+
+            cur.execute(aggregate_sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                rd = dict(row)
+                kind = str(rd.get("kind") or "other")
+                if kind == "other":
+                    continue
+                by_kind[kind] = {
+                    "events": int(rd.get("events") or 0),
+                    "errors": int(rd.get("errors") or 0),
+                    "latest_event_at": rd.get("latest_event_at"),
+                }
+
+            cur.execute(latest_error_sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                rd = dict(row)
+                kind = str(rd.get("kind_col") or "other")
+                if kind == "other":
+                    continue
+                payload = rd.get("payload_json")
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = None
+                latest_error_by_kind[kind] = {
+                    "ts": rd.get("ts"),
+                    "event_type": rd.get("event_type"),
+                    "source": rd.get("source"),
+                    "payload_json": payload,
+                }
+
+            cur.execute(webhook_sql, (organization_id, cutoff))
+            for row in cur.fetchall():
+                rd = dict(row)
+                status = str(rd.get("status") or "").lower()
+                if status == "success":
+                    webhooks["delivered"] = int(rd.get("n") or 0)
+                elif status == "failed":
+                    webhooks["failed"] = int(rd.get("n") or 0)
+                elif status == "retrying":
+                    webhooks["retrying"] = int(rd.get("n") or 0)
+
+        return {
+            "window_hours": int(window_hours),
+            "by_kind": by_kind,
+            "latest_error_by_kind": latest_error_by_kind,
+            "webhooks": webhooks,
+        }
+        return int(deleted)
+
+    # ------------------------------------------------------------------
     # Webhook delivery log (Module 7 v1 Pass 3)
     # ------------------------------------------------------------------
 
