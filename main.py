@@ -1395,6 +1395,12 @@ from clearledgr.api.threshold_policy import (
 )
 app.include_router(threshold_policy_router)
 
+# Wave 5 / G5: accrual JE for received-not-billed
+from clearledgr.api.accrual_journal_entry import (
+    router as accrual_je_router,
+)
+app.include_router(accrual_je_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
