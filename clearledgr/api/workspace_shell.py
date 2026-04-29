@@ -898,6 +898,13 @@ class TeamInviteCreateRequest(BaseModel):
     email: EmailStr
     role: str = Field(default="member", pattern="^(admin|member|viewer|user)$")
     expires_in_days: int = Field(default=7, ge=1, le=30)
+    # Module 6 Pass D — optional restriction to specific legal entities.
+    # On invite accept the auth handler writes one user_entity_roles
+    # row per entity_id, so the user lands scoped from day one. Empty
+    # list / omitted = no restriction (org-wide access).
+    entity_restrictions: Optional[List[str]] = Field(
+        default=None, max_length=64,
+    )
 
 
 class ERPConnectStartRequest(BaseModel):
@@ -3360,6 +3367,7 @@ def create_team_invite(
         role=request.role,
         created_by=user.user_id,
         expires_at=expires_at,
+        entity_restrictions=request.entity_restrictions,
     )
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
     invite_link = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"

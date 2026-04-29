@@ -494,28 +494,32 @@ async def delete_user(
     if not user_data or user_data["organization_id"] != requesting_user.organization_id:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # §5.4 Archived Users: soft delete with attribution
+    # Module 6 Pass D — soft-delete + cross-surface revocation +
+    # single audit event with the per-step revocation summary.
+    # Per scope §Module 6 acceptance: "remove access within 30 seconds
+    # across all surfaces". The synchronous DB steps (archive, slack
+    # mapping clear, webhook deactivation, entity-role clear) all
+    # complete inside this handler; the Google OAuth remote revoke
+    # is best-effort with a 5s timeout so the response never stalls.
+    from clearledgr.services.user_offboarding import offboard_user
     actor_email = getattr(current_user, "email", None) or current_user.user_id
-    db.delete_user(user_id, archived_by=actor_email)
+    result = offboard_user(
+        db,
+        user_id=user_id,
+        organization_id=requesting_user.organization_id,
+        actor_email=actor_email,
+    )
 
-    # Audit event
-    try:
-        db.append_audit_event({
-            "event_type": "user_archived",
-            "actor_type": "user",
-            "actor_id": actor_email,
-            "organization_id": requesting_user.organization_id,
-            "source": "auth_api",
-            "payload_json": {
-                "archived_user_id": user_id,
-                "archived_user_email": user_data.get("email"),
-                "archived_by": actor_email,
-            },
-        })
-    except Exception:
-        pass
-
-    return {"message": "User archived", "user_id": user_id}
+    return {
+        "message": "User archived",
+        "user_id": user_id,
+        "revocation": {
+            "user_archived": result.user_archived,
+            "gmail_revoked": result.gmail_revoked,
+            "slack_revoked": result.slack_revoked,
+            "entity_roles_cleared": result.entity_roles_cleared,
+        },
+    }
 
 
 @router.post("/users/{user_id}/role", response_model=User)
@@ -1188,6 +1192,48 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
         raise HTTPException(status_code=500, detail="invite_accept_failed")
 
     db.accept_team_invite(str(invite.get("id")), accepted_by=user.id)
+
+    # Module 6 Pass D — materialize per-entity scope on accept.
+    # The invite carries an optional entity_restrictions list; for
+    # each entry we create a user_entity_roles row so the new user
+    # is scoped to those entities from their first session. Best-
+    # effort — failures don't roll back the invite acceptance, but
+    # we audit so admins can re-apply if needed.
+    entity_restrictions = invite.get("entity_restrictions") or []
+    if entity_restrictions and hasattr(db, "set_user_entity_role"):
+        applied: list = []
+        for entity_id in entity_restrictions:
+            try:
+                db.set_user_entity_role(
+                    user_id=user.id,
+                    entity_id=str(entity_id),
+                    organization_id=organization_id,
+                    role=role,
+                )
+                applied.append(entity_id)
+            except Exception as exc:
+                logger.warning(
+                    "[invite_accept] could not apply entity restriction %s for user %s: %s",
+                    entity_id, user.id, exc,
+                )
+        try:
+            db.append_audit_event({
+                "event_type": "user_entity_role_replaced",
+                "actor_type": "user",
+                "actor_id": user.id,
+                "organization_id": organization_id,
+                "box_id": user.id,
+                "box_type": "user",
+                "source": "invite_accept",
+                "payload_json": {
+                    "trigger": "invite_accept",
+                    "entity_restrictions": entity_restrictions,
+                    "applied": applied,
+                },
+            })
+        except Exception:
+            pass
+
     access = create_access_token(user.id, user.email, user.organization_id, user.role)
     _set_workspace_session_cookies(response, access)
     return {

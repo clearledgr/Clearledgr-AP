@@ -969,19 +969,33 @@ class AuthStore:
         role: str,
         created_by: str,
         expires_at: Optional[str],
+        entity_restrictions: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        """Create a pending invite.
+
+        Module 6 Pass D — ``entity_restrictions`` (optional list of
+        entity_ids) gets persisted as a JSON column. On invite accept
+        the auth handler reads this and writes one user_entity_roles
+        row per entity, scoping the new user from day one.
+        """
         self.initialize()
+        import json as _json
         import uuid
         import secrets
 
         now = datetime.now(timezone.utc).isoformat()
         invite_id = f"INV-{uuid.uuid4().hex}"
         token = secrets.token_urlsafe(32)
+        entity_restrictions_json = (
+            _json.dumps(list(entity_restrictions))
+            if entity_restrictions else None
+        )
         sql = (
             """
             INSERT INTO team_invites
-            (id, organization_id, email, role, token, status, expires_at, created_by, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s)
+            (id, organization_id, email, role, token, status, expires_at,
+             created_by, entity_restrictions_json, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -996,6 +1010,7 @@ class AuthStore:
                     token,
                     expires_at,
                     created_by,
+                    entity_restrictions_json,
                     now,
                     now,
                 ),
@@ -1012,7 +1027,29 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))
             rows = cur.fetchall()
-        return [dict(row) for row in rows]
+        return [d for d in (self._decode_invite_row(r) for r in rows) if d is not None]
+
+    def _decode_invite_row(self, row) -> Optional[Dict[str, Any]]:
+        """Convert a DB row into the public invite dict, decoding any
+        entity_restrictions_json column to a real list."""
+        if row is None:
+            return None
+        out = dict(row)
+        raw = out.pop("entity_restrictions_json", None)
+        entity_restrictions: List[str] = []
+        if raw:
+            try:
+                import json as _json
+                if isinstance(raw, str):
+                    parsed = _json.loads(raw)
+                else:
+                    parsed = raw
+                if isinstance(parsed, list):
+                    entity_restrictions = [str(v) for v in parsed if v]
+            except Exception:
+                entity_restrictions = []
+        out["entity_restrictions"] = entity_restrictions
+        return out
 
     def get_team_invite(self, invite_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -1021,7 +1058,7 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (invite_id,))
             row = cur.fetchone()
-        return dict(row) if row else None
+        return self._decode_invite_row(row)
 
     def get_team_invite_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         self.initialize()
@@ -1030,7 +1067,7 @@ class AuthStore:
             cur = conn.cursor()
             cur.execute(sql, (token,))
             row = cur.fetchone()
-        return dict(row) if row else None
+        return self._decode_invite_row(row)
 
     def revoke_team_invite(self, invite_id: str) -> bool:
         self.initialize()

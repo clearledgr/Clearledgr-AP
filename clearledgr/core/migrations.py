@@ -2737,3 +2737,28 @@ def _v54_user_entity_roles(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v54] index skipped: %s", exc)
+
+
+@migration(
+    55,
+    "team_invites: entity_restrictions_json column for entity-scoped invites (Module 6 Pass D)"
+)
+def _v55_team_invites_entity_restrictions(cur, db):
+    """Per scope §Module 6 §219: 'optional restriction to specific
+    entities or workflows'. The invite carries a JSON array of
+    entity_ids; on accept, the workspace creates a user_entity_roles
+    row for each, scoping the user from day one rather than relying on
+    a follow-up admin pass.
+
+    The column is nullable (existing tenants don't need backfill —
+    NULL = "no restriction"), and we don't index on it because reads
+    are always by invite id / token (the existing primary key + token
+    indexes serve them).
+    """
+    try:
+        cur.execute(
+            "ALTER TABLE team_invites ADD COLUMN IF NOT EXISTS "
+            "entity_restrictions_json TEXT"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v55] column add skipped: %s", exc)

@@ -130,11 +130,26 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
       toast?.('Enter an email before sending the invite.', 'error');
       return;
     }
+    // Module 6 Pass D — optional per-entity scope. The
+    // <select multiple> below collects entity_ids the admin wants
+    // to scope the invitee to. Empty selection = workspace-wide
+    // access, which matches the legacy behaviour.
+    const entitySelect = document.getElementById('cl-invite-entities');
+    const entityRestrictions = entitySelect
+      ? Array.from(entitySelect.selectedOptions).map((o) => o.value).filter(Boolean)
+      : [];
+    const body = { organization_id: orgId, email, role };
+    if (entityRestrictions.length > 0) {
+      body.entity_restrictions = entityRestrictions;
+    }
     await api('/api/workspace/team/invites', {
       method: 'POST',
-      body: JSON.stringify({ organization_id: orgId, email, role }),
+      body: JSON.stringify(body),
     });
-    toast?.(`Invite sent to ${email}.`, 'success');
+    const scope = entityRestrictions.length > 0
+      ? ` (scoped to ${entityRestrictions.length} entit${entityRestrictions.length === 1 ? 'y' : 'ies'})`
+      : '';
+    toast?.(`Invite sent to ${email}${scope}.`, 'success');
     onRefresh?.();
   });
 
@@ -741,6 +756,10 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                 <option value="read_only">Read Only</option>
               </select>
             </div>
+            <${InviteEntityScope}
+              api=${api}
+              orgId=${orgId}
+              canManage=${canManageTeam} />
             <div class="row-actions" style="justify-content:flex-start;margin-top:14px">
               <button class="btn-primary" onClick=${createInvite} disabled=${!canManageTeam || creatingInvite}>
                 ${creatingInvite ? 'Sending…' : 'Send invite'}
@@ -1238,6 +1257,52 @@ function CustomRoleEditor({ permissionEntries, mode, initial, onCancel, onSubmit
     </form>
   `;
 }
+
+
+// ─── Module 6 Pass D — Invite entity scope picker ────────────────────
+// Sits below the email/role inputs. Multi-select of legal entities;
+// empty selection = workspace-wide invite (legacy behaviour). Loaded
+// from /api/workspace/entities on mount; hidden when the workspace
+// has zero entities (single-entity tenants don't need this).
+function InviteEntityScope({ api, orgId, canManage }) {
+  const [entities, setEntities] = useState([]);
+  useEffect(() => {
+    if (!api || !orgId) return;
+    let cancelled = false;
+    api(`/api/workspace/entities?organization_id=${encodeURIComponent(orgId)}`)
+      .then((resp) => {
+        if (cancelled) return;
+        const list = Array.isArray(resp?.entities) ? resp.entities : [];
+        setEntities(list);
+      })
+      .catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, [api, orgId]);
+
+  if (entities.length === 0) return null;
+
+  return html`
+    <div style="margin-top:12px">
+      <label class="cl-field-label" for="cl-invite-entities">
+        Entity scope (optional — hold ⌘ / Ctrl to multi-select)
+      </label>
+      <select
+        id="cl-invite-entities"
+        multiple
+        disabled=${!canManage}
+        size=${Math.min(Math.max(entities.length, 3), 6)}
+        style="width:100%">
+        ${entities.map((e) => html`
+          <option key=${e.id} value=${e.id}>${e.name} ${e.code ? html`(${e.code})` : null}</option>
+        `)}
+      </select>
+      <div class="muted" style="font-size:11px;margin-top:4px">
+        Leave empty for workspace-wide access. Selected entities will get a per-entity role override on first login.
+      </div>
+    </div>
+  `;
+}
+
 
 
 // ─── Module 6 Pass B — Per-entity role assignments ────────────────────
