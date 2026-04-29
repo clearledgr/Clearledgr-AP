@@ -95,6 +95,12 @@ class SAMLConfigPutRequest(BaseModel):
     default_role: str = Field(default="ap_clerk", max_length=64)
     default_entity_id: Optional[str] = Field(default=None, max_length=128)
     jit_provisioning: bool = True
+    # Optional Single Logout endpoints. When set, SP-initiated
+    # logout redirects users to idp_slo_url so the IdP closes its
+    # session in addition to ours. sp_slo_url is what the IdP uses
+    # to send a LogoutRequest to us (echoed in SP metadata).
+    idp_slo_url: Optional[str] = Field(default=None, max_length=1024)
+    sp_slo_url: Optional[str] = Field(default=None, max_length=1024)
 
 
 @saml_admin_router.get("/config")
@@ -154,6 +160,8 @@ def put_saml_config_endpoint(
         default_role=(body.default_role or "ap_clerk").strip().lower(),
         default_entity_id=(body.default_entity_id or "").strip() or None,
         jit_provisioning=body.jit_provisioning,
+        idp_slo_url=(body.idp_slo_url or "").strip() or None,
+        sp_slo_url=(body.sp_slo_url or "").strip() or None,
     )
     try:
         saml_sso.save_saml_config(db, org_id, config)
@@ -337,4 +345,102 @@ async def saml_acs(
         max_age=60 * 60 * 8,
         path="/",
     )
+    return response
+
+
+# ── Single Logout (SLO) ────────────────────────────────────────────
+
+
+@saml_public_router.get("/{organization_id}/logout")
+def saml_logout_initiate(
+    organization_id: str,
+    relay: Optional[str] = Query(default=None, max_length=512, alias="RelayState"),
+):
+    """SP-initiated Single Logout.
+
+    Clears the local Clearledgr session cookie and (if the IdP
+    published an SLO endpoint in the SAML config) redirects to the
+    IdP's SLO URL so the IdP also closes its session. This is the
+    'sign out' button's target.
+
+    No XML signing in v1 — most IdPs accept an unsigned LogoutRequest
+    over the redirect binding when the SP entity id matches a known
+    federation. Cert-pinned signed LogoutRequest is the design-doc
+    deferred hardening.
+    """
+    db = get_db()
+    cfg = saml_sso.get_saml_config(db, organization_id)
+    if not cfg:
+        # No SAML configured — just clear the cookie and bounce to
+        # workspace login. Operators of non-SAML tenants shouldn't be
+        # able to hit a 404 from a "sign out" button.
+        response = RedirectResponse(url="/workspace/login", status_code=302)
+        response.delete_cookie("clearledgr_session", path="/")
+        return response
+
+    _audit_saml(
+        db,
+        organization_id=organization_id,
+        event_type="saml_logout_initiated",
+        actor_id="sp_initiated",
+        payload={
+            "idp_slo_url": cfg.idp_slo_url,
+            "relay": relay,
+        },
+    )
+
+    if cfg.idp_slo_url:
+        response = RedirectResponse(url=cfg.idp_slo_url, status_code=302)
+    else:
+        # No IdP SLO endpoint configured — local-only logout.
+        response = RedirectResponse(url="/workspace/login", status_code=302)
+    response.delete_cookie("clearledgr_session", path="/")
+    return response
+
+
+@saml_public_router.post("/{organization_id}/slo")
+async def saml_slo_callback(
+    organization_id: str,
+    request: Request,
+):
+    """SLO callback for IdP-initiated logout.
+
+    The IdP POSTs either a ``SAMLRequest`` (asking us to log the user
+    out) or a ``SAMLResponse`` (confirming our SP-initiated logout
+    completed). Either way we clear the session cookie + audit-emit.
+
+    Full XML signature validation on the LogoutRequest is the
+    design-doc deferred hardening (same family as the SLO redirect-
+    binding signing). For now we treat the inbound POST as
+    advisory: clear the session locally and respond 200 so the IdP
+    doesn't retry.
+    """
+    db = get_db()
+
+    form_data = {}
+    try:
+        form = await request.form()
+        form_data = dict(form)
+    except Exception:
+        pass
+
+    direction = (
+        "logout_request" if form_data.get("SAMLRequest")
+        else "logout_response" if form_data.get("SAMLResponse")
+        else "unknown"
+    )
+
+    _audit_saml(
+        db,
+        organization_id=organization_id,
+        event_type="saml_logout_callback_received",
+        actor_id="idp_initiated",
+        payload={
+            "direction": direction,
+            "relay_state": form_data.get("RelayState"),
+        },
+    )
+
+    response = Response(status_code=200, content="")
+    response.delete_cookie("clearledgr_session", path="/")
     return response

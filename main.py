@@ -1458,6 +1458,14 @@ app.include_router(ops_router)
 from clearledgr.api.workspace_shell import router as workspace_shell_router
 app.include_router(workspace_shell_router)
 
+# Module 5 carry-over: ERP test-connection + credential-rotation
+# endpoints. Closes the audit gap where ERP admins couldn't re-test
+# or rotate credentials without re-running the connect flow.
+from clearledgr.api.erp_connection_ops import (
+    router as erp_connection_ops_router,
+)
+app.include_router(erp_connection_ops_router)
+
 # Module 6 Pass C — SAML SSO. Two routers: admin CRUD under
 # /api/workspace/saml/, plus IdP-facing flows (metadata, login,
 # ACS) under /saml/. The latter must NOT require auth — they're

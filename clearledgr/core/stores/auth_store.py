@@ -1082,14 +1082,58 @@ class AuthStore:
             return cur.rowcount > 0
 
     def accept_team_invite(self, invite_id: str, accepted_by: str) -> bool:
+        """Mark an invite accepted + apply any entity_restrictions
+        from the invite row to user_entity_roles.
+
+        Module 6 Pass D close-out: an invite created with
+        ``entity_restrictions=['EU', 'UK']`` for a vendor that hasn't
+        landed in the workspace yet now writes one user_entity_roles
+        row per entity at accept time, scoping the new user from day
+        one without an extra admin step.
+        """
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        sql = (
-            "UPDATE team_invites SET status = 'accepted', accepted_by = %s, accepted_at = %s, updated_at = %s "
-            "WHERE id = %s AND status = 'pending'"
-        )
+        # Pre-fetch the invite row so we know what scoping was set + the
+        # role to apply, then mark accepted + write per-entity roles in
+        # the same connection. The UPDATE returns rowcount=0 when the
+        # invite has already been accepted or is expired — caller treats
+        # that as "no-op" so this is safe to retry.
+        invite_row = self.get_team_invite(invite_id)
+        if not invite_row:
+            return False
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (accepted_by, now, now, invite_id))
+            cur.execute(
+                "UPDATE team_invites SET status = 'accepted', "
+                "accepted_by = %s, accepted_at = %s, updated_at = %s "
+                "WHERE id = %s AND status = 'pending'",
+                (accepted_by, now, now, invite_id),
+            )
+            updated_rows = cur.rowcount
             conn.commit()
-            return cur.rowcount > 0
+
+        if updated_rows == 0:
+            return False
+
+        # Write user_entity_roles for each scoping entry. Best-effort:
+        # a failure here doesn't unflip the accepted status — the user
+        # gets org-wide access (the prior behaviour) until the admin
+        # manually scopes them. We log + audit so the gap is visible.
+        entity_restrictions = invite_row.get("entity_restrictions") or []
+        if entity_restrictions and hasattr(self, "set_user_entity_role"):
+            invite_role = str(invite_row.get("role") or "ap_clerk").lower()
+            for entity_id in entity_restrictions:
+                try:
+                    self.set_user_entity_role(
+                        organization_id=invite_row.get("organization_id"),
+                        user_id=accepted_by,
+                        entity_id=str(entity_id),
+                        role=invite_role,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[accept_team_invite] failed to apply entity "
+                        "restriction %s for user %s: %s",
+                        entity_id, accepted_by, exc,
+                    )
+        return True

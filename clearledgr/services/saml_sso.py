@@ -65,6 +65,13 @@ class SAMLConfig:
     default_role: str
     default_entity_id: Optional[str]
     jit_provisioning: bool
+    # Optional Single Logout endpoint published by the IdP (e.g.
+    # https://login.microsoftonline.com/.../saml2/logout). When set,
+    # SP-initiated logout redirects here so the IdP also closes its
+    # session. Empty/None disables SP-initiated logout (cookie is
+    # still cleared locally).
+    idp_slo_url: Optional[str] = None
+    sp_slo_url: Optional[str] = None
 
     def to_redacted_dict(self) -> Dict[str, Any]:
         """JSON view safe to return on the GET endpoint.
@@ -88,6 +95,8 @@ class SAMLConfig:
             "default_role": self.default_role,
             "default_entity_id": self.default_entity_id,
             "jit_provisioning": self.jit_provisioning,
+            "idp_slo_url": self.idp_slo_url,
+            "sp_slo_url": self.sp_slo_url,
         }
 
 
@@ -121,6 +130,8 @@ def get_saml_config(db, organization_id: str) -> Optional[SAMLConfig]:
         default_role=str(raw.get("default_role") or "ap_clerk").strip().lower(),
         default_entity_id=(str(raw.get("default_entity_id") or "").strip() or None),
         jit_provisioning=bool(raw.get("jit_provisioning", True)),
+        idp_slo_url=(str(raw.get("idp_slo_url") or "").strip() or None),
+        sp_slo_url=(str(raw.get("sp_slo_url") or "").strip() or None),
     )
 
 
@@ -170,6 +181,8 @@ def save_saml_config(db, organization_id: str, config: SAMLConfig) -> None:
         "default_role": config.default_role,
         "default_entity_id": config.default_entity_id,
         "jit_provisioning": config.jit_provisioning,
+        "idp_slo_url": config.idp_slo_url,
+        "sp_slo_url": config.sp_slo_url,
     }
     db.update_organization(organization_id, settings_json=settings)
 
