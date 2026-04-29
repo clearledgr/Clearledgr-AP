@@ -920,7 +920,127 @@ def pre_post_validate(
         except Exception as exc:
             logger.debug("[pre_post_validate] Vendor check failed: %s", exc)
 
+    # 4. Wave 1 / A5 — mandatory GL coding at posting time.
+    #
+    # Per AP cycle reference doc Stage 5 + AICPA accuracy assertion:
+    # GL is mandatory on every bill. Today the bill-posting path
+    # silently defaults to the org's ``expenses`` account when the
+    # invoice carries no GL — which both Hackett and Levvel call out
+    # as a top driver of mis-classified spend ("inconsistent coding
+    # for the same vendor across periods" / "incorrect cost-center
+    # allocation that pollutes department-level financial reports").
+    #
+    # This gate is on by default. Operators can opt out per-tenant
+    # via settings_json["mandatory_gl_at_posting"]=False for tenants
+    # that deliberately want default-account fallback (typically
+    # low-value automation flows). The default is enforced.
+    #
+    # Resolution: every line item in metadata.line_items must carry a
+    # non-empty gl_code. Items without line_items must have a top-
+    # level ap_item.metadata.gl_code, OR the org-level gl_account_map
+    # must define an explicit ``expenses`` account (the default
+    # fallback is what we're refusing here).
+    if _mandatory_gl_enabled(db, organization_id):
+        gl_failures = _check_mandatory_gl(item, db, organization_id)
+        failures.extend(gl_failures)
+
     return {"valid": len(failures) == 0, "failures": failures}
+
+
+def _mandatory_gl_enabled(db: Any, organization_id: str) -> bool:
+    """Resolve the per-tenant ``mandatory_gl_at_posting`` toggle.
+
+    Default True — the AICPA-aligned safe behaviour. Tenants that
+    deliberately want default-account fallback set the flag to False
+    in settings_json.
+    """
+    try:
+        org = db.get_organization(organization_id) or {}
+    except Exception:
+        return True
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            import json as _json
+            settings = _json.loads(settings)
+        except Exception:
+            return True
+    if not isinstance(settings, dict):
+        return True
+    raw = settings.get("mandatory_gl_at_posting")
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _check_mandatory_gl(
+    ap_item: Dict[str, Any], db: Any, organization_id: str,
+) -> List[Dict[str, str]]:
+    """Per-line GL completeness check.
+
+    Returns a list of failure dicts. Empty list = OK.
+    """
+    failures: List[Dict[str, str]] = []
+    metadata = ap_item.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            import json as _json
+            metadata = _json.loads(metadata)
+        except Exception:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    line_items = metadata.get("line_items")
+    if not isinstance(line_items, list):
+        line_items = None
+
+    if line_items:
+        # Every line must have a non-empty gl_code.
+        missing_lines: List[int] = []
+        for idx, line in enumerate(line_items):
+            if not isinstance(line, dict):
+                missing_lines.append(idx)
+                continue
+            gl_code = str(
+                line.get("gl_code")
+                or line.get("gl_account")
+                or line.get("account_code")
+                or ""
+            ).strip()
+            if not gl_code:
+                missing_lines.append(idx)
+        if missing_lines:
+            failures.append({
+                "check": "mandatory_gl",
+                "reason": (
+                    f"GL code missing on {len(missing_lines)} line item"
+                    f"{'s' if len(missing_lines) != 1 else ''} "
+                    f"(indexes: {missing_lines})"
+                ),
+                "missing_line_indexes": ",".join(str(i) for i in missing_lines),
+            })
+        return failures
+
+    # Single-line invoice path: top-level GL OR an AP-item-level
+    # gl_code field. Either lands the bill on a real account.
+    top_level_gl = (
+        ap_item.get("gl_code")
+        or metadata.get("gl_code")
+        or metadata.get("suggested_gl_code")
+    )
+    if not (str(top_level_gl or "").strip()):
+        failures.append({
+            "check": "mandatory_gl",
+            "reason": (
+                "AP item has no line items and no top-level GL code; "
+                "explicit GL is required by org policy "
+                "(settings_json.mandatory_gl_at_posting=true)."
+            ),
+        })
+    return failures
 
 
 # ==================== Bill Dispatch ====================
