@@ -169,3 +169,41 @@ def patch_vendor_status(
         "status_changed_at": updated.get("status_changed_at"),
         "status_changed_by": updated.get("status_changed_by"),
     }
+
+
+# ─── Module 4 Pass D — Reverse vendor sync (Clearledgr → ERP) ────────
+
+
+@router.post("/{vendor_name}/sync-erp")
+async def sync_vendor_to_erp(
+    vendor_name: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Push the in-Clearledgr vendor profile to the connected ERP.
+
+    Admin-gated. Returns a structured result the SPA can render:
+    ok / no_change / not_supported / no_erp_id / failed. Audit
+    emission is handled by the push service so callers never lose
+    the trail even if the network call timed out mid-flight.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+
+    from clearledgr.services.vendor_erp_push import push_vendor_to_erp
+
+    result = await push_vendor_to_erp(
+        organization_id=org_id, vendor_name=vendor_name,
+    )
+    body = result.to_dict()
+    # Surface the right HTTP status so the SPA can branch without
+    # parsing the result dict twice. ``not_supported`` is a 200
+    # because the request itself is well-formed — the operator
+    # learns the ERP doesn't support reverse sync via the body.
+    if result.status == "ok" or result.status == "no_change":
+        return body
+    if result.status == "not_supported":
+        return body
+    if result.status == "no_erp_id":
+        raise HTTPException(status_code=409, detail=body)
+    raise HTTPException(status_code=502, detail=body)

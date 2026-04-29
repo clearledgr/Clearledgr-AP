@@ -558,6 +558,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/iban-verification/reject$",
         # Phase 2.2: vendor trusted-domains allowlist endpoints
         r"^/api/vendors/[^/]+/status$",
+        r"^/api/vendors/[^/]+/sync-erp$",
         r"^/api/vendors/[^/]+/trusted-domains$",
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         # Phase 2.4: vendor KYC + risk score endpoints

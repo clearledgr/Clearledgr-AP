@@ -180,6 +180,11 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                     vendor=${vendor}
                     toast=${toast}
                     onChanged=${() => loadVendors({ silent: true })} />
+                  <${VendorPushButton}
+                    api=${api}
+                    orgId=${orgId}
+                    vendor=${vendor}
+                    toast=${toast} />
                 </div>
               </div>
             `)}
@@ -316,6 +321,57 @@ function VendorStatusButton({ api, orgId, vendor, toast, onChanged }) {
       onClick=${run}
       disabled=${pending}>
       ${pending ? '…' : verb}
+    </button>
+  `;
+}
+
+
+// ─── Module 4 Pass D — Reverse vendor sync (Clearledgr → ERP) ─────────
+// "Push to ERP" button: calls POST /api/vendors/{name}/sync-erp,
+// surfaces the structured PushResult as a toast. Admin-gated server-
+// side; the button is always visible so the role gate's the source
+// of truth.
+function VendorPushButton({ api, orgId, vendor, toast }) {
+  const [pending, run] = useAction(async () => {
+    try {
+      const res = await api(
+        `/api/vendors/${encodeURIComponent(vendor.vendor_name)}/sync-erp?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST' },
+      );
+      // 200-shaped responses come through here as the parsed body.
+      if (res?.status === 'ok') {
+        const fields = (res.fields_pushed || []).join(', ');
+        toast?.(`${vendor.vendor_name} pushed to ${res.erp_type} (${fields}).`, 'success');
+      } else if (res?.status === 'no_change') {
+        toast?.(`${vendor.vendor_name}: no fields changed since last push.`, 'info');
+      } else if (res?.status === 'not_supported') {
+        toast?.(`Reverse sync not supported for ${res.erp_type} yet.`, 'error');
+      } else {
+        toast?.(`Push returned ${res?.status || 'unknown'}.`, 'error');
+      }
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail || {};
+      const status = typeof detail === 'object' ? detail.status : null;
+      const reason = typeof detail === 'object' ? detail.error : null;
+      if (status === 'no_erp_id') {
+        toast?.(
+          `${vendor.vendor_name} has no recorded ERP id. Run a vendor sync first.`,
+          'error',
+        );
+      } else if (reason === 'admin_role_required') {
+        toast?.('Only admins can push vendors to the ERP.', 'error');
+      } else {
+        toast?.(reason || exc?.message || 'Push failed.', 'error');
+      }
+    }
+  });
+  return html`
+    <button
+      class="btn-ghost btn-sm"
+      onClick=${run}
+      disabled=${pending}
+      title="Push the in-Clearledgr vendor profile to the connected ERP.">
+      ${pending ? 'Pushing…' : 'Push to ERP'}
     </button>
   `;
 }
