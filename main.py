@@ -557,6 +557,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/[^/]+/iban-verification/complete$",
         r"^/api/vendors/[^/]+/iban-verification/reject$",
         # Phase 2.2: vendor trusted-domains allowlist endpoints
+        r"^/api/vendors/[^/]+/status$",
         r"^/api/vendors/[^/]+/trusted-domains$",
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         # Phase 2.4: vendor KYC + risk score endpoints
@@ -1247,6 +1248,12 @@ app.include_router(iban_verification_router)
 # domains the validation gate trusts for each vendor. See DESIGN_THESIS.md §8.
 from clearledgr.api.vendor_domains import router as vendor_domains_router
 app.include_router(vendor_domains_router)
+
+# Module 4 Pass B — vendor allowlist/blocklist (admin gated). Status
+# writes flow through the vendor profile and the bill-validation gate
+# refuses to post for blocked vendors.
+from clearledgr.api.vendor_status import router as vendor_status_router
+app.include_router(vendor_status_router)
 
 # Vendor KYC API — Phase 2.4. First-class KYC fields + computed signals.
 # Reads = any org member; writes = Financial Controller+. See DESIGN_THESIS.md §3.

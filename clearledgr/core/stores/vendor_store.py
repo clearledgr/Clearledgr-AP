@@ -294,6 +294,14 @@ class VendorStore:
             "vendor_kyc_updated_at",
             # §3: primary AP contact email on the Vendor record.
             "primary_contact_email",
+            # Module 4 Pass B: vendor allowlist/blocklist. Writes
+            # should normally go through ``set_vendor_status`` so the
+            # status_changed_* metadata is consistent, but the field
+            # is allowed here for bulk import paths.
+            "status",
+            "status_reason",
+            "status_changed_at",
+            "status_changed_by",
         }
         safe_fields = {k: v for k, v in fields.items() if k in _ALLOWED}
 
@@ -350,6 +358,89 @@ class VendorStore:
                 logger.warning("[VendorStore] upsert update failed: %s", exc)
 
         return self.get_vendor_profile(organization_id, vendor_name) or {}
+
+    # ------------------------------------------------------------------ #
+    # Module 4 Pass B: Vendor allowlist/blocklist                          #
+    # ------------------------------------------------------------------ #
+    #
+    # The status column on vendor_profiles drives whether new invoices
+    # for this vendor are accepted. The bill-validation gate refuses
+    # to post for vendors with status='blocked'; the dashboard
+    # surfaces the chip + a Block/Unblock action gated to admins.
+
+    _VENDOR_STATUS_VALUES = frozenset({"active", "blocked", "archived"})
+
+    def set_vendor_status(
+        self,
+        organization_id: str,
+        vendor_name: str,
+        *,
+        status: str,
+        reason: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Set the vendor's allowlist/blocklist status with attribution.
+
+        Validates the status token against ``_VENDOR_STATUS_VALUES``
+        so the column never contains garbage. Returns the refreshed
+        profile dict, or ``None`` if the vendor doesn't exist.
+
+        Caller is responsible for the audit emit (the API layer has
+        the requesting user's identity for the actor field).
+        """
+        clean_status = str(status or "").strip().lower()
+        if clean_status not in self._VENDOR_STATUS_VALUES:
+            raise ValueError(
+                f"vendor status must be one of "
+                f"{sorted(self._VENDOR_STATUS_VALUES)}, got {status!r}"
+            )
+
+        existing = self.get_vendor_profile(organization_id, vendor_name)
+        if not existing:
+            return None
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = (
+            "UPDATE vendor_profiles SET "
+            "status = %s, status_reason = %s, "
+            "status_changed_at = %s, status_changed_by = %s, "
+            "updated_at = %s "
+            "WHERE organization_id = %s AND vendor_name = %s"
+        )
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    sql,
+                    (
+                        clean_status,
+                        (reason or "").strip() or None,
+                        now_iso,
+                        (actor or "").strip() or None,
+                        now_iso,
+                        organization_id,
+                        vendor_name,
+                    ),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("[VendorStore] set_vendor_status failed: %s", exc)
+            raise
+        return self.get_vendor_profile(organization_id, vendor_name)
+
+    def is_vendor_blocked(
+        self, organization_id: str, vendor_name: str
+    ) -> bool:
+        """Quick predicate for the bill-validation gate.
+
+        Returns True iff there's a vendor row whose status='blocked'.
+        Vendors that don't exist return False (they're new vendors,
+        not blocked).
+        """
+        profile = self.get_vendor_profile(organization_id, vendor_name)
+        if not profile:
+            return False
+        return str(profile.get("status") or "active").strip().lower() == "blocked"
 
     # ------------------------------------------------------------------ #
     # Phase 2.1.a: Bank-details typed accessors                            #

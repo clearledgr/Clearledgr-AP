@@ -2740,6 +2740,58 @@ def _v54_user_entity_roles(cur, db):
 
 
 @migration(
+    56,
+    "vendor_profiles: status + status_reason for allowlist/blocklist (Module 4 Pass B)"
+)
+def _v56_vendor_profiles_status(cur, db):
+    """Add status columns to vendor_profiles for allowlist/blocklist.
+
+    Per scope §Module 4: customer admins can mark a vendor as blocked
+    (no new invoices accepted) or active (default). Stored as a
+    plain TEXT column with check at the application layer rather
+    than a CHECK constraint — keeps the value space extensible
+    (future ``archived`` / ``under_review``) without a schema migration
+    each time. Default ``active`` so existing rows stay functional.
+    """
+    try:
+        cur.execute(
+            "ALTER TABLE vendor_profiles ADD COLUMN IF NOT EXISTS "
+            "status TEXT NOT NULL DEFAULT 'active'"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v56] status add skipped: %s", exc)
+    try:
+        cur.execute(
+            "ALTER TABLE vendor_profiles ADD COLUMN IF NOT EXISTS "
+            "status_reason TEXT"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v56] status_reason add skipped: %s", exc)
+    try:
+        cur.execute(
+            "ALTER TABLE vendor_profiles ADD COLUMN IF NOT EXISTS "
+            "status_changed_at TEXT"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v56] status_changed_at add skipped: %s", exc)
+    try:
+        cur.execute(
+            "ALTER TABLE vendor_profiles ADD COLUMN IF NOT EXISTS "
+            "status_changed_by TEXT"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v56] status_changed_by add skipped: %s", exc)
+    try:
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vendor_profiles_status "
+            "ON vendor_profiles(organization_id, status) "
+            "WHERE status != 'active'"
+        )
+    except Exception as exc:
+        logger.warning("[Migration v56] status index skipped: %s", exc)
+
+
+@migration(
     55,
     "team_invites: entity_restrictions_json column for entity-scoped invites (Module 6 Pass D)"
 )

@@ -155,6 +155,13 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                       ${typeof vendor.risk_score === 'number' && vendor.risk_score > 0
                         ? html`<${RiskScoreChip} score=${vendor.risk_score} />`
                         : null}
+                      ${vendor.profile?.status && vendor.profile.status !== 'active'
+                        ? html`<span class="secondary-chip" style=${vendor.profile.status === 'blocked'
+                            ? 'background:#FEE2E2;color:#991B1B;border-color:#FCA5A5;font-weight:600'
+                            : 'background:#F4F4F5;color:#52525B;border-color:#D4D4D8'}>
+                            ${vendor.profile.status === 'blocked' ? 'Blocked' : (vendor.profile.status === 'archived' ? 'Archived' : vendor.profile.status)}
+                          </span>`
+                        : null}
                     </div>
                   </div>
                   <div class="secondary-card-stat">
@@ -167,6 +174,12 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
                   <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in invoices</button>
+                  <${VendorStatusButton}
+                    api=${api}
+                    orgId=${orgId}
+                    vendor=${vendor}
+                    toast=${toast}
+                    onChanged=${() => loadVendors({ silent: true })} />
                 </div>
               </div>
             `)}
@@ -240,4 +253,69 @@ function RiskScoreChip({ score }) {
     style=${`background:${tone.bg};color:${tone.fg};border-color:${tone.bd};font-variant-numeric:tabular-nums`}>
     Risk ${score}
   </span>`;
+}
+
+
+// ─── Module 4 Pass B — Vendor allowlist/blocklist action ──────────────
+// Block / Unblock toggle wired to PATCH /api/vendors/{name}/status.
+// Admin-gated server-side (403 if non-admin); the button is always
+// visible so the role gate's the source of truth.
+function VendorStatusButton({ api, orgId, vendor, toast, onChanged }) {
+  const status = vendor?.profile?.status || 'active';
+  const isBlocked = status === 'blocked';
+  const verb = isBlocked ? 'Unblock' : 'Block';
+  const [pending, run] = useAction(async () => {
+    let reason = null;
+    if (!isBlocked) {
+      // window.prompt is intentionally synchronous here so the
+      // operator stops and writes a real reason — the audit row
+      // carries this verbatim.
+      const input = window.prompt(
+        `Block invoices from "${vendor.vendor_name}"? Add a reason for the audit log:`,
+        '',
+      );
+      if (input === null) return; // user cancelled
+      reason = String(input || '').trim() || null;
+    } else {
+      const ok = window.confirm(
+        `Unblock "${vendor.vendor_name}"? New invoices will be accepted again.`,
+      );
+      if (!ok) return;
+    }
+    try {
+      await api(
+        `/api/vendors/${encodeURIComponent(vendor.vendor_name)}/status?organization_id=${encodeURIComponent(orgId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: isBlocked ? 'active' : 'blocked',
+            reason,
+          }),
+        },
+      );
+      toast?.(
+        isBlocked
+          ? `${vendor.vendor_name} unblocked — invoices will post again.`
+          : `${vendor.vendor_name} blocked — new invoices will be rejected.`,
+        'success',
+      );
+      onChanged?.();
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail;
+      const reasonStr = typeof detail === 'object' ? detail.reason : null;
+      if (reasonStr === 'admin_role_required') {
+        toast?.('Only admins can change vendor status.', 'error');
+      } else {
+        toast?.(exc?.message || 'Could not change vendor status.', 'error');
+      }
+    }
+  });
+  return html`
+    <button
+      class=${isBlocked ? 'btn-secondary btn-sm' : 'btn-ghost btn-sm'}
+      onClick=${run}
+      disabled=${pending}>
+      ${pending ? '…' : verb}
+    </button>
+  `;
 }

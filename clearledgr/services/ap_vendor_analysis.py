@@ -380,6 +380,9 @@ def _build_vendor_summary_rows(
                     "always_approved": bool((profile or {}).get("always_approved")),
                     "approval_override_rate": safe_float((profile or {}).get("approval_override_rate")),
                     "anomaly_flags": list((profile or {}).get("anomaly_flags") or [])[:4],
+                    # Module 4 Pass B — allowlist/blocklist status.
+                    "status": str((profile or {}).get("status") or "active").strip().lower(),
+                    "status_reason": (profile or {}).get("status_reason") or None,
                 },
                 # Module 4 Pass A — vendor risk score computed at read
                 # time from the already-loaded profile (zero extra DB
