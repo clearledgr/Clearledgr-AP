@@ -18,7 +18,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -138,6 +138,7 @@ def patch_vendor_status(
 
     # Only audit when something actually changed — re-saving the
     # same status should not flood the audit log with no-ops.
+    revalidation_summary: Optional[Dict[str, Any]] = None
     if before_status != new_status:
         try:
             db.append_audit_event({
@@ -161,7 +162,39 @@ def patch_vendor_status(
                 org_id, vendor_name, exc,
             )
 
-    return {
+        # Wave 1 / A11 — eager re-validation. A status flip to
+        # blocked / archived must propagate to in-flight AP items
+        # so the operator sees them in the exception queue without
+        # waiting for the next gate-time recheck. The reverse path
+        # (active again) clears any prior ``vendor_blocked`` flags
+        # only on items the operator explicitly resolves — we don't
+        # auto-clear because the original cause may still apply.
+        revalidate_reason = None
+        if new_status == "blocked":
+            revalidate_reason = "vendor_blocked"
+        elif new_status == "archived":
+            revalidate_reason = "vendor_status_archived"
+
+        if revalidate_reason is not None:
+            from clearledgr.services.vendor_revalidation import (
+                revalidate_in_flight_ap_items,
+            )
+            try:
+                rv_result = revalidate_in_flight_ap_items(
+                    db,
+                    organization_id=org_id,
+                    vendor_name=vendor_name,
+                    reason=revalidate_reason,
+                    actor=actor_email,
+                )
+                revalidation_summary = rv_result.to_dict()
+            except Exception as exc:
+                logger.warning(
+                    "[vendor_status] revalidation failed for org=%s vendor=%s: %s",
+                    org_id, vendor_name, exc,
+                )
+
+    response_body: Dict[str, Any] = {
         "organization_id": org_id,
         "vendor_name": vendor_name,
         "status": new_status,
@@ -169,6 +202,9 @@ def patch_vendor_status(
         "status_changed_at": updated.get("status_changed_at"),
         "status_changed_by": updated.get("status_changed_by"),
     }
+    if revalidation_summary is not None:
+        response_body["revalidation"] = revalidation_summary
+    return response_body
 
 
 # ─── Module 4 Pass D — Reverse vendor sync (Clearledgr → ERP) ────────

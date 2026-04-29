@@ -212,6 +212,27 @@ class IbanChangeFreezeService:
             },
         )
 
+        # Wave 1 / A11 — eager mid-workflow re-validation. The freeze
+        # just took effect; every other in-flight AP item for this
+        # vendor needs to surface as an exception so the operator
+        # doesn't approve them while the IBAN is unverified.
+        try:
+            from clearledgr.services.vendor_revalidation import (
+                revalidate_in_flight_ap_items,
+            )
+            revalidate_in_flight_ap_items(
+                self.db,
+                organization_id=self.organization_id,
+                vendor_name=vendor_name,
+                reason="vendor_iban_change_pending",
+                actor="system:iban_change_freeze",
+            )
+        except Exception as exc:
+            logger.warning(
+                "[IbanChangeFreeze] revalidation failed for %s: %s",
+                vendor_name, exc,
+            )
+
         return FreezeDetectionResult(
             status="frozen",
             vendor_name=vendor_name,
