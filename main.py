@@ -1411,6 +1411,12 @@ app.include_router(cycle_time_metrics_router)
 from clearledgr.api.dual_approval import router as dual_approval_router
 app.include_router(dual_approval_router)
 
+# Wave 6 / H2: vendor inquiry status surface
+from clearledgr.api.vendor_inquiry import (
+    router as vendor_inquiry_router,
+)
+app.include_router(vendor_inquiry_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
