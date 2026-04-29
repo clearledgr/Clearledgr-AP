@@ -1423,6 +1423,12 @@ from clearledgr.api.dispute_reopen import (
 )
 app.include_router(dispute_reopen_router)
 
+# Wave 6 / H4: reclassification JE
+from clearledgr.api.reclassification_je import (
+    router as reclassification_je_router,
+)
+app.include_router(reclassification_je_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
