@@ -1357,6 +1357,12 @@ app.include_router(vat_router)
 from clearledgr.api.gdpr import router as gdpr_router
 app.include_router(gdpr_router)
 
+# Wave 3 / E4: JE preview on approval cards
+from clearledgr.api.journal_entry_preview import (
+    router as journal_entry_preview_router,
+)
+app.include_router(journal_entry_preview_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)

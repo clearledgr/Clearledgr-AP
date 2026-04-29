@@ -567,30 +567,43 @@ DEFAULT_ACCOUNT_MAP = {
     "quickbooks": {
         "cash": "1",  # Default checking account
         "accounts_receivable": "4",
+        "accounts_payable": "33",  # AP control account
         "payment_fees": "74",  # Bank Service Charges
         "revenue": "1",
         "expenses": "7",  # Expenses (default AP bill debit account)
+        # Wave 3 / E2 + E4: VAT control accounts
+        "vat_input": "TaxOnPurchases",
+        "vat_output": "TaxOnSales",
     },
     "xero": {
         "cash": "090",  # Business Bank Account
         "accounts_receivable": "610",  # Accounts Receivable
+        "accounts_payable": "800",  # Accounts Payable
         "payment_fees": "404",  # Bank Fees
         "revenue": "200",  # Sales
         "expenses": "400",  # General Expenses (default AP bill debit account)
+        "vat_input": "820",   # VAT (input)
+        "vat_output": "825",  # VAT (output) — RC self-assessed
     },
     "netsuite": {
         "cash": "1000",  # Cash and Cash Equivalents
         "accounts_receivable": "1200",  # Accounts Receivable
+        "accounts_payable": "2000",  # Accounts Payable
         "payment_fees": "6800",  # Bank Service Charges
         "revenue": "4000",  # Sales Revenue
         "expenses": "67",  # Vendor expense (default AP bill debit account)
+        "vat_input": "1410",
+        "vat_output": "2410",
     },
     "sap": {
         "cash": "1000",  # Cash
         "accounts_receivable": "1100",  # AR
+        "accounts_payable": "1600",  # AP control account (typical 1600/2100 in CoA)
         "payment_fees": "6200",  # Bank Charges
         "revenue": "4000",  # Revenue
         "expenses": "6000",  # General Expenses (default AP invoice GL account)
+        "vat_input": "1576",   # SAP standard input VAT
+        "vat_output": "3806",  # SAP standard output VAT
     },
 }
 

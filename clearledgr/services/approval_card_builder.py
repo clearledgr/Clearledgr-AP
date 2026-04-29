@@ -354,6 +354,49 @@ def build_approval_surface_copy(
 # ---------------------------------------------------------------------------
 
 
+def _render_je_preview_block(preview: Dict[str, Any]) -> str:
+    """Fallback text renderer when extra_context carries the dict
+    form of a JEPreview but not the pre-rendered text."""
+    try:
+        from clearledgr.services.journal_entry_preview import (
+            JELine,
+            JEPreview,
+            render_je_preview_text,
+        )
+        from decimal import Decimal
+        lines = [
+            JELine(
+                direction=ln.get("direction") or "",
+                account_code=str(ln.get("account_code") or ""),
+                account_label=str(ln.get("account_label") or ""),
+                amount=Decimal(str(ln.get("amount") or 0)),
+                currency=str(ln.get("currency") or "GBP"),
+                line_role=str(ln.get("line_role") or ""),
+                description=ln.get("description"),
+            )
+            for ln in (preview.get("lines") or [])
+        ]
+        rebuilt = JEPreview(
+            ap_item_id=str(preview.get("ap_item_id") or ""),
+            erp_type=str(preview.get("erp_type") or ""),
+            treatment=str(preview.get("treatment") or ""),
+            vat_code=str(preview.get("vat_code") or ""),
+            currency=str(preview.get("currency") or "GBP"),
+            gross_amount=Decimal(str(preview.get("gross_amount") or 0)),
+            net_amount=Decimal(str(preview.get("net_amount") or 0)),
+            vat_amount=Decimal(str(preview.get("vat_amount") or 0)),
+            vat_rate=Decimal(str(preview.get("vat_rate") or 0)),
+            lines=lines,
+            debit_total=Decimal(str(preview.get("debit_total") or 0)),
+            credit_total=Decimal(str(preview.get("credit_total") or 0)),
+            balanced=bool(preview.get("balanced", True)),
+            notes=list(preview.get("notes") or []),
+        )
+        return render_je_preview_text(rebuilt)
+    except Exception:
+        return ""
+
+
 def build_approval_blocks(
     invoice: Any,
     extra_context: Optional[Dict[str, Any]] = None,
@@ -738,6 +781,32 @@ def build_approval_blocks(
                 },
             }
         )
+
+    # ========== JE PREVIEW (Wave 3 / E4) ==========
+    # Show the approver the canonical Dr/Cr lines (with VAT split per
+    # E2) before they click approve. The preview lives on the AP item
+    # via journal_entry_preview.build_je_preview.
+    je_preview_block = (extra_context or {}).get("journal_entry_preview")
+    if isinstance(je_preview_block, dict):
+        rendered = (
+            je_preview_block.get("rendered_text")
+            or _render_je_preview_block(je_preview_block)
+        )
+        if rendered:
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    # Slack Block Kit caps section text at 3000 chars;
+                    # truncate defensively.
+                    "text": (
+                        "*Journal Entry preview*\n```"
+                        + str(rendered)[:2800]
+                        + "```"
+                    ),
+                },
+            })
 
     # ========== ACTIONS ==========
     requires_budget_decision = bool(budget_summary.get("requires_decision"))
