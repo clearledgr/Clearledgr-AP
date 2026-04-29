@@ -401,6 +401,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/bootstrap",
     "/api/workspace/dashboard",
     "/api/workspace/entities",
+    "/api/workspace/erp/field-mappings",
     "/api/workspace/ga-readiness",
     "/api/workspace/health",
     "/api/workspace/integrations",

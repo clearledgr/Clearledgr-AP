@@ -1268,3 +1268,117 @@
     flex-wrap: wrap;
   }
 }
+
+/* ─── Module 5 Pass A — Custom field mapping panel ─────────────────────
+ * Lives below the ERP connection card on the Connections page. Per-ERP
+ * catalog with grouped fieldsets (identity / workflow / dimension).
+ * Each row: meta column (label + description + default) on the left,
+ * input + reset on the right.
+ * ─────────────────────────────────────────────────────────────────── */
+
+.cl-field-mapping-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cl-field-mapping-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.cl-field-mapping-group {
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  padding: 10px 14px 12px;
+  margin: 0;
+  background: var(--cl-bg-subtle, #fafafa);
+}
+
+.cl-field-mapping-group legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted, #666);
+}
+
+.cl-field-mapping-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.cl-field-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cl-field-mapping-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.cl-field-mapping-meta strong {
+  font-size: 13px;
+  color: var(--cl-ink-primary, #111);
+}
+
+.cl-field-mapping-meta .muted {
+  font-size: 12px;
+  color: var(--cl-ink-muted, #666);
+  line-height: 1.4;
+}
+
+.cl-field-mapping-default {
+  font-size: 11px;
+  color: var(--cl-ink-muted, #666);
+  margin-top: 2px;
+}
+
+.cl-field-mapping-default code {
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 11px;
+  background: white;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+}
+
+.cl-field-mapping-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-field-mapping-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  font-family: var(--font-mono, 'SFMono-Regular', monospace);
+  font-size: 12px;
+  background: white;
+}
+
+.cl-field-mapping-input input:focus {
+  outline: none;
+  border-color: var(--cl-mint, #00d67e);
+  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+}
+
+@media (max-width: 720px) {
+  .cl-field-mapping-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}

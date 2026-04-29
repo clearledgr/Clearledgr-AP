@@ -221,6 +221,15 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
           canManageConnections=${canEditConnections}
         />
 
+        <${FieldMappingPanel}
+          api=${api}
+          orgId=${orgId}
+          erpType=${erpType}
+          erpConnected=${erp.connected}
+          canManage=${canEditConnections}
+          toast=${toast}
+        />
+
         <${ApprovalSurfaceCard}
           title="Slack approval routing"
           status=${slack.status || (slack.connected ? 'connected' : 'disconnected')}
@@ -485,6 +494,259 @@ function WebhooksPanel({ api, canManage, toast }) {
         </div>
         <div class="secondary-note" style="margin-top:10px">Events can be &quot;*&quot; for all AP events, or a comma-separated list like &quot;invoice.approved, invoice.posted_to_erp&quot;.</div>
       `}
+    </div>
+  `;
+}
+
+
+// ─── Module 5 Pass A — Custom field mapping panel ────────────────────
+// Sits below the ERP connection card on the Connections page. Reads
+// the bounded catalog from the workspace shell, renders one input per
+// catalog entry, persists user-supplied overrides on save. The catalog
+// is per-ERP — switching the ERP picker above re-fetches.
+//
+// Backed by:
+//   GET /api/workspace/erp/field-mappings?erp_type=&organization_id=
+//   PUT /api/workspace/erp/field-mappings?organization_id=  body={erp_type, mappings}
+//
+// The default field id is rendered as the input placeholder so the
+// operator sees what Clearledgr will fall back to if they don't
+// override. A "Reset" link reverts a single field to the default.
+function FieldMappingPanel({ api, orgId, erpType, erpConnected, canManage, toast }) {
+  const [catalog, setCatalog] = useState(null);
+  const [supportedErps, setSupportedErps] = useState([]);
+  const [mappings, setMappings] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+
+  const erpKey = String(erpType || '').trim().toLowerCase();
+
+  // Reload the catalog + persisted mapping whenever the ERP picker
+  // above changes. Catalog is per-ERP (NetSuite custom-bodies vs
+  // SAP Z-fields) so we can't render a single combined view.
+  useEffect(() => {
+    if (!api || !orgId || !erpKey) return;
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const resp = await api(
+          `/api/workspace/erp/field-mappings?erp_type=${encodeURIComponent(erpKey)}&organization_id=${encodeURIComponent(orgId)}`
+        );
+        if (cancelled) return;
+        setCatalog(Array.isArray(resp?.catalog) ? resp.catalog : []);
+        setSupportedErps(Array.isArray(resp?.supported_erps) ? resp.supported_erps : []);
+        setMappings(resp?.mappings || {});
+        setDirty(false);
+      } catch (exc) {
+        if (cancelled) return;
+        // Treat 400 unsupported_erp as "no catalog for this ERP" rather
+        // than an error — the panel renders an empty-state hint instead
+        // of a red banner. Anything else is a real error.
+        const msg = String(exc?.message || exc);
+        if (msg.includes('unsupported_erp_type')) {
+          setCatalog([]);
+          setMappings({});
+        } else {
+          setError(msg);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [api, orgId, erpKey]);
+
+  const setField = (key, value) => {
+    setMappings((prev) => ({ ...prev, [key]: value }));
+    setDirty(true);
+  };
+
+  const resetField = (key) => {
+    setMappings((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setDirty(true);
+  };
+
+  const validateClientSide = () => {
+    // Match the regex the server enforces. Client-side check exists to
+    // give immediate feedback; the server is still the source of truth.
+    const errors = [];
+    for (const entry of catalog || []) {
+      const value = String(mappings[entry.key] || '').trim();
+      if (!value) continue;
+      try {
+        const re = new RegExp(entry.pattern);
+        if (!re.test(value)) {
+          errors.push(`${entry.label}: '${value}' doesn't match ${entry.pattern}`);
+        }
+      } catch (exc) {
+        // If the pattern itself fails to compile (shouldn't happen),
+        // skip — server validation will catch any real issue.
+      }
+    }
+    return errors;
+  };
+
+  const onSave = async () => {
+    if (!canManage) return;
+    setError(null);
+    const clientErrors = validateClientSide();
+    if (clientErrors.length > 0) {
+      setError(clientErrors.join('  •  '));
+      return;
+    }
+    // Only send non-empty values. The server treats empty == revert
+    // to default, but sending fewer keys is a cleaner audit diff.
+    const payloadMappings = Object.fromEntries(
+      Object.entries(mappings)
+        .map(([k, v]) => [k, String(v || '').trim()])
+        .filter(([, v]) => v.length > 0)
+    );
+    setSaving(true);
+    try {
+      const resp = await api(
+        `/api/workspace/erp/field-mappings?organization_id=${encodeURIComponent(orgId)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ erp_type: erpKey, mappings: payloadMappings }),
+        }
+      );
+      setMappings(resp?.mappings || {});
+      setDirty(false);
+      toast?.('Custom field mappings saved.', 'success');
+    } catch (exc) {
+      const msg = String(exc?.message || exc);
+      // The 422 detail surfaces the server-side validation list.
+      // Surface it raw so the operator sees the exact field violation.
+      setError(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const erpLabel = (() => {
+    const map = { netsuite: 'NetSuite', sap: 'SAP', quickbooks: 'QuickBooks', xero: 'Xero' };
+    return map[erpKey] || (erpKey ? erpKey.charAt(0).toUpperCase() + erpKey.slice(1) : 'ERP');
+  })();
+
+  // Group catalog entries by category for the UI grouping headers.
+  const grouped = (() => {
+    const buckets = {};
+    for (const entry of catalog || []) {
+      const cat = entry.category || 'other';
+      if (!buckets[cat]) buckets[cat] = [];
+      buckets[cat].push(entry);
+    }
+    return buckets;
+  })();
+
+  const CATEGORY_LABELS = {
+    identity: 'Identity fields',
+    workflow: 'Workflow fields',
+    dimension: 'Dimension fields',
+    other: 'Other fields',
+  };
+
+  return html`
+    <div class="panel cl-field-mapping-panel">
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin:0">Custom field mapping</h3>
+          <p class="muted" style="margin:4px 0 0;font-size:12px">
+            Override the default ${erpLabel} field IDs that Clearledgr writes
+            to. Leave a field blank to use the default.
+          </p>
+        </div>
+        ${supportedErps.length > 0 && !supportedErps.includes(erpKey) ? html`
+          <span class="secondary-chip">Not configurable for ${erpLabel}</span>
+        ` : null}
+      </div>
+
+      ${loading ? html`<div class="muted" style="padding:8px 0">Loading catalog…</div>` : null}
+
+      ${!loading && (catalog?.length || 0) === 0 ? html`
+        <div class="secondary-empty" style="padding:8px 0">
+          ${supportedErps.includes(erpKey)
+            ? `No custom fields are mapped for ${erpLabel} yet.`
+            : `Custom field mapping is not available for ${erpLabel}. Switch ERP above to configure NetSuite or SAP.`}
+        </div>
+      ` : null}
+
+      ${(catalog?.length || 0) > 0 ? html`
+        <div class="cl-field-mapping-body">
+          ${Object.keys(CATEGORY_LABELS).map((cat) => {
+            const entries = grouped[cat];
+            if (!entries || entries.length === 0) return null;
+            return html`
+              <fieldset class="cl-field-mapping-group" key=${cat}>
+                <legend>${CATEGORY_LABELS[cat]}</legend>
+                <div class="cl-field-mapping-rows">
+                  ${entries.map((entry) => {
+                    const value = mappings[entry.key] || '';
+                    const usingDefault = !value;
+                    return html`
+                      <div class="cl-field-mapping-row" key=${entry.key}>
+                        <div class="cl-field-mapping-meta">
+                          <strong>${entry.label}</strong>
+                          <span class="muted">${entry.description}</span>
+                          ${entry.default ? html`
+                            <span class="cl-field-mapping-default">
+                              Default: <code>${entry.default}</code>
+                            </span>
+                          ` : null}
+                        </div>
+                        <div class="cl-field-mapping-input">
+                          <input
+                            type="text"
+                            placeholder=${entry.default || `${erpLabel} field id`}
+                            value=${value}
+                            onInput=${(e) => setField(entry.key, e.target.value)}
+                            disabled=${!canManage || saving} />
+                          ${!usingDefault ? html`
+                            <button
+                              class="btn-ghost btn-sm"
+                              type="button"
+                              onClick=${() => resetField(entry.key)}
+                              disabled=${!canManage || saving}>
+                              Reset
+                            </button>
+                          ` : null}
+                        </div>
+                      </div>`;
+                  })}
+                </div>
+              </fieldset>`;
+          })}
+        </div>
+        ${error ? html`<div class="form-error">${error}</div>` : null}
+        ${canManage ? html`
+          <div class="secondary-inline-actions" style="margin-top:12px">
+            <button
+              class="btn-primary btn-sm"
+              onClick=${onSave}
+              disabled=${saving || !dirty}>
+              ${saving ? 'Saving…' : (dirty ? 'Save mappings' : 'No changes')}
+            </button>
+            ${!erpConnected ? html`
+              <span class="muted" style="font-size:12px">
+                ${erpLabel} is not connected yet — mappings will apply once you connect.
+              </span>
+            ` : null}
+          </div>
+        ` : html`
+          <div class="secondary-note" style="margin-top:10px">
+            Only admins can change custom field mappings.
+          </div>
+        `}
+      ` : null}
     </div>
   `;
 }

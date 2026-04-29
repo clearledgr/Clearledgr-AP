@@ -3773,3 +3773,222 @@ def get_admin_health(
         "ga_readiness_summary": _summarize_ga_readiness(evidence, rollback_controls=rollback_controls),
     }
     return health
+
+
+# ---------------------------------------------------------------------------
+# Module 5 Pass A — Custom ERP field mappings.
+#
+# The leader maps non-default ERP field IDs (NetSuite custom-bodies, SAP
+# Z-fields, QB classes, Xero tracking categories) to the bounded set of
+# Clearledgr fields the agent runtime understands. Backed by:
+#   * clearledgr/integrations/field_mapping_catalog.py — the catalog
+#     defines what's mappable and the per-ERP regex each value must match
+#   * settings_json["erp_field_mappings"][erp_type] — persistence
+#   * audit_events row (event_type=erp_admin_action:field_mapping_updated)
+#     emitted on every diff so compliance can reconstruct who-changed-what
+#
+# The catalog is bounded by design (per scope §Module 5): the surface
+# is "structured UI, not infinitely flexible". Adding a new mappable
+# field is a code change that ships with the corresponding poster
+# wired to consume it.
+# ---------------------------------------------------------------------------
+
+from clearledgr.integrations.field_mapping_catalog import (  # noqa: E402
+    diff_mappings as _diff_field_mappings,
+    list_supported_erps as _list_supported_erps,
+    serialize_catalog as _serialize_field_catalog,
+    validate_mapping as _validate_field_mapping,
+)
+
+
+class _FieldMappingRequest(BaseModel):
+    erp_type: str
+    mappings: Dict[str, str]
+
+
+def _read_field_mappings(settings_json: Any, erp_type: str) -> Dict[str, str]:
+    """Pull the persisted mapping for an ERP out of org settings.
+
+    Tolerant of legacy tenants where ``settings_json`` is a stringified
+    JSON blob (older onboarding paths persisted strings). Returns ``{}``
+    on any parse failure rather than raising — the dashboard should
+    never 500 on a malformed legacy row.
+    """
+    settings = settings_json or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            return {}
+    if not isinstance(settings, dict):
+        return {}
+    all_mappings = settings.get("erp_field_mappings") or {}
+    if not isinstance(all_mappings, dict):
+        return {}
+    erp_key = str(erp_type or "").strip().lower()
+    erp_mapping = all_mappings.get(erp_key) or {}
+    return dict(erp_mapping) if isinstance(erp_mapping, dict) else {}
+
+
+def _emit_field_mapping_audit(
+    *,
+    user: TokenData,
+    org_id: str,
+    erp_type: str,
+    diff: Dict[str, Any],
+    mapping_count: int,
+) -> None:
+    """Append a single audit row recording a field-mapping change.
+
+    Best-effort: if the audit write fails we still return success to
+    the operator (we'd rather complete the user's intent than block on
+    telemetry), but we log so the gap is visible. Mirrors the pattern
+    in clearledgr/api/erp_connections._audit_erp_admin_action.
+    """
+    try:
+        db = get_db()
+        actor_id = str(getattr(user, "user_id", "") or "").strip() or "unknown"
+        actor_email = str(getattr(user, "email", "") or "").strip() or None
+        db.append_audit_event({
+            "event_type": "erp_admin_action:field_mapping_updated",
+            "actor_type": "user",
+            "actor_id": actor_id,
+            "organization_id": org_id,
+            # ERP-config changes are org-scoped, not Box-scoped — key the
+            # event on the organization itself so it groups with other
+            # org-level admin actions (rename, integration mode, etc).
+            "box_id": org_id,
+            "box_type": "organization",
+            "source": "workspace_shell",
+            "payload_json": {
+                "erp": erp_type,
+                "actor_email": actor_email,
+                "success": True,
+                "diff": diff,
+                "mapping_count": mapping_count,
+            },
+        })
+    except Exception as exc:
+        logger.warning(
+            "[field_mapping_audit] failed to write audit event for org=%s erp=%s: %s",
+            org_id, erp_type, exc,
+        )
+
+
+@router.get("/erp/field-mappings")
+async def get_erp_field_mappings(
+    erp_type: str = Query(..., description="netsuite | sap | quickbooks | xero"),
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the catalog + persisted custom field mappings for an ERP.
+
+    Response shape::
+
+        {
+          "organization_id": "org_xyz",
+          "erp_type": "netsuite",
+          "supported_erps": ["netsuite", "sap", "quickbooks", "xero"],
+          "catalog": [
+            {"key": "state_field", "label": "...", "description": "...",
+             "default": "custbody_clearledgr_state",
+             "pattern": "^[a-z]...", "category": "workflow"},
+            ...
+          ],
+          "mappings": {"state_field": "custbody_acme_state", ...}
+        }
+
+    The ``mappings`` dict only contains keys the operator has
+    explicitly customised; unset entries fall back to ``default`` at
+    posting time.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    erp_key = str(erp_type or "").strip().lower()
+    if erp_key not in _list_supported_erps():
+        raise HTTPException(status_code=400, detail=f"unsupported_erp_type:{erp_key}")
+
+    db = get_db()
+    org = db.get_organization(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+    mappings = _read_field_mappings(
+        org.get("settings_json") or org.get("settings") or {},
+        erp_key,
+    )
+    return {
+        "organization_id": org_id,
+        "erp_type": erp_key,
+        "supported_erps": _list_supported_erps(),
+        "catalog": _serialize_field_catalog(erp_key),
+        "mappings": mappings,
+    }
+
+
+@router.put("/erp/field-mappings")
+async def update_erp_field_mappings(
+    body: _FieldMappingRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Persist a custom field mapping for an ERP.
+
+    Validates each key against the bounded catalog and each value
+    against the per-ERP regex. Empty values are dropped — they
+    represent "revert to the default field id". Emits an audit
+    event with a per-key before/after diff on any change.
+
+    Admin-gated because field mappings can change where bills post.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    erp_key = str(body.erp_type or "").strip().lower()
+    if erp_key not in _list_supported_erps():
+        raise HTTPException(status_code=400, detail=f"unsupported_erp_type:{erp_key}")
+
+    cleaned, errors = _validate_field_mapping(erp_key, body.mappings or {})
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "validation_failed", "errors": errors},
+        )
+
+    db = get_db()
+    org = db.get_organization(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+
+    settings = org.get("settings_json") or org.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    all_mappings = settings.get("erp_field_mappings") or {}
+    if not isinstance(all_mappings, dict):
+        all_mappings = {}
+    before = dict(all_mappings.get(erp_key) or {})
+
+    all_mappings[erp_key] = cleaned
+    settings["erp_field_mappings"] = all_mappings
+    db.update_organization(org_id, settings_json=settings)
+
+    diff = _diff_field_mappings(before, cleaned)
+    if diff:
+        # Audit only when something actually changed — re-saving the
+        # same form should not flood the audit log with no-op rows.
+        _emit_field_mapping_audit(
+            user=user,
+            org_id=org_id,
+            erp_type=erp_key,
+            diff=diff,
+            mapping_count=len(cleaned),
+        )
+
+    return {
+        "organization_id": org_id,
+        "erp_type": erp_key,
+        "mappings": cleaned,
+    }
