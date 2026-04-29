@@ -139,7 +139,20 @@ class SapS4HanaIntakeAdapter:
     ) -> StateUpdate:
         invoice_payload = envelope.channel_metadata.get("invoice_payload") or {}
         if envelope.event_type == "paid":
-            return StateUpdate(target_state=APState.CLOSED.value)
+            # Wave 2 / C3 + S/4HANA carry-over: 'paid' events are now
+            # routed through the C2 payment-tracking lifecycle by
+            # erp_payment_dispatcher.dispatch_sap_s4hana_payment_webhook
+            # (which the SAP webhook route calls in parallel with the
+            # intake adapter). The canonical lifecycle is:
+            #   posted_to_erp -> awaiting_payment -> payment_executed
+            #   -> closed
+            # We must NOT short-circuit straight to CLOSED here —
+            # that would skip the payment_confirmations row, the
+            # remittance advice hook, and the bank-rec match link.
+            # Return target_state=None so the intake-adapter dispatch
+            # only handles bill-side state updates; the payment
+            # dispatcher handles the close downstream.
+            return StateUpdate(target_state=None)
         if envelope.event_type == "cancelled":
             return StateUpdate(target_state=APState.CLOSED.value)
         if envelope.event_type in {"update", "blocked", "released"}:

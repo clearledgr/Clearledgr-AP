@@ -446,4 +446,27 @@ async def sap_webhook(
             organization_id, dispatch_exc,
         )
 
+    # Wave 2 / C3 + S/4HANA carry-over: route CPI payment events
+    # (cleared / paid / cancelled) through the C2 payment-tracking
+    # lifecycle instead of letting the intake adapter shortcut the
+    # AP item to CLOSED. Sync (no REST roundtrip — CloudEvents
+    # payload carries the cleared amount + reference).
+    try:
+        from clearledgr.services.erp_payment_dispatcher import (
+            dispatch_sap_s4hana_payment_webhook,
+        )
+        pay_result = dispatch_sap_s4hana_payment_webhook(
+            organization_id=organization_id, raw_body=raw,
+        )
+        if pay_result.get("events_parsed"):
+            logger.info(
+                "sap s/4hana payment dispatch: org=%s result=%s",
+                organization_id, pay_result,
+            )
+    except Exception:
+        logger.exception(
+            "sap s/4hana payment dispatch raised for org=%s",
+            organization_id,
+        )
+
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})

@@ -487,7 +487,7 @@ def dispatch_netsuite_payment_webhook(
     return summary
 
 
-# ── SAP B1 polling ──────────────────────────────────────────────────
+# ── SAP B1 + S/4HANA polling ────────────────────────────────────────
 
 
 async def poll_sap_b1_payments(
@@ -504,10 +504,16 @@ async def poll_sap_b1_payments(
     ask SAP whether each one has been settled.
 
     Called by a Celery beat schedule (5 min cadence by default).
+    Routes only to B1 connections (Service Layer base_url with
+    ``/b1s/`` segment); S/4HANA connections go to
+    :func:`poll_sap_s4hana_payments`.
     """
     from clearledgr.core.database import get_db
     from clearledgr.integrations.erp_router import get_erp_connection
-    from clearledgr.integrations.erp_sap import get_payment_status_sap
+    from clearledgr.integrations.erp_sap import (
+        get_payment_status_sap,
+        is_sap_s4hana_connection,
+    )
 
     db = db or get_db()
     summary: Dict[str, Any] = {
@@ -523,6 +529,12 @@ async def poll_sap_b1_payments(
         return summary
     if connection is None:
         return summary
+    if is_sap_s4hana_connection(connection):
+        # Route to S/4HANA poller — the B1 OData endpoints don't
+        # exist on the S/4HANA gateway.
+        return await poll_sap_s4hana_payments(
+            organization_id, db=db, limit=limit,
+        )
 
     candidates: List[Dict[str, Any]] = []
     for state in ("awaiting_payment", "payment_in_flight"):
@@ -639,3 +651,243 @@ def _dispatch_one(
         actor_id=evt.source,
         metadata=evt.metadata or None,
     )
+
+
+# ── SAP S/4HANA polling ────────────────────────────────────────────
+
+
+async def poll_sap_s4hana_payments(
+    organization_id: str,
+    *,
+    db=None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Polling fallback for SAP S/4HANA when CPI Event Mesh isn't
+    wired (common in mid-market deployments without SAP BTP).
+
+    Walks AP items in ``awaiting_payment`` / ``payment_in_flight``
+    for the org and queries the S/4HANA Supplier Invoice OData
+    endpoint to check IsCleared. Cleared invoices route through
+    record_payment_confirmation so the C2 lifecycle (audit +
+    remittance + bank-rec hooks) fires identically to the
+    webhook path.
+    """
+    from clearledgr.core.database import get_db
+    from clearledgr.integrations.erp_router import get_erp_connection
+    from clearledgr.integrations.erp_sap import (
+        get_payment_status_sap_s4hana,
+    )
+
+    db = db or get_db()
+    summary: Dict[str, Any] = {
+        "polled": 0,
+        "events_dispatched": 0,
+        "duplicates": 0,
+        "errors": 0,
+    }
+    try:
+        connection = get_erp_connection(organization_id, "sap")
+    except Exception:
+        logger.exception(
+            "sap s/4hana poll: connection lookup failed org=%s",
+            organization_id,
+        )
+        return summary
+    if connection is None:
+        return summary
+
+    candidates: List[Dict[str, Any]] = []
+    for state in ("awaiting_payment", "payment_in_flight"):
+        rows = db.list_ap_items(
+            organization_id=organization_id, state=state, limit=limit,
+        )
+        candidates.extend(rows or [])
+    summary["polled"] = len(candidates)
+
+    for item in candidates:
+        bill_ref = str(item.get("erp_reference") or "").strip()
+        if not bill_ref:
+            continue
+        # S/4HANA primary key is composite "CC/DOC/FY".
+        # ap_items.erp_reference stores that string at posting time.
+        if "/" not in bill_ref:
+            continue
+        try:
+            sap_status = await get_payment_status_sap_s4hana(
+                connection, bill_ref,
+            )
+        except Exception:
+            logger.exception(
+                "sap s/4hana poll: status fetch failed bill=%s org=%s",
+                bill_ref, organization_id,
+            )
+            summary["errors"] += 1
+            continue
+        if not isinstance(sap_status, dict):
+            continue
+        if not sap_status.get("paid"):
+            continue
+        evt = ParsedPaymentEvent(
+            payment_id=str(
+                sap_status.get("payment_reference") or f"{bill_ref}:paid"
+            ),
+            source="sap_s4hana",
+            erp_bill_reference=bill_ref,
+            status="confirmed",
+            settlement_at=sap_status.get("payment_date") or None,
+            amount=(
+                float(sap_status["payment_amount"])
+                if sap_status.get("payment_amount") is not None else None
+            ),
+            currency=sap_status.get("currency") or None,
+            payment_reference=str(sap_status.get("payment_reference") or "") or None,
+            method=str(sap_status.get("payment_method") or "") or None,
+        )
+        res = _dispatch_one(db, organization_id, evt)
+        if res is None:
+            continue
+        if res.duplicate:
+            summary["duplicates"] += 1
+        else:
+            summary["events_dispatched"] += 1
+    return summary
+
+
+# ── SAP S/4HANA CPI CloudEvents payment dispatcher ────────────────
+
+
+def _parse_sap_s4hana_payment_envelope(body: bytes) -> List[ParsedPaymentEvent]:
+    """Parse a CPI-delivered CloudEvents payment payload.
+
+    SAP CPI publishes outgoing-payment events under topics like
+    ``sap.s4.beh.suppliere2einvoice.cleared`` or ``...paid``. The
+    envelope follows CloudEvents v1.0:
+
+      {
+        "specversion": "1.0",
+        "type": "sap.s4.beh.suppliere2einvoice.cleared.v1",
+        "source": "/sap/...",
+        "id": "<uuid>",
+        "data": {
+          "CompanyCode": "1000",
+          "SupplierInvoice": "5105600000",
+          "FiscalYear": "2026",
+          "PaymentReference": "...",
+          "ClearingDate": "2026-04-29",
+          "InvoiceGrossAmount": 1190.00,
+          "DocumentCurrency": "EUR"
+        }
+      }
+
+    Some CPI integrations bundle multiple events as a list
+    ``{"events": [...]}``; we accept either shape.
+    """
+    try:
+        text = body.decode("utf-8", errors="replace") if body else ""
+        envelope = json.loads(text) if text else {}
+    except Exception:
+        return []
+
+    events_list: List[Dict[str, Any]] = []
+    if isinstance(envelope, dict):
+        if isinstance(envelope.get("events"), list):
+            events_list = [
+                e for e in envelope["events"] if isinstance(e, dict)
+            ]
+        elif "data" in envelope:
+            events_list = [envelope]
+    elif isinstance(envelope, list):
+        events_list = [e for e in envelope if isinstance(e, dict)]
+
+    out: List[ParsedPaymentEvent] = []
+    for e in events_list:
+        ev_type = str(e.get("type") or "").lower()
+        # Only process cleared / paid / payment-cancelled events.
+        is_cleared = (
+            "cleared" in ev_type or "paid" in ev_type
+            or "settl" in ev_type or "execut" in ev_type
+        )
+        is_cancelled = (
+            "cancel" in ev_type or "void" in ev_type
+            or "revers" in ev_type
+        )
+        if not (is_cleared or is_cancelled):
+            continue
+        data = e.get("data") or {}
+        if not isinstance(data, dict):
+            continue
+        cc = str(
+            data.get("CompanyCode") or data.get("companyCode") or ""
+        ).strip()
+        doc = str(
+            data.get("SupplierInvoice") or data.get("supplierInvoice")
+            or data.get("BELNR") or ""
+        ).strip()
+        fy = str(
+            data.get("FiscalYear") or data.get("fiscalYear")
+            or data.get("GJAHR") or ""
+        ).strip()
+        if not (cc and doc and fy):
+            continue
+        bill_ref = f"{cc}/{doc}/{fy}"
+        clearing_doc = str(
+            data.get("ClearingDocument")
+            or data.get("clearingDocument")
+            or ""
+        ).strip()
+        clearing_date = (
+            data.get("ClearingDate") or data.get("clearingDate")
+            or data.get("PaymentDate") or None
+        )
+        amount = data.get("InvoiceGrossAmount") or data.get("Amount")
+        currency = data.get("DocumentCurrency") or data.get("Currency")
+
+        out.append(ParsedPaymentEvent(
+            payment_id=clearing_doc or f"{bill_ref}:cpi:{e.get('id') or ''}",
+            source="sap_s4hana",
+            erp_bill_reference=bill_ref,
+            status="failed" if is_cancelled else "confirmed",
+            settlement_at=str(clearing_date) if clearing_date else None,
+            amount=float(amount) if amount is not None else None,
+            currency=str(currency) if currency else None,
+            payment_reference=clearing_doc or None,
+            failure_reason="cancelled" if is_cancelled else None,
+            metadata={"cpi_event_type": ev_type, "cpi_event_id": e.get("id")},
+        ))
+    return out
+
+
+def dispatch_sap_s4hana_payment_webhook(
+    organization_id: str,
+    raw_body: bytes,
+    *,
+    db=None,
+) -> Dict[str, Any]:
+    """SAP CPI publishes payment CloudEvents to the same /sap webhook
+    route the intake adapter uses. The route now calls THIS
+    dispatcher in addition to the bill-event intake adapter so a
+    single CPI delivery containing payment events lands properly in
+    the C2 lifecycle (record_payment_confirmation) instead of
+    short-circuiting through the intake adapter's 'paid' state.
+
+    Sync (no follow-up REST roundtrip) — the CloudEvents payload
+    carries the cleared amount + reference."""
+    from clearledgr.core.database import get_db
+    db = db or get_db()
+    summary: Dict[str, Any] = {
+        "events_parsed": 0,
+        "events_dispatched": 0,
+        "events_skipped": 0,
+        "duplicates": 0,
+    }
+    events = _parse_sap_s4hana_payment_envelope(raw_body)
+    summary["events_parsed"] = len(events)
+    for evt in events:
+        res = _dispatch_one(db, organization_id, evt)
+        if res is None:
+            summary["events_skipped"] += 1
+        elif res.duplicate:
+            summary["duplicates"] += 1
+        else:
+            summary["events_dispatched"] += 1
+    return summary

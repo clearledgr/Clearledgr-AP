@@ -647,9 +647,12 @@ def poll_sap_b1_payments_all_orgs() -> dict:
     """Walk every org with a SAP connection and poll for cleared
     outgoing payments (Wave 2 / C3 carry-over).
 
-    SAP B1 doesn't ship a payment webhook, so the dispatcher in
-    erp_payment_dispatcher.poll_sap_b1_payments has to be polled.
-    This task wraps that per-org and aggregates the results.
+    Handles BOTH SAP B1 and S/4HANA. The poll_sap_b1_payments
+    dispatcher inspects the connection's base_url and routes to
+    poll_sap_s4hana_payments when the URL doesn't match the B1
+    Service Layer pattern (``/b1s/`` segment) — covering S/4HANA
+    deployments where CPI Event Mesh isn't wired and the only
+    payment signal is the OData IsCleared flag.
 
     Cadence: every 5 minutes via Celery Beat. Idempotent — the
     payment-tracking layer (C2) deduplicates redelivered payment

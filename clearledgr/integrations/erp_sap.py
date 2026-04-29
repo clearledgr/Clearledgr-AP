@@ -1337,6 +1337,125 @@ async def get_payment_status_sap(
         return {"paid": False, "error": "payment_status_lookup_failed"}
 
 
+# ==================== S/4HANA Payment Status (Carry-over) ====================
+
+
+def is_sap_s4hana_connection(connection) -> bool:
+    """Heuristic: SAP B1 Service Layer URLs include ``/b1s/`` (e.g.
+    https://<host>:50000/b1s/v1). S/4HANA endpoints typically include
+    ``/sap/opu/odata/sap/`` or run against the SAP API hub. Anything
+    that doesn't look like B1 we treat as S/4HANA so the polling
+    + CloudEvents path is the default for modern SAP shops."""
+    base = str(getattr(connection, "base_url", None) or "").lower()
+    return "/b1s/" not in base
+
+
+async def get_payment_status_sap_s4hana(
+    connection,
+    supplier_invoice_key: str,
+) -> Dict[str, Any]:
+    """Read payment status for one SAP S/4HANA supplier invoice.
+
+    ``supplier_invoice_key`` is the composite ``CompanyCode/SupplierInvoice/FiscalYear``
+    string the intake adapter constructs (the canonical S/4HANA
+    primary key). The OData endpoint:
+
+        {base_url}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/
+            A_SupplierInvoice(CompanyCode='1000',SupplierInvoice='5105600000',FiscalYear='2026')
+
+    Compares ``PaymentBlockingReason`` + ``IsCleared`` flags. The
+    cleared flag is the canonical "the bill has been paid out by
+    treasury" signal in S/4HANA.
+    """
+    if not connection.access_token or not connection.base_url:
+        return {"paid": False, "error": "SAP S/4HANA not properly configured"}
+
+    parts = (supplier_invoice_key or "").split("/")
+    if len(parts) != 3:
+        return {"paid": False, "error": "invalid_invoice_key_expected_CC_DOC_FY"}
+    company_code, supplier_invoice, fiscal_year = parts
+    base = str(connection.base_url or "").rstrip("/")
+    url = (
+        f"{base}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/"
+        f"A_SupplierInvoice("
+        f"CompanyCode='{company_code}',"
+        f"SupplierInvoice='{supplier_invoice}',"
+        f"FiscalYear='{fiscal_year}')"
+    )
+    try:
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Accept": "application/json",
+            },
+            timeout=_ERP_TIMEOUT,
+        )
+        if response.status_code == 401:
+            return {
+                "paid": False,
+                "error": "authentication_failed",
+                "needs_reauth": True,
+            }
+        if response.status_code == 404:
+            return {"paid": False, "reason": "not_found"}
+        response.raise_for_status()
+        data = response.json() or {}
+        # OData envelope can be either {"d": {...}} (v2) or root-level (v4).
+        record = data.get("d") if isinstance(data.get("d"), dict) else data
+
+        is_cleared = str(record.get("IsCleared") or "").lower() in (
+            "true", "x", "1", "yes",
+        )
+        is_cancelled = str(record.get("IsCancelled") or "").lower() in (
+            "true", "x", "1", "yes",
+        )
+        amount = float(record.get("InvoiceGrossAmount") or 0)
+        currency = str(record.get("DocumentCurrency") or "")
+        payment_block = str(record.get("PaymentBlockingReason") or "").strip()
+        clearing_doc = str(record.get("ClearingDocument") or "").strip()
+        clearing_date = str(record.get("ClearingDate") or "")
+
+        if is_cancelled:
+            return {
+                "paid": False,
+                "payment_failed": True,
+                "reason": "invoice_cancelled",
+            }
+
+        if is_cleared and amount > 0:
+            return {
+                "paid": True,
+                "payment_amount": round(amount, 2),
+                "payment_date": clearing_date,
+                "payment_method": "",
+                "payment_reference": clearing_doc or supplier_invoice,
+                "partial": False,
+                "remaining_balance": 0.0,
+                "currency": currency,
+            }
+
+        if payment_block and payment_block != "0":
+            return {
+                "paid": False,
+                "reason": f"payment_blocked:{payment_block}",
+            }
+
+        return {"paid": False, "reason": "unpaid"}
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "SAP S/4HANA payment status HTTP error: status=%d",
+            exc.response.status_code,
+        )
+        return {"paid": False, "error": f"http_{exc.response.status_code}"}
+    except Exception as exc:
+        logger.warning(
+            "SAP S/4HANA payment status failed: %s", type(exc).__name__,
+        )
+        return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
 # ==================== Chart of Accounts ====================
 
 _SAP_GROUP_CODE_MAP = {
