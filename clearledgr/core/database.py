@@ -140,6 +140,7 @@ def _load_store_symbols() -> None:
     global PurchaseOrderStore
     global BoxLifecycleStore
     global CustomRolesStore
+    global UserEntityRolesStore
 
     if "APStore" in globals():
         return
@@ -177,6 +178,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.custom_roles_store import (
         CustomRolesStore as _CustomRolesStore,
     )
+    from clearledgr.core.stores.user_entity_roles_store import (
+        UserEntityRolesStore as _UserEntityRolesStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -199,6 +203,7 @@ def _load_store_symbols() -> None:
     PurchaseOrderStore = _PurchaseOrderStore
     BoxLifecycleStore = _BoxLifecycleStore
     CustomRolesStore = _CustomRolesStore
+    UserEntityRolesStore = _UserEntityRolesStore
 
 
 class _ClearledgrDBBase:
@@ -1489,6 +1494,7 @@ def _get_db_impl_class():
             PurchaseOrderStore,
             BoxLifecycleStore,
             CustomRolesStore,
+            UserEntityRolesStore,
             _ClearledgrDBBase,
         ):
             pass

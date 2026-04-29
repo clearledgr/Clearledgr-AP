@@ -843,6 +843,12 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         canManage=${canManageTeam}
         panelRef=${rolesRef} />
 
+      <${EntityRolesPanel}
+        api=${api}
+        orgId=${orgId}
+        toast=${toast}
+        canManage=${canManageTeam} />
+
       ${implStatus?.steps ? html`
         <div class="panel">
           <div class="panel-head compact">
@@ -1232,5 +1238,258 @@ function CustomRoleEditor({ permissionEntries, mode, initial, onCancel, onSubmit
     </form>
   `;
 }
+
+
+// ─── Module 6 Pass B — Per-entity role assignments ────────────────────
+// Lives directly under the CustomRolesPanel on SettingsPage. Each
+// active workspace user expands into an inline editor where the
+// admin can override their org-level role per legal entity and set
+// an optional approval ceiling. Backed by:
+//   GET /api/workspace/team/users
+//   GET /api/workspace/entities
+//   GET /api/workspace/users/{id}/entity-roles
+//   PUT /api/workspace/users/{id}/entity-roles
+//   GET /api/workspace/roles/custom (for custom-role tokens)
+function EntityRolesPanel({ api, orgId, toast, canManage }) {
+  const [users, setUsers] = useState([]);
+  const [entities, setEntities] = useState([]);
+  const [customRoles, setCustomRoles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [openUserId, setOpenUserId] = useState(null);
+
+  const loadAll = async () => {
+    if (!api || !orgId) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const [usersResp, entitiesResp, rolesResp] = await Promise.all([
+        api(`/api/workspace/team/users?organization_id=${encodeURIComponent(orgId)}`),
+        api(`/api/workspace/entities?organization_id=${encodeURIComponent(orgId)}`),
+        api(`/api/workspace/roles/custom?organization_id=${encodeURIComponent(orgId)}`),
+      ]);
+      setUsers(Array.isArray(usersResp?.users) ? usersResp.users : []);
+      setEntities(Array.isArray(entitiesResp?.entities) ? entitiesResp.entities : []);
+      setCustomRoles(Array.isArray(rolesResp?.custom_roles) ? rolesResp.custom_roles : []);
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadAll(); }, [api, orgId]);
+
+  return html`
+    <div class="panel">
+      <div class="panel-head compact">
+        <div>
+          <h3>Per-entity role overrides${!canManage ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+          <p class="muted">Override a user's role inside a specific legal entity. Per-amount approval ceilings compose with their effective role.</p>
+        </div>
+      </div>
+
+      ${err ? html`<div class="form-error">${err}</div>` : null}
+      ${loading ? html`<div class="muted">Loading…</div>` : null}
+      ${!loading && entities.length === 0 ? html`
+        <div class="muted">Add legal entities under Settings → Entities to start setting per-entity overrides.</div>
+      ` : null}
+
+      ${!loading && users.length > 0 && entities.length > 0 ? html`
+        <div class="cl-entity-roles-list">
+          ${users.map((u) => html`
+            <div class="cl-entity-roles-row" key=${u.id}>
+              <div class="cl-entity-roles-head">
+                <div>
+                  <strong>${u.name}</strong>
+                  <span class="muted" style="margin-left:6px;font-size:12px">${u.email}</span>
+                </div>
+                <div class="row-actions">
+                  <span class="cl-roles-chip">Org role: ${u.role}</span>
+                  <button
+                    class="btn-secondary btn-sm"
+                    onClick=${() => setOpenUserId(openUserId === u.id ? null : u.id)}>
+                    ${openUserId === u.id ? 'Close' : 'Per-entity overrides'}
+                  </button>
+                </div>
+              </div>
+
+              ${openUserId === u.id ? html`
+                <${EntityRolesEditor}
+                  api=${api}
+                  orgId=${orgId}
+                  toast=${toast}
+                  user=${u}
+                  entities=${entities}
+                  customRoles=${customRoles}
+                  canManage=${canManage}
+                  onSaved=${() => setOpenUserId(null)} />
+              ` : null}
+            </div>
+          `)}
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+
+function EntityRolesEditor({ api, orgId, toast, user, entities, customRoles, canManage, onSaved }) {
+  const [assignments, setAssignments] = useState({}); // { entity_id: {role, approval_ceiling} }
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const STANDARD_ROLES = [
+    { value: '', label: 'Use org role' },
+    { value: 'owner', label: 'Owner' },
+    { value: 'cfo', label: 'CFO' },
+    { value: 'financial_controller', label: 'Financial Controller' },
+    { value: 'ap_manager', label: 'AP Manager' },
+    { value: 'ap_clerk', label: 'AP Clerk' },
+    { value: 'read_only', label: 'Read-only' },
+  ];
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!api || !orgId || !user?.id) return;
+      setLoading(true);
+      try {
+        const resp = await api(
+          `/api/workspace/users/${encodeURIComponent(user.id)}/entity-roles?organization_id=${encodeURIComponent(orgId)}`,
+        );
+        if (cancelled) return;
+        const map = {};
+        (resp?.assignments || []).forEach((a) => {
+          map[a.entity_id] = {
+            role: a.role,
+            approval_ceiling: a.approval_ceiling || '',
+          };
+        });
+        setAssignments(map);
+      } catch (exc) {
+        toast?.(`Could not load assignments: ${exc?.message || exc}`, 'error');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [api, orgId, user?.id]);
+
+  const setField = (entityId, field, value) => {
+    setAssignments((prev) => {
+      const next = { ...prev };
+      const row = { ...(next[entityId] || {}), [field]: value };
+      // Clear-out a row when role goes back to "use org role" with no
+      // ceiling — it shouldn't exist server-side.
+      if (!row.role && !row.approval_ceiling) {
+        delete next[entityId];
+      } else {
+        next[entityId] = row;
+      }
+      return next;
+    });
+  };
+
+  const onSave = async () => {
+    if (!canManage) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        assignments: Object.entries(assignments)
+          .filter(([_eid, row]) => row.role)
+          .map(([entity_id, row]) => ({
+            entity_id,
+            role: row.role,
+            approval_ceiling: row.approval_ceiling
+              ? Number(row.approval_ceiling)
+              : null,
+          })),
+      };
+      await api(
+        `/api/workspace/users/${encodeURIComponent(user.id)}/entity-roles?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'PUT', body: JSON.stringify(payload) },
+      );
+      toast?.('Per-entity roles saved.', 'success');
+      onSaved?.();
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail || {};
+      const reason = typeof detail === 'object' ? detail.reason : null;
+      const msg =
+        reason === 'invalid_role'
+          ? `Unknown role: ${detail.role}`
+          : reason === 'validation_failed'
+          ? detail.message || 'Validation failed.'
+          : exc?.message || 'Could not save assignments.';
+      toast?.(msg, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return html`
+    <div class="cl-entity-roles-editor">
+      ${loading ? html`<div class="muted">Loading current assignments…</div>` : null}
+      ${!loading ? html`
+        <table class="cl-entity-roles-table">
+          <thead>
+            <tr>
+              <th>Entity</th>
+              <th>Role override</th>
+              <th>Approval ceiling</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${entities.map((e) => {
+              const row = assignments[e.id] || { role: '', approval_ceiling: '' };
+              return html`
+                <tr key=${e.id}>
+                  <td>
+                    <strong>${e.name}</strong>
+                    <div class="muted" style="font-size:11px">${e.code || e.id}</div>
+                  </td>
+                  <td>
+                    <select
+                      value=${row.role}
+                      onChange=${(ev) => setField(e.id, 'role', ev.target.value)}
+                      disabled=${!canManage}>
+                      <optgroup label="Standard">
+                        ${STANDARD_ROLES.map((r) => html`<option value=${r.value}>${r.label}</option>`)}
+                      </optgroup>
+                      ${customRoles.length > 0 ? html`
+                        <optgroup label="Custom">
+                          ${customRoles.map((cr) => html`<option value=${cr.id}>${cr.name}</option>`)}
+                        </optgroup>
+                      ` : null}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="No ceiling"
+                      value=${row.approval_ceiling}
+                      onInput=${(ev) => setField(e.id, 'approval_ceiling', ev.target.value)}
+                      disabled=${!canManage} />
+                  </td>
+                </tr>`;
+            })}
+          </tbody>
+        </table>
+        <div class="row-actions" style="justify-content:flex-end;margin-top:10px">
+          <button
+            class="btn-primary btn-sm"
+            onClick=${onSave}
+            disabled=${submitting || !canManage}>
+            ${submitting ? 'Saving…' : 'Save assignments'}
+          </button>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
 
 

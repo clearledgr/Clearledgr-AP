@@ -3247,6 +3247,45 @@ def list_team_invites(
     return {"organization_id": org_id, "invites": invites}
 
 
+@router.get("/team/users")
+def list_team_users(
+    organization_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    user: TokenData = Depends(get_current_user),
+):
+    """Lightweight user list for admin surfaces.
+
+    Used by the Roles & permissions UI (Pass B) to show per-user
+    entity-role overrides without paying the cost of /team/approvers'
+    Slack-resolution probe. Returns {id, email, name, role,
+    is_active} only — sensitive fields (password_hash, slack tokens)
+    never appear in the response.
+
+    Tenant-scoped via _resolve_org_id. Read-gated to admin since the
+    user list itself is privileged information.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    rows = db.get_users(org_id, include_inactive=include_inactive)
+    users = [
+        {
+            "id": row.get("id"),
+            "email": (row.get("email") or "").strip().lower(),
+            "name": (row.get("name") or "").strip() or (row.get("email") or ""),
+            "role": (row.get("role") or "ap_clerk").strip().lower(),
+            "is_active": bool(row.get("is_active")),
+        }
+        for row in rows
+    ]
+    users.sort(key=lambda u: (u["name"] or u["email"] or "").lower())
+    return {
+        "organization_id": org_id,
+        "users": users,
+        "count": len(users),
+    }
+
+
 @router.get("/team/approvers")
 async def list_team_approvers(
     organization_id: Optional[str] = Query(default=None),
@@ -4298,3 +4337,264 @@ def delete_custom_role(
         extra={"name": existing.get("name")},
     )
     return {"id": role_id, "status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Module 6 Pass B — Per-entity role + approval ceiling
+#
+# A user's effective role can vary per legal entity (Sara is AP
+# Manager in EU, Read-only in US). Per-amount approval ceilings
+# compose with that. Backed by the user_entity_roles table
+# (migration v54) and resolved by clearledgr/services/role_resolver.py.
+# ---------------------------------------------------------------------------
+
+from clearledgr.core.permissions import ROLE_PERMISSIONS as _ROLE_PERMISSIONS  # noqa: E402
+from clearledgr.services import role_resolver as _role_resolver  # noqa: E402
+
+
+class EntityRoleAssignment(BaseModel):
+    entity_id: str = Field(..., min_length=1, max_length=128)
+    role: str = Field(..., min_length=1, max_length=64)
+    approval_ceiling: Optional[float] = Field(default=None, ge=0)
+
+
+class EntityRolesPutRequest(BaseModel):
+    assignments: List[EntityRoleAssignment]
+
+
+def _resolve_role_token(role_token: str, db) -> bool:
+    """Validate a role token: standard taxonomy OR existing custom role id.
+
+    Returns ``True`` if the token is acceptable. Used at the API
+    boundary so a malformed admin request 422s before persistence.
+    """
+    token = (role_token or "").strip().lower()
+    if not token:
+        return False
+    if token in _ROLE_PERMISSIONS:
+        return True
+    if token.startswith("cr_"):
+        try:
+            row = db.get_custom_role(token)
+        except Exception:
+            return False
+        return bool(row)
+    return False
+
+
+def _serialize_entity_role(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a DB row to a JSON-friendly dict (Decimal → str)."""
+    out = {
+        "user_id": row.get("user_id"),
+        "entity_id": row.get("entity_id"),
+        "organization_id": row.get("organization_id"),
+        "role": row.get("role"),
+        "approval_ceiling": (
+            str(row["approval_ceiling"])
+            if row.get("approval_ceiling") is not None else None
+        ),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+    return out
+
+
+def _audit_entity_role(
+    *,
+    user: TokenData,
+    org_id: str,
+    target_user_id: str,
+    action: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Audit emit for per-entity role mutations."""
+    try:
+        db = get_db()
+        payload: Dict[str, Any] = {
+            "actor_email": getattr(user, "email", None),
+            "target_user_id": target_user_id,
+        }
+        if extra:
+            payload.update(extra)
+        db.append_audit_event({
+            "event_type": f"user_entity_role_{action}",
+            "actor_type": "user",
+            "actor_id": str(getattr(user, "user_id", "") or "unknown"),
+            "organization_id": org_id,
+            "box_id": target_user_id,
+            "box_type": "user",
+            "source": "workspace_admin",
+            "payload_json": payload,
+        })
+    except Exception as exc:
+        logger.warning(
+            "[entity_role_audit] failed for org=%s user=%s action=%s: %s",
+            org_id, target_user_id, action, exc,
+        )
+
+
+@router.get("/users/{user_id}/entity-roles")
+def list_entity_roles_for_user(
+    user_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """List per-entity role assignments for one user.
+
+    Tenant-scoped. Returns the resolver's view: which entities have
+    overrides + their ceilings. Includes the user's org-level role
+    on the response so the UI can render the fallback label.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    rows = db.list_user_entity_roles(user_id)
+    # Filter out any rows that belong to a different tenant — there
+    # shouldn't be any (the writer scopes by org_id), but a stale
+    # row would otherwise leak across tenants.
+    rows = [r for r in rows if str(r.get("organization_id") or "") == org_id]
+    return {
+        "user_id": user_id,
+        "organization_id": org_id,
+        "assignments": [_serialize_entity_role(r) for r in rows],
+        "count": len(rows),
+    }
+
+
+@router.put("/users/{user_id}/entity-roles")
+def replace_entity_roles_for_user(
+    user_id: str,
+    body: EntityRolesPutRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Idempotently replace ALL per-entity assignments for one user.
+
+    The PUT body is the full desired state — any entity_id in the
+    request is upserted, any prior assignment whose entity is missing
+    from the request is deleted. The replace happens in one
+    transaction so the user is never observed in a half-applied
+    state.
+
+    Validation:
+      * each ``role`` must be a known standard role token OR an
+        existing custom role id in this tenant;
+      * ``approval_ceiling`` must be non-negative if provided;
+      * an empty assignments[] is valid — it clears every per-entity
+        assignment for the user.
+
+    Audit-emitted with a per-entity diff so compliance can
+    reconstruct what changed.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    # Validate every role token before any DB write.
+    for a in body.assignments:
+        if not _resolve_role_token(a.role, db):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": "invalid_role",
+                    "entity_id": a.entity_id,
+                    "role": a.role,
+                },
+            )
+
+    # Capture before-state for audit diff.
+    before_rows = db.list_user_entity_roles(user_id)
+    before_map = {r["entity_id"]: r for r in before_rows}
+
+    incoming_payload = [
+        {
+            "entity_id": a.entity_id,
+            "role": a.role,
+            "approval_ceiling": a.approval_ceiling,
+        }
+        for a in body.assignments
+    ]
+
+    try:
+        new_rows = db.replace_user_entity_roles(
+            user_id=user_id,
+            organization_id=org_id,
+            assignments=incoming_payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "validation_failed", "message": str(exc)},
+        )
+
+    after_map = {r["entity_id"]: r for r in new_rows}
+    added = sorted(set(after_map) - set(before_map))
+    removed = sorted(set(before_map) - set(after_map))
+    changed = sorted([
+        e for e in (set(before_map) & set(after_map))
+        if (
+            before_map[e].get("role") != after_map[e].get("role")
+            or before_map[e].get("approval_ceiling") != after_map[e].get("approval_ceiling")
+        )
+    ])
+
+    if added or removed or changed:
+        _audit_entity_role(
+            user=user, org_id=org_id, target_user_id=user_id,
+            action="replaced",
+            extra={
+                "added": added, "removed": removed, "changed": changed,
+                "count_after": len(new_rows),
+            },
+        )
+
+    return {
+        "user_id": user_id,
+        "organization_id": org_id,
+        "assignments": [_serialize_entity_role(r) for r in new_rows],
+        "count": len(new_rows),
+    }
+
+
+@router.get("/users/{user_id}/effective-permissions")
+def get_effective_permissions_for_user(
+    user_id: str,
+    entity_id: Optional[str] = Query(default=None),
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the resolver's view of one user's effective permissions
+    in one entity (or org-level if entity_id is omitted).
+
+    The resolver decides which scope wins (entity > org), so the
+    frontend can probe this endpoint to know exactly what to render
+    or gate without re-implementing the resolver client-side.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    # Look up the target user's org-level role. Tolerant of users that
+    # don't exist in this tenant — return an empty resolver result
+    # rather than 404 so the UI can render "user not found" cleanly.
+    target_role = ""
+    if hasattr(db, "get_user"):
+        try:
+            target = db.get_user(user_id)
+            if target and str(target.get("organization_id") or "") == org_id:
+                target_role = str(target.get("role") or "").strip().lower()
+        except Exception:
+            target_role = ""
+
+    resolved = _role_resolver.resolve_role(
+        db, user_id=user_id, org_role=target_role, entity_id=entity_id,
+    )
+    return {
+        "user_id": user_id,
+        "organization_id": org_id,
+        "entity_id": entity_id,
+        "role": resolved.role,
+        "scope": resolved.scope,
+        "permissions": sorted(resolved.permissions),
+        "approval_ceiling": (
+            str(resolved.approval_ceiling) if resolved.approval_ceiling is not None else None
+        ),
+    }

@@ -2680,3 +2680,60 @@ def _v53_custom_roles(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v53] index skipped: %s", exc)
+
+
+@migration(54, "user_entity_roles table — per-entity role + approval ceiling (Module 6 Pass B)")
+def _v54_user_entity_roles(cur, db):
+    """Per-(user, entity) role assignment + per-amount approval ceiling.
+
+    Per scope spec §Module 6 §217-218:
+      * "A user can have different roles in different legal entities
+        (Sara is AP Manager in EU entity, Read-only in US entity)."
+      * "Per-amount scoping: composes with rules — 'Sara can approve
+        up to $50K'."
+
+    A row here overrides the org-level ``user.role`` for the named
+    entity. Absent a row, the user's org-level role applies (so this
+    table is purely additive — existing tenants behave identically
+    until they explicitly assign a per-entity role).
+
+    The ``role`` column accepts either:
+      * a standard role token (``owner`` / ``cfo`` / ... / ``read_only``);
+      * a custom role id (``cr_<hex>``) referencing custom_roles.id.
+
+    No FK on entity_id or user_id — the resolver is tolerant of stale
+    references (returns the org-level fallback) so a deleted entity
+    or user doesn't 500 the dashboard.
+
+    ``approval_ceiling`` is NULL by default = no ceiling (the role's
+    permissions decide). When set, ``can_approve`` enforces
+    ``amount <= ceiling``.
+
+    Indexed for the most common reads:
+      * primary key (user_id, entity_id) — point lookup at approve time;
+      * (organization_id) — list-by-org for the admin UI.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_entity_roles (
+            user_id TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            approval_ceiling NUMERIC(18,2),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, entity_id)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_user_entity_roles_org "
+        "ON user_entity_roles(organization_id)",
+        "CREATE INDEX IF NOT EXISTS idx_user_entity_roles_user "
+        "ON user_entity_roles(user_id, organization_id)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v54] index skipped: %s", exc)

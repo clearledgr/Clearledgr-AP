@@ -1414,6 +1414,74 @@
   }
 }
 
+/* ─── Module 6 Pass B — Per-entity role editor ────────────────────── */
+
+.cl-entity-roles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cl-entity-roles-row {
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  background: white;
+  overflow: hidden;
+}
+
+.cl-entity-roles-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--cl-bg-subtle, #fafafa);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cl-entity-roles-editor {
+  padding: 12px;
+  border-top: 1px solid var(--cl-border, #e5e7eb);
+}
+
+.cl-entity-roles-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cl-entity-roles-table th,
+.cl-entity-roles-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--cl-border-subtle, #efefef);
+  vertical-align: top;
+  text-align: left;
+}
+
+.cl-entity-roles-table th {
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.cl-entity-roles-table select,
+.cl-entity-roles-table input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  font-size: 12px;
+  background: white;
+}
+
+@media (max-width: 720px) {
+  .cl-entity-roles-table {
+    font-size: 11px;
+  }
+}
+
 /* ─── Module 5 Pass A — Custom field mapping panel ─────────────────────
  * Lives below the ERP connection card on the Connections page. Per-ERP
  * catalog with grouped fieldsets (identity / workflow / dimension).
