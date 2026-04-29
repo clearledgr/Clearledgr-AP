@@ -49,6 +49,10 @@ from clearledgr.services.vat_return import (
     list_vat_returns,
     mark_vat_return_submitted,
 )
+from clearledgr.services.vat_return_forms import (
+    map_to_country_form,
+    supported_jurisdictions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +260,47 @@ def get_return(
     if row is None or row.get("organization_id") != user.organization_id:
         raise HTTPException(status_code=404, detail="return_not_found")
     return _serialize_vat_return(row)
+
+
+@router.get("/vat-returns/{return_id}/form")
+def get_country_form(
+    return_id: str,
+    jurisdiction: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Map a stored VAT return onto a country-specific form layout.
+
+    Wave 4 / F3: GB (HMRC 9-box, identity), DE (UStVA), NL (BTW),
+    FR (CA3). The ``jurisdiction`` query param overrides the
+    return's stored jurisdiction — useful when a UK org files a
+    parallel German UStVA for a German subsidiary.
+    """
+    db = get_db()
+    row = get_vat_return(db, return_id)
+    if row is None or row.get("organization_id") != user.organization_id:
+        raise HTTPException(status_code=404, detail="return_not_found")
+    target = (jurisdiction or row.get("jurisdiction") or "GB").upper()
+    if target not in supported_jurisdictions():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unsupported_jurisdiction:{target!r}; "
+                f"supported={supported_jurisdictions()}"
+            ),
+        )
+    boxes = {
+        k: v for k, v in row.items()
+        if k.startswith("box")
+    }
+    try:
+        mapped = map_to_country_form(
+            boxes,
+            jurisdiction=target,
+            currency=row.get("currency") or "GBP",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return mapped
 
 
 @router.post("/vat-returns/{return_id}/submit")
