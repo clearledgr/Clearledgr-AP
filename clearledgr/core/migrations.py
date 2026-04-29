@@ -3093,6 +3093,66 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    66,
+    "tax_authority_submissions — Africa e-invoice transmission ledger (F4 carry-over)",
+)
+def _v66_tax_authority_submissions(cur, db):
+    """Submission ledger for the F4 transmission layer.
+
+    One row per attempted/successful submit to a tax authority's
+    Access/Service Provider (FIRS via Sovos/Pwani Tech, KRA via the
+    eTIMS device API, SARS via the proposed e-invoice gateway).
+    Stores the request payload + provider response + the issued
+    reference (FIRS IRN, KRA CUIN, SARS submission id) so the
+    audit chain bill -> payload -> tax authority reference is
+    one query away.
+
+    Composite uniqueness on (organization_id, ap_item_id, country)
+    means re-submission for the same bill+country is rejected at
+    the DB layer; operators must explicitly cancel/supersede the
+    prior submission via review_status before re-submitting.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tax_authority_submissions (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            ap_item_id TEXT NOT NULL,
+            country TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            document_type TEXT NOT NULL DEFAULT 'invoice',
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            provider_reference TEXT,
+            provider_response_json TEXT,
+            error_reason TEXT,
+            review_status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            submitted_at TEXT,
+            superseded_at TEXT,
+            superseded_reason TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_tax_subm_org_apitem "
+        "ON tax_authority_submissions(organization_id, ap_item_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_tax_subm_org_country_status "
+        "ON tax_authority_submissions(organization_id, country, status, created_at DESC)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tax_subm_active_unique "
+        "ON tax_authority_submissions(organization_id, ap_item_id, country) "
+        "WHERE review_status = 'open'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v66] tax_authority_submissions index skipped: %s", exc,
+            )
+
+
+@migration(
     65,
     "data_subject_requests + retention_policy_runs (Wave 3 E3)",
 )
