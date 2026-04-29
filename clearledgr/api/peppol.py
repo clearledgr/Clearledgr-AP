@@ -1,18 +1,16 @@
-"""PEPPOL UBL invoice import API (Wave 4 / F1).
+"""PEPPOL UBL inbound + outbound API (Wave 4 / F1 + F2).
 
+Inbound (F1):
   POST /api/workspace/peppol/import
-      Body: raw UBL 2.1 XML invoice
-      - Parses via peppol_ubl_parser.parse_peppol_ubl_invoice
-      - Creates an ap_items row in 'received' state
-      - Pre-populates net/vat/treatment/bill_country from the
-        invoice's tax breakdown so the JE preview (E4) renders
-        correctly without needing a separate vat-recalculate call.
-      - Returns the AP item id + parser warnings so the operator
-        sees any structural issues.
-
   POST /api/workspace/peppol/preview
-      Same parser, no DB writes — returns the canonical extraction
-      shape. Useful for the import dry-run UI.
+
+Outbound (F2):
+  POST /api/workspace/peppol/credit-notes
+      Body: { ap_item_id, credit_amount, reason, credit_note_id?, issue_date? }
+      Returns: { credit_note_id, ap_item_id, ubl_xml }
+      Generates a UBL CreditNote (TypeCode 381) referencing the
+      original invoice. The supplier on the credit note is the
+      issuing org; the customer is the vendor we are crediting.
 """
 from __future__ import annotations
 
@@ -25,6 +23,9 @@ from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.services.peppol_ubl_generator import (
+    build_credit_note_from_ap_item,
+)
 from clearledgr.services.peppol_ubl_parser import (
     ParsedPeppolInvoice,
     parse_peppol_ubl_invoice,
@@ -252,4 +253,66 @@ async def peppol_import(
         derived_treatment=parsed.derived_treatment,
         derived_vat_code=parsed.derived_vat_code,
         warnings=list(parsed.warnings),
+    )
+
+
+# ── Outbound (F2) ──────────────────────────────────────────────────
+
+
+class CreditNoteRequest(BaseModel):
+    ap_item_id: str = Field(..., min_length=1)
+    credit_amount: float = Field(..., gt=0)
+    reason: str = Field(..., min_length=1, max_length=1000)
+    credit_note_id: Optional[str] = Field(None, max_length=128)
+    issue_date: Optional[str] = Field(None, max_length=32)
+
+
+class CreditNoteResponse(BaseModel):
+    credit_note_id: str
+    ap_item_id: str
+    ubl_xml: str
+
+
+@router.post("/credit-notes", response_model=CreditNoteResponse)
+def issue_credit_note(
+    body: CreditNoteRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Generate a UBL CreditNote XML payload referencing one
+    ``ap_items`` row.
+
+    The credit note is org-scoped: the AP item must belong to the
+    authenticated user's organization. Cross-org access surfaces 404.
+    """
+    db = get_db()
+    item = db.get_ap_item(body.ap_item_id)
+    if item is None or item.get("organization_id") != user.organization_id:
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
+
+    org = db.get_organization(user.organization_id) or {
+        "id": user.organization_id,
+        "organization_name": user.organization_id,
+    }
+
+    try:
+        xml = build_credit_note_from_ap_item(
+            ap_item=item,
+            organization=org,
+            credit_amount=Decimal(str(body.credit_amount)),
+            credit_reason=body.reason,
+            credit_note_id=body.credit_note_id,
+            issue_date=body.issue_date,
+        )
+    except Exception as exc:
+        logger.exception(
+            "peppol credit note generation failed for ap_item=%s",
+            body.ap_item_id,
+        )
+        raise HTTPException(status_code=500, detail=f"generation_failed:{exc}")
+
+    cn_id = body.credit_note_id or f"CN-{item.get('id')}"
+    return CreditNoteResponse(
+        credit_note_id=cn_id,
+        ap_item_id=body.ap_item_id,
+        ubl_xml=xml.decode("utf-8"),
     )
