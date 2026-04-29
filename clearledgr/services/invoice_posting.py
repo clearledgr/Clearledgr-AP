@@ -142,6 +142,73 @@ class InvoicePostingMixin:
             vendor_name=invoice_data.get("vendor") or invoice_data.get("vendor_name"),
             invoice_number=invoice_data.get("invoice_number"),
         )
+
+        # Wave 1 / D1 — segregation-of-duties gate. AICPA + IOFM
+        # require requester != approver and processor != approver.
+        # Default mode is enforced; tenants opt into ``warn`` for a
+        # soft-fail signal or ``disabled`` for legacy behaviour. SOC
+        # 2 controls expect this; current code path silently allowed
+        # an AP Clerk to both edit and approve their own bills.
+        if ap_item_id:
+            from clearledgr.services.sod_check import check_sod
+
+            approver_user_id_resolved: Optional[str] = None
+            try:
+                from clearledgr.core.auth import get_user_by_email
+                if actor_email:
+                    user_row = get_user_by_email(actor_email)
+                    if user_row:
+                        approver_user_id_resolved = str(getattr(user_row, "id", "") or "")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[approve_invoice] approver user_id lookup failed for %s: %s",
+                    actor_email, exc,
+                )
+
+            sod_result = check_sod(
+                self.db,
+                ap_item_id=ap_item_id,
+                approver_user_id=approver_user_id_resolved,
+                approver_email=actor_email,
+                organization_id=self.organization_id,
+            )
+            try:
+                if not sod_result.allowed and sod_result.violation_reason:
+                    sod_event_type = "sod_violation_blocked"
+                elif sod_result.violation_reason:
+                    sod_event_type = "sod_violation_warned"
+                else:
+                    sod_event_type = "sod_check_passed"
+                self.db.append_audit_event({
+                    "event_type": sod_event_type,
+                    "actor_type": "user",
+                    "actor_id": (
+                        approver_user_id_resolved
+                        or actor_email
+                        or approved_by
+                    ),
+                    "organization_id": self.organization_id,
+                    "box_id": ap_item_id,
+                    "box_type": "ap_item",
+                    "source": "approve_invoice",
+                    "payload_json": sod_result.to_dict(),
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[approve_invoice] SOD audit emit failed: %s", exc,
+                )
+
+            if not sod_result.allowed:
+                return {
+                    "status": "error",
+                    "invoice_id": gmail_id,
+                    "ap_item_id": ap_item_id,
+                    "reason": "sod_violation",
+                    "violation_reason": sod_result.violation_reason,
+                    "message": sod_result.message,
+                    "sod": sod_result.to_dict(),
+                }
+
         correlation_id = self._ensure_ap_item_correlation_id(
             ap_item_id=ap_item_id,
             gmail_id=gmail_id,
