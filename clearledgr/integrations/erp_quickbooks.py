@@ -206,12 +206,27 @@ async def post_bill_to_quickbooks(
     if bill_currency and len(bill_currency) == 3:
         qb_bill["CurrencyRef"] = {"value": bill_currency}
 
+    # Tax-code propagation: Clearledgr vat_code -> QBO TaxCodeRef. Set
+    # at the line level via AccountBasedExpenseLineDetail.TaxCodeRef.
+    # Operators map their realm-specific TaxCode ids via gl_map (e.g.
+    # gl_map["tax_code_T1"] -> "5" for the realm where TaxCode id 5 is
+    # "Standard Rated Input"). Without an override we fall back to a
+    # canonical default ("TAX" / "NON") used by QB Sandbox tenants.
+    bill_vat_code = str(getattr(bill, "vat_code", "") or "").upper()
+
+    def _resolve_qb_tax_code(code: str) -> Optional[str]:
+        if not code:
+            return None
+        if gl_map and gl_map.get(f"tax_code_{code}"):
+            return str(gl_map[f"tax_code_{code}"])
+        return _DEFAULT_QB_TAXCODE_MAP.get(code)
+
     # Add line items or create single expense line.
     # money_to_float quantizes to 2dp exactly before serialisation so
     # the number we ship to QB matches what we stored internally.
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
-            qb_bill["Line"].append({
+            line: Dict[str, Any] = {
                 "Id": str(i + 1),
                 "DetailType": "AccountBasedExpenseLineDetail",
                 "Amount": money_to_float(item.get("amount", 0)),
@@ -219,10 +234,17 @@ async def post_bill_to_quickbooks(
                 "AccountBasedExpenseLineDetail": {
                     "AccountRef": {"value": item.get("account_id", expense_account)},
                 }
-            })
+            }
+            line_vat = str(item.get("vat_code") or bill_vat_code or "").upper()
+            tax_code = _resolve_qb_tax_code(line_vat)
+            if tax_code:
+                line["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {
+                    "value": tax_code,
+                }
+            qb_bill["Line"].append(line)
     else:
         # Single line item for full amount
-        qb_bill["Line"].append({
+        single = {
             "Id": "1",
             "DetailType": "AccountBasedExpenseLineDetail",
             "Amount": money_to_float(bill.amount),
@@ -230,7 +252,13 @@ async def post_bill_to_quickbooks(
             "AccountBasedExpenseLineDetail": {
                 "AccountRef": {"value": expense_account},
             }
-        })
+        }
+        tax_code = _resolve_qb_tax_code(bill_vat_code)
+        if tax_code:
+            single["AccountBasedExpenseLineDetail"]["TaxCodeRef"] = {
+                "value": tax_code,
+            }
+        qb_bill["Line"].append(single)
 
     # Add tax line if tax_amount is provided
     if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
@@ -1481,6 +1509,23 @@ async def fetch_quickbooks_bill_payment(
             type(exc).__name__,
         )
         return {"status": "error", "reason": "bill_payment_fetch_failed"}
+
+
+# ==================== Tax Code Default Map ====================
+
+# Default Clearledgr vat_code -> QuickBooks TaxCode id. The TaxCode
+# entity is per-realm in QBO, so these defaults are best-effort —
+# operators override per-realm via settings_json[gl_account_map]
+# [tax_code_T1] = "<realm-specific TaxCode id>".
+# QB Sandbox / US realms typically use "TAX" / "NON" as id strings;
+# UK / EU realms use numeric ids (e.g. "9" for Standard Rated).
+_DEFAULT_QB_TAXCODE_MAP: Dict[str, str] = {
+    "T1": "TAX",   # Taxable
+    "T0": "NON",   # Non-taxable / zero-rated
+    "T2": "NON",   # Exempt
+    "RC": "NON",   # Reverse charge — net to vendor (no QBO tax line)
+    "OO": "NON",   # Out of scope
+}
 
 
 # ==================== Chart of Accounts ====================

@@ -217,14 +217,34 @@ async def post_bill_to_xero(
     # Add line items.  Money boundary: quantize every amount before
     # serialising to the Xero payload so the wire value matches what
     # we stored internally in Decimal.
+    # Tax-code propagation: Clearledgr vat_code -> Xero TaxType per
+    # line. Operators map their tenant's TaxType ids via gl_map (e.g.
+    # gl_map["tax_code_T1"] = "INPUT2" for a UK-VAT-registered Xero
+    # tenant). Defaults below cover the standard Xero TaxType
+    # namespace used for Bills (purchase side).
+    bill_vat_code = str(getattr(bill, "vat_code", "") or "").upper()
+
+    def _resolve_xero_tax_type(code: str) -> Optional[str]:
+        if not code:
+            return None
+        if gl_map and gl_map.get(f"tax_code_{code}"):
+            return str(gl_map[f"tax_code_{code}"])
+        return _DEFAULT_XERO_TAXTYPE_MAP.get(code)
+
     if bill.line_items:
         for item in bill.line_items:
+            line_vat = str(item.get("vat_code") or bill_vat_code or "").upper()
+            tax_type = (
+                item.get("tax_type")
+                or _resolve_xero_tax_type(line_vat)
+                or "NONE"
+            )
             xero_line = {
                 "Description": item.get("description", ""),
                 "Quantity": item.get("quantity", 1),
                 "UnitAmount": money_to_float(item.get("unit_amount", item.get("amount", 0))),
                 "AccountCode": item.get("account_code", expense_account),
-                "TaxType": item.get("tax_type", "NONE"),
+                "TaxType": tax_type,
             }
             # Module 5 Pass C — carry tracking_1/tracking_2 forward
             # from upstream line_items. The finalization step below
@@ -236,18 +256,27 @@ async def post_bill_to_xero(
                 xero_line["tracking_2"] = item["tracking_2"]
             xero_bill["LineItems"].append(xero_line)
     else:
+        single_tax_type = _resolve_xero_tax_type(bill_vat_code) or "NONE"
         xero_bill["LineItems"].append({
             "Description": bill.description or f"Invoice {bill.invoice_number}",
             "Quantity": 1,
             "UnitAmount": money_to_float(bill.amount),
             "AccountCode": expense_account,
-            "TaxType": "NONE",
+            "TaxType": single_tax_type,
         })
 
-    # Apply tax to line items if tax_amount provided
-    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+    # Apply tax to line items if tax_amount provided AND no explicit
+    # vat_code on the bill (since the per-line TaxType above already
+    # carries the right code). Honor the legacy "OUTPUT" default only
+    # when no Clearledgr-side vat_code was set.
+    if (
+        getattr(bill, "tax_amount", None)
+        and bill.tax_amount > 0
+        and not bill_vat_code
+    ):
         for li in xero_bill["LineItems"]:
-            li["TaxType"] = "OUTPUT"  # Standard tax
+            if li.get("TaxType") in (None, "", "NONE"):
+                li["TaxType"] = "OUTPUT"  # Standard tax (legacy default)
         xero_bill["TotalTax"] = money_to_float(bill.tax_amount)
 
     # Apply discount as negative line
@@ -1159,6 +1188,20 @@ async def get_payment_status_xero(
 
 
 # ==================== Chart of Accounts ====================
+
+# Default Clearledgr vat_code -> Xero TaxType map (purchase side).
+# Operators override per-tenant via settings_json[gl_account_map]
+# [tax_code_T1] = "<region-specific Xero TaxType>". Standard Xero
+# regions: GB uses "INPUT2" (Standard 20%), AU uses "INPUT" (GST),
+# NZ uses "INPUT2" (15%). Defaults assume GB for the EU/UK launch.
+_DEFAULT_XERO_TAXTYPE_MAP: Dict[str, str] = {
+    "T1": "INPUT2",          # Standard rated input (20% UK)
+    "T0": "ZERORATEDINPUT",  # Zero-rated input
+    "T2": "EXEMPTINPUT",     # Exempt input
+    "RC": "REVERSECHARGES",  # Reverse charge — applies to services
+    "OO": "NONE",            # Out of scope
+}
+
 
 _XERO_ACCOUNT_TYPE_MAP = {
     "bank": "asset",

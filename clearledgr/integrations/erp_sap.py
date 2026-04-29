@@ -164,11 +164,21 @@ async def post_to_sap(
     connection,
     entry: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Post journal entry to SAP via OData.
+    """Post a journal entry to SAP — flavor-aware dispatcher.
 
-    Uses SAP Business One Service Layer or S/4HANA OData.
+    B1 connections (Service Layer base_url) -> _post_to_sap_b1.
+    S/4HANA connections -> _post_to_sap_s4hana via API_JOURNALENTRY_SRV.
     """
+    if is_sap_s4hana_connection(connection):
+        return await _post_to_sap_s4hana(connection, entry)
+    return await _post_to_sap_b1(connection, entry)
+
+
+async def _post_to_sap_b1(
+    connection,
+    entry: Dict[str, Any],
+) -> Dict[str, Any]:
+    """SAP Business One Service Layer journal entry post."""
     if not connection.access_token or not connection.base_url:
         return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
 
@@ -234,6 +244,34 @@ async def post_bill_to_sap(
     field_mappings: Optional[Dict[str, str]] = None,
     custom_fields: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    """Post a vendor bill to SAP — flavor-aware dispatcher.
+
+    B1 connections (Service Layer) -> _post_bill_to_sap_b1.
+    S/4HANA connections -> _post_bill_to_sap_s4hana via
+    API_SUPPLIERINVOICE_PROCESS_SRV with TaxCode (MWSKZ) propagation.
+    """
+    if is_sap_s4hana_connection(connection):
+        return await _post_bill_to_sap_s4hana(
+            connection, bill,
+            gl_map=gl_map,
+            field_mappings=field_mappings,
+            custom_fields=custom_fields,
+        )
+    return await _post_bill_to_sap_b1(
+        connection, bill,
+        gl_map=gl_map,
+        field_mappings=field_mappings,
+        custom_fields=custom_fields,
+    )
+
+
+async def _post_bill_to_sap_b1(
+    connection,
+    bill,
+    gl_map: Optional[Dict[str, str]] = None,
+    field_mappings: Optional[Dict[str, str]] = None,
+    custom_fields: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """
     Post vendor bill to SAP B1 (A/P Invoice via Service Layer).
 
@@ -289,6 +327,19 @@ async def post_bill_to_sap(
     if bill_currency and len(bill_currency) == 3:
         sap_bill["DocCurrency"] = bill_currency
 
+    # Tax-code propagation: Clearledgr vat_code -> SAP B1 TaxCode.
+    # Bill-level vat_code applies to every line unless the line carries
+    # its own override. Operators can remap via gl_map["tax_code_<code>"]
+    # (e.g. "tax_code_T1" -> "V7" for an org whose CoA defines V7).
+    bill_vat_code = str(getattr(bill, "vat_code", "") or "").upper()
+
+    def _resolve_b1_tax_code(code: str) -> Optional[str]:
+        if not code:
+            return None
+        if gl_map and gl_map.get(f"tax_code_{code}"):
+            return str(gl_map[f"tax_code_{code}"])
+        return _DEFAULT_B1_TAXCODE_MAP.get(code)
+
     # SAP B1 wants numeric LineTotals; we serialise quantized floats so
     # the payload matches what we hold in Decimal on our side.
     if bill.line_items:
@@ -299,6 +350,12 @@ async def post_bill_to_sap(
                 "AccountCode": item.get("gl_code") or item.get("account_code") or expense_account,
                 "LineTotal": money_to_float(item.get("amount", 0)),
             }
+            line_vat = str(
+                item.get("vat_code") or bill_vat_code or "",
+            ).upper()
+            tax_code = _resolve_b1_tax_code(line_vat)
+            if tax_code:
+                line["TaxCode"] = tax_code
             # Module 5 Pass C — carry per-line SAP B1 dimensions
             # (CostCenter, ProfitCenter, WBSElement) from upstream
             # line_items. Renamed below when the customer has
@@ -309,12 +366,16 @@ async def post_bill_to_sap(
                     line[dim_key] = str(dim_val)
             sap_bill["DocumentLines"].append(line)
     else:
-        sap_bill["DocumentLines"].append({
+        single_line = {
             "LineNum": 0,
             "ItemDescription": bill.description or f"Invoice {bill.invoice_number}",
             "AccountCode": expense_account,
             "LineTotal": money_to_float(bill.amount),
-        })
+        }
+        tax_code = _resolve_b1_tax_code(bill_vat_code)
+        if tax_code:
+            single_line["TaxCode"] = tax_code
+        sap_bill["DocumentLines"].append(single_line)
 
     # Tax handling for SAP. Divide tax evenly across lines; Decimal
     # division with ROUND_HALF_UP keeps each line's tax value penny-
@@ -473,6 +534,25 @@ async def post_bill_to_sap(
 
 
 async def reverse_bill_from_sap(
+    connection,
+    erp_reference: str,
+    *,
+    reason: str,
+) -> Dict[str, Any]:
+    """Reverse a posted SAP A/P Invoice — flavor-aware dispatcher.
+
+    B1 connections (Service Layer) -> _reverse_bill_from_sap_b1.
+    S/4HANA connections -> _reverse_bill_from_sap_s4hana via the
+    CancelSupplierInvoice OData action.
+    """
+    if is_sap_s4hana_connection(connection):
+        return await _reverse_bill_from_sap_s4hana(connection, erp_reference)
+    return await _reverse_bill_from_sap_b1(
+        connection, erp_reference, reason=reason,
+    )
+
+
+async def _reverse_bill_from_sap_b1(
     connection,
     erp_reference: str,
     *,
@@ -1335,6 +1415,461 @@ async def get_payment_status_sap(
     except Exception as e:
         logger.error("SAP payment status error: %s", type(e).__name__)
         return {"paid": False, "error": "payment_status_lookup_failed"}
+
+
+# ==================== SAP S/4HANA Write Surface ====================
+
+
+async def _post_to_sap_s4hana(
+    connection,
+    entry: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Post a journal entry to SAP S/4HANA via API_JOURNALENTRY_SRV.
+
+    Entity: A_JournalEntry. Lines deep-create through
+    to_JournalEntryItem. DebitCreditCode is 'S' (debit) / 'H' (credit)
+    per SAP convention. The composite key
+    (CompanyCode, FiscalYear, AccountingDocument) is the canonical JE
+    id; we return AccountingDocument as ``entry_id``.
+    """
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+    if not connection.company_code:
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "missing_company_code_for_s4hana",
+        }
+
+    posting_date = entry.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    currency = (entry.get("currency") or "USD").upper()
+    description = entry.get("description") or "Auto-generated by Clearledgr"
+
+    items: List[Dict[str, Any]] = []
+    for line in entry.get("lines") or []:
+        debit = float(line.get("debit") or 0)
+        credit = float(line.get("credit") or 0)
+        if debit > 0:
+            direction = "S"
+            amount = debit
+        elif credit > 0:
+            direction = "H"
+            amount = credit
+        else:
+            continue
+        item: Dict[str, Any] = {
+            "GLAccount": str(line.get("account") or ""),
+            "DebitCreditCode": direction,
+            "AmountInTransactionCurrency": round(amount, 2),
+            "TransactionCurrency": currency,
+            "DocumentItemText": (
+                str(line.get("description") or line.get("account_name") or "")[:50]
+            ),
+        }
+        tax_code = line.get("tax_code") or line.get("TaxCode")
+        if tax_code:
+            item["TaxCode"] = str(tax_code)
+        items.append(item)
+
+    if not items:
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "no_lines_to_post",
+        }
+
+    payload = {
+        "CompanyCode": connection.company_code,
+        "AccountingDocumentType": "SA",  # SA = G/L document
+        "DocumentDate": posting_date,
+        "PostingDate": posting_date,
+        "DocumentReferenceID": (
+            str(entry.get("reference_id") or "Clearledgr")[:16]
+        ),
+        "DocumentHeaderText": description[:25],
+        "to_JournalEntryItem": items,
+    }
+
+    base = str(connection.base_url).rstrip("/")
+    url = f"{base}/sap/opu/odata/sap/API_JOURNALENTRY_SRV/A_JournalEntry"
+
+    try:
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {
+                "status": "error", "erp": "sap",
+                "reason": "authentication_failed",
+                "needs_reauth": True,
+            }
+        response.raise_for_status()
+        body = response.json() or {}
+        record = body.get("d") if isinstance(body.get("d"), dict) else body
+        accounting_document = (
+            record.get("AccountingDocument")
+            or record.get("DocumentNumber")
+        )
+        fiscal_year = record.get("FiscalYear") or record.get("fiscalYear")
+        company_code = record.get("CompanyCode") or connection.company_code
+        # Composite key as the canonical reference
+        je_id = (
+            f"{company_code}/{accounting_document}/{fiscal_year}"
+            if accounting_document and fiscal_year
+            else accounting_document
+        )
+        logger.info("Posted JE to SAP S/4HANA: %s", je_id)
+        return {
+            "status": "success",
+            "erp": "sap",
+            "entry_id": je_id,
+            "accounting_document": accounting_document,
+            "fiscal_year": fiscal_year,
+            "company_code": company_code,
+        }
+    except httpx.HTTPStatusError as exc:
+        sc = exc.response.status_code
+        try:
+            err_payload = exc.response.json()
+        except Exception:
+            err_payload = None
+        detail = _extract_sap_validation_message(err_payload) or ""
+        logger.error(
+            "SAP S/4HANA JE post error: status=%d detail=%s", sc, detail[:200],
+        )
+        return {
+            "status": "error", "erp": "sap",
+            "reason": f"http_{sc}",
+            "erp_error_detail": detail,
+            "needs_reauth": sc == 401,
+        }
+    except Exception as exc:
+        logger.error("SAP S/4HANA JE post error: %s", type(exc).__name__)
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "je_post_failed",
+            "erp_error_detail": str(exc)[:300],
+        }
+
+
+async def _post_bill_to_sap_s4hana(
+    connection,
+    bill,
+    gl_map: Optional[Dict[str, str]] = None,
+    field_mappings: Optional[Dict[str, str]] = None,
+    custom_fields: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Post a vendor bill to SAP S/4HANA via API_SUPPLIERINVOICE_PROCESS_SRV.
+
+    Entity: A_SupplierInvoice. Lines via to_SupplierInvoiceItemAcctAssgmt
+    (GL-account-keyed accruals). The bill's tax code (vat_code) is
+    propagated onto each line via TaxCode (MWSKZ).
+    """
+    from clearledgr.integrations.erp_router import get_account_code
+
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    missing = []
+    if not bill.vendor_id:
+        missing.append("vendor_id")
+    if not bill.amount or bill.amount <= 0:
+        missing.append("amount")
+    if not connection.company_code:
+        missing.append("company_code")
+    if missing:
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "sap_validation_failed",
+            "missing_fields": missing,
+        }
+
+    expense_account = get_account_code("sap", "expenses", gl_map)
+    currency = (str(getattr(bill, "currency", "") or "USD") or "USD").upper()
+
+    # Map Clearledgr vat_code to S/4HANA MWSKZ. Per-tenant overrides
+    # via gl_map["tax_code_*"]; fall back to canonical defaults.
+    bill_vat_code = str(getattr(bill, "vat_code", "") or "").upper()
+
+    def _resolve_mwskz(code: str) -> Optional[str]:
+        if not code:
+            return None
+        # Operator override key: gl_map["tax_code_T1"] -> "V7" etc.
+        if gl_map and gl_map.get(f"tax_code_{code}"):
+            return str(gl_map[f"tax_code_{code}"])
+        return _DEFAULT_S4HANA_MWSKZ_MAP.get(code)
+
+    items: List[Dict[str, Any]] = []
+    line_idx = 1
+    if bill.line_items:
+        for item in bill.line_items:
+            account = (
+                item.get("gl_code") or item.get("account_code") or expense_account
+            )
+            line: Dict[str, Any] = {
+                "SupplierInvoiceItem": str(line_idx),
+                "CompanyCode": connection.company_code,
+                "GLAccount": str(account),
+                "DocumentCurrency": currency,
+                "SupplierInvoiceItemAmount": money_to_float(item.get("amount", 0)),
+                "DebitCreditCode": "S",
+                "SupplierInvoiceItemText": str(item.get("description") or "")[:50],
+            }
+            line_vat = str(item.get("vat_code") or bill_vat_code or "").upper()
+            mwskz = _resolve_mwskz(line_vat)
+            if mwskz:
+                line["TaxCode"] = mwskz
+            cost_center = item.get("CostCenter") or item.get("cost_center")
+            if cost_center:
+                line["CostCenter"] = str(cost_center)
+            profit_center = item.get("ProfitCenter") or item.get("profit_center")
+            if profit_center:
+                line["ProfitCenter"] = str(profit_center)
+            items.append(line)
+            line_idx += 1
+    else:
+        line = {
+            "SupplierInvoiceItem": "1",
+            "CompanyCode": connection.company_code,
+            "GLAccount": str(expense_account),
+            "DocumentCurrency": currency,
+            "SupplierInvoiceItemAmount": money_to_float(bill.amount),
+            "DebitCreditCode": "S",
+            "SupplierInvoiceItemText": (
+                bill.description or f"Invoice {bill.invoice_number}"
+            )[:50],
+        }
+        mwskz = _resolve_mwskz(bill_vat_code)
+        if mwskz:
+            line["TaxCode"] = mwskz
+        items.append(line)
+
+    payload = {
+        "CompanyCode": connection.company_code,
+        "DocumentDate": (
+            bill.invoice_date
+            or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ),
+        "PostingDate": (
+            bill.invoice_date
+            or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ),
+        "InvoicingParty": str(bill.vendor_id),
+        "DocumentCurrency": currency,
+        "InvoiceGrossAmount": money_to_float(bill.amount),
+        "SupplierInvoiceIDByInvcgParty": str(bill.invoice_number or "")[:16],
+        "DocumentHeaderText": (
+            bill.description or f"Invoice from {bill.vendor_name}"
+        )[:25],
+        "to_SupplierInvoiceItemGLAcct": items,
+    }
+
+    if getattr(bill, "tax_amount", None) and bill.tax_amount > 0:
+        payload["TaxAmount"] = money_to_float(bill.tax_amount)
+
+    base = str(connection.base_url).rstrip("/")
+    url = (
+        f"{base}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/"
+        f"A_SupplierInvoice"
+    )
+
+    try:
+        client = get_http_client()
+        response = await client.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {
+                "status": "error", "erp": "sap",
+                "reason": "authentication_failed",
+                "needs_reauth": True,
+            }
+        response.raise_for_status()
+        body = response.json() or {}
+        record = body.get("d") if isinstance(body.get("d"), dict) else body
+        supplier_invoice = (
+            record.get("SupplierInvoice")
+            or record.get("DocumentNumber")
+        )
+        fiscal_year = record.get("FiscalYear")
+        company_code = record.get("CompanyCode") or connection.company_code
+
+        bill_id = (
+            f"{company_code}/{supplier_invoice}/{fiscal_year}"
+            if supplier_invoice and fiscal_year
+            else supplier_invoice
+        )
+        je_id = bill_id  # In S/4HANA, supplier invoice IS the JE source.
+        logger.info(
+            "Posted A/P Invoice to SAP S/4HANA: bill=%s je=%s",
+            bill_id, je_id,
+        )
+        return {
+            "status": "success",
+            "erp": "sap",
+            "bill_id": bill_id,
+            "doc_num": supplier_invoice,
+            "fiscal_year": fiscal_year,
+            "company_code": company_code,
+            "erp_journal_entry_id": je_id,
+        }
+    except httpx.HTTPStatusError as exc:
+        sc = exc.response.status_code
+        try:
+            err_payload = exc.response.json()
+        except Exception:
+            err_payload = None
+        detail = _extract_sap_validation_message(err_payload) or ""
+        reason = f"http_{sc}"
+        if "duplicate" in detail.lower():
+            reason = "erp_duplicate_bill"
+        elif "supplier" in detail.lower() and "not found" in detail.lower():
+            reason = "erp_vendor_not_found"
+        elif "g/l" in detail.lower() and "not found" in detail.lower():
+            reason = "erp_gl_account_invalid"
+        logger.error(
+            "SAP S/4HANA bill post error: status=%d reason=%s detail=%s",
+            sc, reason, detail[:200],
+        )
+        return {
+            "status": "error", "erp": "sap",
+            "reason": reason,
+            "erp_error_detail": detail,
+            "needs_reauth": sc == 401,
+        }
+    except Exception as exc:
+        logger.error(
+            "SAP S/4HANA bill post error: %s: %s",
+            type(exc).__name__, exc,
+        )
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "bill_posting_failed",
+            "erp_error_detail": str(exc)[:300],
+        }
+
+
+async def _reverse_bill_from_sap_s4hana(
+    connection,
+    erp_reference: str,
+) -> Dict[str, Any]:
+    """Cancel a posted supplier invoice in SAP S/4HANA.
+
+    erp_reference is the composite key ``CompanyCode/SupplierInvoice/FiscalYear``.
+    The cancellation OData action is CancelSupplierInvoice (bound to
+    A_SupplierInvoice). After a successful POST, S/4HANA creates a
+    cancellation document and clears the original. The cancellation
+    document's id is returned as ``cancellation_id``."""
+    if not connection.access_token or not connection.base_url:
+        return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
+
+    parts = (erp_reference or "").split("/")
+    if len(parts) != 3:
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "invalid_invoice_key_expected_CC_DOC_FY",
+        }
+    cc, doc, fy = parts
+    base = str(connection.base_url).rstrip("/")
+    url = (
+        f"{base}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/"
+        f"A_SupplierInvoice("
+        f"CompanyCode='{cc}',SupplierInvoice='{doc}',FiscalYear='{fy}')"
+        f"/CancelSupplierInvoice"
+    )
+    try:
+        client = get_http_client()
+        response = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json={
+                "ReversalReason": "01",   # Reversal in current period
+                "PostingDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            },
+            timeout=60,
+        )
+        if response.status_code == 401:
+            return {
+                "status": "error", "erp": "sap",
+                "reason": "authentication_failed",
+                "needs_reauth": True,
+            }
+        response.raise_for_status()
+        body = response.json() or {}
+        record = body.get("d") if isinstance(body.get("d"), dict) else body
+        cancellation = (
+            record.get("CancellationDocument")
+            or record.get("ReverseDocument")
+            or record.get("AccountingDocument")
+        )
+        return {
+            "status": "success",
+            "erp": "sap",
+            "reversed_bill_id": erp_reference,
+            "cancellation_id": cancellation,
+        }
+    except httpx.HTTPStatusError as exc:
+        sc = exc.response.status_code
+        try:
+            err = exc.response.json()
+        except Exception:
+            err = None
+        detail = _extract_sap_validation_message(err) or ""
+        return {
+            "status": "error", "erp": "sap",
+            "reason": f"http_{sc}",
+            "erp_error_detail": detail,
+            "needs_reauth": sc == 401,
+        }
+    except Exception as exc:
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "reversal_failed",
+            "erp_error_detail": str(exc)[:300],
+        }
+
+
+# Default Clearledgr vat_code -> S/4HANA MWSKZ tax code map.
+# Tenants override via gl_account_map["tax_code_<code>"] (e.g.
+# settings_json["gl_account_map"]["tax_code_T1"] = "V7" for a tenant
+# whose CoA defines V7 as 7% input VAT).
+_DEFAULT_S4HANA_MWSKZ_MAP: Dict[str, str] = {
+    "T1": "V1",  # Standard rated input VAT
+    "T0": "V0",  # Zero-rated input
+    "T2": "VE",  # Exempt input
+    "RC": "VR",  # Reverse charge input
+    "OO": "V0",  # Out of scope -> no VAT line
+}
+
+
+# B1 ships a different default tax-code namespace per CoA template;
+# the canonical SAP-supplied template uses 1S (standard input),
+# 0S (zero), EX (exempt), R7 (reverse charge). Operators with
+# customised CoAs override via gl_map["tax_code_<code>"].
+_DEFAULT_B1_TAXCODE_MAP: Dict[str, str] = {
+    "T1": "1S",
+    "T0": "0S",
+    "T2": "EX",
+    "RC": "R7",
+    "OO": "0S",
+}
 
 
 # ==================== S/4HANA Payment Status (Carry-over) ====================
