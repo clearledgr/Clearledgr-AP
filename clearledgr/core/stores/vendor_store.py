@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     -- vendors who pull from their own portal / bank statement.
     remittance_email TEXT,
     remittance_opt_out INTEGER NOT NULL DEFAULT 0,
+    -- Wave 3 / E1: sanctions screening rolled-up disposition.
+    -- 'unscreened' (no screen run yet), 'clear' (latest screen
+    -- returned no matches), 'review' (latest screen returned a
+    -- match the operator has not cleared), 'blocked' (operator
+    -- has confirmed the match — payments to this vendor must be
+    -- gated). last_sanctions_check_at drives the re-screen cadence.
+    sanctions_status TEXT NOT NULL DEFAULT 'unscreened',
+    last_sanctions_check_at TEXT,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -303,6 +311,9 @@ class VendorStore:
             # Wave 2 / C5: remittance advice config.
             "remittance_email",
             "remittance_opt_out",
+            # Wave 3 / E1: sanctions screening disposition.
+            "sanctions_status",
+            "last_sanctions_check_at",
             # Module 4 Pass B: vendor allowlist/blocklist. Writes
             # should normally go through ``set_vendor_status`` so the
             # status_changed_* metadata is consistent, but the field

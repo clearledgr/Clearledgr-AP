@@ -3093,6 +3093,72 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    63,
+    "vendor_sanctions_checks + vendor_profiles sanctions_status (Wave 3 E1)",
+)
+def _v63_sanctions_screening(cur, db):
+    """Persistent sanctions screening history + per-vendor disposition.
+
+    The AP cycle audit doc + EU 6AMLD + UK Money Laundering Regulations
+    require a screening record per vendor onboarding AND ongoing
+    monitoring (lists update; vendors that were clear yesterday can be
+    hit today). Stored verbatim so the provider's raw payload is
+    available for compliance audit.
+
+    ``vendor_profiles.sanctions_status`` is the rolled-up disposition
+    used by the pre-payment gate: clear / review / blocked /
+    unscreened. ``last_sanctions_check_at`` drives the re-screen
+    cadence (default: re-screen if older than 30 days).
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vendor_sanctions_checks (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            vendor_name TEXT NOT NULL,
+            check_type TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_reference TEXT,
+            status TEXT NOT NULL,
+            matches_json TEXT,
+            evidence_json TEXT,
+            raw_payload_json TEXT,
+            checked_at TEXT NOT NULL,
+            checked_by TEXT,
+            review_status TEXT NOT NULL DEFAULT 'open',
+            cleared_at TEXT,
+            cleared_by TEXT,
+            cleared_reason TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vendor_sanctions_org_vendor "
+        "ON vendor_sanctions_checks(organization_id, vendor_name, checked_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_sanctions_org_status "
+        "ON vendor_sanctions_checks(organization_id, status, checked_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_sanctions_open_hits "
+        "ON vendor_sanctions_checks(organization_id, vendor_name) "
+        "WHERE status = 'hit' AND review_status = 'open'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v63] sanctions index skipped: %s", exc,
+            )
+
+    cur.execute(
+        "ALTER TABLE vendor_profiles "
+        "ADD COLUMN IF NOT EXISTS sanctions_status TEXT NOT NULL DEFAULT 'unscreened'"
+    )
+    cur.execute(
+        "ALTER TABLE vendor_profiles "
+        "ADD COLUMN IF NOT EXISTS last_sanctions_check_at TEXT"
+    )
+
+
+@migration(
     62,
     "bank_statement_imports + bank_statement_lines (Wave 2 C6)",
 )

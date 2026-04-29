@@ -117,6 +117,38 @@ def record_payment_confirmation(
     item couldn't be transitioned (terminal state, unknown path,
     AP item missing, status=disputed).
     """
+    # ── 0. Sanctions gate (Wave 3 / E1) ────────────────────────────
+    # Defence-in-depth: if the vendor's rolled-up sanctions_status is
+    # 'blocked', refuse to record any payment confirmation. The
+    # AP-item-level exception flow catches this earlier; this is the
+    # last line. Raises SanctionsBlockedError so the caller's HTTP /
+    # webhook layer surfaces a 403-shaped error instead of silently
+    # writing a payment row.
+    try:
+        from clearledgr.services.sanctions_screening import (
+            gate_payment_against_sanctions,
+        )
+        ap_item_for_gate = db.get_ap_item(ap_item_id)
+        if ap_item_for_gate is not None:
+            gate_payment_against_sanctions(
+                db,
+                organization_id=organization_id,
+                vendor_name=ap_item_for_gate.get("vendor_name"),
+            )
+    except Exception as exc:
+        # Re-raise SanctionsBlockedError; swallow other transient
+        # errors so a sanctions-store hiccup doesn't block legitimate
+        # payments.
+        from clearledgr.services.sanctions_screening import (
+            SanctionsBlockedError,
+        )
+        if isinstance(exc, SanctionsBlockedError):
+            raise
+        logger.warning(
+            "payment_tracking: sanctions gate raised non-blocking error: %s",
+            exc,
+        )
+
     # ── 1. Idempotency pre-check ───────────────────────────────────
     existing = db.get_payment_confirmation_by_external_id(
         organization_id, source, payment_id, ap_item_id,

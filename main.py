@@ -1345,6 +1345,10 @@ app.include_router(payment_confirmations_router)
 from clearledgr.api.bank_statements import router as bank_statements_router
 app.include_router(bank_statements_router)
 
+# Wave 3 / E1: sanctions screening surface
+from clearledgr.api.sanctions import router as sanctions_router
+app.include_router(sanctions_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
