@@ -496,6 +496,73 @@ def reap_expired_seats_task() -> dict:
 ## See list_recent_ap_audit_events_with_retention on the AP store.
 
 
+@app.task
+def poll_sap_b1_payments_all_orgs() -> dict:
+    """Walk every org with a SAP connection and poll for cleared
+    outgoing payments (Wave 2 / C3 carry-over).
+
+    SAP B1 doesn't ship a payment webhook, so the dispatcher in
+    erp_payment_dispatcher.poll_sap_b1_payments has to be polled.
+    This task wraps that per-org and aggregates the results.
+
+    Cadence: every 5 minutes via Celery Beat. Idempotent — the
+    payment-tracking layer (C2) deduplicates redelivered payment
+    events at the (org, source, payment_id, ap_item_id) compound
+    key, so a missed-then-recovered run never double-records.
+    """
+    import asyncio
+    from clearledgr.core.database import get_db
+    from clearledgr.services.erp_payment_dispatcher import (
+        poll_sap_b1_payments,
+    )
+
+    db = get_db()
+    db.initialize()
+
+    summary = {
+        "orgs_polled": 0,
+        "events_dispatched": 0,
+        "duplicates": 0,
+        "errors": 0,
+        "per_org": [],
+    }
+    try:
+        with db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT organization_id FROM erp_connections "
+                "WHERE erp_type = %s",
+                ("sap",),
+            )
+            org_rows = cur.fetchall()
+        org_ids = [dict(r)["organization_id"] for r in org_rows]
+    except Exception as exc:
+        logger.error("[CeleryBeat] sap b1 poll: org enum failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    for org_id in org_ids:
+        try:
+            result = asyncio.run(
+                poll_sap_b1_payments(organization_id=org_id, db=db),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[CeleryBeat] sap b1 poll failed for org=%s: %s",
+                org_id, exc,
+            )
+            summary["errors"] += 1
+            continue
+        summary["orgs_polled"] += 1
+        summary["events_dispatched"] += int(
+            result.get("events_dispatched") or 0
+        )
+        summary["duplicates"] += int(result.get("duplicates") or 0)
+        summary["errors"] += int(result.get("errors") or 0)
+        summary["per_org"].append({"org": org_id, **result})
+
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Module 7 v1 Pass 3 — audit-event SIEM webhook fan-out
 #

@@ -106,6 +106,16 @@ app.config_from_object(
                 "task": "clearledgr.services.celery_tasks.purge_soft_deleted_orgs",
                 "schedule": 24 * 60 * 60.0,  # Daily
             },
+            # Wave 2 / C3 carry-over: SAP B1 doesn't ship a payment
+            # webhook, so we poll connected orgs every 5 minutes for
+            # cleared outgoing payments. The payment-tracking layer
+            # (C2) deduplicates at the (org, source, payment_id,
+            # ap_item_id) compound key, so missed-then-recovered runs
+            # never double-record.
+            "poll-sap-b1-payments": {
+                "task": "clearledgr.services.celery_tasks.poll_sap_b1_payments_all_orgs",
+                "schedule": 5 * 60.0,  # Every 5 minutes
+            },
         },
     }
 )
