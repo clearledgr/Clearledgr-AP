@@ -171,12 +171,21 @@ async def post_bill_to_xero(
     connection,
     bill,
     gl_map: Optional[Dict[str, str]] = None,
+    field_mappings: Optional[Dict[str, str]] = None,
+    custom_fields: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to Xero.
 
     API: https://developer.xero.com/documentation/api/accounting/invoices
     Type: ACCPAY (Accounts Payable / Bill)
+
+    ``field_mappings`` (Module 5) carries Xero tracking-category
+    names (the customer's "Region", "Cost Centre", etc). Each line
+    item gets ``Tracking`` entries set from the configured names so
+    Xero's reports group on customer-defined dimensions. Workflow
+    custom fields (``custom_fields``) appear on each line as
+    ``Description`` suffixes — Xero has no per-bill custom-fields API.
     """
     from clearledgr.integrations.erp_router import get_account_code
 
@@ -210,13 +219,22 @@ async def post_bill_to_xero(
     # we stored internally in Decimal.
     if bill.line_items:
         for item in bill.line_items:
-            xero_bill["LineItems"].append({
+            xero_line = {
                 "Description": item.get("description", ""),
                 "Quantity": item.get("quantity", 1),
                 "UnitAmount": money_to_float(item.get("unit_amount", item.get("amount", 0))),
                 "AccountCode": item.get("account_code", expense_account),
                 "TaxType": item.get("tax_type", "NONE"),
-            })
+            }
+            # Module 5 Pass C — carry tracking_1/tracking_2 forward
+            # from upstream line_items. The finalization step below
+            # converts them to Xero's Tracking[] format using the
+            # configured tracking-category names.
+            if item.get("tracking_1") is not None:
+                xero_line["tracking_1"] = item["tracking_1"]
+            if item.get("tracking_2") is not None:
+                xero_line["tracking_2"] = item["tracking_2"]
+            xero_bill["LineItems"].append(xero_line)
     else:
         xero_bill["LineItems"].append({
             "Description": bill.description or f"Invoice {bill.invoice_number}",
@@ -241,6 +259,57 @@ async def post_bill_to_xero(
             "AccountCode": expense_account,
             "TaxType": "NONE",
         })
+
+    # Module 5 Pass C — Xero tracking categories per line. Operator
+    # configures the Xero category names via the field-mapping form
+    # (catalog keys ``tracking_category_1_field`` /
+    # ``tracking_category_2_field``); the per-line tracking value
+    # itself comes from the line's ``tracking_1`` / ``tracking_2``
+    # entries when the upstream pipeline supplies them. We only emit
+    # Tracking[] entries for lines that carry both pieces (name +
+    # option) — empty configurations are silent no-ops.
+    fm = field_mappings or {}
+    track_1_name = (fm.get("tracking_category_1_field") or "").strip()
+    track_2_name = (fm.get("tracking_category_2_field") or "").strip()
+    if track_1_name or track_2_name:
+        for li in xero_bill["LineItems"]:
+            tracking = []
+            if track_1_name and li.get("tracking_1"):
+                tracking.append({
+                    "Name": track_1_name,
+                    "Option": str(li["tracking_1"]),
+                })
+            if track_2_name and li.get("tracking_2"):
+                tracking.append({
+                    "Name": track_2_name,
+                    "Option": str(li["tracking_2"]),
+                })
+            if tracking:
+                li["Tracking"] = tracking
+            # Strip the upstream tracking_* keys regardless so they
+            # don't leak into the Xero payload (Xero rejects unknown
+            # keys at the LineItem level).
+            li.pop("tracking_1", None)
+            li.pop("tracking_2", None)
+
+    # Module 5 Pass C — workflow custom fields. Xero has no first-class
+    # custom-field API on Invoices; the operational compromise is to
+    # append the workflow markers to the Reference field, which is
+    # 255 chars and surfaces in the Xero UI alongside the bill. Format
+    # is "<vendor po> | clearledgr:<state>:<box_id>" so the existing
+    # po reference (set above) is preserved.
+    if custom_fields:
+        marker_parts = []
+        for erp_field_id, value in custom_fields.items():
+            if erp_field_id and value is not None:
+                marker_parts.append(f"{erp_field_id}={value}")
+        if marker_parts:
+            existing_ref = str(xero_bill.get("Reference") or "").strip()
+            marker = " | clearledgr:" + ";".join(marker_parts)
+            new_ref = (existing_ref + marker) if existing_ref else marker.lstrip(" | ")
+            # Cap at Xero's 255-char Reference limit so we never bounce
+            # the whole bill on a payload-size validation error.
+            xero_bill["Reference"] = new_ref[:255]
 
     url = "https://api.xero.com/api.xro/2.0/Invoices"
 

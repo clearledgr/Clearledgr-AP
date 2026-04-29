@@ -293,13 +293,22 @@ async def post_bill_to_netsuite(
     connection,
     bill,
     gl_map: Optional[Dict[str, str]] = None,
+    field_mappings: Optional[Dict[str, str]] = None,
+    custom_fields: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to NetSuite.
 
     API: https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/record_vendorbill.html
+
+    ``field_mappings`` (Module 5) lets the customer rename standard
+    dimension fields (department/class/location). ``custom_fields``
+    is the resolved {erp_field_id: value} dict for workflow custom
+    body fields (state/box_id/approver/correlation_id) — the agent
+    stamps these onto the outbound Vendor Bill so NetSuite reports
+    can filter on Clearledgr-managed work.
     """
-    from clearledgr.integrations.erp_router import get_account_code
+    from clearledgr.integrations.erp_router import get_account_code, _dimension_field_name
 
     if not connection.account_id:
         return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
@@ -357,6 +366,15 @@ async def post_bill_to_netsuite(
                 "amount": money_to_float(item.get("amount", 0)),
                 "memo": item.get("description", ""),
             }
+            # Module 5 Pass C — carry per-line dimensions from upstream
+            # line_items into the wire payload. NetSuite expects each
+            # of these as { "id": <internal_id> }. Renamed below by
+            # _dimension_field_name when the customer has overridden
+            # the field name.
+            for dim_key in ("department", "class", "location"):
+                dim_val = item.get(dim_key)
+                if dim_val:
+                    line[dim_key] = {"id": str(dim_val)}
             line_tax_rate = item.get("tax_rate")
             line_tax_code = item.get("tax_code_id") or item.get("tax_code")
             if line_tax_rate is not None or line_tax_code:
@@ -401,6 +419,41 @@ async def post_bill_to_netsuite(
     # Payment terms in memo
     if getattr(bill, "payment_terms", None):
         ns_bill["memo"] = f"{ns_bill['memo']} | Terms: {bill.payment_terms}"
+
+    # Module 5 Pass C — stamp customer-configured custom body fields
+    # (workflow). Each ``custom_fields`` key is the literal NetSuite
+    # field id (e.g. ``custbody_clearledgr_state``); value is the
+    # resolved string (state name, box id, approver email,
+    # correlation id). Catalog regex restricts ids to safe chars at
+    # the API boundary so we can splat into the body without escaping
+    # concerns.
+    if custom_fields:
+        for erp_field_id, value in custom_fields.items():
+            if erp_field_id and value is not None:
+                ns_bill[str(erp_field_id)] = value
+
+    # Module 5 Pass C — dimension field renames. NetSuite's standard
+    # dimensions live on each line ('department', 'class', 'location').
+    # Customers with non-default subsidiary configs occasionally rename
+    # these — when they do, the customer maps the catalog key to the
+    # actual NetSuite field id and we rewrite each line key on the way
+    # out. ``field_mappings`` is the raw catalog dict; we resolve only
+    # the dimension entries here.
+    dimension_renames = {}
+    for catalog_key, default in (
+        ("department_field", "department"),
+        ("class_field", "class"),
+        ("location_field", "location"),
+    ):
+        custom = _dimension_field_name(field_mappings or {}, catalog_key, default)
+        if custom != default:
+            dimension_renames[default] = custom
+
+    if dimension_renames:
+        for line in ns_bill["expense"]["items"]:
+            for default_key, custom_key in dimension_renames.items():
+                if default_key in line and custom_key != default_key:
+                    line[custom_key] = line.pop(default_key)
 
     url = f"https://{connection.account_id}.suitetalk.api.netsuite.com/services/rest/record/v1/vendorBill"
     auth_header = _oauth_header(connection, "POST", url)

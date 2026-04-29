@@ -231,6 +231,8 @@ async def post_bill_to_sap(
     connection,
     bill,
     gl_map: Optional[Dict[str, str]] = None,
+    field_mappings: Optional[Dict[str, str]] = None,
+    custom_fields: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to SAP B1 (A/P Invoice via Service Layer).
@@ -238,8 +240,14 @@ async def post_bill_to_sap(
     SAP B1: https://help.sap.com/docs/SAP_BUSINESS_ONE
     Validates required fields before posting. company_code must be set in
     the ERP connection credentials (stored as settings_json["gl_account_map"]).
+
+    ``field_mappings`` (Module 5) lets the customer rename dimension
+    fields (CostCenter, ProfitCenter, WBSElement). ``custom_fields``
+    is the resolved {erp_field_id: value} dict for workflow Z-fields
+    (state/box_id/approver) — stamped at the document level so SAP
+    cockpit views can filter on Clearledgr-managed work.
     """
-    from clearledgr.integrations.erp_router import get_account_code
+    from clearledgr.integrations.erp_router import get_account_code, _dimension_field_name
 
     if not connection.access_token or not connection.base_url:
         return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
@@ -285,12 +293,21 @@ async def post_bill_to_sap(
     # the payload matches what we hold in Decimal on our side.
     if bill.line_items:
         for i, item in enumerate(bill.line_items):
-            sap_bill["DocumentLines"].append({
+            line = {
                 "LineNum": i,
                 "ItemDescription": item.get("description", ""),
                 "AccountCode": item.get("gl_code") or item.get("account_code") or expense_account,
                 "LineTotal": money_to_float(item.get("amount", 0)),
-            })
+            }
+            # Module 5 Pass C — carry per-line SAP B1 dimensions
+            # (CostCenter, ProfitCenter, WBSElement) from upstream
+            # line_items. Renamed below when the customer has
+            # configured a Z-field instead of the standard name.
+            for dim_key in ("CostCenter", "ProfitCenter", "WBSElement"):
+                dim_val = item.get(dim_key)
+                if dim_val:
+                    line[dim_key] = str(dim_val)
+            sap_bill["DocumentLines"].append(line)
     else:
         sap_bill["DocumentLines"].append({
             "LineNum": 0,
@@ -317,6 +334,35 @@ async def post_bill_to_sap(
             "AccountCode": expense_account,
             "LineTotal": money_to_float(-bill.discount_amount),
         })
+
+    # Module 5 Pass C — stamp customer-configured Z-fields (workflow).
+    # SAP B1 accepts user-defined fields as flat top-level keys on the
+    # PurchaseInvoice document. The catalog regex restricts ids at
+    # the API boundary so a misconfigured field id can't inject
+    # arbitrary payload structure here.
+    if custom_fields:
+        for erp_field_id, value in custom_fields.items():
+            if erp_field_id and value is not None:
+                sap_bill[str(erp_field_id)] = value
+
+    # Module 5 Pass C — dimension field renames per line. SAP B1's
+    # standard dimensions live on each DocumentLine: CostCenter,
+    # ProfitCenter, WBSElement. Tenants that use Z-fields rename here.
+    dimension_renames = {}
+    for catalog_key, default in (
+        ("cost_center_field", "CostCenter"),
+        ("profit_center_field", "ProfitCenter"),
+        ("wbs_field", "WBSElement"),
+    ):
+        custom = _dimension_field_name(field_mappings or {}, catalog_key, default)
+        if custom != default:
+            dimension_renames[default] = custom
+
+    if dimension_renames:
+        for line in sap_bill["DocumentLines"]:
+            for default_key, custom_key in dimension_renames.items():
+                if default_key in line and custom_key != default_key:
+                    line[custom_key] = line.pop(default_key)
 
     url = f"{connection.base_url}/PurchaseInvoices"
 

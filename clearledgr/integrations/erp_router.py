@@ -647,6 +647,133 @@ def get_account_code(
     return DEFAULT_ACCOUNT_MAP.get(erp_type, {}).get(account_type, "1")
 
 
+# ==================== ERP CUSTOM FIELD MAPPINGS (Module 5 Pass C) ====================
+#
+# Pass A persisted custom field mappings under
+# settings_json["erp_field_mappings"][erp_type] (NetSuite custbody_*,
+# SAP Z-fields, QB Class/Location, Xero tracking categories). Pass B
+# surfaced connection health. Pass C makes the mapping load-bearing:
+# at posting time, ``post_bill`` resolves the configured field IDs
+# and the per-poster code stamps them onto the outbound payload.
+#
+# Two kinds of fields:
+#   * Workflow fields (state_field, box_id_field, approver_field,
+#     correlation_id_field) — the customer chose the ERP field id;
+#     the value comes from the AP item / bill metadata at posting
+#     time. Resolved by ``_resolve_workflow_custom_fields`` below.
+#   * Dimension fields (department_field, class_field, location_field,
+#     cost_center_field, profit_center_field, wbs_field) — the
+#     customer renames a *standard* dimension. The poster reads the
+#     mapping and writes the dimension under the configured field
+#     name instead of the default.
+
+def _get_org_field_mappings(organization_id: str, erp_type: str) -> Dict[str, str]:
+    """Load per-tenant ERP field mappings from org settings_json.
+
+    Returns ``{}`` (every-default) when nothing is configured. Tolerant
+    of legacy stringified ``settings_json`` rows.
+    """
+    try:
+        import json as _json
+        db = _get_db()
+        org = db.get_organization(organization_id)
+        if not org:
+            return {}
+        settings = org.get("settings_json") or org.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = _json.loads(settings)
+            except Exception:
+                return {}
+        if not isinstance(settings, dict):
+            return {}
+        all_mappings = settings.get("erp_field_mappings") or {}
+        if not isinstance(all_mappings, dict):
+            return {}
+        erp_key = str(erp_type or "").strip().lower()
+        per_erp = all_mappings.get(erp_key) or {}
+        return dict(per_erp) if isinstance(per_erp, dict) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_workflow_custom_fields(
+    *,
+    field_mappings: Dict[str, str],
+    organization_id: str,
+    ap_item_id: Optional[str],
+) -> Dict[str, str]:
+    """Compute the (erp_field_id → value) pairs for workflow fields.
+
+    Reads the AP item once to pull state, box id, approver email, and
+    correlation id, then matches each configured catalog key to its
+    resolved value. Returns only entries the customer has both
+    configured AND that have a non-empty value — empty payloads on
+    optional custom fields are silent (the poster simply doesn't stamp
+    them).
+
+    Errors loading the AP item are non-fatal; we log and return ``{}``
+    so a transient DB hiccup never blocks a bill from posting.
+    """
+    if not field_mappings or not ap_item_id:
+        return {}
+
+    try:
+        db = _get_db()
+        ap_item = db.get_ap_item(ap_item_id) or {}
+    except Exception as exc:
+        logger.warning(
+            "[field_mapping] could not load AP item %s for custom-field resolution: %s",
+            ap_item_id, exc,
+        )
+        return {}
+
+    # Source-of-truth values per workflow key. Pull from common AP item
+    # column aliases — the AP store has historically renamed columns
+    # (state vs. status, approver_email vs. final_approver_email), so
+    # we read the first non-empty alias.
+    def _first(*keys) -> Optional[str]:
+        for k in keys:
+            v = ap_item.get(k)
+            if v:
+                return str(v)
+        return None
+
+    sources = {
+        "state_field": _first("state", "status"),
+        "box_id_field": _first("id", "ap_item_id", "box_id"),
+        "approver_field": _first(
+            "final_approver_email",
+            "approver_email",
+            "approved_by_email",
+            "approved_by",
+        ),
+        "correlation_id_field": _first("correlation_id", "agent_correlation_id"),
+    }
+
+    out: Dict[str, str] = {}
+    for catalog_key, value in sources.items():
+        erp_field = field_mappings.get(catalog_key)
+        if erp_field and value:
+            out[str(erp_field)] = str(value)
+    return out
+
+
+def _dimension_field_name(
+    field_mappings: Dict[str, str], catalog_key: str, default: str,
+) -> str:
+    """Resolve the ERP-side field name for a standard dimension.
+
+    If the customer configured an override (e.g. NetSuite has
+    ``department`` renamed to ``department_2``), use it; otherwise
+    fall back to the catalog default.
+    """
+    return str(
+        (field_mappings or {}).get(catalog_key)
+        or default
+    ).strip() or default
+
+
 # ==================== BILLS / VENDOR BILLS ====================
 
 @dataclass
@@ -898,8 +1025,24 @@ async def post_bill(
 
     gl_map = _get_entity_gl_map(organization_id, entity_id) or _get_org_gl_map(organization_id)
 
+    # Module 5 Pass C — resolve per-tenant custom field mappings.
+    # ``field_mappings`` is the raw catalog → ERP-field-id dict (used
+    # by the posters to rename dimension fields like department/class/
+    # location). ``custom_fields`` is the pre-resolved (erp_field_id →
+    # value) dict for workflow fields (state/box_id/approver/correlation_id)
+    # that the posters stamp directly onto the outbound bill payload.
+    field_mappings = _get_org_field_mappings(organization_id, connection.type)
+    custom_fields = _resolve_workflow_custom_fields(
+        field_mappings=field_mappings,
+        organization_id=organization_id,
+        ap_item_id=ap_item_id,
+    )
+
     if connection.type == "quickbooks":
-        result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
+        result = await post_bill_to_quickbooks(
+            connection, bill, gl_map=gl_map,
+            field_mappings=field_mappings, custom_fields=custom_fields,
+        )
         if isinstance(result, dict) and result.get("needs_reauth"):
             new_token = await refresh_with_dedupe(
                 organization_id=organization_id, erp_type="quickbooks",
@@ -907,9 +1050,15 @@ async def post_bill(
             )
             if new_token:
                 set_erp_connection(organization_id, connection)
-                result = await post_bill_to_quickbooks(connection, bill, gl_map=gl_map)
+                result = await post_bill_to_quickbooks(
+                    connection, bill, gl_map=gl_map,
+                    field_mappings=field_mappings, custom_fields=custom_fields,
+                )
     elif connection.type == "xero":
-        result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
+        result = await post_bill_to_xero(
+            connection, bill, gl_map=gl_map,
+            field_mappings=field_mappings, custom_fields=custom_fields,
+        )
         if isinstance(result, dict) and result.get("needs_reauth"):
             new_token = await refresh_with_dedupe(
                 organization_id=organization_id, erp_type="xero",
@@ -917,20 +1066,35 @@ async def post_bill(
             )
             if new_token:
                 set_erp_connection(organization_id, connection)
-                result = await post_bill_to_xero(connection, bill, gl_map=gl_map)
+                result = await post_bill_to_xero(
+                    connection, bill, gl_map=gl_map,
+                    field_mappings=field_mappings, custom_fields=custom_fields,
+                )
     elif connection.type == "netsuite":
-        result = await post_bill_to_netsuite(connection, bill, gl_map=gl_map)
+        result = await post_bill_to_netsuite(
+            connection, bill, gl_map=gl_map,
+            field_mappings=field_mappings, custom_fields=custom_fields,
+        )
         if isinstance(result, dict) and result.get("needs_reauth"):
             # H7: NetSuite uses OAuth 1.0a — no token refresh, but retry once
             # in case of transient clock-skew causing signature mismatch.
             logger.warning("NetSuite 401 for org %s — retrying once (clock-skew mitigation)", organization_id)
-            result = await post_bill_to_netsuite(connection, bill, gl_map=gl_map)
+            result = await post_bill_to_netsuite(
+                connection, bill, gl_map=gl_map,
+                field_mappings=field_mappings, custom_fields=custom_fields,
+            )
     elif connection.type == "sap":
-        result = await post_bill_to_sap(connection, bill, gl_map=gl_map)
+        result = await post_bill_to_sap(
+            connection, bill, gl_map=gl_map,
+            field_mappings=field_mappings, custom_fields=custom_fields,
+        )
         if isinstance(result, dict) and result.get("needs_reauth"):
             # H9: SAP B1 session may have expired — retry forces a fresh Login.
             logger.warning("SAP 401 for org %s — retrying with fresh session", organization_id)
-            result = await post_bill_to_sap(connection, bill, gl_map=gl_map)
+            result = await post_bill_to_sap(
+                connection, bill, gl_map=gl_map,
+                field_mappings=field_mappings, custom_fields=custom_fields,
+            )
     else:
         result = {"status": "error", "reason": f"Unknown ERP type: {connection.type}"}
 
