@@ -28,8 +28,29 @@ from clearledgr.services.ap_field_review import (
     _parse_json,
     _normalize_document_type_token,
 )
+from clearledgr.services.vendor_risk import (
+    VendorRiskScore,
+    compute_risk_from_profile,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _risk_score_for_profile(profile: Optional[Dict[str, Any]]) -> int:
+    """Headline risk score (0-100) for a vendor.
+
+    Returns 0 when no profile is loaded — distinguishes "low risk"
+    from "vendor not in our system" via the detail endpoint, which
+    surfaces ``vendor_found=False`` explicitly.
+    """
+    return compute_risk_from_profile(profile).score
+
+
+def _risk_breakdown_for_profile(
+    profile: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Full risk-score breakdown for the vendor detail panel."""
+    return compute_risk_from_profile(profile).to_dict()
 
 
 def _safe_sort_timestamp(value: Any) -> float:
@@ -360,6 +381,13 @@ def _build_vendor_summary_rows(
                     "approval_override_rate": safe_float((profile or {}).get("approval_override_rate")),
                     "anomaly_flags": list((profile or {}).get("anomaly_flags") or [])[:4],
                 },
+                # Module 4 Pass A — vendor risk score computed at read
+                # time from the already-loaded profile (zero extra DB
+                # round trips). Higher = more risk; clamped to [0, 100].
+                # The full breakdown is on /vendors/{name} detail; the
+                # list row only carries the headline score so the UI
+                # can render a chip.
+                "risk_score": _risk_score_for_profile(profile),
             }
         )
 
@@ -442,6 +470,11 @@ def _build_vendor_detail_payload(
             "anomaly_flags": list(profile.get("anomaly_flags") or [])[:8],
             "metadata": _parse_json(profile.get("metadata")),
         },
+        # Module 4 Pass A — full risk-score breakdown for the detail
+        # panel. The list endpoint already exposes ``risk_score`` per
+        # row; this surfaces the per-component contributions so the
+        # operator can read "why" the score is what it is.
+        "risk": _risk_breakdown_for_profile(profile),
         "recent_items": linked_item_rows,
         "open_issues": [
             issue

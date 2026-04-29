@@ -113,138 +113,152 @@ class VendorRiskScoreService:
         doesn't exist in the database. Callers that need to distinguish
         "unknown vendor" from "low risk vendor" should check that flag.
         """
-        now = datetime.now(timezone.utc)
         profile = self.db.get_vendor_profile(self.organization_id, vendor_name)
-        if not profile:
-            return VendorRiskScore(
-                score=0,
-                components=[],
-                computed_at=now.isoformat(),
-                vendor_found=False,
-            )
+        return compute_risk_from_profile(profile)
 
-        components: List[RiskComponent] = []
 
-        # 1. New vendor
-        invoice_count = int(profile.get("invoice_count") or 0)
-        if invoice_count == 0:
-            components.append(
-                RiskComponent(
-                    code="new_vendor",
-                    label="Vendor has no posted invoices yet",
-                    points=WEIGHT_NEW_VENDOR,
-                    details={"invoice_count": invoice_count},
-                )
-            )
+def compute_risk_from_profile(
+    profile: Optional[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> VendorRiskScore:
+    """Compute a ``VendorRiskScore`` from an already-loaded profile dict.
 
-        # 2. Active IBAN change freeze (Phase 2.1.b)
-        if profile.get("iban_change_pending"):
-            components.append(
-                RiskComponent(
-                    code="iban_change_freeze_active",
-                    label="IBAN change freeze in progress",
-                    points=WEIGHT_IBAN_FREEZE,
-                    details={
-                        "iban_change_detected_at": profile.get(
-                            "iban_change_detected_at"
-                        ),
-                    },
-                )
-            )
-
-        # 3. Recent bank-details change (within the last 30 days)
-        bank_changed_at = profile.get("bank_details_changed_at")
-        if bank_changed_at:
-            days = _days_since(bank_changed_at, now)
-            if days is not None and 0 <= days <= RECENT_BANK_CHANGE_DAYS:
-                components.append(
-                    RiskComponent(
-                        code="recent_bank_change",
-                        label=(
-                            f"Bank details changed {days} day(s) ago "
-                            f"(threshold: {RECENT_BANK_CHANGE_DAYS})"
-                        ),
-                        points=WEIGHT_RECENT_BANK_CHANGE,
-                        details={"days_since_change": days},
-                    )
-                )
-
-        # 4. High human override rate
-        override_rate = float(profile.get("approval_override_rate") or 0.0)
-        if override_rate > HIGH_OVERRIDE_RATE:
-            components.append(
-                RiskComponent(
-                    code="high_override_rate",
-                    label=(
-                        f"Human override rate {override_rate:.0%} exceeds "
-                        f"threshold {HIGH_OVERRIDE_RATE:.0%}"
-                    ),
-                    points=WEIGHT_HIGH_OVERRIDE_RATE,
-                    details={"override_rate": override_rate},
-                )
-            )
-
-        # 5. KYC missing / stale
-        kyc_date = profile.get("kyc_completion_date")
-        if not kyc_date:
-            components.append(
-                RiskComponent(
-                    code="kyc_missing",
-                    label="KYC has never been completed for this vendor",
-                    points=WEIGHT_KYC_MISSING,
-                )
-            )
-        else:
-            days = _days_since(kyc_date, now)
-            if days is not None and days > STALE_KYC_DAYS:
-                components.append(
-                    RiskComponent(
-                        code="kyc_stale",
-                        label=(
-                            f"KYC is {days} day(s) old "
-                            f"(stale threshold: {STALE_KYC_DAYS})"
-                        ),
-                        points=WEIGHT_KYC_STALE,
-                        details={"days_since_kyc": days},
-                    )
-                )
-
-        # 6. Missing individual KYC fields
-        if not (profile.get("registration_number") or "").strip():
-            components.append(
-                RiskComponent(
-                    code="missing_registration_number",
-                    label="Vendor has no registration number on file",
-                    points=WEIGHT_MISSING_REGISTRATION_NUMBER,
-                )
-            )
-        if not (profile.get("vat_number") or "").strip():
-            components.append(
-                RiskComponent(
-                    code="missing_vat_number",
-                    label="Vendor has no VAT number on file",
-                    points=WEIGHT_MISSING_VAT_NUMBER,
-                )
-            )
-        director_names = profile.get("director_names") or []
-        if not isinstance(director_names, list) or not director_names:
-            components.append(
-                RiskComponent(
-                    code="missing_director_names",
-                    label="Vendor has no director names on file",
-                    points=WEIGHT_MISSING_DIRECTOR_NAMES,
-                )
-            )
-
-        total = sum(c.points for c in components)
-        clamped = min(MAX_SCORE, max(0, total))
-
+    Use this when callers have profiles in memory (e.g. the vendor
+    summary builder loads them in bulk via ``get_vendor_profiles_bulk``)
+    and want the score without paying for a re-fetch. ``compute()`` on
+    the service is a thin wrapper that fetches + delegates here.
+    """
+    now = now or datetime.now(timezone.utc)
+    if not profile:
         return VendorRiskScore(
-            score=clamped,
-            components=components,
+            score=0,
+            components=[],
             computed_at=now.isoformat(),
-            vendor_found=True,
+            vendor_found=False,
         )
+    components: List[RiskComponent] = []
+
+    # 1. New vendor
+    invoice_count = int(profile.get("invoice_count") or 0)
+    if invoice_count == 0:
+        components.append(
+            RiskComponent(
+                code="new_vendor",
+                label="Vendor has no posted invoices yet",
+                points=WEIGHT_NEW_VENDOR,
+                details={"invoice_count": invoice_count},
+            )
+        )
+
+    # 2. Active IBAN change freeze (Phase 2.1.b)
+    if profile.get("iban_change_pending"):
+        components.append(
+            RiskComponent(
+                code="iban_change_freeze_active",
+                label="IBAN change freeze in progress",
+                points=WEIGHT_IBAN_FREEZE,
+                details={
+                    "iban_change_detected_at": profile.get(
+                        "iban_change_detected_at"
+                    ),
+                },
+            )
+        )
+
+    # 3. Recent bank-details change (within the last 30 days)
+    bank_changed_at = profile.get("bank_details_changed_at")
+    if bank_changed_at:
+        days = _days_since(bank_changed_at, now)
+        if days is not None and 0 <= days <= RECENT_BANK_CHANGE_DAYS:
+            components.append(
+                RiskComponent(
+                    code="recent_bank_change",
+                    label=(
+                        f"Bank details changed {days} day(s) ago "
+                        f"(threshold: {RECENT_BANK_CHANGE_DAYS})"
+                    ),
+                    points=WEIGHT_RECENT_BANK_CHANGE,
+                    details={"days_since_change": days},
+                )
+            )
+
+    # 4. High human override rate
+    override_rate = float(profile.get("approval_override_rate") or 0.0)
+    if override_rate > HIGH_OVERRIDE_RATE:
+        components.append(
+            RiskComponent(
+                code="high_override_rate",
+                label=(
+                    f"Human override rate {override_rate:.0%} exceeds "
+                    f"threshold {HIGH_OVERRIDE_RATE:.0%}"
+                ),
+                points=WEIGHT_HIGH_OVERRIDE_RATE,
+                details={"override_rate": override_rate},
+            )
+        )
+
+    # 5. KYC missing / stale
+    kyc_date = profile.get("kyc_completion_date")
+    if not kyc_date:
+        components.append(
+            RiskComponent(
+                code="kyc_missing",
+                label="KYC has never been completed for this vendor",
+                points=WEIGHT_KYC_MISSING,
+            )
+        )
+    else:
+        days = _days_since(kyc_date, now)
+        if days is not None and days > STALE_KYC_DAYS:
+            components.append(
+                RiskComponent(
+                    code="kyc_stale",
+                    label=(
+                        f"KYC is {days} day(s) old "
+                        f"(stale threshold: {STALE_KYC_DAYS})"
+                    ),
+                    points=WEIGHT_KYC_STALE,
+                    details={"days_since_kyc": days},
+                )
+            )
+
+    # 6. Missing individual KYC fields
+    if not (profile.get("registration_number") or "").strip():
+        components.append(
+            RiskComponent(
+                code="missing_registration_number",
+                label="Vendor has no registration number on file",
+                points=WEIGHT_MISSING_REGISTRATION_NUMBER,
+            )
+        )
+    if not (profile.get("vat_number") or "").strip():
+        components.append(
+            RiskComponent(
+                code="missing_vat_number",
+                label="Vendor has no VAT number on file",
+                points=WEIGHT_MISSING_VAT_NUMBER,
+            )
+        )
+    director_names = profile.get("director_names") or []
+    if not isinstance(director_names, list) or not director_names:
+        components.append(
+            RiskComponent(
+                code="missing_director_names",
+                label="Vendor has no director names on file",
+                points=WEIGHT_MISSING_DIRECTOR_NAMES,
+            )
+        )
+
+    total = sum(c.points for c in components)
+    clamped = min(MAX_SCORE, max(0, total))
+
+    return VendorRiskScore(
+        score=clamped,
+        components=components,
+        computed_at=now.isoformat(),
+        vendor_found=True,
+    )
 
 
 def _days_since(iso_value: Any, now: Optional[datetime] = None) -> Optional[int]:

@@ -152,6 +152,9 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                       ${(vendor.profile?.anomaly_flags || []).slice(0, 2).map((flag) => html`
                         <span key=${flag} class="secondary-chip" style="background:#FEF2F2;color:#B91C1C;border-color:#FECACA">${String(flag).replace(/_/g, ' ')}</span>
                       `)}
+                      ${typeof vendor.risk_score === 'number' && vendor.risk_score > 0
+                        ? html`<${RiskScoreChip} score=${vendor.risk_score} />`
+                        : null}
                     </div>
                   </div>
                   <div class="secondary-card-stat">
@@ -214,4 +217,27 @@ function DedupBanner({ api, orgId, toast }) {
       `)}
     </div>
   `;
+}
+
+
+// ─── Module 4 Pass A — Vendor risk score chip ─────────────────────────
+// Surfaces VendorRiskScoreService output on the vendor list row. The
+// score is computed server-side from the already-loaded profile, so
+// rendering here costs nothing extra. Color thresholds match the
+// service's component weights:
+//   * 0      → no chip (handled by caller; we never render a "0" chip)
+//   * 1-29   → low (green) — usually one missing-field component
+//   * 30-49  → medium (amber) — new vendor, or two missing components
+//   * 50+    → high (red) — IBAN freeze + new vendor or worse
+function RiskScoreChip({ score }) {
+  const tone =
+    score >= 50 ? { bg: '#FEE2E2', fg: '#991B1B', bd: '#FCA5A5' }
+    : score >= 30 ? { bg: '#FEF3C7', fg: '#92400E', bd: '#FCD34D' }
+    : { bg: '#ECFDF5', fg: '#0A663E', bd: '#86EFAC' };
+  return html`<span
+    class="secondary-chip"
+    title="Vendor risk score (0-100). Higher = more risk."
+    style=${`background:${tone.bg};color:${tone.fg};border-color:${tone.bd};font-variant-numeric:tabular-nums`}>
+    Risk ${score}
+  </span>`;
 }
