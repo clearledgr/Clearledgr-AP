@@ -1359,6 +1359,130 @@ async def get_payment_status_quickbooks(
         return {"paid": False, "error": "payment_status_lookup_failed"}
 
 
+# ==================== BillPayment Fetch (Wave 2 / C3) ====================
+
+
+async def fetch_quickbooks_bill_payment(
+    connection,
+    bill_payment_id: str,
+) -> Dict[str, Any]:
+    """Fetch a BillPayment by its QuickBooks Id.
+
+    Used by the inbound payment webhook receiver: when QB pushes a
+    notification of a BillPayment.create / .update event we follow up
+    with this read so we know which Bill(s) it cleared, the rail
+    (Check / CreditCard), the date, and the cleared amount.
+
+    Returns either::
+
+        {
+            "status": "success",
+            "bill_payment_id": str,
+            "txn_date": str | None,         # YYYY-MM-DD
+            "total_amount": float,
+            "currency": str | None,         # ISO 4217 from CurrencyRef
+            "private_note": str | None,
+            "pay_type": str | None,         # "Check" | "CreditCard" | ...
+            "linked_bills": [{"bill_id": str, "amount": float}, ...],
+            "voided": bool,                 # True if PrivateNote indicates void
+        }
+
+    or::
+
+        {"status": "error", "reason": str, "needs_reauth": bool}
+    """
+    if not connection.access_token or not connection.realm_id:
+        return {
+            "status": "error",
+            "reason": "QuickBooks not properly configured",
+        }
+
+    safe_id = _sanitize_quickbooks_like_operand(bill_payment_id)
+    if not safe_id:
+        return {"status": "error", "reason": "invalid_bill_payment_id"}
+
+    url = (
+        f"https://quickbooks.api.intuit.com/v3/company/"
+        f"{connection.realm_id}/billpayment/{safe_id}"
+    )
+    try:
+        client = get_http_client()
+        response = await client.get(
+            url,
+            headers=_quickbooks_headers(connection),
+            timeout=_ERP_TIMEOUT,
+        )
+        if response.status_code == 401:
+            return {
+                "status": "error",
+                "reason": "token_expired",
+                "needs_reauth": True,
+            }
+        if response.status_code == 404:
+            return {"status": "error", "reason": "not_found"}
+        response.raise_for_status()
+        body = response.json() or {}
+        bp = body.get("BillPayment") or {}
+        if not bp:
+            return {"status": "error", "reason": "no_bill_payment_in_response"}
+
+        linked: List[Dict[str, Any]] = []
+        for line in bp.get("Line") or []:
+            if not isinstance(line, dict):
+                continue
+            line_amount = line.get("Amount")
+            for lt in line.get("LinkedTxn") or []:
+                if not isinstance(lt, dict):
+                    continue
+                if str(lt.get("TxnType") or "").lower() != "bill":
+                    continue
+                tid = str(lt.get("TxnId") or "").strip()
+                if tid:
+                    linked.append({
+                        "bill_id": tid,
+                        "amount": (
+                            float(line_amount)
+                            if line_amount is not None else None
+                        ),
+                    })
+
+        currency = None
+        currency_ref = bp.get("CurrencyRef")
+        if isinstance(currency_ref, dict):
+            currency = currency_ref.get("value") or None
+
+        private_note = bp.get("PrivateNote")
+        pay_type = str(bp.get("PayType") or "").strip() or None
+
+        # QB doesn't expose a "Voided" flag directly on BillPayment;
+        # convention is to set PrivateNote to "Voided" when voiding.
+        voided = bool(
+            isinstance(private_note, str)
+            and "void" in private_note.lower()
+        )
+
+        return {
+            "status": "success",
+            "bill_payment_id": str(bp.get("Id") or safe_id),
+            "txn_date": bp.get("TxnDate"),
+            "total_amount": float(bp.get("TotalAmt") or 0.0),
+            "currency": currency,
+            "private_note": private_note,
+            "pay_type": pay_type,
+            "linked_bills": linked,
+            "voided": voided,
+        }
+    except httpx.HTTPStatusError as exc:
+        sc = exc.response.status_code
+        return {"status": "error", "reason": f"http_{sc}"}
+    except Exception as exc:
+        logger.warning(
+            "fetch_quickbooks_bill_payment failed: %s",
+            type(exc).__name__,
+        )
+        return {"status": "error", "reason": "bill_payment_fetch_failed"}
+
+
 # ==================== Chart of Accounts ====================
 
 _QB_ACCOUNT_TYPE_MAP = {

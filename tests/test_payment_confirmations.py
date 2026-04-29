@@ -440,7 +440,9 @@ def test_service_audit_event_idempotency_key_present(db):
         source="xero",
         status="confirmed",
     )
-    expected_key = "payment_confirmation:default:xero:PAY-AUDIT-1"
+    expected_key = (
+        f"payment_confirmation:default:xero:PAY-AUDIT-1:{item['id']}"
+    )
     fetched = db.get_ap_audit_event_by_key(expected_key)
     assert fetched is not None
     assert fetched["event_type"] == "payment_confirmation_recorded"

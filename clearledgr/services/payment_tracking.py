@@ -119,7 +119,7 @@ def record_payment_confirmation(
     """
     # ── 1. Idempotency pre-check ───────────────────────────────────
     existing = db.get_payment_confirmation_by_external_id(
-        organization_id, source, payment_id,
+        organization_id, source, payment_id, ap_item_id,
     )
     if existing:
         ap_item = db.get_ap_item(ap_item_id)
@@ -155,7 +155,7 @@ def record_payment_confirmation(
         # Race: another concurrent caller inserted between the
         # pre-check and our INSERT. Re-fetch and report duplicate.
         winner = db.get_payment_confirmation_by_external_id(
-            organization_id, source, payment_id,
+            organization_id, source, payment_id, ap_item_id,
         )
         ap_item = db.get_ap_item(ap_item_id)
         return PaymentConfirmationResult(
@@ -249,7 +249,8 @@ def record_payment_confirmation(
         "source": "payment_confirmation",
         "correlation_id": correlation_id,
         "idempotency_key": (
-            f"payment_confirmation:{organization_id}:{source}:{payment_id}"
+            f"payment_confirmation:{organization_id}:{source}"
+            f":{payment_id}:{ap_item_id}"
         ),
         "decision_reason": failure_reason or notes,
         "metadata": audit_metadata,

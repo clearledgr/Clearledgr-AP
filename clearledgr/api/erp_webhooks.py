@@ -175,6 +175,26 @@ async def quickbooks_webhook(
         event_type="erp_webhook_received",
         payload_preview=_preview_json(raw),
     )
+
+    # Wave 2 / C3: dispatch BillPayment notifications into the
+    # payment-tracking pipeline. Best-effort — failures log + swallow
+    # so we always return 200 to QBO and avoid retry storms.
+    try:
+        from clearledgr.services.erp_payment_dispatcher import (
+            dispatch_quickbooks_payment_webhook,
+        )
+        result = await dispatch_quickbooks_payment_webhook(
+            organization_id=organization_id, raw_body=raw,
+        )
+        logger.info(
+            "qb webhook dispatch: org=%s result=%s",
+            organization_id, result,
+        )
+    except Exception:
+        logger.exception(
+            "qb webhook dispatch raised for org=%s", organization_id,
+        )
+
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})
 
 
@@ -230,6 +250,28 @@ async def xero_webhook(
         event_type=event_type,
         payload_preview=preview,
     )
+
+    # Wave 2 / C3: dispatch INVOICE updates into the payment-tracking
+    # pipeline. The Intent-to-Receive handshake (events: []) returns
+    # before this runs (parsed.parsed_envelope is empty), so the
+    # handshake response stays fast.
+    if not is_itr:
+        try:
+            from clearledgr.services.erp_payment_dispatcher import (
+                dispatch_xero_payment_webhook,
+            )
+            result = await dispatch_xero_payment_webhook(
+                organization_id=organization_id, raw_body=raw,
+            )
+            logger.info(
+                "xero webhook dispatch: org=%s result=%s",
+                organization_id, result,
+            )
+        except Exception:
+            logger.exception(
+                "xero webhook dispatch raised for org=%s", organization_id,
+            )
+
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})
 
 
@@ -306,6 +348,26 @@ async def netsuite_webhook(
         logger.warning(
             "netsuite webhook dispatch raised for org=%s — %s",
             organization_id, dispatch_exc,
+        )
+
+    # Wave 2 / C3: payment-tracking dispatch. NetSuite SuiteScript
+    # pushes the full payment payload, so this is sync (no follow-up
+    # REST call). Tolerant of payloads that carry only intake events.
+    try:
+        from clearledgr.services.erp_payment_dispatcher import (
+            dispatch_netsuite_payment_webhook,
+        )
+        pay_result = dispatch_netsuite_payment_webhook(
+            organization_id=organization_id, raw_body=raw,
+        )
+        if pay_result.get("events_parsed"):
+            logger.info(
+                "netsuite payment dispatch: org=%s result=%s",
+                organization_id, pay_result,
+            )
+    except Exception:
+        logger.exception(
+            "netsuite payment dispatch raised for org=%s", organization_id,
         )
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})

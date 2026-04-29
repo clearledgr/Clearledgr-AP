@@ -3053,3 +3053,40 @@ def _v59_payment_confirmations(cur, db):
             logger.warning(
                 "[Migration v59] payment_confirmations index skipped: %s", exc,
             )
+
+
+@migration(
+    60,
+    "payment_confirmations: include ap_item_id in unique key (Wave 2 C3)",
+)
+def _v60_payment_confirmations_unique_per_ap_item(cur, db):
+    """Relax the (org, source, payment_id) UNIQUE to also include
+    ap_item_id.
+
+    Why: a single ERP-native payment id can clear multiple bills in
+    one transaction (one QuickBooks BillPayment with N Lines linked
+    to N Bills, or one NetSuite VendorPayment crediting multiple
+    vendor bills). Each bill is its own AP item — and thus needs its
+    own ``payment_confirmations`` row — but they share the same
+    payment_id.
+
+    The original idempotency invariant ("one webhook redelivery
+    yields one row, not two") is still preserved by the new compound
+    key: redelivery hits the same (org, source, payment_id, ap_item_id)
+    tuple every time.
+    """
+    cur.execute(
+        "DROP INDEX IF EXISTS idx_payment_confirmations_external"
+    )
+    try:
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "idx_payment_confirmations_external "
+            "ON payment_confirmations"
+            "(organization_id, source, payment_id, ap_item_id)"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Migration v60] payment_confirmations unique key replace skipped: %s",
+            exc,
+        )

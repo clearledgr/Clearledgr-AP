@@ -1,15 +1,17 @@
-"""Payment confirmation persistence (Wave 2 / C2).
+"""Payment confirmation persistence (Wave 2 / C2 + C3).
 
-One row per confirmed (or failed) payment event. The table holds the
-ledger of "did this bill get paid, by what rail, when did it settle,
-who recorded it" — the data the AP cycle reference doc requires for
-Stage 8/9 traceability + bank reconciliation matching.
+One row per (AP item × confirmed/failed payment event). The table
+holds the ledger of "did this bill get paid, by what rail, when did
+it settle, who recorded it" — the data the AP cycle reference doc
+requires for Stage 8/9 traceability + bank reconciliation matching.
 
-Composite uniqueness on (organization_id, source, payment_id) makes
-the table idempotent: duplicate webhook deliveries from the same ERP
-for the same payment never create two rows. Callers race-tolerantly
-either pre-check via ``get_payment_confirmation_by_external_id`` or
-catch the integrity violation on insert and re-fetch.
+Composite uniqueness on (organization_id, source, payment_id,
+ap_item_id) makes the table idempotent: duplicate webhook deliveries
+from the same ERP for the same (payment, bill) pair never create
+two rows, while still allowing a single ERP-native payment to clear
+multiple bills (one row per bill). Callers race-tolerantly either
+pre-check via ``get_payment_confirmation_by_external_id`` or catch
+the integrity violation on insert and re-fetch.
 """
 from __future__ import annotations
 
@@ -51,21 +53,40 @@ class PaymentConfirmationsStore:
         return self._decode_row(row)
 
     def get_payment_confirmation_by_external_id(
-        self, organization_id: str, source: str, payment_id: str,
+        self,
+        organization_id: str,
+        source: str,
+        payment_id: str,
+        ap_item_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Look up by the (org, source, external payment id) compound
-        key — the natural identity for a payment event. Used by
-        webhook receivers and the manual-confirmation API to gate
-        idempotency."""
+        """Look up by the (org, source, external payment id [, ap_item_id])
+        compound key.
+
+        ``ap_item_id`` was added in v60 because one ERP-native payment
+        can clear multiple bills (one BillPayment per N Bills); each
+        bill becomes its own row. When ``ap_item_id`` is omitted the
+        lookup falls back to "any matching row" — useful for the
+        operator-facing search where the AP item context isn't carried.
+        """
         self.initialize()
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM payment_confirmations "
-                "WHERE organization_id = %s AND source = %s AND payment_id = %s "
-                "LIMIT 1",
-                (organization_id, source, payment_id),
-            )
+            if ap_item_id is not None:
+                cur.execute(
+                    "SELECT * FROM payment_confirmations "
+                    "WHERE organization_id = %s AND source = %s "
+                    "AND payment_id = %s AND ap_item_id = %s "
+                    "LIMIT 1",
+                    (organization_id, source, payment_id, ap_item_id),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM payment_confirmations "
+                    "WHERE organization_id = %s AND source = %s "
+                    "AND payment_id = %s "
+                    "LIMIT 1",
+                    (organization_id, source, payment_id),
+                )
             row = cur.fetchone()
         return self._decode_row(row)
 
