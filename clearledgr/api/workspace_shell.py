@@ -4048,3 +4048,253 @@ def get_connection_health(
     org_id = _resolve_org_id(user, organization_id)
     db = get_db()
     return _build_connection_health(db, org_id, window_hours=int(window_hours))
+
+
+# ---------------------------------------------------------------------------
+# Module 6 Pass A — Permission catalog + custom roles
+#
+# Per scope §Module 6: standard roles cover 80% of cases; the
+# remaining 20% need leader-composed custom roles. The 8 canonical
+# permissions and the standard role taxonomy live in
+# clearledgr/core/permissions.py. Custom roles persist in the
+# ``custom_roles`` table (migration v53), bounded to 10 per org.
+# ---------------------------------------------------------------------------
+
+from clearledgr.core import permissions as _permissions  # noqa: E402
+from clearledgr.core.stores.custom_roles_store import (  # noqa: E402
+    CustomRoleLimitExceeded,
+    CustomRoleNameTaken,
+)
+
+
+class CustomRoleCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    permissions: List[str] = Field(..., min_length=1)
+    description: Optional[str] = Field(default=None, max_length=300)
+
+
+class CustomRoleUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    permissions: Optional[List[str]] = None
+    description: Optional[str] = Field(default=None, max_length=300)
+
+
+def _audit_custom_role(
+    *,
+    user: TokenData,
+    org_id: str,
+    action: str,
+    role_id: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Audit emit for custom-role mutations (create/update/delete)."""
+    try:
+        db = get_db()
+        payload: Dict[str, Any] = {
+            "actor_email": getattr(user, "email", None),
+            "role_id": role_id,
+        }
+        if extra:
+            payload.update(extra)
+        db.append_audit_event({
+            "event_type": f"custom_role_{action}",
+            "actor_type": "user",
+            "actor_id": str(getattr(user, "user_id", "") or "unknown"),
+            "organization_id": org_id,
+            "box_id": role_id,
+            "box_type": "custom_role",
+            "source": "workspace_admin",
+            "payload_json": payload,
+        })
+    except Exception as exc:
+        logger.warning(
+            "[custom_role_audit] failed for org=%s role_id=%s action=%s: %s",
+            org_id, role_id, action, exc,
+        )
+
+
+@router.get("/permissions/catalog")
+def get_permissions_catalog(
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the canonical permission catalog + standard role mapping.
+
+    Public to any authenticated workspace user — the catalog is the
+    contract the UI renders the "Custom roles" composer against, and
+    every user benefits from seeing their own role's permission set
+    inline. Mutations (create/update/delete) are admin-gated below.
+    """
+    return {
+        "permissions": _permissions.serialize_catalog(),
+        "standard_roles": _permissions.serialize_role_permissions(),
+        "custom_role_limit": _permissions.CUSTOM_ROLES_PER_ORG_LIMIT,
+    }
+
+
+@router.get("/roles/custom")
+def list_custom_roles(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """List custom roles for the org (any authenticated user).
+
+    Read-only: rendering the role chip on a user's profile shouldn't
+    require admin. Mutations are admin-gated below.
+    """
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    rows = db.list_custom_roles(org_id)
+    return {
+        "organization_id": org_id,
+        "custom_roles": rows,
+        "count": len(rows),
+        "limit": _permissions.CUSTOM_ROLES_PER_ORG_LIMIT,
+    }
+
+
+@router.post("/roles/custom")
+def create_custom_role(
+    body: CustomRoleCreateRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Create a custom role.
+
+    Admin-gated. Enforces the 10-per-org limit + (org, lower(name))
+    uniqueness invariant. Validates each permission against the
+    bounded catalog — unknown strings are silently dropped, but at
+    least one valid permission must remain or the request 422s.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    try:
+        row = db.create_custom_role(
+            organization_id=org_id,
+            name=body.name,
+            permissions=body.permissions,
+            description=body.description,
+            created_by=str(getattr(user, "user_id", "") or "unknown"),
+        )
+    except CustomRoleLimitExceeded as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "custom_role_limit",
+                "limit": _permissions.CUSTOM_ROLES_PER_ORG_LIMIT,
+                "message": str(exc),
+            },
+        )
+    except CustomRoleNameTaken as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason": "name_taken", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "validation_failed", "message": str(exc)},
+        )
+
+    _audit_custom_role(
+        user=user, org_id=org_id, action="created", role_id=row["id"],
+        extra={
+            "name": row["name"],
+            "permissions": list(row["permissions"]),
+        },
+    )
+    return row
+
+
+@router.put("/roles/custom/{role_id}")
+def update_custom_role(
+    role_id: str,
+    body: CustomRoleUpdateRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Update a custom role's name / description / permissions.
+
+    Tenant-scoped: a 403 if the role belongs to a different org. The
+    audit payload includes a before/after diff of permissions so
+    compliance can reconstruct who changed which permission, when.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    existing = db.get_custom_role(role_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+    if str(existing.get("organization_id") or "") != org_id:
+        # Cross-tenant — same status code as missing so we don't leak
+        # the existence of roles in other tenants.
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+
+    before_perms = sorted(existing.get("permissions") or [])
+    try:
+        updated = db.update_custom_role(
+            role_id,
+            name=body.name,
+            permissions=body.permissions,
+            description=body.description,
+        )
+    except CustomRoleNameTaken as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason": "name_taken", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "validation_failed", "message": str(exc)},
+        )
+    if not updated:
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+
+    after_perms = sorted(updated.get("permissions") or [])
+    diff_added = sorted(set(after_perms) - set(before_perms))
+    diff_removed = sorted(set(before_perms) - set(after_perms))
+    _audit_custom_role(
+        user=user, org_id=org_id, action="updated", role_id=role_id,
+        extra={
+            "name": updated.get("name"),
+            "permissions_added": diff_added,
+            "permissions_removed": diff_removed,
+        },
+    )
+    return updated
+
+
+@router.delete("/roles/custom/{role_id}")
+def delete_custom_role(
+    role_id: str,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Delete a custom role.
+
+    Tenant-scoped. Audit-emitted. Users currently assigned to the
+    role keep working in the meantime — Pass B's user_entity_roles
+    resolver collapses unknown role ids to the standard role
+    ladder rather than 500ing.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    existing = db.get_custom_role(role_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+    if str(existing.get("organization_id") or "") != org_id:
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+
+    deleted = db.delete_custom_role(role_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="custom_role_not_found")
+
+    _audit_custom_role(
+        user=user, org_id=org_id, action="deleted", role_id=role_id,
+        extra={"name": existing.get("name")},
+    )
+    return {"id": role_id, "status": "deleted"}

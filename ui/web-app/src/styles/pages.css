@@ -1269,6 +1269,151 @@
   }
 }
 
+/* ─── Module 6 Pass A — Custom roles panel ─────────────────────────── */
+
+.cl-roles-standard {
+  background: var(--cl-bg-subtle, #fafafa);
+  border-radius: var(--cl-radius-sm, 6px);
+  padding: 8px 12px;
+}
+
+.cl-roles-standard summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--cl-ink-secondary, #444);
+}
+
+.cl-roles-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.cl-roles-matrix th,
+.cl-roles-matrix td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--cl-border-subtle, #efefef);
+  text-align: left;
+}
+
+.cl-roles-matrix th {
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.cl-roles-matrix .cl-roles-cell {
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  color: #0a663e;
+}
+
+.cl-roles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cl-roles-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  background: white;
+}
+
+.cl-roles-perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.cl-roles-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--cl-bg-subtle, #f4f4f4);
+  color: var(--cl-ink-secondary, #444);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+
+.cl-role-editor {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--cl-bg-subtle, #fafafa);
+  border: 1px dashed var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cl-role-editor h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cl-role-editor input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+}
+
+.cl-field-label {
+  display: block;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted, #666);
+  margin-bottom: 4px;
+}
+
+.cl-perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.cl-perm-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: white;
+  border: 1px solid var(--cl-border, #e5e7eb);
+  border-radius: var(--cl-radius-sm, 6px);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cl-perm-checkbox input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  .cl-roles-row {
+    flex-direction: column;
+  }
+  .cl-roles-matrix {
+    font-size: 11px;
+  }
+}
+
 /* ─── Module 5 Pass A — Custom field mapping panel ─────────────────────
  * Lives below the ERP connection card on the Connections page. Per-ERP
  * catalog with grouped fieldsets (identity / workflow / dimension).

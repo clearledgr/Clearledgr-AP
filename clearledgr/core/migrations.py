@@ -2629,3 +2629,54 @@ def _v52_webhook_deliveries(cur, db):
             cur.execute(ddl)
         except Exception as exc:
             logger.warning("[Migration v52] index skipped: %s", exc)
+
+
+@migration(53, "custom_roles table — per-tenant role composition (Module 6 Pass A)")
+def _v53_custom_roles(cur, db):
+    """Per-tenant custom-role table for Module 6 Pass A.
+
+    The scope spec (``Clearledgr_Workspace_Scope_GA.md`` §Module 6)
+    permits up to 10 custom roles per customer, each composed from the
+    bounded permission catalog in ``clearledgr/core/permissions.py``.
+    Standard roles stay code-defined; custom roles persist here.
+
+    A user's role binding can reference either:
+      * a standard role token (``owner``, ``cfo``, ``ap_clerk`` ...) —
+        permission set comes from ``permissions.ROLE_PERMISSIONS``;
+      * a custom role id (``cr_<hex>``) — permission set is the JSON
+        array on this row.
+
+    The 10-per-org limit is enforced at create time in the store
+    layer, not via a DB CHECK, so the operator's UX can return a
+    structured error rather than the bare DB violation.
+
+    Indexes:
+      * primary key on id (lookup);
+      * (organization_id, name) UNIQUE so the SPA can show "name
+        already taken" without a race window;
+      * organization_id alone for "list custom roles for this org".
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS custom_roles (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            permissions_json TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_roles_org_name "
+        "ON custom_roles(organization_id, LOWER(name))",
+        "CREATE INDEX IF NOT EXISTS idx_custom_roles_org "
+        "ON custom_roles(organization_id)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning("[Migration v53] index skipped: %s", exc)

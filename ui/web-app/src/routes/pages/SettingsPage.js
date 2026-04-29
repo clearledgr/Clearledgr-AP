@@ -97,6 +97,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   const vendorPolicyRef = useRef(null);
   const autonomyRef = useRef(null);
   const teamRef = useRef(null);
+  const rolesRef = useRef(null);
   const billingRef = useRef(null);
 
   // ERP + integration state from bootstrap
@@ -397,6 +398,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         <button class=${`segmented-button btn-sm${activeSection === 'vendor' ? ' is-active' : ''}`} onClick=${() => scrollToSection(vendorPolicyRef, 'vendor')}>Vendor Onboarding</button>
         <button class=${`segmented-button btn-sm${activeSection === 'autonomy' ? ' is-active' : ''}`} onClick=${() => scrollToSection(autonomyRef, 'autonomy')}>Autonomy</button>
         <button class=${`segmented-button btn-sm${activeSection === 'team' ? ' is-active' : ''}`} onClick=${() => scrollToSection(teamRef, 'team')}>Team</button>
+        <button class=${`segmented-button btn-sm${activeSection === 'roles' ? ' is-active' : ''}`} onClick=${() => scrollToSection(rolesRef, 'roles')}>Roles</button>
         <button class=${`segmented-button btn-sm${activeSection === 'billing' ? ' is-active' : ''}`} onClick=${() => scrollToSection(billingRef, 'billing')}>Billing</button>
       </div>
     </div>
@@ -834,6 +836,13 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         ` : ''}
       </div>
 
+      <${CustomRolesPanel}
+        api=${api}
+        orgId=${orgId}
+        toast=${toast}
+        canManage=${canManageTeam}
+        panelRef=${rolesRef} />
+
       ${implStatus?.steps ? html`
         <div class="panel">
           <div class="panel-head compact">
@@ -959,3 +968,269 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     </div>
   `;
 }
+
+
+// ─── Module 6 Pass A — Custom roles panel ─────────────────────────────
+// Lives on SettingsPage between Team and Billing. Lets admins compose
+// up to 10 custom roles per workspace from the canonical permission
+// catalog. Backed by:
+//   GET /api/workspace/permissions/catalog
+//   GET/POST/PUT/DELETE /api/workspace/roles/custom
+function CustomRolesPanel({ api, orgId, toast, canManage, panelRef }) {
+  const [catalog, setCatalog] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [limit, setLimit] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  // editorState: null | { mode: 'create' | 'edit', role?: row }
+  const [editorState, setEditorState] = useState(null);
+
+  const loadAll = async () => {
+    if (!api || !orgId) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const [cat, list] = await Promise.all([
+        api('/api/workspace/permissions/catalog'),
+        api(`/api/workspace/roles/custom?organization_id=${encodeURIComponent(orgId)}`),
+      ]);
+      setCatalog(cat);
+      setRoles(Array.isArray(list?.custom_roles) ? list.custom_roles : []);
+      setLimit(list?.limit || 10);
+    } catch (exc) {
+      setErr(String(exc?.message || exc));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadAll(); }, [api, orgId]);
+
+  const onCreate = async (payload) => {
+    try {
+      await api(
+        `/api/workspace/roles/custom?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: JSON.stringify(payload) },
+      );
+      toast?.(`Custom role “${payload.name}” created.`, 'success');
+      setEditorState(null);
+      await loadAll();
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail || {};
+      const reason = (typeof detail === 'object' ? detail.reason : null) || 'unknown';
+      const msg =
+        reason === 'custom_role_limit'
+          ? `Workspace has reached the ${limit}-custom-role limit.`
+          : reason === 'name_taken'
+          ? 'A role with that name already exists.'
+          : reason === 'validation_failed'
+          ? 'Pick at least one valid permission.'
+          : exc?.message || 'Could not save the role.';
+      toast?.(msg, 'error');
+    }
+  };
+
+  const onUpdate = async (roleId, payload) => {
+    try {
+      await api(
+        `/api/workspace/roles/custom/${encodeURIComponent(roleId)}?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'PUT', body: JSON.stringify(payload) },
+      );
+      toast?.('Role updated.', 'success');
+      setEditorState(null);
+      await loadAll();
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail || {};
+      const reason = typeof detail === 'object' ? detail.reason : null;
+      const msg =
+        reason === 'name_taken'
+          ? 'A role with that name already exists.'
+          : reason === 'validation_failed'
+          ? 'Pick at least one valid permission.'
+          : exc?.message || 'Could not save the role.';
+      toast?.(msg, 'error');
+    }
+  };
+
+  const onDelete = async (role) => {
+    if (!window.confirm(`Delete custom role “${role.name}”?\n\nUsers assigned to it will fall back to their standard role.`)) return;
+    try {
+      await api(
+        `/api/workspace/roles/custom/${encodeURIComponent(role.id)}?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'DELETE' },
+      );
+      toast?.('Role deleted.', 'success');
+      await loadAll();
+    } catch (exc) {
+      toast?.(exc?.message || 'Could not delete the role.', 'error');
+    }
+  };
+
+  const permissionEntries = catalog?.permissions || [];
+  const standardRoles = catalog?.standard_roles || {};
+
+  return html`
+    <div class="panel" ref=${panelRef}>
+      <div class="panel-head compact">
+        <div>
+          <h3>Roles &amp; permissions${!canManage ? html`<span class="status-badge" style="font-size:10px;margin-left:8px">Read-only</span>` : null}</h3>
+          <p class="muted">Six standard roles cover most cases. Compose up to ${limit} custom roles for finer-grained control.</p>
+        </div>
+        ${canManage ? html`
+          <button
+            class="btn-primary btn-sm"
+            disabled=${loading || roles.length >= limit}
+            onClick=${() => setEditorState({ mode: 'create' })}>
+            ${roles.length >= limit ? 'Limit reached' : '+ New custom role'}
+          </button>
+        ` : null}
+      </div>
+
+      ${err ? html`<div class="form-error">${err}</div>` : null}
+
+      <details class="cl-roles-standard">
+        <summary>Standard role permissions</summary>
+        ${permissionEntries.length === 0
+          ? html`<div class="muted">Loading…</div>`
+          : html`
+            <table class="cl-roles-matrix">
+              <thead>
+                <tr>
+                  <th>Permission</th>
+                  ${Object.keys(standardRoles).map((role) => html`<th>${role}</th>`)}
+                </tr>
+              </thead>
+              <tbody>
+                ${permissionEntries.map((p) => html`
+                  <tr key=${p.key}>
+                    <td>
+                      <strong>${p.key}</strong>
+                      <div class="muted" style="font-size:11px">${p.description}</div>
+                    </td>
+                    ${Object.entries(standardRoles).map(([role, perms]) => html`
+                      <td class="cl-roles-cell">
+                        ${(perms || []).includes(p.key) ? '✓' : '—'}
+                      </td>
+                    `)}
+                  </tr>
+                `)}
+              </tbody>
+            </table>`}
+      </details>
+
+      <div class="cl-roles-list" style="margin-top:14px">
+        ${roles.length === 0 && !loading
+          ? html`<div class="muted">No custom roles yet. Standard roles cover most cases.</div>`
+          : roles.map((r) => html`
+            <div class="cl-roles-row" key=${r.id}>
+              <div>
+                <strong>${r.name}</strong>
+                ${r.description ? html`<div class="muted" style="font-size:12px">${r.description}</div>` : null}
+                <div class="cl-roles-perms">
+                  ${(r.permissions || []).map((p) => html`<span class="cl-roles-chip">${p}</span>`)}
+                </div>
+              </div>
+              ${canManage ? html`
+                <div class="row-actions">
+                  <button class="btn-secondary btn-sm" onClick=${() => setEditorState({ mode: 'edit', role: r })}>Edit</button>
+                  <button class="btn-danger btn-sm" onClick=${() => onDelete(r)}>Delete</button>
+                </div>
+              ` : null}
+            </div>
+          `)}
+      </div>
+
+      ${editorState ? html`
+        <${CustomRoleEditor}
+          permissionEntries=${permissionEntries}
+          mode=${editorState.mode}
+          initial=${editorState.role}
+          onCancel=${() => setEditorState(null)}
+          onSubmit=${(payload) => editorState.mode === 'edit'
+            ? onUpdate(editorState.role.id, payload)
+            : onCreate(payload)} />
+      ` : null}
+    </div>
+  `;
+}
+
+
+function CustomRoleEditor({ permissionEntries, mode, initial, onCancel, onSubmit }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [selected, setSelected] = useState(new Set(initial?.permissions || []));
+  const [submitting, setSubmitting] = useState(false);
+
+  const togglePerm = (key) => {
+    const next = new Set(selected);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSelected(next);
+  };
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault?.();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        name: name.trim(),
+        description: description.trim() || null,
+        permissions: Array.from(selected),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const isCreate = mode === 'create';
+  return html`
+    <form class="cl-role-editor" onSubmit=${handleSubmit}>
+      <h4>${isCreate ? 'New custom role' : `Edit “${initial?.name || ''}”`}</h4>
+      <label>
+        <span class="cl-field-label">Name</span>
+        <input
+          type="text"
+          value=${name}
+          onInput=${(e) => setName(e.target.value)}
+          placeholder="e.g., Procurement Reviewer"
+          maxlength="80"
+          required />
+      </label>
+      <label>
+        <span class="cl-field-label">Description (optional)</span>
+        <input
+          type="text"
+          value=${description}
+          onInput=${(e) => setDescription(e.target.value)}
+          placeholder="Approves invoices but cannot configure rules"
+          maxlength="300" />
+      </label>
+      <div class="cl-role-editor-perms">
+        <div class="cl-field-label">Permissions (${selected.size} selected)</div>
+        <div class="cl-perm-grid">
+          ${permissionEntries.map((p) => html`
+            <label key=${p.key} class="cl-perm-checkbox">
+              <input
+                type="checkbox"
+                checked=${selected.has(p.key)}
+                onChange=${() => togglePerm(p.key)} />
+              <div>
+                <strong>${p.key}</strong>
+                <div class="muted" style="font-size:11px">${p.description}</div>
+              </div>
+            </label>
+          `)}
+        </div>
+      </div>
+      <div class="row-actions" style="justify-content:flex-end">
+        <button type="button" class="btn-tertiary btn-sm" onClick=${onCancel} disabled=${submitting}>Cancel</button>
+        <button type="submit" class="btn-primary btn-sm" disabled=${submitting || selected.size === 0 || !name.trim()}>
+          ${submitting ? 'Saving…' : (isCreate ? 'Create role' : 'Save changes')}
+        </button>
+      </div>
+    </form>
+  `;
+}
+
+
