@@ -2975,3 +2975,81 @@ def _v58_ap_items_journal_entry_id(cur, db):
         )
     except Exception as exc:
         logger.warning("[Migration v58] JE-id index skipped: %s", exc)
+
+
+@migration(
+    59,
+    "payment_confirmations table — payment-tracking ledger (Wave 2 C2)"
+)
+def _v59_payment_confirmations(cur, db):
+    """One row per confirmed (or failed) payment event for an AP item.
+
+    Per AP cycle reference doc Stages 7-9: the workflow needs a record
+    of who paid this bill, when settlement cleared, on which rail, and
+    against which payment reference. Critical for SOC 2 + AICPA
+    completeness ("all incurred liabilities are recorded AND
+    settled") + bank reconciliation matching.
+
+    Sources of payment confirmations:
+      * QBO webhook on Payment.create / BillPayment.create
+      * Xero webhook on invoice payment
+      * NetSuite SuiteScript on Bill-payment created
+      * SAP B1 scheduled poll of cleared outgoing payments
+      * Manual operator confirmation (offline cheques, bank-portal
+        payments, reconciled bank-statement debits)
+
+    The (organization_id, source, payment_id) compound key is unique
+    so duplicate webhook deliveries from the same ERP for the same
+    payment never create two rows. The webhook receivers + manual
+    confirmation API both pre-check via ``get_payment_confirmation_by_external_id``
+    + handle the unique-violation race symmetrically.
+
+    Status: ``confirmed | failed | disputed``. Failed payments are
+    captured as their own rows so the operator can see the chain
+    (initial in-flight → failed → retried → executed). The terminal
+    ``payment_executed`` AP item state derives from the most-recent
+    confirmed row, NOT from any single confirmation event.
+
+    Indexed for the dashboard's typical reads:
+      * (organization_id, ap_item_id) — list confirmations per item
+      * (organization_id, status) — failures + disputes scan
+      * (organization_id, source, payment_id) — UNIQUE for idempotency
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS payment_confirmations (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            ap_item_id TEXT NOT NULL,
+            payment_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'confirmed',
+            settlement_at TEXT,
+            amount NUMERIC(18, 2),
+            currency TEXT,
+            method TEXT,
+            payment_reference TEXT,
+            bank_account_last4 TEXT,
+            failure_reason TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            metadata_json TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_confirmations_external "
+        "ON payment_confirmations(organization_id, source, payment_id)",
+        "CREATE INDEX IF NOT EXISTS idx_payment_confirmations_ap_item "
+        "ON payment_confirmations(organization_id, ap_item_id, settlement_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_payment_confirmations_failures "
+        "ON payment_confirmations(organization_id, settlement_at DESC) "
+        "WHERE status != 'confirmed'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v59] payment_confirmations index skipped: %s", exc,
+            )
