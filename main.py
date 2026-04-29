@@ -336,6 +336,13 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     # exception queue, stats, resolve. Org-scoped + admin-role gated
     # in the handlers themselves.
     "/api/admin/box",
+    # Module 6 Pass C — SAML SSO. The /saml/{org}/sp-metadata,
+    # /saml/{org}/login, and /saml/{org}/acs paths must be reachable
+    # without auth (they're the entry/exit of the federated login),
+    # and both SP-metadata and ACS use sub-paths so the prefix gate
+    # is the right shape. The handlers enforce per-tenant scoping
+    # (no auth needed — the SAML signature is the auth on ACS).
+    "/saml/",
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -405,6 +412,7 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/erp/field-mappings",
     "/api/workspace/permissions/catalog",
     "/api/workspace/roles/custom",
+    "/api/workspace/saml/config",
     "/api/workspace/team/users",
     "/api/workspace/ga-readiness",
     "/api/workspace/health",
@@ -1345,6 +1353,17 @@ app.include_router(ops_router)
 # page at /workspace is gated separately (§4 Principle 01).
 from clearledgr.api.workspace_shell import router as workspace_shell_router
 app.include_router(workspace_shell_router)
+
+# Module 6 Pass C — SAML SSO. Two routers: admin CRUD under
+# /api/workspace/saml/, plus IdP-facing flows (metadata, login,
+# ACS) under /saml/. The latter must NOT require auth — they're
+# the entry/exit points of a federated login.
+from clearledgr.api.saml import (
+    saml_admin_router as _saml_admin_router,
+    saml_public_router as _saml_public_router,
+)
+app.include_router(_saml_admin_router)
+app.include_router(_saml_public_router)
 
 # Phase 9 Backoffice surface — Box exceptions admin UI endpoints.
 from clearledgr.api.box_exceptions_admin import router as box_exceptions_admin_router

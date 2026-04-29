@@ -225,7 +225,13 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # console (3 endpoints), agent-intents API surface (3 endpoints),
         # and assorted recent additions including /api/leads, plan-
         # observability hooks, and field-review batch routes.
-        assert len(paths) <= 275
+        # 2026-04-29: Module 6 (Users, Roles, and Permissions). Cap
+        # raised 275 → 285 to cover:
+        #   * permissions catalog + custom roles CRUD (5 endpoints)
+        #   * per-entity role assignments (3 endpoints)
+        #   * SAML admin + IdP-facing flows (6 endpoints — config
+        #     CRUD + sp-metadata + login + acs)
+        assert len(paths) <= 285
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -262,6 +268,12 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             "/api/policies",
             "/api/ops/projections",
             "/api/ops/outbox",
+            # 2026-04-29 Module 6 Pass C: SAML SSO IdP-facing flows.
+            # /saml/{org_id}/sp-metadata, /saml/{org_id}/login,
+            # /saml/{org_id}/acs are reachable without auth (the SAML
+            # signature is the auth on ACS); per-tenant scoping is
+            # enforced inside the handlers.
+            "/saml/",
         }
         # Phase 2.1.b IBAN verification endpoints are mounted and pass
         # the strict-profile route filter.

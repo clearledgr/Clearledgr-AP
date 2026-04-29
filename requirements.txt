@@ -84,6 +84,19 @@ psycopg[binary]>=3.1
 # this at database.py:198-230 to build the pool lazily.
 psycopg_pool>=3.2
 
+# SAML 2.0 — pure-Python XML signature verification (Module 6 Pass C
+# SAML SSO). signxml uses cryptography + lxml under the hood and
+# avoids the libxmlsec1 system dependency that python3-saml requires.
+# clearledgr/services/saml_validator.py wraps it with the SAML
+# response checks the spec actually requires for Clearledgr's IdP-
+# initiated and SP-initiated flows: signature verification against
+# pinned cert, Conditions/Audience/NotOnOrAfter, replay protection.
+signxml>=4.0
+# Defused XML parser — entry point uses defusedxml to reject DTD
+# references + entity expansion attacks before signature
+# verification runs.
+defusedxml>=0.7
+
 # Optional: ERP Integrations
 # quickbooks-python>=0.5.0    # QuickBooks (if needed)
 # xero-python>=4.0.0          # Xero (if needed)
