@@ -1401,6 +1401,12 @@ from clearledgr.api.accrual_journal_entry import (
 )
 app.include_router(accrual_je_router)
 
+# Wave 5 / G6: cycle-time + touchless-rate metrics
+from clearledgr.api.cycle_time_metrics import (
+    router as cycle_time_metrics_router,
+)
+app.include_router(cycle_time_metrics_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
