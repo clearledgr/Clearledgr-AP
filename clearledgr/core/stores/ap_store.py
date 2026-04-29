@@ -102,6 +102,16 @@ class APStore:
         # values coincide — but we still store under this column
         # so callers query one field uniformly.
         "erp_journal_entry_id",
+        # Wave 3 / E2 — VAT split + treatment. amount stays as the
+        # gross/total (what the operator and matcher rely on);
+        # net_amount + vat_amount carry the split for JE building
+        # and VAT-return rollup.
+        "net_amount",
+        "vat_amount",
+        "vat_rate",
+        "vat_code",
+        "tax_treatment",
+        "bill_country",
     })
 
     # ------------------------------------------------------------------

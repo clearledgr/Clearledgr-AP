@@ -3093,6 +3093,94 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    64,
+    "ap_items VAT columns + vat_returns table (Wave 3 E2)",
+)
+def _v64_vat_modeling(cur, db):
+    """Per-bill VAT split + periodic VAT return rollup.
+
+    AP cycle Stage 5 (post bill) requires the correct net/VAT split
+    on the journal entry — domestic bills get an input-VAT line,
+    intra-EU B2B reverse-charge bills get self-assessed input + output
+    VAT (net to zero, but both sides recorded so the VAT return
+    boxes balance), zero-rated EU exports / out-of-scope post net-only.
+
+    Columns added on ``ap_items``:
+      * ``net_amount`` — exclusive of VAT
+      * ``vat_amount`` — VAT line value (0 for reverse_charge in net,
+        but the self-assessed value lands here for VAT box reporting)
+      * ``vat_rate`` — applied rate (e.g. 19.0 for DE, 0.0 for
+        zero-rated). Pulled from STANDARD_VAT_RATES at compute time.
+      * ``vat_code`` — operator/auditor-facing code: T1 (standard
+        rated), T0 (zero rated), T2 (exempt), RC (reverse charge),
+        OO (out of scope)
+      * ``tax_treatment`` — canonical disposition: domestic |
+        reverse_charge | zero_rated | exempt | out_of_scope
+      * ``bill_country`` — seller's country code (ISO 3166-1 alpha-2)
+        used to derive the treatment relative to the org's home
+        country.
+
+    ``vat_returns`` is the periodic rollup. Each row is one period
+    (HMRC quarterly / EU monthly) with the 9-box totals frozen.
+    """
+    for col, ddl in (
+        ("net_amount",     "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS net_amount NUMERIC(18, 2)"),
+        ("vat_amount",     "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18, 2)"),
+        ("vat_rate",       "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(6, 3)"),
+        ("vat_code",       "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS vat_code TEXT"),
+        ("tax_treatment",  "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS tax_treatment TEXT"),
+        ("bill_country",   "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS bill_country TEXT"),
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v64] ap_items.%s column skipped: %s", col, exc,
+            )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vat_returns (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            jurisdiction TEXT NOT NULL,
+            box1_vat_due_on_sales NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box2_vat_due_on_acquisitions NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box3_total_vat_due NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box4_vat_reclaimed NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box5_net_vat_payable NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box6_total_sales_ex_vat NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box7_total_purchases_ex_vat NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box8_total_eu_sales NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            box9_total_eu_purchases NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'GBP',
+            status TEXT NOT NULL DEFAULT 'draft',
+            computed_at TEXT NOT NULL,
+            computed_by TEXT,
+            submitted_at TEXT,
+            submission_reference TEXT,
+            metadata_json TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_vat_returns_org_period "
+        "ON vat_returns(organization_id, period_start DESC, period_end DESC)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vat_returns_period_unique "
+        "ON vat_returns(organization_id, jurisdiction, period_start, period_end) "
+        "WHERE status != 'superseded'",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v64] vat_returns index skipped: %s", exc,
+            )
+
+
+@migration(
     63,
     "vendor_sanctions_checks + vendor_profiles sanctions_status (Wave 3 E1)",
 )
