@@ -207,3 +207,75 @@ async def sync_vendor_to_erp(
     if result.status == "no_erp_id":
         raise HTTPException(status_code=409, detail=body)
     raise HTTPException(status_code=502, detail=body)
+
+
+# ─── Module 4 Pass E — Bulk vendor import via CSV ─────────────────────
+
+
+class CSVImportRequest(BaseModel):
+    csv_text: str = Field(..., min_length=1, max_length=1_200_000)
+
+
+@router.post("/import/preview")
+def preview_vendor_csv_import(
+    body: CSVImportRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Dry-run preview of a CSV upload — no DB writes.
+
+    Returns per-row validation results so the SPA can render a
+    table with green/red rows. Operators fix the errors in their
+    sheet, re-paste, and only commit once everything's clean.
+    """
+    _require_admin(user)
+    _resolve_org_id(user, organization_id)
+    from clearledgr.services.vendor_csv_import import parse_and_validate
+    return parse_and_validate(body.csv_text).to_dict()
+
+
+@router.post("/import/commit")
+def commit_vendor_csv_import(
+    body: CSVImportRequest,
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Re-parse the CSV and apply each valid row.
+
+    The dashboard normally calls /preview first to render the
+    operator's review screen, then this endpoint with the same CSV
+    text on commit. We re-parse rather than passing the parsed rows
+    over the wire so the server is the single source of truth and
+    a malicious client can't claim a row passed validation when it
+    didn't.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+
+    from clearledgr.services.vendor_csv_import import (
+        commit_rows,
+        parse_and_validate,
+    )
+
+    preview = parse_and_validate(body.csv_text)
+    if preview.fatal_error:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "csv_invalid", "fatal_error": preview.fatal_error},
+        )
+
+    db = get_db()
+    actor_email = (
+        getattr(user, "email", None)
+        or str(getattr(user, "user_id", "") or "unknown")
+    )
+    summary = commit_rows(db, org_id, preview.rows, actor=actor_email)
+    return {
+        "organization_id": org_id,
+        **summary,
+        "preview_summary": {
+            "total_rows": preview.total_rows,
+            "valid_rows": preview.valid_rows,
+            "error_rows": preview.error_rows,
+        },
+    }

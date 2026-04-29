@@ -19,6 +19,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [search, setSearch] = useState('');
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
 
   const loadVendors = async ({ silent = false } = {}) => {
     setLoading(true);
@@ -101,9 +102,17 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        <button class="btn-secondary btn-sm" onClick=${() => setBulkImportOpen(true)}>Bulk import</button>
         <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
       </div>
     </div>
+
+    ${bulkImportOpen ? html`<${VendorBulkImportModal}
+      api=${api}
+      orgId=${orgId}
+      toast=${toast}
+      onClose=${() => setBulkImportOpen(false)}
+      onCommitted=${() => { setBulkImportOpen(false); loadVendors({ silent: true }); }} />` : null}
 
     <div class="secondary-chip-row" style="margin:0 0 18px">
       <span class="secondary-chip">Vendors tracked ${vendors.length}</span>
@@ -373,5 +382,157 @@ function VendorPushButton({ api, orgId, vendor, toast }) {
       title="Push the in-Clearledgr vendor profile to the connected ERP.">
       ${pending ? 'Pushing…' : 'Push to ERP'}
     </button>
+  `;
+}
+
+
+// ─── Module 4 Pass E — Bulk vendor import via CSV ─────────────────────
+// Two-step modal: paste CSV → preview (server validates per-row) →
+// commit. Operators iterate on the source sheet until everything's
+// green, then commit. Backed by:
+//   POST /api/vendors/import/preview
+//   POST /api/vendors/import/commit
+function VendorBulkImportModal({ api, orgId, toast, onClose, onCommitted }) {
+  const [csvText, setCsvText] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+
+  const onPreview = async () => {
+    if (!csvText.trim()) {
+      toast?.('Paste CSV content first.', 'error');
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const res = await api(
+        `/api/vendors/import/preview?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: JSON.stringify({ csv_text: csvText }) },
+      );
+      setPreview(res);
+      if (res.fatal_error) {
+        toast?.(`CSV invalid: ${res.fatal_error}`, 'error');
+      }
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail;
+      toast?.(detail?.message || exc?.message || 'Preview failed.', 'error');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const onCommit = async () => {
+    if (!preview || preview.valid_rows === 0) return;
+    if (!window.confirm(
+      `Apply ${preview.valid_rows} valid row${preview.valid_rows === 1 ? '' : 's'} to the workspace? ` +
+      `${preview.error_rows ? preview.error_rows + ' invalid row(s) will be skipped.' : ''}`
+    )) return;
+    setCommitting(true);
+    try {
+      const res = await api(
+        `/api/vendors/import/commit?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: JSON.stringify({ csv_text: csvText }) },
+      );
+      toast?.(
+        `Imported ${res.applied_count} vendor${res.applied_count === 1 ? '' : 's'}.` +
+        (res.skipped_count ? ` Skipped ${res.skipped_count}.` : ''),
+        'success',
+      );
+      onCommitted?.();
+    } catch (exc) {
+      const detail = exc?.detail || exc?.body?.detail;
+      toast?.(detail?.fatal_error || detail?.message || exc?.message || 'Commit failed.', 'error');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  return html`
+    <div class="cl-modal-overlay" onClick=${onClose}>
+      <div
+        class="cl-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cl-bulk-import-title"
+        style="max-width:880px;width:90vw"
+        onClick=${(e) => e.stopPropagation()}>
+        <h3 id="cl-bulk-import-title" class="cl-modal-title">Bulk vendor import</h3>
+        <div class="cl-modal-body">
+          <p class="muted" style="font-size:12px;margin:0 0 8px">
+            Paste CSV content. The first row must be a header. Required column:
+            <code>vendor_name</code>. Optional columns:
+            <code>email</code>, <code>address</code>, <code>terms</code>,
+            <code>vat_number</code>, <code>registration_number</code>,
+            <code>status</code> (active|blocked|archived). 5 000 rows max.
+          </p>
+          <textarea
+            value=${csvText}
+            onInput=${(e) => setCsvText(e.target.value)}
+            placeholder="vendor_name,email,terms\nAcme Inc,ap@acme.test,Net 30"
+            style="width:100%;min-height:160px;font-family:var(--font-mono,monospace);font-size:12px"
+            disabled=${previewing || committing}></textarea>
+          <div class="row-actions" style="justify-content:flex-start;margin-top:8px">
+            <button class="btn-secondary btn-sm" onClick=${onPreview} disabled=${previewing || !csvText.trim()}>
+              ${previewing ? 'Validating…' : 'Validate preview'}
+            </button>
+          </div>
+
+          ${preview ? html`
+            <div style="margin-top:14px">
+              ${preview.fatal_error
+                ? html`<div class="form-error">CSV invalid: <code>${preview.fatal_error}</code></div>`
+                : html`
+                  <div class="muted" style="font-size:12px;margin-bottom:6px">
+                    ${preview.total_rows} row${preview.total_rows === 1 ? '' : 's'} parsed:
+                    <strong style="color:var(--cl-mint,#0a663e)">${preview.valid_rows} valid</strong>
+                    · <strong style="color:#991b1b">${preview.error_rows} with errors</strong>
+                  </div>
+                  ${preview.rows && preview.rows.length > 0 ? html`
+                    <div style="max-height:240px;overflow:auto;border:1px solid var(--cl-border,#e5e7eb);border-radius:6px">
+                      <table style="width:100%;border-collapse:collapse;font-size:11px">
+                        <thead style="background:var(--cl-bg-subtle,#fafafa)">
+                          <tr>
+                            <th style="padding:4px 8px;text-align:left">Row</th>
+                            <th style="padding:4px 8px;text-align:left">Vendor</th>
+                            <th style="padding:4px 8px;text-align:left">Status</th>
+                            <th style="padding:4px 8px;text-align:left">Issue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${preview.rows.slice(0, 100).map((r) => html`
+                            <tr key=${r.row_number} style="border-top:1px solid var(--cl-border-subtle,#efefef)">
+                              <td style="padding:4px 8px">${r.row_number}</td>
+                              <td style="padding:4px 8px;font-family:var(--font-mono,monospace)">
+                                ${r.parsed?.vendor_name || r.raw?.vendor_name || '—'}
+                              </td>
+                              <td style="padding:4px 8px">
+                                ${r.valid
+                                  ? html`<span style="color:#0a663e">OK</span>`
+                                  : html`<span style="color:#991b1b">Error</span>`}
+                              </td>
+                              <td style="padding:4px 8px;color:#991b1b">
+                                ${(r.errors || []).join(', ')}
+                              </td>
+                            </tr>
+                          `)}
+                        </tbody>
+                      </table>
+                    </div>
+                  ` : null}
+                `}
+            </div>
+          ` : null}
+        </div>
+        <div class="cl-modal-actions">
+          <button class="btn-secondary btn-sm" onClick=${onClose} disabled=${committing}>Cancel</button>
+          <button
+            class="btn-primary btn-sm"
+            disabled=${committing || !preview || preview.fatal_error || preview.valid_rows === 0}
+            onClick=${onCommit}>
+            ${committing ? 'Importing…' : `Import ${preview?.valid_rows || 0} vendor${(preview?.valid_rows ?? 0) === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      </div>
+    </div>
   `;
 }
