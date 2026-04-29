@@ -3093,6 +3093,96 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
 
 
 @migration(
+    62,
+    "bank_statement_imports + bank_statement_lines (Wave 2 C6)",
+)
+def _v62_bank_statement_tables(cur, db):
+    """Bank reconciliation auto-match tables.
+
+    ``bank_statement_imports`` is one row per statement file the
+    operator (or future bank-feed sync) brings in. Holds the
+    metadata + raw filename + reconciled stats for the dashboard.
+
+    ``bank_statement_lines`` is one row per statement transaction.
+    Each line is matched against a ``payment_confirmations`` row via
+    (amount, currency, settlement window). Match status flips
+    unmatched -> matched -> reconciled as the matcher / operator
+    confirms.
+
+    Composite uniqueness on (organization_id, import_id, line_index)
+    so re-importing the same file is idempotent at the line level.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bank_statement_imports (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            filename TEXT,
+            format TEXT NOT NULL,
+            statement_iban TEXT,
+            statement_account TEXT,
+            statement_currency TEXT,
+            from_date TEXT,
+            to_date TEXT,
+            opening_balance NUMERIC(18, 2),
+            closing_balance NUMERIC(18, 2),
+            line_count INTEGER NOT NULL DEFAULT 0,
+            matched_count INTEGER NOT NULL DEFAULT 0,
+            uploaded_by TEXT,
+            uploaded_at TEXT NOT NULL,
+            metadata_json TEXT
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bank_statement_lines (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            import_id TEXT NOT NULL,
+            line_index INTEGER NOT NULL,
+            value_date TEXT,
+            booking_date TEXT,
+            amount NUMERIC(18, 2) NOT NULL,
+            currency TEXT NOT NULL,
+            description TEXT,
+            counterparty TEXT,
+            counterparty_iban TEXT,
+            bank_reference TEXT,
+            end_to_end_id TEXT,
+            payment_confirmation_id TEXT,
+            match_status TEXT NOT NULL DEFAULT 'unmatched',
+            match_confidence REAL,
+            match_reason TEXT,
+            matched_at TEXT,
+            matched_by TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_bank_statement_lines_org_status "
+        "ON bank_statement_lines(organization_id, match_status, value_date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_bank_statement_lines_import "
+        "ON bank_statement_lines(import_id, line_index)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_lines_unique "
+        "ON bank_statement_lines(organization_id, import_id, line_index)",
+        "CREATE INDEX IF NOT EXISTS idx_bank_statement_lines_pcid "
+        "ON bank_statement_lines(payment_confirmation_id) "
+        "WHERE payment_confirmation_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_org "
+        "ON bank_statement_imports(organization_id, uploaded_at DESC)",
+    ):
+        try:
+            cur.execute(ddl)
+        except Exception as exc:
+            logger.warning(
+                "[Migration v62] bank statement index skipped: %s", exc,
+            )
+
+
+@migration(
     61,
     "vendor_profiles: remittance advice columns (Wave 2 C5)",
 )
