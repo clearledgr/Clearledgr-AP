@@ -1337,6 +1337,10 @@ else:
 from clearledgr.api.erp_webhooks import router as erp_webhooks_router
 app.include_router(erp_webhooks_router)
 
+# Wave 2 / C4: manual payment confirmation surface
+from clearledgr.api.payment_confirmations import router as payment_confirmations_router
+app.include_router(payment_confirmations_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
