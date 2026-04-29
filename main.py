@@ -1417,6 +1417,12 @@ from clearledgr.api.vendor_inquiry import (
 )
 app.include_router(vendor_inquiry_router)
 
+# Wave 6 / H3: dispute reopen ceremony
+from clearledgr.api.dispute_reopen import (
+    router as dispute_reopen_router,
+)
+app.include_router(dispute_reopen_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
