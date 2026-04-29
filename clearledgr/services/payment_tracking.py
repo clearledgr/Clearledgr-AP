@@ -256,6 +256,28 @@ def record_payment_confirmation(
         "metadata": audit_metadata,
     })
 
+    # ── 5. Remittance advice (Wave 2 / C5) ─────────────────────────
+    # Fire-and-forget: failures must NOT roll back the confirmation.
+    # The remittance service is itself idempotent (audit event keyed
+    # by payment_id) so re-invocation is safe.
+    if clean_status == "confirmed" and ap_item is not None:
+        try:
+            from clearledgr.services.remittance_advice import (
+                send_remittance_advice,
+            )
+            send_remittance_advice(
+                db,
+                organization_id=organization_id,
+                ap_item_id=ap_item_id,
+                payment_id=payment_id,
+                confirmation=confirmation,
+            )
+        except Exception:
+            logger.exception(
+                "payment_tracking: remittance advice hook failed "
+                "ap_item=%s payment_id=%s", ap_item_id, payment_id,
+            )
+
     return PaymentConfirmationResult(
         confirmation=confirmation,
         duplicate=False,

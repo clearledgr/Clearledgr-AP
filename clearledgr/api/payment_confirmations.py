@@ -269,6 +269,87 @@ def get_payment_confirmation(
     return _serialize(row)
 
 
+class VendorRemittanceConfig(BaseModel):
+    remittance_email: Optional[str] = Field(None, max_length=320)
+    remittance_opt_out: Optional[bool] = None
+
+
+class VendorRemittanceConfigOut(BaseModel):
+    vendor_name: str
+    remittance_email: Optional[str] = None
+    primary_contact_email: Optional[str] = None
+    remittance_opt_out: bool = False
+
+
+@router.get(
+    "/vendors/{vendor_name}/remittance-config",
+    response_model=VendorRemittanceConfigOut,
+)
+def get_vendor_remittance_config(
+    vendor_name: str,
+    user: TokenData = Depends(get_current_user),
+):
+    """Read the per-vendor remittance configuration."""
+    db = get_db()
+    profile = db.get_vendor_profile(user.organization_id, vendor_name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="vendor_not_found")
+    return VendorRemittanceConfigOut(
+        vendor_name=vendor_name,
+        remittance_email=profile.get("remittance_email"),
+        primary_contact_email=profile.get("primary_contact_email"),
+        remittance_opt_out=bool(int(profile.get("remittance_opt_out") or 0)),
+    )
+
+
+@router.put(
+    "/vendors/{vendor_name}/remittance-config",
+    response_model=VendorRemittanceConfigOut,
+)
+def set_vendor_remittance_config(
+    vendor_name: str,
+    body: VendorRemittanceConfig,
+    user: TokenData = Depends(get_current_user),
+):
+    """Update the per-vendor remittance configuration.
+
+    Either field may be omitted — only fields explicitly present in
+    the body are written. Setting ``remittance_opt_out=True`` silences
+    the auto-send for this vendor; setting it back to False resumes
+    sending.
+    """
+    db = get_db()
+    profile = db.get_vendor_profile(user.organization_id, vendor_name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="vendor_not_found")
+
+    fields: Dict[str, Any] = {}
+    if body.remittance_email is not None:
+        fields["remittance_email"] = body.remittance_email.strip() or None
+    if body.remittance_opt_out is not None:
+        fields["remittance_opt_out"] = int(bool(body.remittance_opt_out))
+    if not fields:
+        # No-op — return current config without writing.
+        return VendorRemittanceConfigOut(
+            vendor_name=vendor_name,
+            remittance_email=profile.get("remittance_email"),
+            primary_contact_email=profile.get("primary_contact_email"),
+            remittance_opt_out=bool(
+                int(profile.get("remittance_opt_out") or 0)
+            ),
+        )
+
+    updated = db.upsert_vendor_profile(
+        user.organization_id, vendor_name, **fields,
+    )
+    return VendorRemittanceConfigOut(
+        vendor_name=vendor_name,
+        remittance_email=updated.get("remittance_email"),
+        primary_contact_email=updated.get("primary_contact_email"),
+        remittance_opt_out=bool(int(updated.get("remittance_opt_out") or 0)),
+    )
+
+
 @router.get(
     "/ap-items/{ap_item_id}/payment-confirmations",
     response_model=List[PaymentConfirmationOut],

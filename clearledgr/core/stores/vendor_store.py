@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     kyc_completion_date TEXT,
     vendor_kyc_updated_at TEXT,
     primary_contact_email TEXT,
+    -- Wave 2 / C5: remittance advice config. Both nullable; default
+    -- behaviour is "send to remittance_email or primary_contact_email
+    -- on payment confirmation". opt_out=1 silences the auto-send for
+    -- vendors who pull from their own portal / bank statement.
+    remittance_email TEXT,
+    remittance_opt_out INTEGER NOT NULL DEFAULT 0,
     UNIQUE(organization_id, vendor_name)
 )
 """
@@ -294,6 +300,9 @@ class VendorStore:
             "vendor_kyc_updated_at",
             # §3: primary AP contact email on the Vendor record.
             "primary_contact_email",
+            # Wave 2 / C5: remittance advice config.
+            "remittance_email",
+            "remittance_opt_out",
             # Module 4 Pass B: vendor allowlist/blocklist. Writes
             # should normally go through ``set_vendor_status`` so the
             # status_changed_* metadata is consistent, but the field

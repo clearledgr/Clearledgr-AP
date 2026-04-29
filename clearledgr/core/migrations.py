@@ -3090,3 +3090,35 @@ def _v60_payment_confirmations_unique_per_ap_item(cur, db):
             "[Migration v60] payment_confirmations unique key replace skipped: %s",
             exc,
         )
+
+
+@migration(
+    61,
+    "vendor_profiles: remittance advice columns (Wave 2 C5)",
+)
+def _v61_remittance_columns(cur, db):
+    """Per-vendor outbound remittance configuration.
+
+    Two columns added on ``vendor_profiles``:
+
+      * ``remittance_email`` — overrides ``primary_contact_email`` for
+        AP remittance advices specifically. Some vendors prefer
+        ``ap@vendor.com`` for remittance, while their general
+        correspondence contact is the AE.
+      * ``remittance_opt_out`` — INTEGER 0/1. When 1, Clearledgr does
+        not auto-send a remittance advice on payment confirmation.
+        Used by vendors who pull from their own bank statement /
+        portal feed and treat outbound remittance emails as noise.
+
+    Both are nullable; default behaviour is "send via remittance_email
+    or primary_contact_email when available". Setting these requires
+    an explicit operator action in the workspace.
+    """
+    cur.execute(
+        "ALTER TABLE vendor_profiles "
+        "ADD COLUMN IF NOT EXISTS remittance_email TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE vendor_profiles "
+        "ADD COLUMN IF NOT EXISTS remittance_opt_out INTEGER NOT NULL DEFAULT 0"
+    )
