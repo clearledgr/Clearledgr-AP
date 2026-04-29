@@ -1373,6 +1373,12 @@ from clearledgr.api.africa_einvoice import (
 )
 app.include_router(africa_einvoice_router)
 
+# Wave 5 / G1: 3-way match runner
+from clearledgr.api.three_way_match import (
+    router as three_way_match_router,
+)
+app.include_router(three_way_match_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
