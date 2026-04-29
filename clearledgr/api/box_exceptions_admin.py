@@ -59,6 +59,42 @@ def _assert_org_match(user: TokenData, organization_id: str) -> None:
         raise HTTPException(status_code=403, detail="org_mismatch")
 
 
+def _gather_unresolved(
+    db,
+    organization_id: str,
+    *,
+    box_type: Optional[str] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """Merge canonical box_exceptions with synthetic vendor-onboarding
+    signals. Module 4 Pass C — stuck or blocked vendor onboarding
+    sessions surface as first-class exceptions in the queue without
+    bloating ``box_exceptions`` with synthetic rows.
+
+    Synthetic rows are only included when the caller didn't filter
+    out the ``vendor_onboarding_session`` box type. The combined list
+    is returned unsorted; callers handle severity ordering.
+    """
+    canonical = db.list_unresolved_exceptions(
+        organization_id, box_type=box_type, limit=limit,
+    )
+    # Skip the synthesizer when the caller is filtering for a non-
+    # onboarding box_type — those rows would never appear in the
+    # filtered output.
+    include_synthetic = (
+        box_type is None
+        or box_type == "vendor_onboarding_session"
+    )
+    if not include_synthetic:
+        return canonical
+
+    from clearledgr.services.vendor_onboarding_exceptions import (
+        synthesize_onboarding_exceptions,
+    )
+    synthetic = synthesize_onboarding_exceptions(db, organization_id)
+    return [*canonical, *synthetic]
+
+
 @router.get("/exceptions")
 def list_exceptions(
     box_type: Optional[str] = Query(None, description="Filter by box type (e.g. ap_item)"),
@@ -72,10 +108,8 @@ def list_exceptions(
         raise HTTPException(status_code=400, detail="invalid_severity")
 
     db = get_db()
-    items = db.list_unresolved_exceptions(
-        user.organization_id,
-        box_type=box_type,
-        limit=limit,
+    items = _gather_unresolved(
+        db, user.organization_id, box_type=box_type, limit=limit,
     )
     if severity:
         items = [row for row in items if str(row.get("severity")) == severity]
@@ -93,7 +127,7 @@ def exception_stats(
     """Counts by severity and exception_type for the admin dashboard."""
     _require_admin(user)
     db = get_db()
-    items = db.list_unresolved_exceptions(user.organization_id, limit=500)
+    items = _gather_unresolved(db, user.organization_id, limit=500)
 
     by_severity: Dict[str, int] = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     by_type: Dict[str, int] = {}
@@ -120,8 +154,28 @@ def resolve_exception(
     body: Dict[str, Any] = Body(default_factory=dict),
     user: TokenData = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Mark an exception resolved. The acting user is the resolver."""
+    """Mark an exception resolved. The acting user is the resolver.
+
+    Module 4 Pass C: synthetic vendor-onboarding rows (id prefixed
+    ``vos:``) are read-only here. The operator resolves them by
+    advancing the underlying onboarding session via the vendor
+    surface — recording a fake row in ``box_exceptions`` would be a
+    noisy half-measure (the real signal is the session state).
+    """
     _require_admin(user)
+    if str(exception_id or "").startswith("vos:"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "reason": "synthetic_exception",
+                "message": (
+                    "Vendor onboarding signals resolve via the vendor "
+                    "surface, not the exception queue. Open the vendor "
+                    "record to advance or close the session."
+                ),
+                "vendor_session_id": exception_id[4:],
+            },
+        )
     db = get_db()
 
     existing = db.get_box_exception(exception_id)

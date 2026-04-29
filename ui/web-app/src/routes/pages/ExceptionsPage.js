@@ -118,13 +118,22 @@ export default function ExceptionsPage({ api }) {
                         </div>
                         <div style="display:flex;gap:10px;align-items:center">
                           <span class="status-badge" style="color:${SEVERITY_COLORS[row.severity] || '#6B7280'};font-weight:700">${row.severity}</span>
-                          <button
-                            disabled=${resolvingId === row.id}
-                            onClick=${() => openResolveDialog(row.id)}
-                            class="btn-primary btn-sm"
-                          >
-                            ${resolvingId === row.id ? 'Resolving…' : 'Resolve'}
-                          </button>
+                          ${row.synthetic
+                            ? html`<button
+                                onClick=${() => {
+                                  const v = row.metadata?.vendor_name;
+                                  if (v) window.location.hash = `#/vendors/${encodeURIComponent(v)}`;
+                                }}
+                                class="btn-secondary btn-sm"
+                                title="Resolve this signal by advancing the underlying onboarding session.">
+                                View vendor
+                              </button>`
+                            : html`<button
+                                disabled=${resolvingId === row.id}
+                                onClick=${() => openResolveDialog(row.id)}
+                                class="btn-primary btn-sm">
+                                ${resolvingId === row.id ? 'Resolving…' : 'Resolve'}
+                              </button>`}
                         </div>
                       </div>
                       <div style="font-size:12px;line-height:1.4">${row.reason || '(no reason recorded)'}</div>
