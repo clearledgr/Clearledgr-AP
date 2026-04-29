@@ -1389,6 +1389,12 @@ from clearledgr.api.multi_invoice_split import (
 )
 app.include_router(multi_invoice_split_router)
 
+# Wave 5 / G4: configurable confidence thresholds
+from clearledgr.api.threshold_policy import (
+    router as threshold_policy_router,
+)
+app.include_router(threshold_policy_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
