@@ -1379,6 +1379,10 @@ from clearledgr.api.three_way_match import (
 )
 app.include_router(three_way_match_router)
 
+# Wave 5 / G2: multi-attribute vendor match
+from clearledgr.api.vendor_match import router as vendor_match_router
+app.include_router(vendor_match_router)
+
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
