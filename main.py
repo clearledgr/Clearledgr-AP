@@ -1363,9 +1363,15 @@ from clearledgr.api.journal_entry_preview import (
 )
 app.include_router(journal_entry_preview_router)
 
-# Wave 4 / F1: PEPPOL UBL inbound import
+# Wave 4 / F1+F2: PEPPOL UBL inbound import + outbound credit notes
 from clearledgr.api.peppol import router as peppol_router
 app.include_router(peppol_router)
+
+# Wave 4 / F4: Africa e-invoice formats (NG FIRS, KE eTIMS, ZA SARS)
+from clearledgr.api.africa_einvoice import (
+    router as africa_einvoice_router,
+)
+app.include_router(africa_einvoice_router)
 
 # Agent intent runtime contract (preview/execute)
 from clearledgr.api.agent_intents import router as agent_intents_router
