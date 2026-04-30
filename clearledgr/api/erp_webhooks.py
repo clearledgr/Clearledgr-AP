@@ -36,6 +36,7 @@ Xero Intent-to-Receive handshake:
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -134,6 +135,144 @@ def _preview_json(body: bytes, limit: int = 2048) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Intake-dispatch fan-out helpers (QB + Xero)
+# ---------------------------------------------------------------------------
+#
+# QB and Xero webhooks batch many entity events into one POST. The
+# IntakeAdapter contract is per-event, so the route extracts each
+# Bill / INVOICE entity and calls handle_intake_event once per event
+# with a synthetic single-entity payload that the adapter's
+# parse_envelope expects.
+
+
+async def _dispatch_quickbooks_bill_intake(
+    *,
+    organization_id: str,
+    raw: bytes,
+    headers: Dict[str, str],
+    secret: str,
+) -> None:
+    """Walk a QBO eventNotifications envelope, fan out per Bill
+    entity. Non-Bill entities (BillPayment, etc.) are handled by the
+    payment-tracking dispatcher in the route below this one — we
+    only forward Bill events here.
+    """
+    try:
+        envelope = json.loads(raw.decode("utf-8")) if raw else {}
+    except (ValueError, UnicodeDecodeError):
+        return
+    if not isinstance(envelope, dict):
+        return
+
+    from clearledgr.services.intake_adapter import handle_intake_event
+    # Side-effect import: register the adapter the first time the
+    # webhook fires for this process.
+    import clearledgr.integrations.erp_quickbooks_intake_adapter  # noqa: F401
+
+    for note in envelope.get("eventNotifications") or []:
+        if not isinstance(note, dict):
+            continue
+        realm_id = str(note.get("realmId") or "").strip()
+        change = note.get("dataChangeEvent") or {}
+        for ent in change.get("entities") or []:
+            if not isinstance(ent, dict):
+                continue
+            if str(ent.get("name") or "") != "Bill":
+                continue
+            entity_id = str(ent.get("id") or "").strip()
+            operation = str(ent.get("operation") or "").strip()
+            if not entity_id or not operation:
+                continue
+            synthetic = {
+                "realmId": realm_id,
+                "entity_id": entity_id,
+                "operation": operation,
+                "event_id": f"qb:{realm_id}:{entity_id}:{operation}",
+            }
+            try:
+                result = await handle_intake_event(
+                    source_type="quickbooks",
+                    organization_id=organization_id,
+                    raw=json.dumps(synthetic).encode("utf-8"),
+                    headers=headers,
+                    secret=secret,
+                    signature_already_verified=True,
+                )
+                logger.info(
+                    "qb intake dispatch: org=%s bill=%s op=%s result=%s",
+                    organization_id, entity_id, operation, result,
+                )
+            except Exception:
+                logger.exception(
+                    "qb intake dispatch raised: org=%s bill=%s op=%s",
+                    organization_id, entity_id, operation,
+                )
+
+
+async def _dispatch_xero_invoice_intake(
+    *,
+    organization_id: str,
+    raw: bytes,
+    headers: Dict[str, str],
+    secret: str,
+) -> None:
+    """Walk a Xero events envelope, fan out per INVOICE event.
+
+    The XeroIntakeAdapter's enrich step fetches the invoice and
+    filters ACCPAY only — ACCREC sales invoices are turned into
+    a marker that the universal dispatcher short-circuits without
+    creating a phantom AP item.
+    """
+    try:
+        envelope = json.loads(raw.decode("utf-8")) if raw else {}
+    except (ValueError, UnicodeDecodeError):
+        return
+    if not isinstance(envelope, dict):
+        return
+
+    from clearledgr.services.intake_adapter import handle_intake_event
+    import clearledgr.integrations.erp_xero_intake_adapter  # noqa: F401
+
+    tenant_id_top = str(envelope.get("tenantId") or "").strip()
+    for evt in envelope.get("events") or []:
+        if not isinstance(evt, dict):
+            continue
+        category = str(evt.get("eventCategory") or "").upper()
+        if category != "INVOICE":
+            continue
+        resource_id = str(evt.get("resourceId") or "").strip()
+        event_type = str(evt.get("eventType") or "").strip().upper()
+        if not resource_id or not event_type:
+            continue
+        synthetic = {
+            "tenant_id": str(evt.get("tenantId") or tenant_id_top),
+            "resource_id": resource_id,
+            "event_type": event_type,
+            "event_category": category,
+            "event_id": str(evt.get("eventId") or f"xero:{resource_id}:{event_type}"),
+            "event_date_utc": str(evt.get("eventDateUtc") or ""),
+        }
+        try:
+            result = await handle_intake_event(
+                source_type="xero",
+                organization_id=organization_id,
+                raw=json.dumps(synthetic).encode("utf-8"),
+                headers=headers,
+                secret=secret,
+                signature_already_verified=True,
+            )
+            logger.info(
+                "xero intake dispatch: org=%s invoice=%s op=%s result=%s",
+                organization_id, resource_id, event_type, result,
+            )
+        except Exception:
+            logger.exception(
+                "xero intake dispatch raised: org=%s invoice=%s op=%s",
+                organization_id, resource_id, event_type,
+            )
+
+
+# ---------------------------------------------------------------------------
 # QuickBooks
 # ---------------------------------------------------------------------------
 
@@ -176,9 +315,26 @@ async def quickbooks_webhook(
         payload_preview=_preview_json(raw),
     )
 
-    # Wave 2 / C3: dispatch BillPayment notifications into the
-    # payment-tracking pipeline. Best-effort — failures log + swallow
-    # so we always return 200 to QBO and avoid retry storms.
+    # QBO envelopes batch entity events. Walk eventNotifications and
+    # fan out per-entity:
+    #   - Bill.Create / Update / Delete → IntakeAdapter dispatch
+    #     (creates / refreshes / closes the AP item).
+    #   - BillPayment.Create / Update → payment-tracking dispatcher
+    #     (updates payment state on existing AP items — Wave 2 / C3).
+    # Failures log + swallow so we always return 200 to QBO and
+    # avoid retry storms.
+    try:
+        await _dispatch_quickbooks_bill_intake(
+            organization_id=organization_id,
+            raw=raw,
+            headers=dict(request.headers),
+            secret=verifier_token,
+        )
+    except Exception:
+        logger.exception(
+            "qb intake dispatch raised for org=%s", organization_id,
+        )
+
     try:
         from clearledgr.services.erp_payment_dispatcher import (
             dispatch_quickbooks_payment_webhook,
@@ -187,12 +343,12 @@ async def quickbooks_webhook(
             organization_id=organization_id, raw_body=raw,
         )
         logger.info(
-            "qb webhook dispatch: org=%s result=%s",
+            "qb payment dispatch: org=%s result=%s",
             organization_id, result,
         )
     except Exception:
         logger.exception(
-            "qb webhook dispatch raised for org=%s", organization_id,
+            "qb payment dispatch raised for org=%s", organization_id,
         )
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})
@@ -251,11 +407,26 @@ async def xero_webhook(
         payload_preview=preview,
     )
 
-    # Wave 2 / C3: dispatch INVOICE updates into the payment-tracking
-    # pipeline. The Intent-to-Receive handshake (events: []) returns
-    # before this runs (parsed.parsed_envelope is empty), so the
-    # handshake response stays fast.
+    # Xero envelopes batch INVOICE events. Walk events[] and fan
+    # out per-resource:
+    #   - INVOICE.CREATE / UPDATE / DELETE (filtered to ACCPAY in
+    #     the adapter's enrich) → IntakeAdapter dispatch.
+    #   - Same envelope drives the payment-tracking dispatcher,
+    #     which keys off paid status.
+    # The Intent-to-Receive handshake (events: []) skips both.
     if not is_itr:
+        try:
+            await _dispatch_xero_invoice_intake(
+                organization_id=organization_id,
+                raw=raw,
+                headers=dict(request.headers),
+                secret=webhook_key,
+            )
+        except Exception:
+            logger.exception(
+                "xero intake dispatch raised for org=%s", organization_id,
+            )
+
         try:
             from clearledgr.services.erp_payment_dispatcher import (
                 dispatch_xero_payment_webhook,
@@ -264,12 +435,12 @@ async def xero_webhook(
                 organization_id=organization_id, raw_body=raw,
             )
             logger.info(
-                "xero webhook dispatch: org=%s result=%s",
+                "xero payment dispatch: org=%s result=%s",
                 organization_id, result,
             )
         except Exception:
             logger.exception(
-                "xero webhook dispatch raised for org=%s", organization_id,
+                "xero payment dispatch raised for org=%s", organization_id,
             )
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True})

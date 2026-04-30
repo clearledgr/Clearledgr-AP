@@ -219,6 +219,7 @@ async def handle_intake_event(
     headers: Mapping[str, str],
     secret: Optional[str],
     audit_received_fn: Optional[Callable[[], None]] = None,
+    signature_already_verified: bool = False,
 ) -> Dict[str, Any]:
     """Channel-agnostic dispatch.
 
@@ -230,19 +231,30 @@ async def handle_intake_event(
     ``audit_received_fn`` is the route-side audit-event writer that
     captures the inbound HTTP call (signature pre-verified). Called
     after signature verification so we never audit forged events.
+
+    ``signature_already_verified``: set when the route fans out a
+    pre-verified outer envelope into per-entity synthetic payloads
+    (QB / Xero). The synthetic payloads aren't signed individually,
+    so the adapter's verify_signature would always fail — but the
+    outer envelope's signature was already checked at the route
+    layer, so it's safe to skip the re-verification here. The
+    parameter is explicit (no default-True at the route layer) so
+    callers must opt in deliberately rather than getting the
+    weakened check by accident.
     """
     adapter = get_adapter(source_type)
     if adapter is None:
         return {"ok": False, "reason": "no_adapter", "source_type": source_type}
-    if secret is None or not secret.strip():
-        return {"ok": False, "reason": "no_secret_provisioned", "source_type": source_type}
 
-    if not await adapter.verify_signature(raw, headers, secret):
-        logger.warning(
-            "intake_adapter: signature verification failed for source=%s org=%s (bytes=%d)",
-            source_type, organization_id, len(raw),
-        )
-        return {"ok": False, "reason": "signature_invalid"}
+    if not signature_already_verified:
+        if secret is None or not secret.strip():
+            return {"ok": False, "reason": "no_secret_provisioned", "source_type": source_type}
+        if not await adapter.verify_signature(raw, headers, secret):
+            logger.warning(
+                "intake_adapter: signature verification failed for source=%s org=%s (bytes=%d)",
+                source_type, organization_id, len(raw),
+            )
+            return {"ok": False, "reason": "signature_invalid"}
 
     if audit_received_fn is not None:
         try:
@@ -296,6 +308,22 @@ async def _dispatch_create_like(
             envelope.source_type, source_id, exc,
         )
         return {"ok": False, "reason": "enrich_failed", "error": str(exc)}
+
+    # Adapter-signalled skip: enrich returns InvoiceData with
+    # ``erp_metadata.not_a_bill`` when the source event isn't an
+    # accounts-payable bill (e.g. Xero ACCREC sales invoice arrives
+    # via the same INVOICE webhook channel as ACCPAY vendor bills).
+    # Short-circuit before pipeline creation rather than minting a
+    # phantom AP item.
+    erp_meta = invoice.erp_metadata if isinstance(invoice.erp_metadata, dict) else {}
+    if erp_meta.get("not_a_bill"):
+        return {
+            "ok": True,
+            "reason": "skipped_non_bill",
+            "skip_reason": erp_meta.get("skip_reason"),
+            "source_type": envelope.source_type,
+            "source_id": source_id,
+        }
 
     try:
         from clearledgr.services.invoice_workflow import get_invoice_workflow
