@@ -727,6 +727,55 @@ class AuthStore:
         data["is_active"] = bool(data.get("is_active"))
         return data
 
+    def list_user_api_keys(
+        self, user_id: str, organization_id: str, *, only_active: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Active API keys created by a specific user.
+
+        Used by the user-offboarding flow to cascade-revoke a
+        deactivated user's keys so they can't keep authenticating
+        through the X-API-Key header after they lose JWT access.
+        """
+        self.initialize()
+        if only_active:
+            sql = (
+                "SELECT id, organization_id, key_prefix, user_id, label, "
+                "is_active, last_used_at, created_at, updated_at "
+                "FROM api_keys "
+                "WHERE user_id = %s AND organization_id = %s AND is_active = 1 "
+                "ORDER BY created_at DESC"
+            )
+        else:
+            sql = (
+                "SELECT id, organization_id, key_prefix, user_id, label, "
+                "is_active, last_used_at, created_at, updated_at "
+                "FROM api_keys "
+                "WHERE user_id = %s AND organization_id = %s "
+                "ORDER BY created_at DESC"
+            )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (user_id, organization_id))
+            rows = cur.fetchall()
+        return [dict(r) | {"is_active": bool(dict(r).get("is_active"))} for r in rows]
+
+    def revoke_user_api_keys(
+        self, user_id: str, organization_id: str,
+    ) -> int:
+        """Revoke every active API key owned by a user. Returns count."""
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql = (
+            "UPDATE api_keys SET is_active = 0, updated_at = %s "
+            "WHERE user_id = %s AND organization_id = %s AND is_active = 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (now, user_id, organization_id))
+            affected = cur.rowcount or 0
+            conn.commit()
+        return int(affected)
+
     def revoke_api_key(self, key_id: str, organization_id: str) -> bool:
         """Mark an API key as inactive. Org-scoped to block cross-tenant writes.
 

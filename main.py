@@ -146,6 +146,9 @@ from clearledgr.api.escalation_policies import (
 from clearledgr.api.notification_preferences import (
     router as notification_preferences_router,
 )
+from clearledgr.api.team_offboarding import (
+    router as team_offboarding_router,
+)
 from clearledgr.api.workspace_rules import (
     router as workspace_rules_router,
 )
@@ -1468,6 +1471,13 @@ app.include_router(notification_preferences_router)
 # APDecisionService; falls through to the deterministic 10-step
 # cascade when no rule matches.
 app.include_router(workspace_rules_router)
+
+# Module 6 — user offboarding (deactivate / reactivate).
+# Auth-layer enforcement: _reconcile_token_data rejects the next
+# request from a deactivated user with 403 user_deactivated.
+# Cascade revokes API keys on the same write so X-API-Key auth
+# also stops working immediately.
+app.include_router(team_offboarding_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)

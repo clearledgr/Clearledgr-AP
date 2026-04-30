@@ -227,6 +227,16 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
     Phase 2.3: roles are always normalized to canonical thesis values
     on the way out so downstream predicates operate on ``cfo``,
     ``ap_manager``, etc., regardless of what the stale token claimed.
+
+    Module 6 offboarding: when the resolved user row has
+    ``is_active = 0``, raise 403 ``user_deactivated``. Spec §228 calls
+    for "removes access within 30 seconds across all surfaces" — since
+    every authenticated request flows through this reconciliation,
+    the next request after deactivation hits this gate and fails.
+    Existing tokens cannot keep granting access. Lookup failure
+    (DB hiccup) falls through to the original token data so a
+    transient outage doesn't lock everyone out; auth still proves
+    cryptographic possession of a valid token.
     """
     try:
         db = _get_db()
@@ -239,6 +249,17 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
             row = db.get_user_by_email(email)
         if not row:
             return token_data
+
+        # Module 6 §228: deactivated users cannot authenticate.
+        # The auth path already filters api_keys on is_active; this
+        # closes the same loop for JWT-bearer + cookie + Google-OAuth
+        # auth surfaces.
+        if row.get("is_active") in (0, False):
+            raise HTTPException(
+                status_code=403,
+                detail="user_deactivated",
+            )
+
         raw_role = (
             row.get("role")
             or getattr(token_data, "role", None)
@@ -255,6 +276,10 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
             role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
             exp=token_data.exp,
         )
+    except HTTPException:
+        # 403 user_deactivated must propagate; only DB-layer
+        # exceptions fall back to the token data.
+        raise
     except Exception:
         return token_data
 
