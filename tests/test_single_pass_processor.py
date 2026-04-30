@@ -1,22 +1,36 @@
 """Tests for the single-pass invoice processor.
 
-Covers prompt construction, response parsing (valid JSON, invalid JSON,
-markdown-fenced JSON). All Claude API calls are mocked.
+Three layers under test:
+
+  1. ``_build_single_pass_prompt`` — prompt construction (deterministic).
+  2. ``_parse_single_pass_response`` — JSON / markdown-fence handling.
+  3. ``_validate_response`` — required-field schema gate that drops
+     drifted Claude output before it reaches downstream consumers.
+  4. ``process_invoice_single_pass`` — end-to-end with mocked Claude
+     responses through the LLM Gateway: happy path, missing required
+     field, malformed JSON, gateway error.
+
+All Claude calls are mocked at the LLM Gateway boundary.
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from clearledgr.services.single_pass_processor import (  # noqa: E402
+    MAX_VISUAL_ATTACHMENTS,
     _build_single_pass_prompt,
     _parse_single_pass_response,
+    _validate_response,
+    process_invoice_single_pass,
 )
 
 
@@ -38,15 +52,38 @@ class TestBuildSinglePassPrompt:
         assert "Invoice INV-001" in prompt
         assert "Please find attached invoice." in prompt
 
-    def test_prompt_includes_json_schema_keys(self):
+    def test_prompt_includes_required_authoritative_schema_keys(self):
+        # Authoritative output: classification + extraction.
         prompt = _build_single_pass_prompt(
-            subject="Test",
-            sender="test@test.com",
-            body="body",
+            subject="Test", sender="test@test.com", body="body",
         )
-        for key in ("classification", "extraction", "gl_coding",
-                     "duplicate_analysis", "risk_assessment", "routing_decision"):
+        assert "classification" in prompt
+        assert "extraction" in prompt
+
+    def test_prompt_includes_advisory_schema_keys(self):
+        # Advisory hints: gl_coding, duplicate_analysis, risk_assessment.
+        prompt = _build_single_pass_prompt(
+            subject="Test", sender="test@test.com", body="body",
+        )
+        for key in ("gl_coding", "duplicate_analysis", "risk_assessment"):
             assert key in prompt
+
+    def test_prompt_does_not_request_routing_decision(self):
+        # APDecisionService is the canonical decision-maker; the
+        # single-pass response must NOT include a routing recommendation.
+        prompt = _build_single_pass_prompt(
+            subject="Test", sender="test@test.com", body="body",
+        )
+        assert "routing_decision" not in prompt
+        assert "recommendation" not in prompt
+
+    def test_prompt_marks_advisory_fields_explicitly(self):
+        prompt = _build_single_pass_prompt(
+            subject="Test", sender="test@test.com", body="body",
+        )
+        # The contract is loud: hints, not authoritative.
+        assert "advisory" in prompt.lower()
+        assert "authoritative" in prompt.lower()
 
     def test_prompt_includes_vendor_context_when_provided(self):
         prompt = _build_single_pass_prompt(
@@ -90,9 +127,7 @@ class TestBuildSinglePassPrompt:
 
     def test_prompt_omits_context_sections_when_empty(self):
         prompt = _build_single_pass_prompt(
-            subject="Test",
-            sender="test@test.com",
-            body="body",
+            subject="Test", sender="test@test.com", body="body",
         )
         assert "VENDOR HISTORY" not in prompt
         assert "THREAD CONTEXT" not in prompt
@@ -138,9 +173,7 @@ class TestBuildSinglePassPrompt:
 
     def test_prompt_contains_injection_guard(self):
         prompt = _build_single_pass_prompt(
-            subject="Test",
-            sender="test@test.com",
-            body="body",
+            subject="Test", sender="test@test.com", body="body",
         )
         assert "untrusted" in prompt.lower()
 
@@ -150,24 +183,44 @@ class TestBuildSinglePassPrompt:
 # ---------------------------------------------------------------------------
 
 
-class TestParseSinglePassResponse:
-    """Verify JSON parsing handles valid, invalid, and markdown-fenced input."""
+_VALID_RESPONSE_DICT = {
+    "classification": {
+        "document_type": "invoice",
+        "confidence": 0.95,
+        "reasoning": "Vendor bill with PO reference",
+    },
+    "extraction": {
+        "vendor": "Acme Supplies",
+        "amount": 1234.50,
+        "currency": "USD",
+        "invoice_number": "INV-001",
+        "invoice_date": "2026-04-15",
+        "due_date": "2026-05-15",
+        "po_number": "PO-9001",
+        "payment_terms": "Net 30",
+        "tax_amount": 100.0,
+        "subtotal": 1134.50,
+        "line_items": [],
+        "bank_details": {"bank_name": None, "account_number": None, "iban": None, "swift": None},
+        "field_confidences": {"vendor": 0.99, "amount": 0.97, "invoice_number": 0.99, "due_date": 0.95},
+        "overall_confidence": 0.96,
+    },
+    "gl_coding": {"suggested_gl_code": "6000", "reasoning": "Office supplies"},
+    "duplicate_analysis": {"is_duplicate": False, "is_amendment": False, "supersedes_reference": None, "reasoning": "no match"},
+    "risk_assessment": {"fraud_risk": "none", "fraud_signals": [], "amount_anomaly": "none", "amount_reasoning": "in range"},
+}
 
-    VALID_RESPONSE = json.dumps({
-        "classification": {"document_type": "invoice", "confidence": 0.95, "reasoning": "test"},
-        "extraction": {"vendor": "Acme", "amount": 100.0},
-        "gl_coding": {"suggested_gl_code": "6000", "reasoning": "test"},
-        "duplicate_analysis": {"is_duplicate": False, "is_amendment": False},
-        "risk_assessment": {"fraud_risk": "none"},
-        "routing_decision": {"recommendation": "approve", "confidence": 0.9},
-    })
+_VALID_RESPONSE = json.dumps(_VALID_RESPONSE_DICT)
+
+
+class TestParseSinglePassResponse:
+    """JSON / markdown-fence handling."""
 
     def test_parse_valid_json(self):
-        result = _parse_single_pass_response(self.VALID_RESPONSE)
+        result = _parse_single_pass_response(_VALID_RESPONSE)
         assert result is not None
         assert result["classification"]["document_type"] == "invoice"
-        assert result["extraction"]["vendor"] == "Acme"
-        assert result["routing_decision"]["recommendation"] == "approve"
+        assert result["extraction"]["vendor"] == "Acme Supplies"
 
     def test_parse_returns_none_for_empty_string(self):
         assert _parse_single_pass_response("") is None
@@ -182,23 +235,230 @@ class TestParseSinglePassResponse:
         assert _parse_single_pass_response('{"classification": {"document_type":') is None
 
     def test_parse_markdown_fenced_json(self):
-        fenced = f"```json\n{self.VALID_RESPONSE}\n```"
+        fenced = f"```json\n{_VALID_RESPONSE}\n```"
         result = _parse_single_pass_response(fenced)
         assert result is not None
         assert result["classification"]["document_type"] == "invoice"
 
     def test_parse_markdown_fenced_without_language_tag(self):
-        fenced = f"```\n{self.VALID_RESPONSE}\n```"
+        fenced = f"```\n{_VALID_RESPONSE}\n```"
         result = _parse_single_pass_response(fenced)
         assert result is not None
-        assert result["extraction"]["vendor"] == "Acme"
+        assert result["extraction"]["vendor"] == "Acme Supplies"
 
     def test_parse_markdown_fenced_with_surrounding_prose(self):
-        text = f"Here is the result:\n\n```json\n{self.VALID_RESPONSE}\n```\n\nHope that helps!"
+        text = f"Here is the result:\n\n```json\n{_VALID_RESPONSE}\n```\n\nHope that helps!"
         result = _parse_single_pass_response(text)
         assert result is not None
-        assert result["routing_decision"]["recommendation"] == "approve"
+        assert result["classification"]["confidence"] == 0.95
 
     def test_parse_returns_none_for_fenced_invalid_json(self):
         fenced = "```json\n{broken json\n```"
         assert _parse_single_pass_response(fenced) is None
+
+
+# ---------------------------------------------------------------------------
+# _validate_response — schema gate
+# ---------------------------------------------------------------------------
+
+
+class TestValidateResponse:
+    """The required-field gate that drops drifted Claude output."""
+
+    def test_valid_response_passes(self):
+        assert _validate_response(_VALID_RESPONSE_DICT) is None
+
+    def test_missing_classification_dict_fails(self):
+        bad = {**_VALID_RESPONSE_DICT}
+        del bad["classification"]
+        assert _validate_response(bad) is not None
+        assert "classification" in _validate_response(bad)
+
+    def test_missing_classification_document_type_fails(self):
+        bad = json.loads(_VALID_RESPONSE)
+        del bad["classification"]["document_type"]
+        err = _validate_response(bad)
+        assert err is not None
+        assert "document_type" in err
+
+    def test_classification_confidence_wrong_type_fails(self):
+        bad = json.loads(_VALID_RESPONSE)
+        bad["classification"]["confidence"] = "high"
+        err = _validate_response(bad)
+        assert err is not None
+        assert "confidence" in err
+
+    def test_extraction_amount_can_be_none(self):
+        # Amount is nullable per the schema (e.g. for credit-note
+        # detection where the amount sign matters less than the type).
+        ok = json.loads(_VALID_RESPONSE)
+        ok["extraction"]["amount"] = None
+        assert _validate_response(ok) is None
+
+    def test_extraction_vendor_can_be_none(self):
+        ok = json.loads(_VALID_RESPONSE)
+        ok["extraction"]["vendor"] = None
+        assert _validate_response(ok) is None
+
+    def test_top_level_not_dict_fails(self):
+        assert _validate_response([]) is not None
+        assert _validate_response("string") is not None
+
+    def test_extraction_overall_confidence_required(self):
+        bad = json.loads(_VALID_RESPONSE)
+        del bad["extraction"]["overall_confidence"]
+        err = _validate_response(bad)
+        assert err is not None
+        assert "overall_confidence" in err
+
+
+# ---------------------------------------------------------------------------
+# process_invoice_single_pass — end-to-end with mocked LLM Gateway
+# ---------------------------------------------------------------------------
+
+
+def _fake_llm_response(text: str):
+    """Build a fake LLMResponse-shaped object the gateway returns."""
+    class _Resp:
+        def __init__(self, content):
+            self.content = content
+    return _Resp(text)
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_happy_path(monkeypatch):
+    """Valid response from Claude flows through, gets validated, returns
+    parsed result with the processing_mode marker."""
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Invoice INV-001",
+            sender="billing@acme.com",
+            body="See attached.",
+        )
+    assert result is not None
+    assert result["classification"]["document_type"] == "invoice"
+    assert result["extraction"]["vendor"] == "Acme Supplies"
+    assert result["processing_mode"] == "single_pass"
+    assert result["api_calls"] == 1
+    # Routing decision must NOT be in the result — it's not in the schema.
+    assert "routing_decision" not in result
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_returns_none_on_missing_required_field(monkeypatch):
+    """Schema validation drops drifted output and triggers fallback."""
+    drifted = json.loads(_VALID_RESPONSE)
+    del drifted["classification"]["document_type"]
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(
+        return_value=_fake_llm_response(json.dumps(drifted)),
+    )
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Test", sender="test@test.com", body="body",
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_returns_none_on_malformed_json(monkeypatch):
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(
+        return_value=_fake_llm_response("this is not json"),
+    )
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Test", sender="test@test.com", body="body",
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_returns_none_on_gateway_error(monkeypatch):
+    """Any exception from the gateway must be swallowed and surface as
+    None — never raise from this module."""
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(side_effect=RuntimeError("anthropic 500"))
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Test", sender="test@test.com", body="body",
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_returns_none_on_empty_response(monkeypatch):
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(return_value=_fake_llm_response(""))
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Test", sender="test@test.com", body="body",
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_handles_markdown_fenced_response(monkeypatch):
+    """Claude occasionally returns ```json ... ``` even when the prompt
+    asks for raw JSON. The processor must accept both."""
+    fenced = f"```json\n{_VALID_RESPONSE}\n```"
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(return_value=_fake_llm_response(fenced))
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        result = await process_invoice_single_pass(
+            subject="Test", sender="test@test.com", body="body",
+        )
+    assert result is not None
+    assert result["classification"]["document_type"] == "invoice"
+
+
+@pytest.mark.asyncio
+async def test_process_invoice_single_pass_truncates_visual_attachments(monkeypatch):
+    """More than MAX_VISUAL_ATTACHMENTS attachments — the call still
+    succeeds but only the cap-many are forwarded; truncation is
+    logged, not silent."""
+    fake_gateway = AsyncMock()
+    fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
+    with patch(
+        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        return_value=fake_gateway,
+    ):
+        # Five attachments — more than the cap (3).
+        attachments = [
+            {"data": "AAAA", "mimeType": "application/pdf"} for _ in range(5)
+        ]
+        result = await process_invoice_single_pass(
+            subject="Multi-PDF email",
+            sender="test@test.com",
+            body="body",
+            has_visual_attachments=True,
+            visual_attachments=attachments,
+        )
+    assert result is not None
+    # Verify the gateway was called with at most MAX_VISUAL_ATTACHMENTS
+    # image content blocks (plus one text content block for the prompt).
+    args, kwargs = fake_gateway.call.call_args
+    messages = kwargs.get("messages") or args[1]
+    content = messages[0]["content"]
+    image_blocks = [b for b in content if b.get("type") == "image"]
+    assert len(image_blocks) <= MAX_VISUAL_ATTACHMENTS

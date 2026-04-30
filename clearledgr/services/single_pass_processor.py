@@ -2,26 +2,67 @@
 
 Replaces the multi-call pattern (classify → extract → GL code → match →
 duplicate check → amount reasoning → decide) with one comprehensive
-prompt that returns all decisions in a single API call.
+prompt that returns a single coherent JSON document. When it works,
+this is one Claude round-trip instead of seven.
 
-Benefits:
-- 7x fewer API calls per invoice
-- Claude sees the full picture (classification informs extraction,
-  extraction informs matching, matching informs the decision)
-- Lower latency (one round-trip instead of seven)
-- Lower cost (one prompt with full context instead of seven partial ones)
+Scope of the single-pass output:
 
-Falls back to the multi-call pipeline if the single-pass fails.
+  - **Authoritative**:  ``classification``, ``extraction``. Downstream
+    consumers can rely on these directly when single-pass succeeds.
+  - **Advisory only**:  ``gl_coding``, ``duplicate_analysis``,
+    ``risk_assessment``. These are cheap-tier hints. The deeper
+    deterministic + LLM paths (DUPLICATE_EVALUATION action, the
+    finance-learning GL suggester, the deterministic match engine,
+    APDecisionService) refine or override them on the way through.
+    Downstream must NOT treat these as final.
+  - **Out of scope**:  the routing decision. ``APDecisionService``
+    (Claude Sonnet with full vendor context) is the canonical
+    decision-maker; having Claude produce a ``routing_decision`` in
+    the single-pass response was dead output that conflicted with
+    the canonical path.
+
+If the call fails, the JSON is malformed, or the response is missing
+a required field, ``process_invoice_single_pass`` returns None and
+``gmail_triage_service`` falls through to the multi-call pipeline.
+That fallback is the contract — never raise from this module.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
-from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
+from clearledgr.core.llm_gateway import LLMAction, get_llm_gateway
 
 logger = logging.getLogger(__name__)
+
+
+# Hard cap on attachments forwarded to Claude vision in a single call.
+# Claude's per-call message-size budget plus the per-action output-token
+# cap (see SINGLE_PASS_EXTRACT in llm_gateway.ACTION_REGISTRY) means
+# more than a small handful is wasted context. If a vendor genuinely
+# sends >3 invoices in one email, the multi-invoice splitter is the
+# right path — single-pass is for the common one-invoice case.
+MAX_VISUAL_ATTACHMENTS = 3
+
+
+# Required keys in the parsed response. Each entry is
+# ``(dotted.path, expected_type)``. Used by ``_validate_response`` to
+# reject malformed Claude output before it reaches downstream
+# consumers — drift surfaces as a fallback rather than as a stale
+# field showing up in the operator's queue.
+_REQUIRED_FIELDS: Tuple[Tuple[str, type], ...] = (
+    ("classification", dict),
+    ("classification.document_type", str),
+    ("classification.confidence", (int, float)),
+    ("extraction", dict),
+    ("extraction.vendor", (str, type(None))),
+    ("extraction.amount", (int, float, type(None))),
+    ("extraction.currency", (str, type(None))),
+    ("extraction.overall_confidence", (int, float)),
+)
 
 
 async def process_invoice_single_pass(
@@ -41,9 +82,10 @@ async def process_invoice_single_pass(
 ) -> Optional[Dict[str, Any]]:
     """Process an invoice in a single Claude call.
 
-    Returns a comprehensive result dict with classification, extraction,
-    GL coding, duplicate analysis, risk assessment, and routing decision.
-    Returns None if the call fails.
+    Returns the parsed result dict (classification + extraction +
+    advisory gl/duplicate/risk fields) on success. Returns None on
+    any failure: API error, malformed JSON, or missing required
+    schema field. Never raises.
     """
     prompt = _build_single_pass_prompt(
         subject=subject,
@@ -59,20 +101,29 @@ async def process_invoice_single_pass(
 
     try:
         if has_visual_attachments and visual_attachments:
-            result = await _call_claude_vision_single_pass(
-                prompt, visual_attachments,
-            )
+            raw = await _call_claude_vision_single_pass(prompt, visual_attachments)
         else:
-            result = await _call_claude_text_single_pass(prompt)
+            raw = await _call_claude_text_single_pass(prompt)
 
-        if not result:
+        if not raw:
             return None
 
-        # Parse and validate the response
-        parsed = _parse_single_pass_response(result)
-        if parsed:
-            parsed["processing_mode"] = "single_pass"
-            parsed["api_calls"] = 1
+        parsed = _parse_single_pass_response(raw)
+        if not parsed:
+            return None
+
+        validation_error = _validate_response(parsed)
+        if validation_error:
+            logger.warning(
+                "[SinglePass] schema validation failed (%s) — falling back. "
+                "Response keys: %s",
+                validation_error,
+                sorted(parsed.keys()),
+            )
+            return None
+
+        parsed["processing_mode"] = "single_pass"
+        parsed["api_calls"] = 1
         return parsed
 
     except Exception as exc:
@@ -92,7 +143,7 @@ def _build_single_pass_prompt(
     po_context: str = "",
     recent_invoices_context: str = "",
 ) -> str:
-    """Build a single comprehensive prompt for all AP processing."""
+    """Build a single comprehensive prompt for AP-tier intake."""
 
     context_sections = ""
     if vendor_context:
@@ -104,8 +155,14 @@ def _build_single_pass_prompt(
     if recent_invoices_context:
         context_sections += f"\nRECENT INVOICES FROM THIS VENDOR:\n{recent_invoices_context}\n"
 
-    visual_note = "\nVisual attachments (PDF/images) are provided — analyse them." if has_visual_attachments else ""
-    attachment_section = f"\nATTACHMENT TEXT:\n{attachment_text}" if attachment_text.strip() else ""
+    visual_note = (
+        "\nVisual attachments (PDF/images) are provided — analyse them."
+        if has_visual_attachments
+        else ""
+    )
+    attachment_section = (
+        f"\nATTACHMENT TEXT:\n{attachment_text}" if attachment_text.strip() else ""
+    )
 
     return f"""You are Clearledgr, a finance operations coordination agent. AP is the wedge in v1, so this run is an AP intake task — process the email in ONE pass.
 
@@ -116,7 +173,7 @@ SUBJECT: {subject}
 BODY:
 {body}{attachment_section}
 {context_sections}
-Analyse everything and return ONE JSON object with ALL decisions:
+Analyse everything and return ONE JSON object. Two of the sections — classification, extraction — are *authoritative*; the other three are *advisory hints* that the deterministic pipeline downstream will refine or override. Do not include a routing recommendation; that decision is owned by another stage.
 
 {{
   "classification": {{
@@ -157,13 +214,6 @@ Analyse everything and return ONE JSON object with ALL decisions:
     "fraud_signals": ["<list of specific signals or empty>"],
     "amount_anomaly": "<none|minor|significant>",
     "amount_reasoning": "<why amount is or isn't anomalous>"
-  }},
-  "routing_decision": {{
-    "recommendation": "<approve|needs_info|escalate|reject>",
-    "confidence": <0.0-1.0>,
-    "reasoning": "<why this recommendation>",
-    "needs_human_review": <true/false>,
-    "review_reason": "<what specifically needs review, or null>"
   }}
 }}
 
@@ -174,7 +224,10 @@ Classification rules:
 - "receipt" = payment confirmation for completed transaction
 - "noise" = not finance-related
 
-If document is subscription/receipt/noise, still fill extraction fields but set routing_decision.recommendation to "approve" (auto-close).
+Advisory-tier disclaimers:
+- gl_coding is a hint for the operator. The finance-learning service may suggest a different code based on history; that wins.
+- duplicate_analysis is a cheap signal. A dedicated cross-invoice evaluator runs deeper checks for high-stakes cases.
+- risk_assessment surfaces signals only. The deterministic fraud-control gates own the actual approve/block calls.
 
 Return ONLY valid JSON. No prose, no markdown."""
 
@@ -197,12 +250,23 @@ async def _call_claude_vision_single_pass(
     prompt: str, visual_attachments: List[Dict[str, Any]],
 ) -> Optional[str]:
     """Call Claude for vision-based single-pass processing via LLM Gateway."""
-    import base64
+    if len(visual_attachments) > MAX_VISUAL_ATTACHMENTS:
+        logger.info(
+            "[SinglePass] %d visual attachments — truncating to %d (extras "
+            "are not silently lost; the multi-invoice splitter handles "
+            "high-fanout email)",
+            len(visual_attachments),
+            MAX_VISUAL_ATTACHMENTS,
+        )
 
     content: List[Dict[str, Any]] = []
-    for att in visual_attachments[:3]:  # Max 3 attachments
+    for att in visual_attachments[:MAX_VISUAL_ATTACHMENTS]:
         data = att.get("data", "")
-        media_type = att.get("mimeType") or att.get("content_type") or "application/pdf"
+        media_type = (
+            att.get("mimeType")
+            or att.get("content_type")
+            or "application/pdf"
+        )
         if isinstance(data, bytes):
             data = base64.b64encode(data).decode("utf-8")
         if data:
@@ -224,52 +288,52 @@ async def _call_claude_vision_single_pass(
         return None
 
 
-async def _async_post(*, api_key: str, model: str, prompt: str, max_tokens: int) -> Optional[str]:
-    """Make an async Claude API call.
-
-    .. deprecated::
-        No longer called internally. All callers now use the LLM Gateway
-        (``get_llm_gateway().call()``). Retained for backward compatibility
-        but should not be used for new code.
-    """
-    import httpx as _httpx
-
-    async with _httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=20,
-        )
-    if response.status_code != 200:
-        return None
-    return response.json().get("content", [{}])[0].get("text", "")
-
-
 def _parse_single_pass_response(text: str) -> Optional[Dict[str, Any]]:
-    """Parse Claude's single-pass JSON response."""
+    """Parse Claude's single-pass JSON response.
+
+    Tries direct parse first, then a markdown-fence-stripped fallback
+    (Claude occasionally wraps JSON in ```json ... ``` even when the
+    prompt asks for raw JSON). Returns None on any parse failure.
+    """
     if not text:
         return None
     try:
-        # Try direct parse
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Try extracting JSON from markdown fences
     try:
-        import re
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if match:
             return json.loads(match.group(1))
     except (json.JSONDecodeError, AttributeError):
         pass
     logger.warning("[SinglePass] Could not parse response: %s...", text[:200])
+    return None
+
+
+def _validate_response(parsed: Dict[str, Any]) -> Optional[str]:
+    """Validate parsed response against the required-field contract.
+
+    Returns None if the response is valid, or a short string
+    describing the first violation otherwise. The caller treats any
+    string return as "drop the response and fall back to multi-call".
+    Schema drift surfaces here rather than as a stale field reaching
+    the operator's queue.
+    """
+    if not isinstance(parsed, dict):
+        return f"top-level not dict (got {type(parsed).__name__})"
+    for path, expected_type in _REQUIRED_FIELDS:
+        cursor: Any = parsed
+        keys = path.split(".")
+        for key in keys:
+            if not isinstance(cursor, dict):
+                return f"{path}: parent is not dict"
+            if key not in cursor:
+                return f"{path}: missing"
+            cursor = cursor[key]
+        if not isinstance(cursor, expected_type):
+            return (
+                f"{path}: expected {expected_type}, "
+                f"got {type(cursor).__name__}"
+            )
     return None

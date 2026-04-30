@@ -421,7 +421,6 @@ def _format_single_pass_result(
 
     classification = sp.get("classification", {})
     extraction = sp.get("extraction", {})
-    routing = sp.get("routing_decision", {})
     doc_type = classification.get("document_type", "invoice")
     route = get_route(doc_type)
 
@@ -450,11 +449,14 @@ def _format_single_pass_result(
     else:
         result["action"] = "processed"
         result["document_type"] = doc_type
+        # Advisory intelligence only — APDecisionService owns the
+        # routing call. The deterministic fraud-control gates +
+        # DUPLICATE_EVALUATION action refine these single-pass hints
+        # downstream; consumers must not treat them as authoritative.
         result["intelligence"] = {
             "gl_coding": sp.get("gl_coding", {}),
             "duplicate_analysis": sp.get("duplicate_analysis", {}),
             "risk_assessment": sp.get("risk_assessment", {}),
-            "routing_decision": routing,
         }
         # Map single-pass fields to standard extraction fields
         result["vendor"] = extraction.get("vendor")
