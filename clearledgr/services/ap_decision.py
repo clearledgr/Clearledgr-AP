@@ -206,6 +206,104 @@ def enforce_gate_constraint(
     )
 
 
+def _apply_single_pass_hints(
+    decision: APDecision,
+    hints: Dict[str, Any],
+    invoice: Any,
+) -> APDecision:
+    """Apply single-pass LLM advisory hints as a downgrade-only filter.
+
+    The deterministic cascade is the source of truth. The LLM's
+    advisory output (``gl_coding`` / ``duplicate_analysis`` /
+    ``risk_assessment``) can pull a recommendation toward stricter
+    review when it spots a fraud or duplicate signal the rules missed,
+    but it can never push toward approval. Three transformations:
+
+      - ``risk_assessment.fraud_signals`` are appended to ``risk_flags``
+        for any non-clean recommendation. Audit trail / Slack card
+        readers see the LLM's signal alongside the rule's reasoning.
+      - ``risk_assessment.fraud_risk == "high"`` AND current
+        recommendation is ``approve`` → downgrade to ``escalate`` with
+        ``single_pass_high_fraud_risk`` flag.
+      - ``duplicate_analysis.is_duplicate is True`` AND current
+        recommendation is ``approve`` → downgrade to ``escalate`` with
+        ``single_pass_duplicate_hint`` flag. Note: the deterministic
+        Step 6 already escalates on real duplicate evidence; this hint
+        catches the gap where the LLM saw a duplicate signal that the
+        cross-invoice evaluator hasn't caught yet (e.g., first
+        intake, no DB rows yet).
+    """
+    risk = (hints.get("risk_assessment") or {}) if isinstance(hints, dict) else {}
+    duplicate = (hints.get("duplicate_analysis") or {}) if isinstance(hints, dict) else {}
+
+    fraud_signals = risk.get("fraud_signals") or []
+    fraud_signals = [str(s) for s in fraud_signals if s]
+    fraud_risk = str(risk.get("fraud_risk") or "none").lower().strip()
+    is_duplicate = bool(duplicate.get("is_duplicate"))
+
+    new_flags = list(decision.risk_flags)
+    new_recommendation = decision.recommendation
+    new_reasoning = decision.reasoning
+    overridden = False
+    original_recommendation = decision.original_recommendation
+
+    if decision.recommendation == "approve" and fraud_risk == "high":
+        new_recommendation = "escalate"
+        signals_str = ", ".join(fraud_signals) or "unspecified"
+        amount = getattr(invoice, "amount", 0) or 0
+        new_reasoning = (
+            f"Single-pass extractor flagged HIGH fraud risk for "
+            f"{getattr(invoice, 'vendor_name', 'this vendor')} "
+            f"(${amount:.2f}). Signals: {signals_str}. The deterministic "
+            "rules cascade did not gate on these signals, but high "
+            "fraud-risk hints from the extractor force human review."
+        )
+        if "single_pass_high_fraud_risk" not in new_flags:
+            new_flags.append("single_pass_high_fraud_risk")
+        overridden = True
+        original_recommendation = original_recommendation or decision.recommendation
+
+    elif decision.recommendation == "approve" and is_duplicate:
+        new_recommendation = "escalate"
+        amount = getattr(invoice, "amount", 0) or 0
+        supersedes = duplicate.get("supersedes_reference")
+        new_reasoning = (
+            f"Single-pass extractor flagged this invoice from "
+            f"{getattr(invoice, 'vendor_name', 'this vendor')} "
+            f"(${amount:.2f}) as a likely duplicate"
+            + (f" (supersedes {supersedes})." if supersedes else ".")
+            + " The cross-invoice evaluator hasn't caught it (likely "
+            "first intake or fresh history), but the LLM signal is "
+            "enough to route to human review."
+        )
+        if "single_pass_duplicate_hint" not in new_flags:
+            new_flags.append("single_pass_duplicate_hint")
+        overridden = True
+        original_recommendation = original_recommendation or decision.recommendation
+
+    elif fraud_risk in ("medium", "high") and fraud_signals:
+        for sig in fraud_signals:
+            tag = f"llm_signal:{sig}"[:80]
+            if tag not in new_flags:
+                new_flags.append(tag)
+
+    if not overridden and new_flags == decision.risk_flags:
+        return decision
+
+    return APDecision(
+        recommendation=new_recommendation,
+        reasoning=new_reasoning,
+        confidence=decision.confidence,
+        info_needed=decision.info_needed,
+        risk_flags=new_flags,
+        vendor_context_used=decision.vendor_context_used,
+        model=decision.model,
+        fallback=decision.fallback,
+        gate_override=decision.gate_override,
+        original_recommendation=original_recommendation,
+    )
+
+
 class APDecisionService:
     """Deterministic AP invoice routing.
 
@@ -237,8 +335,20 @@ class APDecisionService:
         anomaly_signals: Optional[Dict[str, Any]] = None,
         vendor_risk_score: Optional[Dict[str, Any]] = None,
         box_summary: Optional[str] = None,
+        single_pass_hints: Optional[Dict[str, Any]] = None,
     ) -> APDecision:
-        """Compute the routing recommendation deterministically. Never raises."""
+        """Compute the routing recommendation deterministically. Never raises.
+
+        ``single_pass_hints`` carries the LLM-side advisory output from
+        :mod:`clearledgr.services.single_pass_processor` (``gl_coding``,
+        ``duplicate_analysis``, ``risk_assessment``). The cascade is the
+        single source of truth, but the hints are applied as a
+        downgrade-only filter at the end: if the LLM saw a fraud or
+        duplicate signal that the deterministic rules missed, the
+        recommendation can drop from ``approve`` to ``escalate`` with
+        the hint surfaced in ``risk_flags``. Hints can never upgrade a
+        decision.
+        """
         vendor_profile = vendor_profile or {}
         vendor_history = vendor_history or []
         decision_feedback = decision_feedback or {}
@@ -271,6 +381,8 @@ class APDecisionService:
             cross_invoice_analysis=cross_invoice_analysis,
             org_config=org_config,
         )
+        if single_pass_hints:
+            decision = _apply_single_pass_hints(decision, single_pass_hints, invoice)
         return enforce_gate_constraint(decision, validation_gate)
 
     def _compute_routing_decision(

@@ -652,11 +652,19 @@ def _format_single_pass_result(
         # routing call. The deterministic fraud-control gates +
         # DUPLICATE_EVALUATION action refine these single-pass hints
         # downstream; consumers must not treat them as authoritative.
-        result["intelligence"] = {
+        single_pass_hints = {
             "gl_coding": sp.get("gl_coding", {}),
             "duplicate_analysis": sp.get("duplicate_analysis", {}),
             "risk_assessment": sp.get("risk_assessment", {}),
         }
+        result["intelligence"] = single_pass_hints
+        # Mirror the hints under a dedicated key that the workflow's
+        # AP-decision call reads. ``intelligence`` is overwritten by
+        # ``gmail_extension_support.apply_intelligence`` on the sidebar
+        # path; ``single_pass_hints`` survives that overwrite so the
+        # downgrade-only consumer in ``APDecisionService.decide`` always
+        # sees the LLM advisory output when one was produced.
+        result["single_pass_hints"] = single_pass_hints
         # Map single-pass fields to standard extraction fields
         result["vendor"] = extraction.get("vendor")
         result["amount"] = extraction.get("amount")

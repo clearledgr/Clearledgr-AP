@@ -191,6 +191,110 @@ class TestAPDecisionService:
         assert "human_feedback_strict_bias" in decision.risk_flags
 
 
+class TestSinglePassHintsConsumption:
+    """Single-pass advisory hints (gl_coding / duplicate_analysis /
+    risk_assessment) act as a downgrade-only filter on the cascade.
+
+    Hints can pull a recommendation from ``approve`` → ``escalate``
+    when the LLM saw a fraud or duplicate signal the rules missed.
+    They never push toward approval.
+    """
+
+    def test_high_fraud_risk_hint_downgrades_approve_to_escalate(self):
+        from clearledgr.services.ap_decision import APDecisionService
+
+        invoice = _make_invoice(confidence=0.97)
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            validation_gate={"passed": True, "reason_codes": []},
+            single_pass_hints={
+                "risk_assessment": {
+                    "fraud_risk": "high",
+                    "fraud_signals": ["mismatched_bank_account", "urgent_change_request"],
+                },
+            },
+        ))
+        assert decision.recommendation == "escalate"
+        assert "single_pass_high_fraud_risk" in decision.risk_flags
+        assert decision.original_recommendation == "approve"
+        assert "fraud" in (decision.reasoning or "").lower()
+
+    def test_duplicate_hint_downgrades_approve_to_escalate(self):
+        from clearledgr.services.ap_decision import APDecisionService
+
+        invoice = _make_invoice(confidence=0.97, invoice_number="INV-100")
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            validation_gate={"passed": True, "reason_codes": []},
+            single_pass_hints={
+                "duplicate_analysis": {
+                    "is_duplicate": True,
+                    "supersedes_reference": "INV-099",
+                },
+            },
+        ))
+        assert decision.recommendation == "escalate"
+        assert "single_pass_duplicate_hint" in decision.risk_flags
+        assert decision.original_recommendation == "approve"
+        assert "INV-099" in (decision.reasoning or "")
+
+    def test_medium_fraud_signals_appended_to_risk_flags_no_downgrade(self):
+        # Cascade returned approve; hint says medium fraud risk with a
+        # signal. Recommendation stays approve (medium isn't enough to
+        # block) but the signal surfaces in risk_flags for audit visibility.
+        from clearledgr.services.ap_decision import APDecisionService
+
+        invoice = _make_invoice(confidence=0.97)
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            validation_gate={"passed": True, "reason_codes": []},
+            single_pass_hints={
+                "risk_assessment": {
+                    "fraud_risk": "medium",
+                    "fraud_signals": ["new_payment_terms"],
+                },
+            },
+        ))
+        assert decision.recommendation == "approve"
+        assert any("new_payment_terms" in f for f in decision.risk_flags)
+
+    def test_hints_never_upgrade_a_decision(self):
+        # Cascade says escalate (low confidence). Hint says fraud_risk=none.
+        # Decision stays escalate — hints never push toward approval.
+        from clearledgr.services.ap_decision import APDecisionService
+
+        invoice = _make_invoice(confidence=0.60)
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            validation_gate={"passed": True, "reason_codes": []},
+            single_pass_hints={
+                "risk_assessment": {"fraud_risk": "none", "fraud_signals": []},
+                "duplicate_analysis": {"is_duplicate": False},
+            },
+        ))
+        assert decision.recommendation == "escalate"
+        assert "low_extraction_confidence" in decision.risk_flags
+
+    def test_no_hints_means_cascade_unchanged(self):
+        # Backwards-compat: existing callers that don't pass hints get
+        # exactly the same cascade result they always have.
+        from clearledgr.services.ap_decision import APDecisionService
+
+        invoice = _make_invoice(confidence=0.97)
+        svc = APDecisionService()
+        decision = asyncio.run(svc.decide(
+            invoice,
+            validation_gate={"passed": True, "reason_codes": []},
+        ))
+        assert decision.recommendation == "approve"
+        assert "single_pass_high_fraud_risk" not in decision.risk_flags
+        assert "single_pass_duplicate_hint" not in decision.risk_flags
+
+
 class TestVendorStore:
 
     def test_vendor_profile_updated_after_outcome(self, tmp_path):

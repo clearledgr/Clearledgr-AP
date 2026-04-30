@@ -587,6 +587,23 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             except Exception:
                 pass
 
+            # Pull single-pass advisory hints if a single-pass run
+            # produced any. Stored under ``vendor_intelligence`` by
+            # the triage path so the downgrade-only filter in
+            # ``APDecisionService.decide`` can inspect them; absent
+            # for intake paths that don't run single-pass, in which
+            # case the kwarg stays None and the cascade behaves as
+            # it always has.
+            single_pass_hints: Optional[Dict[str, Any]] = None
+            try:
+                vi = getattr(invoice, "vendor_intelligence", None)
+                if isinstance(vi, dict):
+                    raw_hints = vi.get("single_pass_hints")
+                    if isinstance(raw_hints, dict):
+                        single_pass_hints = raw_hints
+            except Exception:
+                single_pass_hints = None
+
             decision_svc = APDecisionService()
             decision = await decision_svc.decide(
                 invoice,
@@ -600,6 +617,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 anomaly_signals=anomaly_signals,
                 vendor_risk_score=vendor_risk,
                 box_summary=_box_summary_text,
+                single_pass_hints=single_pass_hints,
             )
             logger.info(
                 "[APDecision] %s → %s (confidence=%.2f fallback=%s risk=%s): %s",
