@@ -1,7 +1,12 @@
 """
 Clearledgr v1 - FastAPI Backend
 
-Clearledgr v1: Agentic Finance Execution Layer (AP-first)
+Clearledgr is the embedded coordination layer for finance operations.
+Each workflow instance gets a Box (one persistent home with state
+machine + timeline + outcome + exception queue) rendered into
+whichever tool the user is already in. AP is the wedge — the only
+workflow shipped in v1 — but the runtime, intent contract, and Box
+primitive are not AP-specific.
 
 Run Instructions:
 -----------------
@@ -235,28 +240,28 @@ async def app_lifespan(app: FastAPI):
 app = FastAPI(
     title="Clearledgr API",
     description="""
-    Clearledgr API v1 - Agentic Finance Execution Layer (AP-first)
-    
-    **Clearledgr is a finance execution agent platform: one runtime, AP-first skills, embedded where operators already work.**
-    
-    This API powers an embedded AP operating model across Gmail, Slack/Teams approvals, and ERP write-back.
-    
+    Clearledgr API v1 — embedded coordination layer for finance operations.
+
+    **Each workflow instance gets a Box: one persistent home (state machine + append-only timeline + outcome + exception queue) rendered into whichever tool the user is already in.** AP is the wedge in v1; the runtime + intent contract + Box primitive are not AP-specific.
+
     ## Agent Runtime
     - Canonical intent contract: `/api/agent/intents/preview` and `/api/agent/intents/execute`
-    - Skill-packaged execution (AP skills first; expandable to adjacent finance workflows)
+    - Skill-packaged execution (AP skills shipped today; the runtime is workflow-agnostic and expands to adjacent finance workflows)
     - Deterministic policy prechecks before execution
     - Idempotency-aware execution and auditable outcomes
-    
-    ## AP Workflow (v1)
-    - Invoice/AP intake, extraction, and routing
-    - Needs-info follow-up loop (draft-first)
-    - Low-risk approval routing and recoverable retry handling
-    - ERP posting with API-first + controlled fallback patterns
-    
-    ## Embedded Surfaces
-    - Gmail-first operator workflow
-    - Slack/Teams approval decisions
-    - Ops and audit visibility for finance operators
+
+    ## AP Workflow (v1 — the wedge)
+    - Multi-source invoice intake: Gmail, PEPPOL UBL inbound, ERP-native (NetSuite + SAP S/4HANA)
+    - Extraction, 3-way match, ERP vendor master check, budget/tolerance/sanctions guards
+    - Approval routing through the customer's actual decision surface (Slack, Teams, NetSuite SuiteApp, SAP Fiori)
+    - ERP posting with API-first + controlled fallback patterns: QuickBooks, Xero, NetSuite, SAP B1, SAP S/4HANA
+    - Bank reconciliation (CAMT.053 / OFX), period-close accruals, VAT + reverse-charge, PEPPOL outbound, Africa e-invoice (NG/KE/ZA)
+
+    ## Embedded Surfaces (render targets)
+    - Gmail extension — operator work surface (sidebar + label sync)
+    - Slack / Teams — approval decision surface
+    - NetSuite SuiteApp / SAP Fiori extension — ERP-native operator surfaces
+    - Workspace SPA at the configured `APP_BASE_URL` — the agent's home for ops + audit visibility
     
     ## Authentication
     API key authentication is optional. Set `API_KEY` environment variable to enable.
