@@ -1780,3 +1780,695 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+
+/* =========================================================== */
+/* Record detail — Module 2 (Exception Detail and Resolution)  */
+/*                                                              */
+/* The leader's per-record screen. Header at the top, action    */
+/* bar below it, agent reasoning panel as the centerpiece, then */
+/* a 2-column grid (bill detail + 3-way match), and the         */
+/* timeline at the bottom.                                      */
+/* =========================================================== */
+
+.cl-record-detail {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cl-record-detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cl-record-back {
+  background: transparent;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cl-ink-secondary);
+  cursor: pointer;
+}
+.cl-record-back:hover {
+  border-color: var(--cl-border-strong);
+  color: var(--cl-ink-primary);
+}
+
+.cl-record-detail-id {
+  font-family: var(--cl-font-mono);
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+}
+
+/* ------- Header ------- */
+
+.cl-record-header {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 24px;
+}
+
+.cl-record-header-primary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--cl-border);
+  margin-bottom: 16px;
+}
+
+.cl-record-header-eyebrow {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin-bottom: 4px;
+}
+
+.cl-record-header-vendor-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.cl-record-header-money {
+  font-family: var(--cl-font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-record-header-amount {
+  text-align: right;
+}
+
+.cl-record-header-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px 24px;
+  margin: 0;
+}
+
+.cl-record-header-meta-cell dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 4px;
+}
+
+.cl-record-header-meta-cell dd {
+  font-size: 14px;
+  color: var(--cl-ink-primary);
+  margin: 0;
+}
+
+.cl-record-header-meta-cell dd code {
+  font-family: var(--cl-font-mono);
+  font-size: 13px;
+}
+
+/* State chip — uses semantic tones per AP state */
+.cl-record-state {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #F1F5F9;
+  color: var(--cl-ink-secondary);
+}
+.cl-record-state-needs_approval,
+.cl-record-state-needs_second_approval { background: #FEF3C7; color: #92400E; }
+.cl-record-state-needs_info { background: #DBEAFE; color: #1E40AF; }
+.cl-record-state-failed_post,
+.cl-record-state-rejected,
+.cl-record-state-payment_failed { background: #FEE2E2; color: #991B1B; }
+.cl-record-state-approved,
+.cl-record-state-posted_to_erp,
+.cl-record-state-payment_executed,
+.cl-record-state-closed { background: var(--cl-mint-soft); color: #14532D; }
+
+/* ------- Action bar ------- */
+
+.cl-record-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+}
+
+.cl-record-action-bar-empty {
+  justify-content: center;
+}
+.cl-record-action-bar-empty-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cl-ink-muted);
+}
+
+.cl-record-action-primary {
+  background: var(--cl-mint);
+  border-color: var(--cl-mint);
+  color: var(--cl-navy);
+  font-weight: 600;
+}
+.cl-record-action-primary:hover:not(:disabled) {
+  background: var(--cl-mint-strong);
+  border-color: var(--cl-mint-strong);
+}
+
+/* ------- Panels (shared) ------- */
+
+.cl-record-panel {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 24px;
+}
+
+.cl-record-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.cl-record-panel-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.cl-record-panel-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+}
+
+.cl-record-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cl-ink-muted);
+  padding: 16px 0;
+}
+
+.cl-record-muted {
+  color: var(--cl-ink-muted);
+  font-size: 13px;
+}
+
+.cl-record-tiny {
+  font-size: 11px;
+  color: var(--cl-ink-muted);
+  margin-left: 6px;
+}
+
+.cl-record-num {
+  text-align: right;
+  font-family: var(--cl-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------- Chips ------- */
+
+.cl-record-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #F1F5F9;
+  color: var(--cl-ink-secondary);
+  border: 1px solid transparent;
+}
+.cl-record-chip-success { background: var(--cl-mint-soft); color: #14532D; }
+.cl-record-chip-warning { background: #FEF3C7; color: #92400E; }
+.cl-record-chip-error { background: #FEE2E2; color: #991B1B; }
+.cl-record-chip-info { background: #DBEAFE; color: #1E40AF; }
+
+/* ------- Reasoning panel (centerpiece) ------- */
+
+.cl-record-reasoning-narrative {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--cl-ink-primary);
+  padding: 12px 16px;
+  background: #F8FAFC;
+  border-left: 3px solid var(--cl-mint);
+  border-radius: 0 var(--cl-radius-sm) var(--cl-radius-sm) 0;
+}
+
+.cl-record-reasoning-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px 24px;
+  margin: 0 0 16px;
+}
+
+.cl-record-reasoning-cell dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 6px;
+}
+.cl-record-reasoning-cell dd {
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  margin: 0;
+}
+.cl-record-reasoning-cell-wide {
+  grid-column: 1 / -1;
+}
+.cl-record-reasoning-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cl-record-confidence {
+  position: relative;
+  height: 10px;
+  background: #F1F5F9;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 220px;
+}
+.cl-record-confidence-bar {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  background: var(--cl-mint);
+  transition: width 200ms ease;
+}
+.cl-record-confidence-warning { background: #F59E0B; }
+.cl-record-confidence-error { background: var(--cl-danger); }
+.cl-record-confidence-label {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+  color: var(--cl-ink-primary);
+  font-family: var(--cl-font-mono);
+}
+
+.cl-record-reasoning-sources {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--cl-border);
+}
+.cl-record-reasoning-sources > summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-secondary);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.cl-record-reasoning-sources-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cl-record-source-card {
+  background: #FAFAF8;
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  padding: 12px 14px;
+}
+.cl-record-source-card h4 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 8px;
+}
+.cl-record-source-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.cl-record-source-card li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cl-ink-primary);
+}
+.cl-record-source-card-warn {
+  background: #FEF3C7;
+  border-color: #FCD34D;
+}
+
+.cl-record-reasoning-recovery {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--cl-border);
+}
+.cl-record-reasoning-recovery > summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-secondary);
+  cursor: pointer;
+}
+.cl-record-recovery-summary {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+  margin: 12px 0 8px;
+}
+.cl-record-recovery-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  counter-reset: step;
+}
+.cl-record-recovery-step {
+  position: relative;
+  padding: 10px 0 10px 28px;
+  border-bottom: 1px solid var(--cl-border);
+  counter-increment: step;
+}
+.cl-record-recovery-step:last-child {
+  border-bottom: none;
+}
+.cl-record-recovery-step::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--cl-mint-soft);
+  color: var(--cl-navy);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cl-record-recovery-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cl-record-recovery-rationale {
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ------- Detail grid (bill + match side-by-side) ------- */
+
+.cl-record-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .cl-record-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .cl-record-header-primary {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .cl-record-header-amount {
+    text-align: left;
+  }
+}
+
+/* ------- Bill detail panel ------- */
+
+.cl-record-bill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 24px;
+  margin: 0 0 20px;
+}
+.cl-record-bill-cell dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 4px;
+}
+.cl-record-bill-cell dd {
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  margin: 0;
+  font-family: var(--cl-font-mono);
+}
+
+.cl-record-bill-lines h3,
+.cl-record-bill-bank h3,
+.cl-record-three-way-exceptions h3 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 16px 0 8px;
+}
+
+.cl-record-bill-line-table,
+.cl-record-three-way-line-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cl-record-bill-line-table thead th,
+.cl-record-three-way-line-table thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--cl-border);
+}
+.cl-record-bill-line-table thead th.cl-record-num,
+.cl-record-three-way-line-table thead th.cl-record-num {
+  text-align: right;
+}
+.cl-record-bill-line-table tbody td,
+.cl-record-three-way-line-table tbody td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--cl-border);
+  color: var(--cl-ink-primary);
+}
+.cl-record-bill-line-table tbody tr:last-child td,
+.cl-record-three-way-line-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cl-record-bill-bank dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+}
+.cl-record-bill-bank dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--cl-ink-muted);
+  margin: 0;
+}
+.cl-record-bill-bank dd {
+  font-size: 13px;
+  margin: 0;
+  font-family: var(--cl-font-mono);
+}
+
+/* ------- Three-way match panel ------- */
+
+.cl-record-three-way-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px 16px;
+  margin: 0 0 12px;
+}
+.cl-record-three-way-grid dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 4px;
+}
+.cl-record-three-way-grid dd {
+  font-size: 13px;
+  font-family: var(--cl-font-mono);
+  margin: 0;
+}
+
+.cl-record-three-way-exceptions ul {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 0;
+}
+.cl-record-three-way-exceptions li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cl-ink-primary);
+}
+
+.cl-record-three-way-lines {
+  margin-top: 16px;
+}
+.cl-record-three-way-lines summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-secondary);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+/* ------- Timeline ------- */
+
+.cl-record-timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  position: relative;
+}
+
+.cl-record-timeline-event {
+  position: relative;
+  padding: 8px 0 12px 24px;
+  border-bottom: 1px solid var(--cl-border);
+}
+.cl-record-timeline-event:last-child {
+  border-bottom: none;
+}
+
+.cl-record-timeline-dot {
+  position: absolute;
+  top: 14px;
+  left: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cl-mint);
+}
+
+.cl-record-timeline-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cl-record-timeline-summary {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cl-ink-primary);
+}
+
+.cl-record-timeline-meta {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-family: var(--cl-font-mono);
+}
+
+/* ------- Loading + error states ------- */
+
+.cl-record-detail-loading {
+  pointer-events: none;
+}
+
+.cl-record-skeleton {
+  background: linear-gradient(
+    90deg,
+    #F1F5F9 0%,
+    #E2E8F0 50%,
+    #F1F5F9 100%
+  );
+  background-size: 200% 100%;
+  border-radius: var(--cl-radius);
+  animation: cl-record-shimmer 1500ms ease-in-out infinite;
+}
+@keyframes cl-record-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.cl-record-skeleton-header { height: 120px; }
+.cl-record-skeleton-action-bar { height: 56px; }
+.cl-record-skeleton-panel { height: 200px; }
+.cl-record-skeleton-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 960px) {
+  .cl-record-skeleton-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-record-skeleton {
+    animation: none;
+  }
+}
+
+.cl-record-detail-error {
+  text-align: center;
+  padding: 64px 32px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+}
+.cl-record-detail-error h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--cl-ink-primary);
+}
+.cl-record-detail-error-message {
+  font-size: 13px;
+  color: var(--cl-ink-muted);
+  margin: 0 0 24px;
+}
+.cl-record-detail-error-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}

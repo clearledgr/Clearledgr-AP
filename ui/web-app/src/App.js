@@ -15,6 +15,7 @@ import { PrivacyPage, TermsPage, RequestDemoPage } from './auth/LegalPages.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
 import { PipelineRoute } from './routes/pages/PipelineRoute.js';
+import { RecordDetailRoute } from './routes/pages/RecordDetailRoute.js';
 import { ReviewRoute } from './routes/pages/ReviewRoute.js';
 import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
 import { VendorsRoute } from './routes/pages/VendorsRoute.js';
@@ -66,7 +67,7 @@ export function App() {
                     <${Route} path="/health"><${HealthRoute} /><//>
                     <${Route} path="/status"><${StatusPage} /><//>
                     <${Route} path="/items/:id">
-                      ${(params) => html`<${PlaceholderPage} title=${`Item ${params.id}`} lift="record-route" />`}
+                      ${(params) => html`<${RecordDetailRoute} recordId=${params.id} />`}
                     <//>
                     <${Route}><${PlaceholderPage} title="Page not found" /><//>
                   <//>
