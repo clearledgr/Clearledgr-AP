@@ -346,10 +346,11 @@ async def _run_loop():
             except Exception as exc:
                 logger.warning("Notification retry drain failed: %s", exc)
 
-            # Every 2nd tick (~30 min): scan for vendor follow-up responses
-            if tick % 2 == 0:
-                for org_id in org_ids:
-                    await _check_vendor_followup_responses(org_id)
+            # Vendor follow-up response sweep is dormant per the
+            # 2026-04-30 product call (memory:
+            # project_vendor_followup_templates_dormant.md). Solden
+            # no longer authors outbound vendor email bodies, so
+            # there are no follow-up threads to scan for replies.
 
             # Every 15 minutes: check overdue and stale tasks + approval timeouts
             if tick % 1 == 0:  # runs every iteration (15 min sleep)

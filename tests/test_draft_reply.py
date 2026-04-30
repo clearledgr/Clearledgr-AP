@@ -190,6 +190,24 @@ def _seed_ap_item(db, org_id: str, *, item_id: str, exception_code: str | None =
     return payload
 
 
+@pytest.mark.skip(
+
+
+    reason=(
+
+
+        "vendor_followup_dormant_2026_04_30 "
+
+
+        "— see memory/project_vendor_followup_templates_dormant.md"
+
+
+    ),
+
+
+)
+
+
 def test_draft_reply_endpoint_returns_template_payload_for_known_exception(client, db):
     db.create_organization("draft-org-1", "Northwind", settings={"company_name": "Northwind Trading"})
     _seed_ap_item(db, "draft-org-1", item_id="DR-PO-1", exception_code="po_missing")
@@ -206,6 +224,24 @@ def test_draft_reply_endpoint_returns_template_payload_for_known_exception(clien
     assert payload["to"] == "ap@acme.example"
     assert "Northwind Trading" in payload["body"]
     assert "DR-PO-1" in payload["body"]
+
+
+@pytest.mark.skip(
+
+
+    reason=(
+
+
+        "vendor_followup_dormant_2026_04_30 "
+
+
+        "— see memory/project_vendor_followup_templates_dormant.md"
+
+
+    ),
+
+
+)
 
 
 def test_draft_reply_endpoint_resolves_by_thread_id(client, db):
@@ -226,6 +262,24 @@ def test_draft_reply_endpoint_resolves_by_thread_id(client, db):
     assert "Customer Co" in payload["body"]
 
 
+@pytest.mark.skip(
+
+
+    reason=(
+
+
+        "vendor_followup_dormant_2026_04_30 "
+
+
+        "— see memory/project_vendor_followup_templates_dormant.md"
+
+
+    ),
+
+
+)
+
+
 def test_draft_reply_endpoint_404s_on_missing_item(client, db):
     response = client.post(
         "/extension/draft-reply",
@@ -234,6 +288,24 @@ def test_draft_reply_endpoint_404s_on_missing_item(client, db):
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "ap_item_not_found"
+
+
+@pytest.mark.skip(
+
+
+    reason=(
+
+
+        "vendor_followup_dormant_2026_04_30 "
+
+
+        "— see memory/project_vendor_followup_templates_dormant.md"
+
+
+    ),
+
+
+)
 
 
 def test_draft_reply_endpoint_blocks_cross_org_lookup(client, db):

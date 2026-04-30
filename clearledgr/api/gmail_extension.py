@@ -6,7 +6,6 @@ semantics are owned by one contract boundary. Lower-level workflows remain
 implementation machinery behind that runtime seam.
 """
 import json
-import os
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
@@ -901,50 +900,11 @@ class DraftReplyRequest(BaseModel):
     organization_id: Optional[str] = None
 
 
-@router.post("/draft-reply")
-async def draft_reply(
-    request: DraftReplyRequest,
-    user=Depends(get_current_user),
-):
-    """Return a `{subject, body, to, template_id, source}` draft for an
-    AP item. Either `ap_item_id` or `thread_id` is required; both are
-    accepted so the extension can call this from any surface that
-    knows one of the two. Org isolation goes through
-    `_resolve_org_id_for_user` like every other extension route.
-    """
-    org_id = _resolve_org_id_for_user(user, request.organization_id)
-    db = get_db()
-
-    item = None
-    if request.ap_item_id:
-        item = db.get_ap_item(request.ap_item_id)
-        if item and str(item.get("organization_id")) not in {org_id, "default"}:
-            # Org-isolation guard. The thread-resolution path below already
-            # passes org_id directly so it's implicit there; the explicit
-            # ap_item_id path needs an explicit cross-org check.
-            raise HTTPException(status_code=404, detail="ap_item_not_found")
-    if not item and request.thread_id:
-        item = db.get_ap_item_by_thread(org_id, request.thread_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="ap_item_not_found")
-
-    org = db.get_organization(org_id) or {}
-    settings = org.get("settings") if isinstance(org.get("settings"), dict) else {}
-    company_name = (
-        str(settings.get("company_name") or "").strip()
-        or str(org.get("name") or "").strip()
-        or "Accounts Payable"
-    )
-
-    enriched = build_worklist_item(db, item)
-
-    from clearledgr.services.draft_reply import synthesize_reply_for_item
-
-    return synthesize_reply_for_item(
-        enriched,
-        company_name=company_name,
-        original_subject=str(enriched.get("subject") or item.get("subject") or ""),
-    )
+# /extension/draft-reply removed 2026-04-30 — the vendor follow-up
+# email templates that backed it are dormant per the AP-as-wedge
+# product call (see memory/project_vendor_followup_templates_dormant.md).
+# Operators compose vendor replies in their own Gmail compose now;
+# Solden no longer authors outbound vendor email bodies.
 
 
 @router.post("/gmail/register-token")
@@ -1380,22 +1340,6 @@ def _parse_iso_utc(raw: Any) -> Optional[datetime]:
         return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
-
-
-def _vendor_followup_sla_hours() -> int:
-    try:
-        hours = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_SLA_HOURS", "24"))
-    except (TypeError, ValueError):
-        hours = 24
-    return max(1, min(hours, 168))
-
-
-def _vendor_followup_max_attempts() -> int:
-    try:
-        attempts = int(os.getenv("CLEARLEDGR_VENDOR_FOLLOWUP_MAX_ATTEMPTS", "3"))
-    except (TypeError, ValueError):
-        attempts = 3
-    return max(1, min(attempts, 10))
 
 
 def _merge_ap_item_metadata(db: Any, ap_item: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -1835,37 +1779,10 @@ async def approval_nudge(
     return response
 
 
-@router.post("/vendor-followup", dependencies=[Depends(get_current_user)])
-async def vendor_followup(
-    request: VendorFollowupRequest,
-    audit: Any = Depends(get_audit_service),
-    user=Depends(require_ops_user),
-):
-    """Prepare a vendor follow-up draft through the canonical finance runtime."""
-    from clearledgr.services.finance_agent_runtime import IntentNotSupportedError
-
-    org_id = _resolve_org_id_for_user(user, request.organization_id)
-    runtime = _build_finance_runtime(user, org_id)
-    try:
-        response = await runtime.execute_intent(
-            "prepare_vendor_followups",
-            {
-                "email_id": request.email_id,
-                "reason": request.reason,
-                "force": request.force,
-            },
-            idempotency_key=request.idempotency_key,
-        )
-    except IntentNotSupportedError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    return response
+# /extension/vendor-followup removed 2026-04-30 — see the dormant
+# call note above /extension/draft-reply. The intent contract
+# (`prepare_vendor_followups`) and the runtime evaluator stay on
+# disk as option-value but no surface mounts them.
 
 
 @router.post("/route-low-risk-approval", dependencies=[Depends(get_current_user)])

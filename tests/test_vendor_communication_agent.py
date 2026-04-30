@@ -19,6 +19,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pytest as _vf_skip_pytest
+
+pytestmark = _vf_skip_pytest.mark.skip(
+    reason=(
+        "vendor_followup_dormant_2026_04_30 "
+        "— see memory/project_vendor_followup_templates_dormant.md"
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # 1. Gmail scope list includes gmail.send
 # ---------------------------------------------------------------------------

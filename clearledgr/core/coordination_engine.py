@@ -1682,14 +1682,18 @@ class CoordinationEngine:
         }
 
     async def _handle_check_vendor_response(self, action: Action, plan: Plan) -> dict:
-        """§4.3: Check if vendor has responded to a chase email."""
-        try:
-            from clearledgr.services.agent_background import _check_vendor_followup_responses
-            await _check_vendor_followup_responses([self.organization_id])
-            return {"ok": True, "checked": True}
-        except Exception as exc:
-            logger.debug("[CoordinationEngine] check_vendor_response non-fatal: %s", exc)
-            return {"ok": True}
+        """§4.3: Check if vendor has responded to a chase email.
+
+        Dormant per the 2026-04-30 product call — Solden no longer
+        sends chase emails, so there are no responses to scan for.
+        Handler stays registered so plans referencing the action
+        don't blow up; it returns a noop marker.
+        """
+        return {
+            "ok": True,
+            "checked": False,
+            "noop_reason": "vendor_followup_dormant_2026_04_30",
+        }
 
     async def _handle_evaluate_grn(self, action: Action, plan: Plan) -> dict:
         """§4.3: Evaluate GRN lookup result — clear waiting or reschedule."""
