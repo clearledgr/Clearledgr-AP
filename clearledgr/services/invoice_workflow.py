@@ -1119,6 +1119,43 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             },
         )
 
+        # Needs-info recovery plan — advisory ordered plan from
+        # AGENT_PLANNING. Activates a previously-dormant LLM action.
+        # Persisted to AP item metadata for operator tooling to display;
+        # never executed automatically. Failures are silent (None
+        # return), so the needs_info path keeps its prior single-question
+        # behaviour as a floor.
+        if ap_decision.recommendation == "needs_info":
+            try:
+                from clearledgr.services.needs_info_recovery import (
+                    propose_recovery_plan,
+                )
+
+                vendor_profile_for_plan = invoice.vendor_intelligence.get(
+                    "vendor_context"
+                ) if isinstance(invoice.vendor_intelligence, dict) else None
+                recovery_plan = await propose_recovery_plan(
+                    invoice,
+                    ap_decision,
+                    vendor_profile=vendor_profile_for_plan,
+                )
+                if recovery_plan is not None:
+                    self._update_ap_item_metadata(
+                        invoice_id,
+                        {"agent_recovery_plan": recovery_plan.to_dict()},
+                    )
+                    logger.info(
+                        "[InvoiceWorkflow] %s needs_info — recovery plan: %s (%d steps)",
+                        invoice.vendor_name,
+                        recovery_plan.summary[:80],
+                        len(recovery_plan.steps),
+                    )
+            except Exception as plan_exc:
+                # Recovery planning is purely advisory — never block on it.
+                logger.debug(
+                    "[InvoiceWorkflow] recovery plan generation skipped: %s", plan_exc,
+                )
+
         # Deterministic gate is a hard guardrail that overrides Claude.
         # If it fires, route to human — but use Claude's reasoning as context.
         if not validation_gate.get("passed", True):
