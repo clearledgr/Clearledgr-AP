@@ -29,9 +29,37 @@ async def run_inline_gmail_triage(
     combined_text: str,
     attachments: Optional[List[Dict[str, Any]]] = None,
     agent_reasoning_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    _is_subunit: bool = False,
 ) -> Dict[str, Any]:
-    """Run the inline Gmail triage flow and return the triage payload."""
+    """Run the inline Gmail triage flow and return the triage payload.
+
+    Multi-invoice handling: at the top-level call (``_is_subunit=False``),
+    the email's attachments are run through
+    :mod:`clearledgr.services.multi_invoice_intake` to detect the case
+    where one PDF carries multiple invoices, or where multiple PDFs
+    each carry one. When fan-out happens, this function recurses
+    once per detected invoice (with ``_is_subunit=True`` to break
+    further recursion) and returns the primary result with a
+    ``multi_invoice_results`` field listing every triage result so
+    the caller creates one AP item per invoice.
+    """
     request_attachments = list(attachments or [])
+
+    # Multi-invoice fan-out — only at the top-level call to avoid
+    # recursive splitting of already-split sub-PDFs.
+    if not _is_subunit:
+        from clearledgr.services.multi_invoice_intake import split_email_attachments
+
+        units = split_email_attachments(request_attachments)
+        if len(units) > 1:
+            return await _fan_out_multi_invoice(
+                units=units,
+                payload=payload,
+                org_id=org_id,
+                combined_text=combined_text,
+                agent_reasoning_fn=agent_reasoning_fn,
+            )
+
     trail = get_audit_trail(org_id)
     trail.log(
         invoice_id=payload.get("email_id"),
@@ -375,6 +403,72 @@ async def run_inline_gmail_triage(
 # ---------------------------------------------------------------------------
 # Single-pass helpers
 # ---------------------------------------------------------------------------
+
+
+async def _fan_out_multi_invoice(
+    *,
+    units: List[Any],
+    payload: Dict[str, Any],
+    org_id: str,
+    combined_text: str,
+    agent_reasoning_fn: Optional[Callable[..., Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Run triage once per detected invoice and aggregate results.
+
+    Each unit gets its own AP item id (suffixed ``::split-N`` for
+    everything past the first) so downstream Box creation stays
+    unique. The splitter's pre-detected invoice number, when
+    present, is grafted onto the per-unit extraction as a fallback
+    for cases where Claude misses it on the sub-PDF.
+
+    Returns a dict shaped like the primary triage result with two
+    extra keys consumers can rely on:
+
+      - ``multi_invoice_results`` — list of every per-unit triage
+        result (length matches ``len(units)``). The caller iterates
+        and creates one AP item per entry.
+      - ``multi_invoice_count`` — same length as a number, for
+        quick inspection without enumerating.
+    """
+    results: List[Dict[str, Any]] = []
+    base_email_id = str(payload.get("email_id") or "unknown")
+
+    for idx, unit in enumerate(units):
+        sub_payload = dict(payload)
+        # Disambiguate AP item ids for fan-out beyond the primary so
+        # each invoice ends up in its own Box.
+        if idx > 0:
+            sub_payload["email_id"] = f"{base_email_id}::split-{idx}"
+
+        sub_result = await run_inline_gmail_triage(
+            payload=sub_payload,
+            org_id=org_id,
+            combined_text=combined_text,
+            attachments=list(unit.attachments),
+            agent_reasoning_fn=agent_reasoning_fn,
+            _is_subunit=True,
+        )
+
+        # Surface the splitter's pre-detected invoice number on the
+        # extraction when single-pass / multi-call missed it. The
+        # splitter saw the invoice header text on the boundary page
+        # — no reason to lose that signal.
+        hint = getattr(unit, "hint_invoice_number", None)
+        if hint and isinstance(sub_result, dict):
+            extraction = sub_result.get("extraction")
+            if isinstance(extraction, dict) and not extraction.get("invoice_number"):
+                extraction["invoice_number"] = hint
+
+        results.append(sub_result)
+
+    primary = dict(results[0]) if results else {
+        "email_id": base_email_id,
+        "action": "multi_invoice_empty",
+    }
+    primary["multi_invoice_results"] = results
+    primary["multi_invoice_count"] = len(results)
+    primary["multi_invoice_strategy"] = "splitter_fanout"
+    return primary
 
 
 def _emit_processing_mode_metric(
