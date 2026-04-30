@@ -540,9 +540,18 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 logger.debug("[APDecision] Cross-invoice analysis skipped (non-fatal): %s", exc)
 
             # ---- Volume anomaly detection ----
+            # Two-layer: rule-based z-score decides if there's an anomaly
+            # (deterministic, owns the boolean used by the cascade); the
+            # LLM augmenter then rewrites the generic "verify data
+            # completeness" suggestion into a context-aware operator
+            # explanation tied to this vendor's actual history. Augment
+            # never gates — failure preserves the rule output verbatim.
             anomaly_signals: Dict[str, Any] = {}
             try:
-                from clearledgr.services.agent_anomaly_detection import detect_volume_anomalies
+                from clearledgr.services.agent_anomaly_detection import (
+                    detect_volume_anomalies,
+                    explain_volume_anomaly,
+                )
                 historical_amounts = [
                     h.get("amount") for h in (vendor_history or [])
                     if h.get("amount") is not None
@@ -550,6 +559,18 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if historical_amounts and invoice.amount is not None:
                     vol_result = detect_volume_anomalies(invoice.amount, historical_amounts)
                     if vol_result and vol_result.get("is_anomaly"):
+                        try:
+                            vol_result = await explain_volume_anomaly(
+                                vol_result,
+                                vendor_name=invoice.vendor_name,
+                                invoice_amount=float(invoice.amount or 0.0),
+                                recent_amounts=[float(x) for x in historical_amounts],
+                                currency=str(getattr(invoice, "currency", "USD") or "USD"),
+                            )
+                        except Exception as ex_exc:
+                            logger.debug(
+                                "[APDecision] Anomaly explanation skipped: %s", ex_exc,
+                            )
                         anomaly_signals["volume"] = vol_result
             except Exception as exc:
                 logger.debug("[APDecision] Volume anomaly detection skipped (non-fatal): %s", exc)

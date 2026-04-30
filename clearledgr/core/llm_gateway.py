@@ -63,6 +63,7 @@ class LLMAction(str, Enum):
     EXPLAIN_STATE = "explain_state"
     SLACK_QUERY = "slack_query"
     SINGLE_PASS_EXTRACT = "single_pass_extract"
+    EXPLAIN_ANOMALY = "explain_anomaly"
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,11 @@ ACTION_REGISTRY: Dict[LLMAction, ActionConfig] = {
     # timeout matches AGENT_PLANNING's precedent for similarly-sized
     # composite Sonnet calls.
     LLMAction.SINGLE_PASS_EXTRACT:    ActionConfig(max_output_tokens=6000, model_tier="sonnet", timeout_seconds=120),
+    # Augments rule-detected anomalies with a context-aware operator
+    # explanation (vendor, history, what's likely off). Cheap tier —
+    # the rules already decided there's an anomaly; the LLM only writes
+    # the description and never gates the routing call.
+    LLMAction.EXPLAIN_ANOMALY:        ActionConfig(max_output_tokens=400,  model_tier="haiku", timeout_seconds=10),
 }
 
 
