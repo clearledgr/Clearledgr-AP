@@ -1,3 +1,29 @@
+// SidebarApp.test — exercises the AP-first Gmail sidebar shell.
+//
+// History note: the original suite asserted on a richer in-sidebar
+// layout (`WorkPanel` with agent-memory cards, related-records,
+// task/notes/files, read-only viewer affordance, "Operator overrides"
+// disclosure, in-line field-review buttons). Commit 281ee98
+// ("fix: always render ThreadSidebar, never WorkPanel", 2026-04-11)
+// removed `WorkPanel` from the mounted output — `ThreadSidebar` now
+// owns the entire item view. The tests covering that removed UI were
+// stale by construction (they tested code that's defined but never
+// rendered). They were dropped in the harness commit when CI started
+// running these tests on every PR; the deleted assertions are listed
+// here so anyone re-introducing the richer in-sidebar layout knows
+// what shape the previous spec expected:
+//
+//   - "What happens next" / "Before Clearledgr continues" agent-memory
+//     section (AgentViewSection) — currently lives in dead WorkPanel
+//   - Related-records / Tasks / Notes / Files sub-sections
+//   - Read-only viewer copy ("Read-only view" + suppressed actions)
+//   - Operator-override disclosure for routine pending approvals
+//   - In-line field-review "Use email" / "Use attachment" resolution
+//
+// What this suite locks now: the shell renders header + auth gate +
+// ThreadSidebar mount + queue navigator + unlinked-thread create-or-
+// link flow.
+
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { h } from 'preact';
@@ -120,86 +146,8 @@ afterEach(async () => {
 });
 
 describe('SidebarApp', () => {
-  it('renders the canonical agent-memory view on the mounted thread surface', async () => {
-    const item = buildItem({
-      agent_memory: {
-        profile: {
-          mission: 'Protect cash before it leaves the company.',
-          autonomy_level: 'human_supervised',
-        },
-        next_action: {
-          label: 'Wait for approval decision',
-          owner: 'approver',
-        },
-        summary: {
-          reason: 'Awaiting approval response.',
-        },
-        uncertainties: {
-          reason_codes: ['vendor_unscored'],
-        },
-        current_state: 'needs_approval',
-      },
-    });
-    const queueManager = createQueueManager({
-      fetchAuditTrail: mock.fn(async () => ([
-        {
-          id: 'audit-1',
-          event_type: 'state_transition',
-          operator_title: 'Approval requested',
-          operator_message: 'Invoice routed to the approver.',
-          operator_importance: 'high',
-          created_at: '2026-04-05T10:00:00Z',
-        },
-      ])),
-    });
-
-    store.queueState = [item];
-    store.selectedItemId = item.id;
-    store.currentUserRole = 'operator';
-
-    const view = mount(h(SidebarApp, { queueManager }));
-    await flushTicks(3);
-
-    const text = getTextContent(view.container);
-    assert.match(text, /What happens next/);
-    assert.match(text, /Waiting for approval/);
-    assert.match(text, /Awaiting approval response\./);
-    assert.match(text, /Vendor details need review/);
-    assert.match(text, /Evidence checklist/);
-    assert.match(text, /View audit/);
-  });
-
-  it('replaces internal agent-memory copy with operator-facing language', async () => {
-    const item = buildItem({
-      state: 'received',
-      requires_field_review: true,
-      workflow_paused_reason: 'ap_invoice_processing_field_review_required',
-      confidence_blockers: [
-        {
-          field: 'due_date',
-          confidence: 0.62,
-          review_threshold: 0.95,
-          source: 'attachment',
-          values: { attachment: '2026-04-16', email: '2026-04-18' },
-        },
-      ],
-      agent_memory: {
-        current_state: 'received',
-        status: 'received',
-        next_action: {
-          type: 'human_field_review',
-          label: 'Resolve field blockers before workflow execution',
-          owner: 'operator',
-        },
-        summary: {
-          reason: 'ap_invoice_processing_field_review_required',
-        },
-        uncertainties: {
-          reason_codes: ['ap_skill_not_ready', 'gate:legal_transition_correctness'],
-        },
-      },
-    });
-
+  it('renders the header and mounts ThreadSidebar for the selected item', async () => {
+    const item = buildItem();
     store.queueState = [item];
     store.selectedItemId = item.id;
     store.currentUserRole = 'operator';
@@ -207,113 +155,12 @@ describe('SidebarApp', () => {
     const view = mount(h(SidebarApp, { queueManager: createQueueManager() }));
     await flushTicks(3);
 
-    const text = getTextContent(view.container);
-    assert.match(text, /Before Clearledgr continues/);
-    assert.match(text, /Next step/);
-    assert.match(text, /Confirm the due date/);
-    assert.match(text, /Needs your review/);
-    assert.match(text, /Why it paused/);
-    assert.match(text, /Review due date before this invoice moves forward\./);
-    assert.doesNotMatch(text, /ap_invoice_processing_field_review_required/i);
-    assert.doesNotMatch(text, /Resolve field blockers before workflow execution/i);
-    assert.doesNotMatch(text, /Legal Transition Correctness/i);
-    assert.doesNotMatch(text, /Ap Skill Not Ready/i);
-  });
-
-  it('renders tasks, notes, related records, and files on the mounted thread surface', async () => {
-    const item = buildItem({
-      linked_finance_documents: [
-        {
-          source_ap_item_id: 'credit-1',
-          document_type: 'credit_note',
-          vendor_name: 'Acme Supplies',
-          invoice_number: 'CN-10',
-          amount: 120,
-          currency: 'USD',
-          outcome: 'applied',
-        },
-      ],
-    });
-    const queueManager = createQueueManager({
-      fetchItemContext: mock.fn(async () => ({})),
-    });
-
-    store.queueState = [item];
-    store.selectedItemId = item.id;
-    store.currentUserRole = 'operator';
-    store.contextState = new Map([
-      [item.id, {
-        related_records: {
-          same_invoice_number_items: [
-            {
-              id: 'item-duplicate',
-              vendor_name: 'Acme Supplies',
-              invoice_number: 'INV-100',
-              amount: 1234.5,
-              currency: 'USD',
-              state: 'needs_info',
-            },
-          ],
-        },
-        web: {
-          dms_documents: [{ subject: 'Invoice packet.pdf' }],
-        },
-      }],
-    ]);
-    store.tasksState = new Map([
-      [item.id, [
-        {
-          task_id: 'task-1',
-          title: 'Call vendor about missing PO',
-          status: 'open',
-          due_date: '2026-04-10',
-          comments: [{ comment_id: 'comment-1', user_email: 'ops@clearledgr.com', comment: 'Waiting on callback.' }],
-        },
-      ]],
-    ]);
-    store.notesState = new Map([
-      [item.id, [
-        {
-          id: 'note-1',
-          author: 'ops@clearledgr.com',
-          body: 'Vendor asked for Friday follow-up.',
-          created_at: '2026-04-06T08:30:00Z',
-        },
-      ]],
-    ]);
-    store.commentsState = new Map([
-      [item.id, [
-        {
-          id: 'comment-1',
-          author: 'controller@clearledgr.com',
-          body: 'Approved the response language.',
-          created_at: '2026-04-06T08:45:00Z',
-        },
-      ]],
-    ]);
-    store.filesState = new Map([
-      [item.id, [
-        {
-          id: 'file-1',
-          label: 'Shared quote',
-          url: 'https://docs.example.com/quote',
-          file_type: 'drive_link',
-          note: 'Latest vendor quote',
-        },
-      ]],
-    ]);
-
-    const view = mount(h(SidebarApp, { queueManager }));
-    await flushTicks(3);
-
-    const text = getTextContent(view.container);
-    assert.match(text, /Related records/);
-    assert.match(text, /Call vendor about missing PO/);
-    assert.match(text, /Approved the response language\./);
-    assert.match(text, /Vendor asked for Friday follow-up\./);
-    assert.match(text, /Files and evidence/);
-    assert.match(text, /Shared quote/);
-    assert.match(text, /Invoice packet\.pdf/);
+    // Shell: branded header + ThreadSidebar surface with the item's
+    // vendor name visible.
+    assert.match(getTextContent(view.container), /Clearledgr AP/);
+    assert.ok(view.container.querySelector('.cl-thread-sidebar'),
+      'ThreadSidebar should mount when an item is selected');
+    assert.match(getTextContent(view.container), /Acme Supplies/);
   });
 
   it('lets operators move through the queue from the header navigator', async () => {
@@ -337,21 +184,30 @@ describe('SidebarApp', () => {
     const view = mount(h(SidebarApp, { queueManager: createQueueManager() }));
     await flushTicks(3);
 
-    assert.match(getTextContent(view.container), /1 of 2/);
+    // Preact's effect queue can take several macrotasks to settle in
+    // node:test + happy-dom (the subscription useEffect doesn't run
+    // until after a render commit, and forceUpdate is itself batched).
+    // We poll up to ~12 cumulative ticks rather than assume a fixed
+    // count — keeps the test robust without hiding real regressions.
+    const waitForText = async (regex, maxTicks = 12) => {
+      for (let i = 0; i < maxTicks; i += 1) {
+        if (regex.test(getTextContent(view.container))) return true;
+        await flushTicks(1);
+      }
+      return false;
+    };
+
+    assert.ok(await waitForText(/1 of 2/), 'expected "1 of 2" in header');
     assert.match(getTextContent(view.container), /Acme Supplies/);
 
     click(view.container.querySelector('[aria-label="Next record"]'));
-    await flushTicks(2);
-
     assert.equal(store.selectedItemId, 'item-2');
-    assert.match(getTextContent(view.container), /2 of 2/);
-    assert.match(getTextContent(view.container), /Little Learners Nursery and Preschool/);
+    assert.ok(await waitForText(/2 of 2/), 'expected "2 of 2" after Next click');
+    assert.ok(await waitForText(/Little Learners Nursery/), 'expected new vendor in body');
 
     click(view.container.querySelector('[aria-label="Previous record"]'));
-    await flushTicks(2);
-
     assert.equal(store.selectedItemId, 'item-1');
-    assert.match(getTextContent(view.container), /1 of 2/);
+    assert.ok(await waitForText(/1 of 2/), 'expected "1 of 2" after Previous click');
   });
 
   it('shows the Gmail auth prompt and starts authorization from the mounted view', async () => {
@@ -370,112 +226,6 @@ describe('SidebarApp', () => {
     await flushTicks(3);
 
     assert.equal(queueManager.authorizeGmailNow.mock.calls.length, 1);
-    assert.equal(queueManager.refreshQueue.mock.calls.length, 1);
-  });
-
-  it('keeps read-only viewers out of mutation actions while preserving context', async () => {
-    const item = buildItem({
-      agent_memory: {
-        next_action: { label: 'Wait for approval decision', owner: 'approver' },
-        summary: { reason: 'Awaiting approval response.' },
-        uncertainties: { reason_codes: ['vendor_unscored'] },
-      },
-    });
-    const queueManager = createQueueManager();
-
-    store.queueState = [item];
-    store.selectedItemId = item.id;
-    store.currentUserRole = 'viewer';
-
-    const view = mount(h(SidebarApp, { queueManager }));
-    await flushTicks(3);
-
-    const text = getTextContent(view.container);
-    assert.match(text, /Read-only view/);
-    assert.match(text, /Open in invoices/);
-    assert.doesNotMatch(text, /Record 1 of/);
-    assert.equal(findButton(view.container, 'Reject'), null);
-    assert.equal(findButton(view.container, 'Nudge approver'), null);
-    assert.equal(findButton(view.container, 'Reassign approver'), null);
-  });
-
-  it('treats routine pending approvals as agent-monitored states with overrides collapsed below the fold', async () => {
-    const item = buildItem({
-      approval_followup: {
-        pending_assignees: ['ap-approver@clearledgr.com'],
-        wait_minutes: 42,
-      },
-      agent_memory: {
-        summary: { reason: 'Clearledgr is monitoring the active approval request.' },
-      },
-    });
-    const queueManager = createQueueManager();
-
-    store.queueState = [item];
-    store.selectedItemId = item.id;
-    store.currentUserRole = 'operator';
-
-    const view = mount(h(SidebarApp, { queueManager }));
-    await flushTicks(3);
-
-    assert.equal(view.container.querySelector('.cl-primary-cta'), null);
-    const overrides = view.container.querySelector('.cl-operator-overrides');
-    assert.ok(overrides);
-    assert.match(getTextContent(overrides.querySelector('summary')), /Operator overrides/);
-    assert.match(getTextContent(view.container), /monitoring this approval/i);
-  });
-
-  it('routes field-review resolution through the queue manager from the mounted panel', async () => {
-    const item = buildItem({
-      state: 'validated',
-      requires_field_review: true,
-      field_provenance: {
-        amount: {
-          source: 'attachment',
-          value: 440,
-        },
-      },
-      field_evidence: {
-        amount: {
-          source: 'attachment',
-          selected_value: 440,
-          email_value: 400,
-          attachment_value: 440,
-          attachment_name: 'invoice.pdf',
-        },
-      },
-      source_conflicts: [
-        {
-          field: 'amount',
-          blocking: true,
-          reason: 'source_value_mismatch',
-          preferred_source: 'attachment',
-          values: { email: 400, attachment: 440 },
-        },
-      ],
-    });
-    const queueManager = createQueueManager();
-
-    store.queueState = [item];
-    store.selectedItemId = item.id;
-    store.currentUserRole = 'operator';
-
-    const view = mount(h(SidebarApp, { queueManager }));
-    await flushTicks(3);
-
-    const useEmailButton = findButton(view.container, 'Use email');
-    assert.ok(useEmailButton);
-
-    click(useEmailButton);
-    await flushTicks(3);
-
-    assert.equal(queueManager.resolveFieldReview.mock.calls.length, 1);
-    assert.deepEqual(queueManager.resolveFieldReview.mock.calls[0].arguments[1], {
-      field: 'amount',
-      source: 'email',
-      manualValue: undefined,
-      autoResume: true,
-    });
     assert.equal(queueManager.refreshQueue.mock.calls.length, 1);
   });
 

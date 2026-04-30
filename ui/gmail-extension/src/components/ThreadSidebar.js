@@ -194,6 +194,10 @@ const THREAD_SIDEBAR_CSS = `
 }
 @keyframes cl-ts-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
+/* Paragraph break in rendered markdown answer body. CSP-friendly
+   alternative to inline style="height:4px". */
+.cl-ts-qa-a .cl-ts-pbreak { height: 4px; }
+
 /* Flash highlight when a reference chip scrolls an audit row into view */
 .cl-ts-audit-flash {
   animation: cl-ts-flash 1.5s ease-out;
@@ -550,7 +554,7 @@ function renderAnswerMarkdown(answer, { references = [], onReferenceClick, strea
         blocks.push(html`<div key=${`p-${i}`}>${renderInlineMarkdown(line, { references, onReferenceClick })}</div>`);
       } else if (blocks.length > 0) {
         // Blank line → paragraph break
-        blocks.push(html`<div key=${`br-${i}`} style="height:4px"></div>`);
+        blocks.push(html`<div key=${`br-${i}`} class="cl-ts-pbreak"></div>`);
       }
     }
   });
