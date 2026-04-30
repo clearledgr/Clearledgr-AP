@@ -64,7 +64,7 @@ sentry-sdk[fastapi]>=2.0.0   # error tracking (opt-in via SENTRY_DSN)
 
 # Development
 pytest>=8.0.0
-pytest-asyncio>=0.23.0
+pytest-asyncio>=1.3.0
 # Parallel test runner. CI uses `pytest -n auto` to fan out across
 # cores; the `loadfile` distribution keeps tests from the same file
 # on the same worker so per-file fixtures (e.g. testcontainer reuse)
