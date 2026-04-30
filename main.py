@@ -138,6 +138,7 @@ from clearledgr.api.slack_invoices import (
     router as slack_invoices_router,
 )
 from clearledgr.api.teams_invoices import router as teams_invoices_router
+from clearledgr.api.api_keys import router as api_keys_router
 from clearledgr.api.ap_item_detail import router as ap_item_detail_router
 from clearledgr.api.three_way_match import (
     router as three_way_match_router,
@@ -1435,6 +1436,11 @@ app.include_router(workspace_reports_router)
 # CRUD over report_subscriptions; the Celery beat task in
 # celery_tasks.deliver_due_report_subscriptions consumes the same rows.
 app.include_router(report_subscriptions_router)
+
+# Module 11 — customer-side API keys.
+# Show-once semantics on create/rotate; soft-delete revocation
+# preserves the audit trail; org-scoped at every endpoint.
+app.include_router(api_keys_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)

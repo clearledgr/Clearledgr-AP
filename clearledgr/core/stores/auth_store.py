@@ -671,6 +671,83 @@ class AuthStore:
             "label": label,
         }
 
+    def list_api_keys(
+        self, organization_id: str, *, include_revoked: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List API keys for an org. Default excludes revoked rows.
+
+        Returns the safe-to-display fields only — ``id``, ``key_prefix``,
+        ``label``, ``user_id``, ``last_used_at``, timestamps,
+        ``is_active``. The full hash and the raw key are NEVER
+        returned; the raw key is only ever in the create response.
+        """
+        self.initialize()
+        if include_revoked:
+            sql = (
+                "SELECT id, organization_id, key_prefix, user_id, label, "
+                "is_active, last_used_at, created_at, updated_at "
+                "FROM api_keys WHERE organization_id = %s "
+                "ORDER BY created_at DESC"
+            )
+        else:
+            sql = (
+                "SELECT id, organization_id, key_prefix, user_id, label, "
+                "is_active, last_used_at, created_at, updated_at "
+                "FROM api_keys WHERE organization_id = %s AND is_active = 1 "
+                "ORDER BY created_at DESC"
+            )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (organization_id,))
+            rows = cur.fetchall()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["is_active"] = bool(data.get("is_active"))
+            result.append(data)
+        return result
+
+    def get_api_key(
+        self, key_id: str, organization_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get an API key row by id, scoped to an org."""
+        self.initialize()
+        sql = (
+            "SELECT id, organization_id, key_prefix, user_id, label, "
+            "is_active, last_used_at, created_at, updated_at "
+            "FROM api_keys WHERE id = %s AND organization_id = %s LIMIT 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (key_id, organization_id))
+            row = cur.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["is_active"] = bool(data.get("is_active"))
+        return data
+
+    def revoke_api_key(self, key_id: str, organization_id: str) -> bool:
+        """Mark an API key as inactive. Org-scoped to block cross-tenant writes.
+
+        We do NOT delete the row — keeping the hash + label preserves
+        the audit trail of what existed and when. ``is_active = 0`` is
+        the canonical "revoked" state; ``validate_api_key`` filters on
+        it, so a revoked key fails auth immediately.
+        """
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        sql = (
+            "UPDATE api_keys SET is_active = 0, updated_at = %s "
+            "WHERE id = %s AND organization_id = %s AND is_active = 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (now, key_id, organization_id))
+            affected = cur.rowcount or 0
+            conn.commit()
+        return bool(affected)
+
     def get_users(self, organization_id: str, include_inactive: bool = False) -> List[Dict[str, Any]]:
         self.initialize()
         if include_inactive:
