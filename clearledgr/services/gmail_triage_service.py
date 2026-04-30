@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from clearledgr.services.agent_reflection import get_agent_reflection
@@ -39,6 +40,12 @@ async def run_inline_gmail_triage(
         details={"subject": payload.get("subject"), "sender": payload.get("sender")},
     )
 
+    # Wall-clock start for the processing-mode-metric event. The
+    # event fires exactly once per invocation regardless of which
+    # path (single-pass or multi-call) wins, so dashboards can
+    # compare the two paths' real-world latency.
+    triage_started_at = time.monotonic()
+
     # --- Single-pass: try processing everything in one Claude call ---
     single_pass_result = await _try_single_pass(payload, org_id, request_attachments)
     if single_pass_result:
@@ -49,7 +56,14 @@ async def run_inline_gmail_triage(
             confidence=single_pass_result.get("classification", {}).get("confidence", 0),
             reasoning="single_pass_processor",
         )
-        return _format_single_pass_result(single_pass_result, payload, org_id)
+        formatted = _format_single_pass_result(single_pass_result, payload, org_id)
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="single_pass",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+        )
+        return formatted
 
     # --- Multi-call fallback: existing pipeline ---
     classification = await classify_email_activity(payload)
@@ -68,6 +82,12 @@ async def run_inline_gmail_triage(
     route = get_route(doc_type)
 
     if doc_type == "noise":
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="multi_call",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+        )
         return {
             "email_id": payload.get("email_id"),
             "classification": classification,
@@ -82,6 +102,12 @@ async def run_inline_gmail_triage(
             event_type=AuditEventType.EXTRACTED,
             summary=f"{route.label} from {extraction.get('vendor') or payload.get('sender')}",
             details={"amount": extraction.get("amount"), "vendor": extraction.get("vendor")},
+        )
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="multi_call",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
         )
         return {
             "email_id": payload.get("email_id"),
@@ -337,12 +363,55 @@ async def run_inline_gmail_triage(
             logger.warning("Agent reasoning failed for email_id=%s: %s", payload.get("email_id"), reasoning_exc)
             result["intelligence"]["agent_reasoning_error"] = str(reasoning_exc)
 
+    _emit_processing_mode_metric(
+        trail=trail,
+        email_id=payload.get("email_id"),
+        mode="multi_call",
+        elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
 # Single-pass helpers
 # ---------------------------------------------------------------------------
+
+
+def _emit_processing_mode_metric(
+    *,
+    trail: Any,
+    email_id: Optional[str],
+    mode: str,
+    elapsed_ms: int,
+) -> None:
+    """Emit a PROCESSING_MODE_METRIC audit event so operators can
+    compare single-pass vs multi-call latency over time.
+
+    Aggregation query (illustrative):
+      SELECT
+        payload_json->>'mode' AS mode,
+        AVG((payload_json->>'elapsed_ms')::int) AS avg_ms,
+        COUNT(*)
+      FROM audit_events
+      WHERE event_type = 'processing_mode_metric'
+        AND created_at > now() - interval '7 days'
+      GROUP BY mode
+
+    Failure to emit is non-fatal — the triage result is the
+    contract; telemetry is best-effort.
+    """
+    try:
+        trail.log(
+            invoice_id=email_id or "unknown",
+            event_type=AuditEventType.PROCESSING_MODE_METRIC,
+            summary=f"Triage completed via {mode} in {elapsed_ms}ms",
+            details={
+                "mode": mode,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception as exc:
+        logger.debug("[Triage] failed to emit processing_mode_metric: %s", exc)
 
 def _collect_attachment_text(attachments: List[Dict[str, Any]]) -> str:
     """Concatenate any pre-extracted text from email attachments.
@@ -502,5 +571,48 @@ def _format_single_pass_result(
         result["due_date"] = extraction.get("due_date")
         result["confidence"] = extraction.get("overall_confidence", 0)
         result["field_confidences"] = extraction.get("field_confidences", {})
+
+        # Run the canonical extraction-review gate against the
+        # single-pass output so the field-review blocker shape is
+        # consistent with the multi-call webhook path. Without this,
+        # single-pass-extracted invoices skip the critical-field
+        # confidence check that the multi-call extracted ones go
+        # through — a real gap that would let low-confidence
+        # single-pass output flow through to posting.
+        try:
+            from clearledgr.core.ap_confidence import build_extraction_review_gate
+
+            amount_raw = extraction.get("amount")
+            try:
+                amount_for_gate = float(amount_raw) if amount_raw is not None else 0.0
+            except (TypeError, ValueError):
+                amount_for_gate = 0.0
+            gate = build_extraction_review_gate(
+                extraction=extraction,
+                amount=amount_for_gate,
+                currency=str(extraction.get("currency") or "USD"),
+                invoice_number=extraction.get("invoice_number"),
+                due_date=extraction.get("due_date"),
+                confidence=float(extraction.get("overall_confidence") or 0.0),
+            )
+            result["confidence_gate"] = gate
+            result["confidence_blockers"] = gate.get("confidence_blockers") or []
+            result["requires_field_review"] = bool(gate.get("requires_field_review"))
+        except Exception as exc:
+            # Failing closed: if the gate raises, treat the item as
+            # needing review rather than letting it through without
+            # a check. The webhook path already has the same fallback
+            # contract — never silently bypass field review.
+            logger.warning(
+                "[Triage] confidence-gate failed on single-pass result, "
+                "marking for field review: %s",
+                exc,
+            )
+            result["confidence_gate"] = {
+                "requires_field_review": True,
+                "error": str(exc),
+            }
+            result["confidence_blockers"] = []
+            result["requires_field_review"] = True
 
     return result

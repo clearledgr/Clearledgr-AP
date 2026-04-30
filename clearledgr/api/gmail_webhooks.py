@@ -22,7 +22,10 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
+from clearledgr.core.ap_confidence import (
+    build_extraction_review_gate as _build_extraction_review_gate,
+    conflict_blockers as _conflict_blockers,
+)
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.core.errors import safe_error
@@ -77,69 +80,6 @@ def _merge_finance_email_metadata(existing: Optional[FinanceEmail], updates: Dic
             continue
         metadata[key] = value
     return metadata
-
-
-def _conflict_blockers(raw_conflicts: Any) -> list[dict[str, Any]]:
-    blockers: list[dict[str, Any]] = []
-    if not isinstance(raw_conflicts, list):
-        return blockers
-    for conflict in raw_conflicts:
-        if not isinstance(conflict, dict) or not conflict.get("blocking"):
-            continue
-        field = str(conflict.get("field") or "").strip()
-        if not field:
-            continue
-        blockers.append(
-            {
-                "field": field,
-                "reason": str(conflict.get("reason") or "source_value_mismatch"),
-                "severity": str(conflict.get("severity") or "high"),
-                "sources": list((conflict.get("values") or {}).keys()),
-                "preferred_source": str(conflict.get("preferred_source") or "attachment"),
-                "values": conflict.get("values") or {},
-            }
-        )
-    return blockers
-
-
-def _build_extraction_review_gate(
-    *,
-    extraction: Dict[str, Any],
-    amount: float,
-    currency: str,
-    invoice_number: Optional[str],
-    due_date: Optional[str],
-    confidence: float,
-) -> Dict[str, Any]:
-    gate = evaluate_critical_field_confidence(
-        overall_confidence=confidence,
-        field_values={
-            "vendor": extraction.get("vendor"),
-            "amount": amount,
-            "invoice_number": invoice_number,
-            "due_date": due_date,
-        },
-        field_confidences=extraction.get("field_confidences") if isinstance(extraction.get("field_confidences"), dict) else {},
-    )
-    blockers = list(gate.get("confidence_blockers") or [])
-    blockers.extend(_conflict_blockers(extraction.get("source_conflicts")))
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for blocker in blockers:
-        if not isinstance(blocker, dict):
-            continue
-        key = (
-            str(blocker.get("field") or "").strip(),
-            str(blocker.get("reason") or "").strip(),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(blocker)
-    gate["confidence_blockers"] = deduped
-    gate["requires_field_review"] = bool(deduped or extraction.get("requires_extraction_review"))
-    gate["currency"] = currency
-    return gate
 
 
 def _lookup_latest_ap_item(db: Any, organization_id: str, *, thread_id: Optional[str], message_id: Optional[str]) -> Optional[Dict[str, Any]]:

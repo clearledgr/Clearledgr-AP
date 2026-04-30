@@ -347,3 +347,102 @@ def evaluate_critical_field_confidence(
         "learned_profile_id": str(learned_profile_id or "").strip() or None,
         "learned_signal_count": int(learned_signal_count or 0),
     }
+
+
+# ---------------------------------------------------------------------------
+# Extraction review gate — composite of confidence-blocker evaluation
+# plus source-conflict promotion. Both intake paths (the gmail webhook
+# and the inline triage path used by the extension and Outlook) call
+# this so single-pass and multi-call extractions land in the same
+# blocker shape downstream.
+# ---------------------------------------------------------------------------
+
+
+def conflict_blockers(raw_conflicts: Any) -> List[Dict[str, Any]]:
+    """Promote ``source_conflicts[]`` entries flagged ``blocking`` to the
+    field-review blocker shape. Multi-call extraction emits source
+    conflicts when the email-side and attachment-side values disagree;
+    single-pass doesn't produce these (one source — Claude — sees both
+    streams together) so this returns ``[]`` for single-pass output.
+    """
+    blockers: List[Dict[str, Any]] = []
+    if not isinstance(raw_conflicts, list):
+        return blockers
+    for conflict in raw_conflicts:
+        if not isinstance(conflict, dict) or not conflict.get("blocking"):
+            continue
+        field = str(conflict.get("field") or "").strip()
+        if not field:
+            continue
+        blockers.append(
+            {
+                "field": field,
+                "reason": str(conflict.get("reason") or "source_value_mismatch"),
+                "severity": str(conflict.get("severity") or "high"),
+                "sources": list((conflict.get("values") or {}).keys()),
+                "preferred_source": str(conflict.get("preferred_source") or "attachment"),
+                "values": conflict.get("values") or {},
+            }
+        )
+    return blockers
+
+
+def build_extraction_review_gate(
+    *,
+    extraction: Dict[str, Any],
+    amount: float,
+    currency: str,
+    invoice_number: Optional[str],
+    due_date: Optional[str],
+    confidence: float,
+) -> Dict[str, Any]:
+    """Build the canonical extraction-review gate result.
+
+    Combines :func:`evaluate_critical_field_confidence` (low-confidence
+    critical-field check) with :func:`conflict_blockers` (multi-source
+    disagreement promotion). Returns the gate dict that downstream
+    consumers store as ``confidence_blockers`` + ``requires_field_review``
+    on the AP item.
+
+    Both intake paths must call this so single-pass and multi-call
+    extractions produce the same downstream shape:
+
+    - The gmail Pub/Sub webhook calls it after multi-call extraction.
+    - ``gmail_triage_service._format_single_pass_result`` calls it
+      against the single-pass extraction so the field-review gate is
+      not bypassed when the single-pass path succeeds.
+    """
+    field_confidences_raw = extraction.get("field_confidences")
+    gate = evaluate_critical_field_confidence(
+        overall_confidence=confidence,
+        field_values={
+            "vendor": extraction.get("vendor"),
+            "amount": amount,
+            "invoice_number": invoice_number,
+            "due_date": due_date,
+        },
+        field_confidences=field_confidences_raw if isinstance(field_confidences_raw, dict) else {},
+    )
+    blockers = list(gate.get("confidence_blockers") or [])
+    blockers.extend(conflict_blockers(extraction.get("source_conflicts")))
+
+    deduped: List[Dict[str, Any]] = []
+    seen: set = set()
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            continue
+        key = (
+            str(blocker.get("field") or "").strip(),
+            str(blocker.get("reason") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(blocker)
+
+    gate["confidence_blockers"] = deduped
+    gate["requires_field_review"] = bool(
+        deduped or extraction.get("requires_extraction_review")
+    )
+    gate["currency"] = currency
+    return gate

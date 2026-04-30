@@ -112,6 +112,18 @@ class AuditEventType(Enum):
     
     # System events
     ERROR = "error"
+
+    # Processing telemetry — used by the inline triage path to track
+    # single-pass vs multi-call cost + latency. See
+    # ``gmail_triage_service.run_inline_gmail_triage`` for emission.
+    PROCESSING_MODE_METRIC = "processing_mode_metric"
+
+    # Single-pass schema-drift signal — emitted when Claude's response
+    # fails the required-field validation in
+    # ``single_pass_processor._validate_response``. Operators query
+    # for this to spot when Claude's output shape changes before the
+    # multi-call fallback rate spikes.
+    SINGLE_PASS_VALIDATION_FAILED = "single_pass_validation_failed"
     RETRY = "retry"
     NOTIFICATION_SENT = "notification_sent"
 

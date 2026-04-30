@@ -120,6 +120,12 @@ async def process_invoice_single_pass(
                 validation_error,
                 sorted(parsed.keys()),
             )
+            _emit_schema_drift_event(
+                organization_id=organization_id,
+                thread_id=thread_id,
+                validation_error=validation_error,
+                response_keys=sorted(parsed.keys()),
+            )
             return None
 
         parsed["processing_mode"] = "single_pass"
@@ -309,6 +315,44 @@ def _parse_single_pass_response(text: str) -> Optional[Dict[str, Any]]:
         pass
     logger.warning("[SinglePass] Could not parse response: %s...", text[:200])
     return None
+
+
+def _emit_schema_drift_event(
+    *,
+    organization_id: str,
+    thread_id: Optional[str],
+    validation_error: str,
+    response_keys: List[str],
+) -> None:
+    """Emit a SINGLE_PASS_VALIDATION_FAILED audit event so operators
+    can query drift over time. Failure is non-fatal — never raise.
+
+    The validation_error string carries the dotted path that drifted
+    (e.g. ``"classification.document_type: missing"``), making it
+    queryable: a count by ``details.validation_path`` over the last
+    24h tells us which Claude-side regression to investigate.
+    """
+    try:
+        from clearledgr.services.audit_trail import (
+            AuditEventType,
+            get_audit_trail,
+        )
+
+        trail = get_audit_trail(organization_id)
+        trail.log(
+            invoice_id=thread_id or "unknown",
+            event_type=AuditEventType.SINGLE_PASS_VALIDATION_FAILED,
+            summary=f"Single-pass schema validation failed: {validation_error}",
+            details={
+                "validation_path": validation_error.split(":", 1)[0],
+                "validation_error": validation_error,
+                "response_keys": response_keys,
+                "processing_mode": "single_pass",
+            },
+        )
+    except Exception as exc:
+        # Telemetry must never break the fallback path.
+        logger.debug("[SinglePass] failed to emit drift event: %s", exc)
 
 
 def _validate_response(parsed: Dict[str, Any]) -> Optional[str]:

@@ -517,6 +517,176 @@ def test_single_pass_action_config_has_sufficient_output_budget():
     )
 
 
+class TestSinglePassConfidenceGate:
+    """#1 — single-pass output flows through the canonical extraction-
+    review gate. Without this, single-pass-extracted invoices skip the
+    critical-field confidence check that the multi-call webhook path
+    runs."""
+
+    def _format(self, sp_extraction):
+        from clearledgr.services.gmail_triage_service import _format_single_pass_result
+
+        sp = {
+            "classification": {"document_type": "invoice", "confidence": 0.95, "reasoning": "test"},
+            "extraction": sp_extraction,
+            "gl_coding": {"suggested_gl_code": "6000", "reasoning": "office"},
+            "duplicate_analysis": {"is_duplicate": False, "is_amendment": False},
+            "risk_assessment": {"fraud_risk": "none"},
+        }
+        payload = {"email_id": "msg-1"}
+        return _format_single_pass_result(sp, payload, "default")
+
+    def test_high_confidence_extraction_does_not_require_field_review(self):
+        result = self._format({
+            "vendor": "Acme",
+            "amount": 100.0,
+            "currency": "USD",
+            "invoice_number": "INV-1",
+            "due_date": "2026-05-15",
+            "overall_confidence": 0.99,
+            "field_confidences": {
+                "vendor": 0.99, "amount": 0.99,
+                "invoice_number": 0.99, "due_date": 0.99,
+            },
+        })
+        assert result["requires_field_review"] is False
+        assert result["confidence_blockers"] == []
+        assert "confidence_gate" in result
+
+    def test_low_field_confidence_triggers_field_review(self):
+        # due_date confidence below the 0.95 critical threshold should
+        # produce a confidence_blocker entry. Without the gate, this
+        # would have flowed through to posting silently.
+        result = self._format({
+            "vendor": "Acme",
+            "amount": 100.0,
+            "currency": "USD",
+            "invoice_number": "INV-1",
+            "due_date": "2026-05-15",
+            "overall_confidence": 0.99,
+            "field_confidences": {
+                "vendor": 0.99, "amount": 0.99,
+                "invoice_number": 0.99, "due_date": 0.40,
+            },
+        })
+        assert result["requires_field_review"] is True
+        blockers = result["confidence_blockers"]
+        assert any(b.get("field") == "due_date" for b in blockers)
+
+    def test_low_overall_confidence_triggers_field_review(self):
+        result = self._format({
+            "vendor": "Acme",
+            "amount": 100.0,
+            "currency": "USD",
+            "invoice_number": "INV-1",
+            "due_date": "2026-05-15",
+            "overall_confidence": 0.45,  # below DEFAULT_CONFIDENCE_FLOOR
+            "field_confidences": {},
+        })
+        assert result["requires_field_review"] is True
+
+    def test_gate_signature_matches_webhook_path(self):
+        # Sanity: the same `build_extraction_review_gate` produces the
+        # same shape whether called from the webhook or the triage path.
+        from clearledgr.core.ap_confidence import build_extraction_review_gate
+
+        gate = build_extraction_review_gate(
+            extraction={
+                "vendor": "Acme",
+                "field_confidences": {
+                    "vendor": 0.99, "amount": 0.99,
+                    "invoice_number": 0.99, "due_date": 0.99,
+                },
+            },
+            amount=100.0,
+            currency="USD",
+            invoice_number="INV-1",
+            due_date="2026-05-15",
+            confidence=0.99,
+        )
+        assert "confidence_blockers" in gate
+        assert "requires_field_review" in gate
+        assert "currency" in gate
+
+
+class TestSchemaDriftEvent:
+    """#4 — `_validate_response` failures emit a
+    SINGLE_PASS_VALIDATION_FAILED audit event. Operators query for
+    this to spot when Claude's output shape changes before the
+    fallback rate spikes."""
+
+    @pytest.mark.asyncio
+    async def test_validation_failure_emits_drift_event(self, monkeypatch):
+        # Drifted response: missing classification.document_type.
+        drifted = json.loads(_VALID_RESPONSE)
+        del drifted["classification"]["document_type"]
+        fake_gateway = AsyncMock()
+        fake_gateway.call = AsyncMock(
+            return_value=_fake_llm_response(json.dumps(drifted)),
+        )
+
+        recorded: list = []
+
+        class _FakeTrail:
+            def log(self, **kwargs):
+                recorded.append(kwargs)
+
+        with patch(
+            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            return_value=fake_gateway,
+        ), patch(
+            "clearledgr.services.audit_trail.get_audit_trail",
+            return_value=_FakeTrail(),
+        ):
+            result = await process_invoice_single_pass(
+                subject="Test",
+                sender="test@test.com",
+                body="body",
+                organization_id="org-1",
+                thread_id="thread-x",
+            )
+        assert result is None  # validation failed, fallback fires
+        # One drift event with the failed path in details
+        assert len(recorded) == 1
+        evt = recorded[0]
+        from clearledgr.services.audit_trail import AuditEventType
+        assert evt["event_type"] == AuditEventType.SINGLE_PASS_VALIDATION_FAILED
+        details = evt["details"]
+        assert details["validation_path"] == "classification.document_type"
+        assert details["processing_mode"] == "single_pass"
+        assert "validation_error" in details
+
+    @pytest.mark.asyncio
+    async def test_no_drift_event_when_validation_passes(self, monkeypatch):
+        fake_gateway = AsyncMock()
+        fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
+
+        recorded: list = []
+
+        class _FakeTrail:
+            def log(self, **kwargs):
+                recorded.append(kwargs)
+
+        with patch(
+            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            return_value=fake_gateway,
+        ), patch(
+            "clearledgr.services.audit_trail.get_audit_trail",
+            return_value=_FakeTrail(),
+        ):
+            result = await process_invoice_single_pass(
+                subject="Test", sender="test@test.com", body="body",
+            )
+        assert result is not None
+        # Zero drift events on the happy path.
+        from clearledgr.services.audit_trail import AuditEventType
+        drift_events = [
+            r for r in recorded
+            if r.get("event_type") == AuditEventType.SINGLE_PASS_VALIDATION_FAILED
+        ]
+        assert drift_events == []
+
+
 @pytest.mark.asyncio
 async def test_process_invoice_single_pass_truncates_visual_attachments(monkeypatch):
     """More than MAX_VISUAL_ATTACHMENTS attachments — the call still
