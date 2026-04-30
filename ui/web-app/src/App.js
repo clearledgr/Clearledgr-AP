@@ -16,6 +16,7 @@ import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
 import { PipelineRoute } from './routes/pages/PipelineRoute.js';
 import { RecordDetailRoute } from './routes/pages/RecordDetailRoute.js';
+import { ReportsRoute } from './routes/pages/ReportsRoute.js';
 import { ReviewRoute } from './routes/pages/ReviewRoute.js';
 import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
 import { VendorsRoute } from './routes/pages/VendorsRoute.js';
@@ -58,6 +59,7 @@ export function App() {
                     <${Route} path="/reconciliation"><${ReconciliationRoute} /><//>
                     <${Route} path="/activity"><${ActivityRoute} /><//>
                     <${Route} path="/audit"><${AuditLogRoute} /><//>
+                    <${Route} path="/reports"><${ReportsRoute} /><//>
                     <${Route} path="/connections"><${ConnectionsRoute} /><//>
                     <${Route} path="/settings"><${SettingsRoute} /><//>
                     <${Route} path="/settings/:section">
