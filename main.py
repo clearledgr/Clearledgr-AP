@@ -488,6 +488,19 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     # is the right shape. The handlers enforce per-tenant scoping
     # (no auth needed — the SAML signature is the auth on ACS).
     "/saml/",
+    # Workspace shell — sub-routers shipped per module. Each is its
+    # own APIRouter with the prefix shown, mounted unconditionally in
+    # the include_router block below. Prefix-allow rather than per-
+    # endpoint exact-match because every router defines its own sub-
+    # routes (e.g. /status, /load, /preview under sample-data).
+    "/api/workspace/dashboard",        # Module 1 — approver workload strip
+    "/api/workspace/rules",             # Module 3 — approval rule engine
+    "/api/workspace/reports",           # Module 8 — five fixed reports + subscriptions
+    "/api/workspace/fx-rates",          # Module 9 — operator FX rate management
+    "/api/workspace/onboarding/sample-data",  # Module 10 — sample data mode
+    "/api/workspace/api-keys",          # Module 11 — customer-side API keys
+    "/api/workspace/escalation-policies",     # Module 11 — escalation policies
+    "/api/workspace/notification-preferences",  # Module 11 — per-user prefs
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -677,6 +690,10 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
         r"^/api/workspace/team/invites/[^/]+/revoke$",
+        # Module 6 — team offboarding (deactivate / reactivate).
+        r"^/api/workspace/team/users/[^/]+/(deactivate|reactivate)$",
+        # Module 2 — consolidated AP item detail page.
+        r"^/api/workspace/ap-items/[^/]+/detail$",
         r"^/api/agent/intents/skills/[^/]+/readiness$",
         r"^/api/agent/sessions/[^/]+$",
         r"^/api/agent/sessions/[^/]+/commands$",
