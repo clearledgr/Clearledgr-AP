@@ -142,6 +142,9 @@ from clearledgr.api.ap_item_detail import router as ap_item_detail_router
 from clearledgr.api.three_way_match import (
     router as three_way_match_router,
 )
+from clearledgr.api.workspace_reports import (
+    router as workspace_reports_router,
+)
 from clearledgr.api.threshold_policy import (
     router as threshold_policy_router,
 )
@@ -1419,6 +1422,11 @@ app.include_router(three_way_match_router)
 # exception-detail page — header + bill detail + reasoning panel +
 # 3-way match + timeline + available actions in one call.
 app.include_router(ap_item_detail_router)
+
+# Module 8 (workspace): the five fixed-scope reports — volume,
+# agent_performance, cycle_time, exception_breakdown, vendor_quality.
+# Each endpoint is org-scoped and never raises.
+app.include_router(workspace_reports_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)
