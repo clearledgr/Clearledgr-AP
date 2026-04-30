@@ -79,6 +79,7 @@ async def process_invoice_single_pass(
     thread_context: str = "",
     po_context: str = "",
     recent_invoices_context: str = "",
+    use_cache: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Process an invoice in a single Claude call.
 
@@ -86,7 +87,51 @@ async def process_invoice_single_pass(
     advisory gl/duplicate/risk fields) on success. Returns None on
     any failure: API error, malformed JSON, or missing required
     schema field. Never raises.
+
+    Idempotency: when ``use_cache`` is True (default), the canonical
+    inputs (subject + sender + body + attachment digests +
+    attachment_text + has_visual_attachments) are hashed and the
+    parsed result is cached for 1 hour. Gmail Pub/Sub re-fires
+    don't pay the Claude cost twice for the same email. Set
+    ``use_cache=False`` to bypass — useful in tests that want to
+    exercise the LLM call path on every invocation.
     """
+    content_hash: Optional[str] = None
+    if use_cache:
+        try:
+            from clearledgr.services.single_pass_cache import (
+                compute_content_hash,
+                get_cached_result,
+            )
+
+            content_hash = compute_content_hash(
+                subject=subject,
+                sender=sender,
+                body=body,
+                has_visual_attachments=has_visual_attachments,
+                visual_attachments=visual_attachments,
+                attachment_text=attachment_text,
+            )
+            cached = get_cached_result(content_hash)
+            if cached is not None:
+                # Mark so the consumer can tell cache hit from
+                # fresh call when reading processing_mode.
+                cached = dict(cached)
+                cached["processing_mode"] = "single_pass_cached"
+                cached["api_calls"] = 0
+                logger.info(
+                    "[SinglePass] cache hit for content_hash=%s — "
+                    "skipping Claude call",
+                    content_hash[:12],
+                )
+                return cached
+        except Exception as exc:
+            logger.debug(
+                "[SinglePass] cache lookup failed (%s) — proceeding with Claude call",
+                exc,
+            )
+            content_hash = None
+
     prompt = _build_single_pass_prompt(
         subject=subject,
         sender=sender,
@@ -130,6 +175,22 @@ async def process_invoice_single_pass(
 
         parsed["processing_mode"] = "single_pass"
         parsed["api_calls"] = 1
+
+        # Cache the validated result so Pub/Sub re-deliveries don't
+        # repay the Claude cost. We cache the parsed dict, not the
+        # markers — the markers are set by the lookup path on a hit.
+        if use_cache and content_hash:
+            try:
+                from clearledgr.services.single_pass_cache import set_cached_result
+
+                cacheable = {
+                    k: v for k, v in parsed.items()
+                    if k not in ("processing_mode", "api_calls")
+                }
+                set_cached_result(content_hash, cacheable)
+            except Exception as exc:
+                logger.debug("[SinglePass] cache set failed: %s", exc)
+
         return parsed
 
     except Exception as exc:
