@@ -93,7 +93,15 @@ ACTION_REGISTRY: Dict[LLMAction, ActionConfig] = {
     LLMAction.PO_LINE_MATCH:          ActionConfig(max_output_tokens=100,  model_tier="haiku", timeout_seconds=10),
     LLMAction.EXPLAIN_STATE:          ActionConfig(max_output_tokens=512,  model_tier="sonnet"),
     LLMAction.SLACK_QUERY:            ActionConfig(max_output_tokens=600,  model_tier="sonnet"),
-    LLMAction.SINGLE_PASS_EXTRACT:    ActionConfig(max_output_tokens=2000, model_tier="sonnet"),
+    # Single-pass produces classification + extraction (with line_items
+    # + bank_details + field_confidences) + three advisory blocks
+    # (gl_coding / duplicate_analysis / risk_assessment). Realistic
+    # response on a 5-line invoice is ~1800 tokens; a 20-line invoice
+    # can exceed 5000. EXTRACT_INVOICE_FIELDS already sits at 4000 for
+    # extraction alone — single-pass does more, so 6000 with a 120s
+    # timeout matches AGENT_PLANNING's precedent for similarly-sized
+    # composite Sonnet calls.
+    LLMAction.SINGLE_PASS_EXTRACT:    ActionConfig(max_output_tokens=6000, model_tier="sonnet", timeout_seconds=120),
 }
 
 

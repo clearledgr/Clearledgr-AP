@@ -432,6 +432,91 @@ async def test_process_invoice_single_pass_handles_markdown_fenced_response(monk
     assert result["classification"]["document_type"] == "invoice"
 
 
+class TestAttachmentTextPlumbing:
+    """The bridge between gmail_triage_service and single-pass —
+    `_collect_attachment_text` produces the `attachment_text` that
+    flows into the single-pass prompt. Used to be hard-coded `""`
+    with a TODO; the tests below pin the corrected behaviour so a
+    future refactor can't silently drop attachment text again.
+    """
+
+    def test_collect_attachment_text_returns_empty_for_no_attachments(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        assert _collect_attachment_text([]) == ""
+        assert _collect_attachment_text(None) == ""
+
+    def test_collect_attachment_text_returns_empty_when_no_content_text(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        assert _collect_attachment_text([{"filename": "scan.png"}]) == ""
+        assert _collect_attachment_text([{"filename": "x.pdf", "content_text": ""}]) == ""
+
+    def test_collect_attachment_text_tags_each_excerpt_with_filename(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        out = _collect_attachment_text([
+            {"filename": "invoice.pdf", "content_text": "INV-9001\nAmount: $500"},
+            {"name": "remit.txt", "content_text": "Payment ref ABC123"},
+        ])
+        assert "--- invoice.pdf ---" in out
+        assert "--- remit.txt ---" in out
+        assert "INV-9001" in out
+        assert "Payment ref ABC123" in out
+
+    def test_collect_attachment_text_caps_excerpts_at_4000_chars(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        big = "X" * 5000
+        out = _collect_attachment_text([{"filename": "huge.pdf", "content_text": big}])
+        assert "...[truncated]" in out
+        # Filename header + 4000-char body + truncation marker — comfortably
+        # under 5000 total even with the header overhead.
+        assert len(out) < 5000
+
+    def test_collect_attachment_text_skips_non_dict_entries(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        assert _collect_attachment_text([None, "not a dict", 42]) == ""
+
+    def test_collect_attachment_text_falls_back_to_default_filename(self):
+        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        out = _collect_attachment_text([{"content_text": "no filename here"}])
+        assert "--- attachment ---" in out
+        assert "no filename here" in out
+
+
+def test_single_pass_action_config_has_sufficient_output_budget():
+    """Pin the action-registry config for SINGLE_PASS_EXTRACT.
+
+    The schema (classification + extraction with line_items +
+    field_confidences + 3 advisory blocks) realistically produces
+    1800-5000 tokens depending on invoice complexity. The output
+    budget MUST exceed EXTRACT_INVOICE_FIELDS (extraction alone)
+    since single-pass also does classification + advisory analysis,
+    and the timeout MUST allow for the larger response. If a future
+    refactor lowers either, this test trips before drift reaches
+    production.
+    """
+    from clearledgr.core.llm_gateway import ACTION_REGISTRY, LLMAction
+
+    sp_config = ACTION_REGISTRY[LLMAction.SINGLE_PASS_EXTRACT]
+    extract_config = ACTION_REGISTRY[LLMAction.EXTRACT_INVOICE_FIELDS]
+
+    assert sp_config.max_output_tokens >= extract_config.max_output_tokens, (
+        f"SINGLE_PASS_EXTRACT must have at least as much output budget as "
+        f"EXTRACT_INVOICE_FIELDS (got {sp_config.max_output_tokens} vs "
+        f"{extract_config.max_output_tokens})"
+    )
+    assert sp_config.max_output_tokens >= 4000, (
+        f"SINGLE_PASS_EXTRACT output budget ({sp_config.max_output_tokens}) "
+        "is below the 4000-token floor needed for line-itemised invoices"
+    )
+    assert sp_config.timeout_seconds >= 60, (
+        f"SINGLE_PASS_EXTRACT timeout ({sp_config.timeout_seconds}s) is "
+        "too tight for the larger response size"
+    )
+    assert sp_config.model_tier == "sonnet", (
+        "SINGLE_PASS_EXTRACT must run on the sonnet tier — haiku quality "
+        "is insufficient for the composite analysis"
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_invoice_single_pass_truncates_visual_attachments(monkeypatch):
     """More than MAX_VISUAL_ATTACHMENTS attachments — the call still

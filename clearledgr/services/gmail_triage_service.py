@@ -344,6 +344,35 @@ async def run_inline_gmail_triage(
 # Single-pass helpers
 # ---------------------------------------------------------------------------
 
+def _collect_attachment_text(attachments: List[Dict[str, Any]]) -> str:
+    """Concatenate any pre-extracted text from email attachments.
+
+    Each attachment dict may carry a ``content_text`` field set by
+    upstream OCR / parsing. We forward those to the single-pass call
+    as ``attachment_text`` so Claude has both the visual stream
+    (through vision) AND the plain-text stream (through the prompt).
+    Each excerpt is capped at 4000 chars and tagged with the
+    filename so Claude can correlate snippets back to their source
+    attachments. Returns "" when nothing usable is available.
+    """
+    if not isinstance(attachments, list):
+        return ""
+    chunks: List[str] = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        text = str(att.get("content_text") or "").strip()
+        if not text:
+            continue
+        # Cap individual excerpts so a single 200KB OCR dump doesn't
+        # blow the call's input-token budget.
+        if len(text) > 4000:
+            text = text[:4000] + " ...[truncated]"
+        name = str(att.get("filename") or att.get("name") or "attachment").strip() or "attachment"
+        chunks.append(f"--- {name} ---\n{text}")
+    return "\n\n".join(chunks)
+
+
 async def _try_single_pass(
     payload: Dict[str, Any],
     org_id: str,
@@ -391,11 +420,18 @@ async def _try_single_pass(
                    for t in ("pdf", "image", "png", "jpeg", "jpg"))
         ]
 
+        # Forward any pre-extracted attachment text (OCR'd PDFs, plain
+        # .txt attachments, etc.) into the single-pass call. The visual
+        # attachments above also get sent through Claude vision, which
+        # is intentional duplication — text-heavy invoices benefit from
+        # both signals.
+        attachment_text = _collect_attachment_text(attachments)
+
         result = await process_invoice_single_pass(
             subject=payload.get("subject", ""),
             sender=payload.get("sender", ""),
             body=payload.get("body") or payload.get("snippet") or "",
-            attachment_text="",  # Text attachments not passed to single-pass yet
+            attachment_text=attachment_text,
             has_visual_attachments=bool(visual_atts),
             visual_attachments=visual_atts if visual_atts else None,
             organization_id=org_id,
