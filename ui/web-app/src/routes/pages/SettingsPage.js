@@ -784,6 +784,13 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
               </div>`
             : html`<div class="secondary-empty">No invites yet. Send one when someone needs access.</div>`}
         </div>
+
+        <${TeamMembersPanel}
+          api=${api}
+          toast=${toast}
+          orgId=${orgId}
+          actorEmail=${(bootstrap?.user?.email || '').toLowerCase()}
+          canManage=${canManageTeam} />
       </div>
 
       <div class="panel" ref=${billingRef}>
@@ -2046,4 +2053,156 @@ function humanizeEvent(event) {
     comment_mentions: 'Comment mentions',
   };
   return labels[event] || event.replace(/_/g, ' ');
+}
+
+
+// ─── Module 6 — Active members panel (deactivate / reactivate) ──────
+//
+// Lives below the invite list in the Team panel. Shows every user
+// in the org, their role, and an Active/Deactivated chip. Admins
+// get inline Deactivate / Reactivate buttons that POST to the
+// Module 6 offboarding endpoints. The UI guards self-deactivation
+// client-side too (the backend enforces it as well — defense in depth).
+
+function TeamMembersPanel({ api, toast, orgId, actorEmail, canManage }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await api(
+        `/api/workspace/team/users?organization_id=${encodeURIComponent(orgId)}&include_inactive=true`,
+      );
+      setUsers(resp?.users || []);
+    } catch (exc) {
+      toast?.(`Failed to load team: ${String(exc?.message || exc)}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [api, orgId, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onDeactivate = useCallback(async (u) => {
+    const confirmation = `Deactivate ${u.email}? They lose access immediately across all surfaces. Active sessions will fail on the next request, and any of their API keys will be revoked.`;
+    if (!window.confirm(confirmation)) return;
+    setBusyId(u.id);
+    try {
+      const resp = await api(`/api/workspace/team/users/${u.id}/deactivate`, {
+        method: 'POST',
+      });
+      const revoked = (resp && resp.api_keys_revoked) || 0;
+      const noun = revoked === 1 ? 'API key' : 'API keys';
+      toast?.(
+        revoked > 0
+          ? `${u.email} deactivated. ${revoked} ${noun} revoked.`
+          : `${u.email} deactivated.`,
+        'success',
+      );
+      await load();
+    } catch (exc) {
+      const detail = exc?.response?.detail || exc?.detail;
+      const code = detail?.code;
+      const message = detail?.message || String(exc?.message || exc);
+      toast?.(
+        code === 'last_owner_protected'
+          ? message
+          : code === 'cannot_deactivate_self'
+          ? message
+          : `Deactivate failed: ${message}`,
+        'error',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }, [api, toast, load]);
+
+  const onReactivate = useCallback(async (u) => {
+    setBusyId(u.id);
+    try {
+      await api(`/api/workspace/team/users/${u.id}/reactivate`, {
+        method: 'POST',
+      });
+      toast?.(`${u.email} reactivated.`, 'success');
+      await load();
+    } catch (exc) {
+      toast?.(`Reactivate failed: ${String(exc?.message || exc)}`, 'error');
+    } finally {
+      setBusyId(null);
+    }
+  }, [api, toast, load]);
+
+  if (loading && users.length === 0) {
+    return html`
+      <div class="panel" style="margin-top:18px">
+        <div class="panel-head compact">
+          <h3>Active members</h3>
+        </div>
+        <p class="muted" style="padding:12px 0">Loading…</p>
+      </div>
+    `;
+  }
+  if (users.length === 0) return null;
+
+  return html`
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-head compact">
+        <div>
+          <h3>Active members</h3>
+          <p class="muted">
+            Deactivation removes access immediately across the dashboard,
+            Gmail extension, Slack/Teams, and any of the user's API keys.
+          </p>
+        </div>
+      </div>
+      <table class="cl-settings-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${users.map((u) => {
+            const isSelf = (u.email || '').toLowerCase() === (actorEmail || '');
+            const isActive = u.is_active !== false;
+            const tone = isActive ? 'success' : 'warning';
+            return html`
+              <tr key=${u.id} class=${isActive ? '' : 'cl-settings-row-inactive'}>
+                <td><strong>${u.name || u.email}</strong>${isSelf ? html` <span class="muted">(you)</span>` : null}</td>
+                <td><code>${u.email}</code></td>
+                <td>${(u.role || '').replace(/_/g, ' ')}</td>
+                <td>
+                  <span class=${`cl-record-chip cl-record-chip-${tone}`}>
+                    ${isActive ? 'active' : 'deactivated'}
+                  </span>
+                </td>
+                <td style="text-align:right">
+                  ${canManage && isActive && !isSelf ? html`
+                    <button class="btn btn-tertiary btn-sm"
+                      onClick=${() => onDeactivate(u)}
+                      disabled=${busyId === u.id}>
+                      ${busyId === u.id ? 'Working…' : 'Deactivate'}
+                    </button>
+                  ` : null}
+                  ${canManage && !isActive ? html`
+                    <button class="btn btn-tertiary btn-sm"
+                      onClick=${() => onReactivate(u)}
+                      disabled=${busyId === u.id}>
+                      ${busyId === u.id ? 'Working…' : 'Reactivate'}
+                    </button>
+                  ` : null}
+                </td>
+              </tr>
+            `;
+          })}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
