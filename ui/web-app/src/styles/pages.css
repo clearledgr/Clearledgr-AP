@@ -3295,3 +3295,148 @@
   margin: 8px 0;
   overflow-x: auto;
 }
+
+
+/* =========================================================== */
+/* Module 4 — Vendor detail page                               */
+/* Reuses cl-record-* primitives; this section adds only the   */
+/* vendor-specific layouts.                                    */
+/* =========================================================== */
+
+.cl-vendor-detail {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cl-vendor-detail-topbar {
+  display: flex;
+  align-items: center;
+}
+
+.cl-vendor-header {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 24px;
+}
+
+.cl-vendor-header-primary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--cl-border);
+  margin-bottom: 16px;
+}
+
+.cl-vendor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .cl-vendor-grid {
+    grid-template-columns: 1fr;
+  }
+  .cl-vendor-header-primary {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+.cl-vendor-section {
+  margin: 16px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--cl-border);
+}
+.cl-vendor-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.cl-vendor-subhead {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cl-ink-muted);
+  margin: 0 0 8px;
+}
+
+.cl-vendor-section-empty {
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.cl-vendor-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cl-vendor-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--cl-ink-primary);
+  padding: 8px 12px;
+  background: #FAFAF8;
+  border-radius: var(--cl-radius-sm);
+}
+
+.cl-vendor-chart {
+  width: 100%;
+  height: 120px;
+  display: block;
+}
+.cl-vendor-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11px;
+  font-family: var(--cl-font-mono);
+  color: var(--cl-ink-muted);
+}
+
+.cl-vendor-invoice-row {
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.cl-vendor-invoice-row:hover {
+  background: #FAFAF8;
+}
+
+.cl-vendor-skeleton {
+  background: linear-gradient(90deg, #F1F5F9 0%, #E2E8F0 50%, #F1F5F9 100%);
+  background-size: 200% 100%;
+  border-radius: var(--cl-radius);
+  animation: cl-record-shimmer 1500ms ease-in-out infinite;
+}
+.cl-vendor-skeleton-head { height: 140px; }
+.cl-vendor-skeleton-grid { height: 320px; }
+
+.cl-vendor-error {
+  text-align: center;
+  padding: 64px 32px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+}
+.cl-vendor-error-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+}

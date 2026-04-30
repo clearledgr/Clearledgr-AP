@@ -146,6 +146,7 @@ from clearledgr.api.escalation_policies import (
 from clearledgr.api.notification_preferences import (
     router as notification_preferences_router,
 )
+from clearledgr.api.dashboard import router as dashboard_router
 from clearledgr.api.fx_rates import router as fx_rates_router
 from clearledgr.api.sample_data import router as sample_data_router
 from clearledgr.api.team_offboarding import (
@@ -1492,6 +1493,10 @@ app.include_router(fx_rates_router)
 # production reads (worklist + reports) filter samples out so they
 # never contaminate live data per spec §329.
 app.include_router(sample_data_router)
+
+# Module 1 — Live Operations dashboard reads.
+# Approver workload aggregation; logistics, not scoring per §74.
+app.include_router(dashboard_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)

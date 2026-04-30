@@ -19,6 +19,7 @@ import { RecordDetailRoute } from './routes/pages/RecordDetailRoute.js';
 import { ReportsRoute } from './routes/pages/ReportsRoute.js';
 import { ReviewRoute } from './routes/pages/ReviewRoute.js';
 import { RulesRoute } from './routes/pages/RulesRoute.js';
+import { VendorDetailRoute } from './routes/pages/VendorDetailRoute.js';
 import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
 import { VendorsRoute } from './routes/pages/VendorsRoute.js';
 import { ReconciliationRoute } from './routes/pages/ReconciliationRoute.js';
@@ -55,7 +56,7 @@ export function App() {
                     <${Route} path="/exceptions"><${ExceptionsRoute} /><//>
                     <${Route} path="/vendors"><${VendorsRoute} /><//>
                     <${Route} path="/vendors/:name">
-                      ${(params) => html`<${VendorsRoute} initialVendor=${params.name} />`}
+                      ${(params) => html`<${VendorDetailRoute} vendorName=${decodeURIComponent(params.name || '')} />`}
                     <//>
                     <${Route} path="/reconciliation"><${ReconciliationRoute} /><//>
                     <${Route} path="/activity"><${ActivityRoute} /><//>

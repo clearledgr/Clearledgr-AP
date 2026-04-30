@@ -80,6 +80,7 @@ export function HomePage() {
   const [upcoming, setUpcoming] = useState({ status: 'loading', data: null });
   const [metrics, setMetrics] = useState({ status: 'loading', data: null });
   const [aging, setAging] = useState({ status: 'loading', data: null });
+  const [workload, setWorkload] = useState({ status: 'loading', data: null });
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +89,8 @@ export function HomePage() {
       api(`/api/ap/items/upcoming?${orgQuery}&limit=10`),
       api(`/api/ap/items/metrics/aggregation?${orgQuery}&vendor_limit=5`),
       api(`/api/ap/items/aging?${orgQuery}`),
-    ]).then(([up, met, age]) => {
+      api('/api/workspace/dashboard/approver-workload'),
+    ]).then(([up, met, age, wl]) => {
       if (cancelled) return;
       setUpcoming(
         up.status === 'fulfilled'
@@ -104,6 +106,11 @@ export function HomePage() {
         age.status === 'fulfilled'
           ? { status: 'ready', data: age.value }
           : { status: 'error', data: null, error: age.reason?.message || 'load_failed' }
+      );
+      setWorkload(
+        wl.status === 'fulfilled'
+          ? { status: 'ready', data: wl.value }
+          : { status: 'error', data: null, error: wl.reason?.message || 'load_failed' }
       );
     });
     return () => { cancelled = true; };
@@ -265,6 +272,10 @@ export function HomePage() {
         </div>
       </section>
 
+      <${ApproverWorkloadStrip}
+        state=${workload}
+        navigate=${navigate} />
+
       <footer class="cl-home-quick-actions">
         <h3>Quick actions</h3>
         <div class="cl-home-quick-actions-row">
@@ -276,6 +287,95 @@ export function HomePage() {
       </footer>
     </div>
   `;
+}
+
+
+// ─── Module 1 — Approver workload strip ───────────────────────────
+//
+// Spec line 74: "Surfaces logistics ('Tobi has 8 waiting, oldest 5
+// days, on PTO') so the leader can re-route. Logistics, not scoring."
+// One row per approver: name, pending count, oldest age. Empty
+// state when no chains pending. Click an approver → pipeline
+// filtered to their items (client-side filter via query string).
+
+function ApproverWorkloadStrip({ state, navigate }) {
+  if (!state || state.status === 'loading') {
+    return html`
+      <section class="cl-home-workload">
+        <header class="cl-home-workload-head">
+          <h2>Approver workload</h2>
+        </header>
+        <div class="cl-home-skeleton">Loading…</div>
+      </section>
+    `;
+  }
+
+  const approvers = (state.data && state.data.approvers) || [];
+
+  if (approvers.length === 0) {
+    return html`
+      <section class="cl-home-workload">
+        <header class="cl-home-workload-head">
+          <h2>Approver workload</h2>
+          <span class="cl-home-workload-meta">Logistics, not scoring</span>
+        </header>
+        <div class="cl-home-empty">
+          <div class="cl-home-empty-title">Nothing waiting on anyone right now.</div>
+          <div class="cl-home-empty-sub">
+            When invoices route to approval, you'll see who has what on their
+            plate so you can re-route if someone is out.
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  return html`
+    <section class="cl-home-workload">
+      <header class="cl-home-workload-head">
+        <h2>Approver workload</h2>
+        <span class="cl-home-workload-meta">
+          ${approvers.length} approver${approvers.length === 1 ? '' : 's'} ·
+          logistics, not scoring
+        </span>
+      </header>
+      <ul class="cl-home-workload-list">
+        ${approvers.slice(0, 8).map((a) => html`
+          <li class="cl-home-workload-row" key=${a.approver_id}
+            onClick=${() => navigate(`/pipeline?approver=${encodeURIComponent(a.email || a.approver_id)}`)}>
+            <div class="cl-home-workload-main">
+              <div class="cl-home-workload-name">${a.name || a.email || a.approver_id}</div>
+              ${a.email && a.email !== a.name ? html`
+                <div class="cl-home-workload-email"><code>${a.email}</code></div>
+              ` : null}
+            </div>
+            <div class="cl-home-workload-stats">
+              <span class="cl-home-workload-count">${a.pending_count}</span>
+              <span class="cl-home-workload-count-label">
+                pending${a.pending_count === 1 ? '' : ''}
+              </span>
+              ${a.oldest_pending_age_days != null ? html`
+                <span class=${`cl-home-workload-age cl-home-workload-age-${ageTone(a.oldest_pending_age_days)}`}>
+                  oldest ${a.oldest_pending_age_days}d
+                </span>
+              ` : null}
+            </div>
+          </li>
+        `)}
+      </ul>
+      ${approvers.length > 8 ? html`
+        <div class="cl-home-workload-more">
+          + ${approvers.length - 8} more approvers
+        </div>
+      ` : null}
+    </section>
+  `;
+}
+
+function ageTone(days) {
+  if (days >= 5) return 'alert';
+  if (days >= 2) return 'warn';
+  return 'ok';
 }
 
 function KpiTile({ label, value, hint, accent = 'neutral', onClick }) {

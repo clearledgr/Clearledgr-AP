@@ -323,3 +323,127 @@
   color: var(--cl-ink-secondary);
   margin-top: 3px;
 }
+
+
+/* Module 1 — Approver workload strip */
+
+.cl-home-workload {
+  margin-top: 24px;
+  padding: 24px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+}
+
+.cl-home-workload-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.cl-home-workload-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.cl-home-workload-meta {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+}
+
+.cl-home-workload-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cl-home-workload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--cl-border);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.cl-home-workload-row:hover {
+  background: #FAFAF8;
+}
+.cl-home-workload-row:last-child {
+  border-bottom: none;
+}
+
+.cl-home-workload-main {
+  flex: 1;
+  min-width: 0;
+}
+.cl-home-workload-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--cl-ink-primary);
+}
+.cl-home-workload-email {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  font-family: var(--cl-font-mono);
+  margin-top: 2px;
+}
+
+.cl-home-workload-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cl-home-workload-count {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--cl-ink-primary);
+  font-family: var(--cl-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.cl-home-workload-count-label {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.cl-home-workload-age {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 8px;
+  font-family: var(--cl-font-mono);
+}
+.cl-home-workload-age-ok {
+  background: var(--cl-mint-soft);
+  color: #14532D;
+}
+.cl-home-workload-age-warn {
+  background: #FEF3C7;
+  color: #92400E;
+}
+.cl-home-workload-age-alert {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+
+.cl-home-workload-more {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  margin-top: 12px;
+  text-align: center;
+}
