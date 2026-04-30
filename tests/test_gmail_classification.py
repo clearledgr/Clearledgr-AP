@@ -1,9 +1,3 @@
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.services.ap_classifier import classify_ap_email
 from clearledgr.services.email_parser import EmailParser

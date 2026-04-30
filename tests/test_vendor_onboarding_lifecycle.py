@@ -11,16 +11,16 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()
@@ -53,7 +53,6 @@ def _seed_session(db, org="org_t", vendor="Acme Ltd", invited_hours_ago=0):
         },
     ) if False else None  # Can't self-transition — update metadata directly
     # Direct metadata update since invited→invited isn't a valid transition.
-    import json
     meta = session.get("metadata") or {}
     meta.update({
         "invite_email_to": "billing@acme.com",
@@ -76,7 +75,6 @@ def _seed_to_bank_verified(db, org="org_t", vendor="Acme Ltd"):
     for s in ("kyc", "bank_verify", "bank_verified"):
         db.transition_onboarding_session_state(session["id"], s, actor_id="agent")
     # Add contact metadata.
-    import json
     updated = db.get_onboarding_session_by_id(session["id"])
     meta = updated.get("metadata") or {}
     meta.update({
@@ -211,7 +209,6 @@ class TestChaseStaleSessionsLogic:
 # ===========================================================================
 
 
-import json
 
 
 class TestActivateVendorInErp:

@@ -6,7 +6,7 @@ connectors. Keeps injection-prevention logic in a single place.
 """
 
 import re
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 
 _QB_QUERY_VALUE_ALLOWED_CHARS = re.compile(r"[^A-Za-z0-9@._\-\s]")

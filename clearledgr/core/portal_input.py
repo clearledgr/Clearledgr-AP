@@ -144,7 +144,7 @@ def validate_registered_address(value: str) -> str:
         _WS_COLLAPSE_RE.sub(" ", line).strip()
         for line in raw.splitlines()
     ]
-    cleaned = "\n".join(l for l in lines if l)
+    cleaned = "\n".join(line for line in lines if line)
     if len(cleaned) > 512:
         raise PortalInputError("registered_address", "too long (max 512 chars)")
     if not _ADDRESS_ALLOWED_RE.match(cleaned.replace("\n", " ")):

@@ -7,7 +7,6 @@ Following the spec: Exception-only notifications with one-click approval.
 
 import os
 import logging
-import httpx
 from clearledgr.core.http_client import get_http_client
 from typing import Dict, Any, Optional, List
 from clearledgr.services.slack_api import resolve_slack_runtime
@@ -154,24 +153,34 @@ def _resolve_intelligent_route(
         result["user_email"] = approver_email
         result["routing_rule"] = result.get("routing_rule") if result["routing_rule"] != "default" else "standard_approval"
 
-    # Rule 2: Above AP Manager threshold → Controller DM + channel copy
+    # Rule 2 / 3: tiered amount-based escalation. Above cfo_threshold
+    # always goes to the CFO with a 4h SLA; between controller and cfo
+    # thresholds goes to the Financial Controller with a channel copy.
     elif message_type in ("personal_approval", "cfo_escalation") and amount and amount > controller_threshold:
+        cfo_email = org_settings.get("cfo_email")
         controller_email = org_settings.get("financial_controller_email")
-        if controller_email:
+        if amount > cfo_threshold and cfo_email:
+            result["target"] = "dm"
+            result["user_email"] = cfo_email
+            result["also_channel"] = True
+            result["escalation_hours"] = 4
+            result["routing_rule"] = "above_threshold_cfo"
+        elif controller_email:
             result["target"] = "dm"
             result["user_email"] = controller_email
-            result["also_channel"] = True  # Copy to channel for visibility
+            result["also_channel"] = True
             result["routing_rule"] = "above_threshold_controller"
         elif approver_email:
             result["target"] = "dm"
             result["user_email"] = approver_email
             result["routing_rule"] = "standard_approval"
 
-    # Rule 3: CFO-level sign-off → CFO DM + 4-hour response window
+    # Rule 3b: explicit CFO escalation message type below cfo_threshold —
+    # still goes to the configured approver with the 4h response window.
     elif message_type == "cfo_escalation" and approver_email:
         result["target"] = "dm"
         result["user_email"] = approver_email
-        result["escalation_hours"] = 4  # 4-hour response window
+        result["escalation_hours"] = 4
         result["routing_rule"] = "cfo_sign_off"
 
     # Rule 4: Exception requiring procurement → procurement contact DM
@@ -1197,21 +1206,37 @@ async def send_invoice_exception_notification(
         },
     ]
 
-    # Send main card — use _post_slack_blocks directly to get message_ts for context thread
+    # Send main card — apply intelligent routing (DM the resolved
+    # approver when one is configured, else channel post). The
+    # threaded match-detail follow-up below needs a channel post for
+    # the parent_ts/parent_channel handles, so DM-only delivery
+    # (no also_channel hint) skips the threaded elaboration.
     route = _resolve_intelligent_route(
         message_type="personal_approval" if user_email else "channel",
         approver_email=user_email,
         organization_id=organization_id,
     )
 
-    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
-    send_result = await _post_slack_blocks(
-        blocks=blocks,
-        text=f"Exception: {exception_statement}",
-        preferred_channel=preferred_channel,
-        organization_id=organization_id,
-    )
-    sent = bool(send_result)
+    dm_sent = False
+    if route.get("target") == "dm" and route.get("user_email"):
+        dm_sent = await _post_slack_dm(
+            user_email=route["user_email"],
+            blocks=blocks,
+            text=f"Exception: {exception_statement}",
+            organization_id=organization_id,
+        )
+
+    send_result: Optional[Dict[str, Any]] = None
+    needs_channel = (not dm_sent) or bool(route.get("also_channel"))
+    if needs_channel:
+        preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+        send_result = await _post_slack_blocks(
+            blocks=blocks,
+            text=f"Exception: {exception_statement}",
+            preferred_channel=preferred_channel,
+            organization_id=organization_id,
+        )
+    sent = dm_sent or bool(send_result)
 
     if sent:
         # CONTEXT THREAD: full match detail as threaded reply

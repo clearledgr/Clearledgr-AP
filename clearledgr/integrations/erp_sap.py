@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from clearledgr.core.http_client import get_http_client
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP
 from clearledgr.core.money import Q2, money_to_float, to_decimal
 from clearledgr.integrations.erp_sanitization import _sanitize_odata_value
 
@@ -1299,30 +1299,25 @@ async def find_bill_sap(
 async def _attach_to_sap(
     connection, bill_id: str, file_bytes: bytes, filename: str,
 ) -> Optional[Dict[str, Any]]:
-    """Upload attachment to a SAP Business One PurchaseInvoice."""
-    import base64
+    """Upload attachment to a SAP Business One PurchaseInvoice.
 
+    SAP B1 Service Layer requires multipart/form-data for /Attachments2
+    so the file body actually travels — the JSON-only path needs the
+    file to already exist on the SAP server filesystem, which it
+    won't for our cloud-uploaded PDFs. Honest stub here until the
+    multipart upload (boundary, Content-Disposition, two-step create
+    + link to bill) is implemented.
+    """
     creds = connection.credentials or {}
     base_url = str(creds.get("base_url") or "").rstrip("/")
     session_id = creds.get("session_id", "")
     if not base_url or not session_id:
         return None
-    encoded = base64.b64encode(file_bytes).decode()
-    url = f"{base_url}/Attachments2"
-    headers = {"Cookie": f"B1SESSION={session_id}", "Content-Type": "application/json"}
-    payload = {
-        "Attachments2_Lines": [{
-            "SourcePath": filename,
-            "FileName": filename,
-            "FileExtension": "pdf",
-            "Override": "tNO",
-        }],
-    }
-    client = get_http_client()
-    # Create attachment record
-    resp = await client.post(url, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
-    return {"attached": True, "erp": "sap"}
+    logger.warning(
+        "[SAP] attachment upload not yet implemented — bill_id=%s filename=%s bytes=%d",
+        bill_id, filename, len(file_bytes or b""),
+    )
+    return {"attached": False, "erp": "sap", "reason": "multipart_upload_not_implemented"}
 
 
 # ==================== Payment Status Lookup ====================

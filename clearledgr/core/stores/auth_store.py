@@ -48,7 +48,6 @@ class AuthStore:
     ) -> None:
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        import uuid
         token_id = f"TOK-{uuid.uuid4().hex}"
 
         encrypted_access = self._encrypt_secret(access_token)
@@ -214,7 +213,6 @@ class AuthStore:
         integration_mode: str = "shared",
     ) -> Dict[str, Any]:
         self.initialize()
-        import uuid
 
         now = datetime.now(timezone.utc).isoformat()
         row_id = organization_id or f"ORG-{uuid.uuid4().hex}"
@@ -513,7 +511,6 @@ class AuthStore:
         Default seat is ``ap_clerk``.
         """
         self.initialize()
-        import uuid
         from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
 
         normalized_role = normalize_user_role(role) or ROLE_AP_CLERK
@@ -652,7 +649,6 @@ class AuthStore:
     ) -> Dict[str, Any]:
         """Store a hashed API key."""
         self.initialize()
-        import uuid
         key_id = str(uuid.uuid4())
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
         key_prefix = raw_key[:12] + "..."
@@ -783,7 +779,6 @@ class AuthStore:
     ) -> str:
         """Backward-compatible helper used by legacy auth routes."""
         self.initialize()
-        import uuid
 
         existing = self.get_user(user_id) if user_id else None
         row_id = user_id or f"USR-{uuid.uuid4().hex}"
@@ -980,7 +975,6 @@ class AuthStore:
         """
         self.initialize()
         import json as _json
-        import uuid
         import secrets
 
         now = datetime.now(timezone.utc).isoformat()

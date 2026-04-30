@@ -17,11 +17,8 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
 import importlib
-import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
 
 import pytest
 from fastapi import HTTPException
@@ -29,7 +26,7 @@ from fastapi import HTTPException
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()
@@ -486,7 +483,7 @@ class TestCFOGatedEndpointsStillEnforce:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB, get_db
+        from clearledgr.core.database import get_db
         from clearledgr.core import database as db_module
         import main
 

@@ -432,7 +432,7 @@ def test_service_audit_event_idempotency_key_present(db):
     idempotency key so a webhook redelivery short-circuits at the
     audit layer too."""
     item = _make_awaiting_ap_item(db, item_id="AP-pc-audit-idem")
-    result = record_payment_confirmation(
+    record_payment_confirmation(
         db,
         organization_id="default",
         ap_item_id=item["id"],

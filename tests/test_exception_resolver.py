@@ -10,7 +10,6 @@ import json
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from clearledgr.services.exception_resolver import ExceptionResolver, get_exception_resolver
 

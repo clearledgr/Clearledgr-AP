@@ -39,12 +39,12 @@ def _ai_evaluate_duplicates(
     scoring can't distinguish.
     """
     try:
-        import os, json
+        import os
+        import json
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             return flagged
 
-        import httpx
         matches_text = "\n".join(
             f"  - Invoice #{d.details.get('matching_invoice_number', '?')}, "
             f"amount {d.details.get('matching_amount', '?')}, "

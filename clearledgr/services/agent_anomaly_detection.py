@@ -3,8 +3,7 @@ Agent Anomaly Detection Service for Clearledgr Reconciliation v1
 
 Detects anomalies and unusual patterns in financial data.
 """
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from typing import Dict, List
 from statistics import mean, stdev
 
 

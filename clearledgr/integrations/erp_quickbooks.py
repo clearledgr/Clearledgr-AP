@@ -1299,24 +1299,12 @@ async def get_payment_status_quickbooks(
         bill_id_val = bill.get("Id") or ""
 
         if balance <= 0 and total_amt > 0:
-            # Fully paid — check if closed by VendorCredit instead of payment
-            # Query for BillPayment linked to this bill
-            bp_query = (
-                "SELECT Id FROM BillPayment WHERE Id IS NOT NULL "
-                f"STARTPOSITION 1 MAXRESULTS 1"
-            )
+            # Fully paid — derive closure_method from the bill's
+            # LinkedTxn rows (BillPayment vs VendorCredit). The dedicated
+            # BillPayment/VendorCredit Query API would give a richer
+            # answer but isn't required for the closure-method label.
             closure_method = "payment"
             try:
-                bp_url = f"https://quickbooks.api.intuit.com/v3/company/{connection.realm_id}/query"
-                bp_literal = _escape_query_literal(str(bill_id_val))
-                vc_query = (
-                    f"SELECT Id FROM VendorCredit "
-                    f"WHERE Id IS NOT NULL "
-                    f"STARTPOSITION 1 MAXRESULTS 1"
-                )
-                # Heuristic: if bill is paid (Balance=0) but we can't find a
-                # direct BillPayment reference, check for VendorCredits
-                # For now, mark closure_method based on available data
                 if not bill.get("LinkedTxn"):
                     closure_method = "unknown_non_payment"
                 else:

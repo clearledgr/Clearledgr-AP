@@ -11,16 +11,10 @@ Covers:
 """
 from __future__ import annotations
 
-import sys
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData

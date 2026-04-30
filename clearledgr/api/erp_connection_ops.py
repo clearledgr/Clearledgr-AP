@@ -33,7 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
@@ -330,7 +330,6 @@ def rotate_erp_credentials(
         )
 
     from clearledgr.integrations.erp_router import (
-        ERPConnection,
         get_erp_connection,
         set_erp_connection,
     )

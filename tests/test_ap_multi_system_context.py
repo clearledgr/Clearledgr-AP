@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.services.ap_item_service import _build_context_payload
@@ -39,7 +33,6 @@ def _make_db(tmp_path: Path) -> ClearledgrDB:
     at the tmp-path). Callers that want the PurchaseOrderService to
     see the same DB must go through ``get_db()`` — keep this in sync.
     """
-    from clearledgr.core.database import get_db
     db = get_db()
     db.initialize()
     return db

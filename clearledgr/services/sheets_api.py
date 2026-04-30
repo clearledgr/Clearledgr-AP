@@ -10,7 +10,6 @@ Used by:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -64,7 +63,6 @@ class SheetsAPIClient:
         Returns:
             List of rows, each row is a list of cell values.
         """
-        import httpx
 
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{range_notation}"
         params = {"valueRenderOption": value_render}
@@ -94,7 +92,6 @@ class SheetsAPIClient:
         Returns:
             Update response from Sheets API.
         """
-        import httpx
 
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{range_notation}"
         params = {"valueInputOption": input_option}
@@ -123,7 +120,6 @@ class SheetsAPIClient:
         Returns:
             Append response from Sheets API.
         """
-        import httpx
 
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{range_notation}:append"
         params = {"valueInputOption": input_option, "insertDataOption": "INSERT_ROWS"}
@@ -136,7 +132,6 @@ class SheetsAPIClient:
 
     async def get_spreadsheet_metadata(self, spreadsheet_id: str) -> Dict[str, Any]:
         """Get spreadsheet title and sheet names."""
-        import httpx
 
         url = f"{SHEETS_API_BASE}/{spreadsheet_id}"
         params = {"fields": "spreadsheetId,properties.title,sheets.properties"}

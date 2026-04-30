@@ -1,15 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import Dict
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.integrations.erp_router import Bill, ERPConnection

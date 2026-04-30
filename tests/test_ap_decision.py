@@ -18,8 +18,7 @@ import pytest
 
 def _make_db(tmp_path) -> Any:
     """Create and initialise a real ClearledgrDB backed by a temp file."""
-    db_file = str(tmp_path / "test_ap_decision.db")
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     db = get_db()
     db.initialize()
     return db

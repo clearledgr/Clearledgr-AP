@@ -235,7 +235,7 @@ class ConversationalAgent:
             question_id=f"vendor_{uuid.uuid4().hex[:8]}",
             question_type=QuestionType.CONFIRM_VENDOR,
             question_text=f"Is this invoice from *{vendor}*?",
-            context=f"This is a new vendor we haven't processed before. Please confirm.",
+            context="This is a new vendor we haven't processed before. Please confirm.",
             options=[
                 {"label": f"✓ Yes, it's {vendor}", "value": "confirm", "recommended": True},
                 {"label": "✗ No, wrong vendor", "value": "reject"},
@@ -261,7 +261,7 @@ class ConversationalAgent:
         return ClarifyingQuestion(
             question_id=f"dup_{uuid.uuid4().hex[:8]}",
             question_type=QuestionType.CONFIRM_DUPLICATE,
-            question_text=f"Is this a duplicate invoice?",
+            question_text="Is this a duplicate invoice?",
             context=f"{dup_msg}. {vendor} - ${amount:,.2f}" if amount else dup_msg,
             options=[
                 {"label": "✓ Not a duplicate, process it", "value": "not_duplicate", "recommended": True},

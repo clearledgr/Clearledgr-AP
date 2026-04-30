@@ -13,7 +13,6 @@ import json
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
-import pytest
 
 from clearledgr.services.invoice_validation import InvoiceValidationMixin
 

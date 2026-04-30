@@ -32,9 +32,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services import vendor_erp_push  # noqa: E402
 from clearledgr.services.vendor_erp_push import (  # noqa: E402
-    PushResult,
     _build_safe_payload,
     _resolve_erp_vendor_id,
     push_vendor_to_erp,

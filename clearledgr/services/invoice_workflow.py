@@ -13,15 +13,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
-from clearledgr.core.ap_confidence import (
-    DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD,
-    evaluate_critical_field_confidence,
-)
-from clearledgr.core.ap_states import (
-    APState,
-    OverrideContext,
-    classify_post_failure_recoverability,
-)
 from clearledgr.core.database import get_db
 from clearledgr.services.slack_api import SlackAPIClient, get_slack_client
 try:
@@ -29,18 +20,8 @@ try:
 except Exception as e:  # pragma: no cover - optional integration in some local builds
     logging.getLogger(__name__).info("TeamsAPIClient not available: %s", e)
     TeamsAPIClient = None  # type: ignore[assignment]
-from clearledgr.services.policy_compliance import get_policy_compliance
-from clearledgr.services.budget_awareness import get_budget_awareness
-from clearledgr.services.purchase_orders import get_purchase_order_service
-from clearledgr.integrations.erp_router import (
-    Bill, Vendor, get_or_create_vendor
-)
-from clearledgr.services.erp_api_first import post_bill_api_first
 from clearledgr.services.finance_learning import get_finance_learning_service
 from clearledgr.services.approval_card_builder import (
-    budget_status_rank,
-    normalize_budget_checks,
-    compute_budget_summary,
     humanize_reason_code,
     dedupe_reason_lines,
     build_approval_surface_copy,
@@ -1217,7 +1198,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             }
 
         # LEARNING: Check if we have a learned GL code for this vendor
-        suggested_gl = None
         try:
             learning = get_finance_learning_service(self.organization_id, db=self.db)
             suggestion = learning.suggest_gl_code(
@@ -1225,9 +1205,12 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 amount=invoice.amount,
             )
             if suggestion and suggestion.get("confidence", 0) > 0.5:
-                suggested_gl = suggestion
                 logger.info(f"Learning suggested GL {suggestion.get('gl_code')} for {invoice.vendor_name} (confidence: {suggestion.get('confidence'):.2f})")
-                
+                # Persist the suggestion onto the invoice when extraction
+                # didn't already pick a code, so downstream posting paths
+                # see the learned default.
+                if not getattr(invoice, "gl_code", None):
+                    invoice.gl_code = suggestion.get("gl_code")
                 # Boost confidence if we've seen this vendor before
                 if suggestion.get("confidence", 0) > 0.8:
                     invoice.confidence = min(0.99, invoice.confidence + 0.1)
@@ -1241,7 +1224,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 invoice.gmail_id, ap_decision.confidence, ap_decision.fallback,
             )
             return await self._auto_approve_and_post(
-                invoice, reason=f"ap_decision_approve"
+                invoice, reason="ap_decision_approve"
             )
 
         if ap_decision.recommendation == "reject":

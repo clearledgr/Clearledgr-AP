@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,8 @@ def _build_day14_blocks(
                     f"In your first two weeks, the agent processed *{total} invoices*. "
                     f"*{clean}* matched cleanly and required no action from you. "
                     f"*{exceptions}* were exceptions — all of which you resolved.\n\n"
-                    f"Your baseline exception rate is *{exception_rate:.1%}*. "
+                    f"Your baseline exception rate is *{exception_rate:.1%}* "
+                    f"(touchless rate *{touchless_rate:.1%}*). "
                     f"The industry average is 12%."
                 ),
             },

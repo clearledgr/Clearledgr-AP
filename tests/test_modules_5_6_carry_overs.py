@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI

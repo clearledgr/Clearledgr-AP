@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _main_module():

@@ -28,12 +28,11 @@ import xml.sax.saxutils as _xml_escape
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote_plus
 
 from clearledgr.services.saml_validator import (
     SAMLValidationError,
-    ValidatedAssertion,
     parse_and_validate_saml_response,
 )
 
@@ -440,7 +439,7 @@ def _summarize_cert(pem: str) -> Optional[Dict[str, Any]]:
     """Extract a non-secret summary of a PEM cert for the GET endpoint."""
     try:
         from cryptography import x509
-        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives import hashes
         cert = x509.load_pem_x509_certificate(pem.encode("ascii"))
         fp = cert.fingerprint(hashes.SHA256())
         return {

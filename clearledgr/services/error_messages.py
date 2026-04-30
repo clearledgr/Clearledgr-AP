@@ -14,7 +14,7 @@ Each error produces a structured message with:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,14 @@ def format_error_message(
         "erp_unreachable": {
             "summary": f"{erp_display} connection lost at {timestamp or 'now'}.",
             "detail": (
-                f"Invoices are queued and will process automatically when connection restores. "
-                f"No payments have been delayed."
+                "Invoices are queued and will process automatically when connection restores. "
+                "No payments have been delayed."
             ),
             "resolution": "Retries every 5 minutes. AP Manager alerted if outage exceeds 30 minutes.",
         },
         "erp_insufficient_permissions": {
             "summary": f"Cannot post to {erp_display} — missing permission.",
-            "detail": detail or f"The specific action requires a permission not currently granted.",
+            "detail": detail or "The specific action requires a permission not currently granted.",
             "resolution": f"Grant the required permission in {erp_display} and retry. Other actions not requiring this permission continue normally.",
         },
         "po_not_found_in_erp": {
@@ -65,7 +65,7 @@ def format_error_message(
             "resolution": "Routed to AP Manager for resolution.",
         },
         "grn_not_matched": {
-            "summary": f"GRN partial match — found receipt but amounts differ.",
+            "summary": "GRN partial match — found receipt but amounts differ.",
             "detail": detail or (
                 f"Invoice {invoice_number or 'N/A'} from {vendor_name or 'vendor'}: "
                 f"goods receipt found but quantities or amounts do not match exactly."
@@ -75,7 +75,7 @@ def format_error_message(
 
         # ── Invoice Processing Errors ──
         "unreadable_pdf": {
-            "summary": f"Invoice attachment could not be parsed.",
+            "summary": "Invoice attachment could not be parsed.",
             "detail": (
                 f"The PDF from {vendor_name or 'vendor'} appears to be "
                 f"image-only, corrupted, or in an unsupported format."
@@ -88,7 +88,7 @@ def format_error_message(
             "resolution": "Ask the vendor to resend with the invoice attached, or manually enter the invoice details.",
         },
         "duplicate_detected": {
-            "summary": f"Possible duplicate of a previous invoice.",
+            "summary": "Possible duplicate of a previous invoice.",
             "detail": (
                 f"Invoice {invoice_number or 'N/A'} from {vendor_name or 'vendor'} "
                 f"({currency} {amount:,.2f}) matches a previously processed invoice "
@@ -97,15 +97,15 @@ def format_error_message(
             "resolution": "Confirm this is a new invoice before processing. Original invoice linked in the timeline.",
         },
         "amount_extraction_conflict": {
-            "summary": f"Amount conflict between email subject and body.",
-            "detail": detail or f"The extracted amount differs from amounts mentioned elsewhere in the email.",
+            "summary": "Amount conflict between email subject and body.",
+            "detail": detail or "The extracted amount differs from amounts mentioned elsewhere in the email.",
             "resolution": "Review the original email and confirm the correct amount before approving.",
         },
 
         # ── Vendor / Onboarding Errors ──
         "vendor_not_in_master": {
             "summary": f"Invoice from {vendor_name or 'unknown sender'} — vendor not in master.",
-            "detail": f"Sender is not an active vendor. No invoice Box created.",
+            "detail": "Sender is not an active vendor. No invoice Box created.",
             "resolution": "Initiate vendor onboarding or reject. Invoice will not be processed until vendor is activated.",
         },
         "iban_validation_failed": {
@@ -120,7 +120,7 @@ def format_error_message(
         },
         "vendor_unresponsive": {
             "summary": f"{vendor_name or 'Vendor'} has not responded to onboarding request.",
-            "detail": f"Auto-chase emails sent at 24h and 48h. No response received.",
+            "detail": "Auto-chase emails sent at 24h and 48h. No response received.",
             "resolution": "Escalated to AP Manager. Consider direct contact or alternative vendor.",
         },
     }

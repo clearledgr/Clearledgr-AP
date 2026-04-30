@@ -16,7 +16,7 @@ Changelog:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
 from clearledgr.services.llm_multimodal import MultiModalLLMService

@@ -5,7 +5,6 @@ as APStore, VendorStore, TaskStore, etc.
 """
 from __future__ import annotations
 
-import json
 import uuid
 import logging
 from datetime import datetime, timezone

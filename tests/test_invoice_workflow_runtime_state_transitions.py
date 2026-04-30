@@ -7,15 +7,9 @@ the persisted canonical AP transitions and audit behavior.
 
 import asyncio
 import json
-import sys
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
@@ -293,7 +287,7 @@ def test_process_new_invoice_routes_to_review_on_low_confidence_critical_field(s
 
 
 def test_approve_invoice_success_transitions_through_ready_to_post(service, db, monkeypatch):
-    item = _create_ap_item(db, gmail_id="gmail-approve-success", state="needs_approval")
+    _create_ap_item(db, gmail_id="gmail-approve-success", state="needs_approval")
 
     monkeypatch.setattr(service, "_load_budget_context_from_invoice_row", lambda _row: [])
     monkeypatch.setattr(service, "_check_po_exception_block", lambda _row: {"blocked": False, "exceptions": []})

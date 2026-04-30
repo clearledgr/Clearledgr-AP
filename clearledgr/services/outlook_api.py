@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import httpx
 from clearledgr.core.http_client import get_http_client
 from cryptography.fernet import Fernet
 

@@ -1,4 +1,3 @@
-from clearledgr.core.http_client import get_http_client
 """
 ERP OAuth API Endpoints
 
@@ -9,14 +8,20 @@ Handles OAuth authorization flows for connecting ERPs:
 - GET /oauth/status - Get connection status
 """
 
-import uuid
 import logging
-from typing import Optional
+import uuid
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from clearledgr.core.auth import get_current_user
+from clearledgr.core.http_client import get_http_client
+from clearledgr.integrations.erp_router import (
+    ERPConnection,
+)
 from clearledgr.integrations.oauth import (
     get_quickbooks_auth_url,
     get_xero_auth_url,
@@ -29,12 +34,6 @@ from clearledgr.integrations.oauth import (
     ERPConnectionRecord,
     ensure_valid_token,
 )
-from clearledgr.integrations.erp_router import (
-    set_erp_connection,
-    get_erp_connection,
-    ERPConnection,
-)
-from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -327,7 +326,6 @@ async def connect_sap(request: SAPConnectRequest):
     credentials = base64.b64encode(f"{request.username}:{request.password}".encode()).decode()
     
     # Test connection
-    import httpx
     try:
         client = get_http_client()
         response = await client.get(

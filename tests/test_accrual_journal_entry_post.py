@@ -23,9 +23,7 @@ Covers:
 """
 from __future__ import annotations
 
-import json
 import sys
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -49,7 +47,6 @@ from clearledgr.services.accrual_journal_entry_post import (  # noqa: E402
     _proposal_to_erp_entry,
     _proposal_to_reversal_entry,
     get_accrual_run,
-    list_accrual_runs,
     post_accrual_je,
     post_pending_reversals,
     run_month_end_close,

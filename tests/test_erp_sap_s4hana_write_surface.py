@@ -26,7 +26,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -333,7 +332,7 @@ def test_reverse_bill_from_sap_b1_routes_to_cancel_action():
 
     with _patch_post(captured, {}), \
          patch.object(erp_sap, "_open_sap_service_layer_session", new=fake_session):
-        result = asyncio.run(erp_sap.reverse_bill_from_sap(
+        asyncio.run(erp_sap.reverse_bill_from_sap(
             _b1_conn(), "100", reason="test",
         ))
     assert "/PurchaseInvoices(100)/Cancel" in captured[0]["url"]

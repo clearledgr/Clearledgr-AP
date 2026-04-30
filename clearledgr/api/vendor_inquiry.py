@@ -13,9 +13,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import TokenData, get_current_user

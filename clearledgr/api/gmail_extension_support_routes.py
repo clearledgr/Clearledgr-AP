@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re as _re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -1113,8 +1114,6 @@ async def _stream_sidebar_query(
 # Reference extraction: find HH:MM timestamps in the answer that match
 # audit events, so the frontend can turn them into clickable links that
 # scroll to the matching row in the Agent Actions timeline.
-import re as _re
-
 _TIMESTAMP_PATTERN = _re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 
 

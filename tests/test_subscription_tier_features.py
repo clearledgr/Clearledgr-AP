@@ -7,7 +7,6 @@ so the thesis-vs-code alignment is a grep-friendly acceptance set.
 """
 from __future__ import annotations
 
-import pytest
 
 from clearledgr.services.subscription import (
     PLAN_PRICING,

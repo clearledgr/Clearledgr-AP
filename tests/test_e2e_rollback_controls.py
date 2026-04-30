@@ -15,20 +15,13 @@ No HTTP, no external calls — all tests use a temp-file SQLite DB.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.database import get_db
 from clearledgr.core.launch_controls import (
-    default_rollback_controls,
     get_channel_action_block_reason,
     get_erp_posting_block_reason,
     get_rollback_controls,

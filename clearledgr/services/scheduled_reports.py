@@ -128,7 +128,7 @@ class ScheduledReportService:
 
     async def _deliver_report(self, schedule: Dict[str, Any]) -> None:
         """Generate and deliver a single report."""
-        from clearledgr.services.report_export import generate_report, rows_to_csv
+        from clearledgr.services.report_export import generate_report
 
         report_type = schedule.get("report_type", "ap_aging")
         rows, columns = generate_report(

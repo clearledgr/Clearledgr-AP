@@ -193,7 +193,6 @@ async def send_digest(org_id: str) -> bool:
             logger.warning("[digest] org=%s: no Slack channel configured", org_id)
             return False
 
-        import httpx
         headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
         payload = {
             "channel": runtime["channel"],

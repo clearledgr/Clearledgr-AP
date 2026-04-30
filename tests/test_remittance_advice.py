@@ -32,7 +32,6 @@ from clearledgr.services.payment_tracking import (  # noqa: E402
     record_payment_confirmation,
 )
 from clearledgr.services.remittance_advice import (  # noqa: E402
-    RemittanceAdviceResult,
     render_remittance_advice,
     send_remittance_advice,
 )

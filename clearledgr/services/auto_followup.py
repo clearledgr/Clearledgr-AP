@@ -247,7 +247,7 @@ Best regards"""
         # Add note about other missing items
         if len(missing_info) > 1:
             other_items = [self._format_missing_type(m) for m in missing_info[1:]]
-            body += f"\n\nAdditionally, please also provide:\n" + "\n".join([f"• {item}" for item in other_items])
+            body += "\n\nAdditionally, please also provide:\n" + "\n".join([f"• {item}" for item in other_items])
         
         draft = FollowUpDraft(
             to=sender_email,

@@ -36,7 +36,6 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 from clearledgr.services.approval_card_builder import build_approval_blocks  # noqa: E402
 from clearledgr.services.invoice_models import InvoiceData  # noqa: E402
 from clearledgr.services.journal_entry_preview import (  # noqa: E402
-    JELine,
     build_je_preview,
     render_je_preview_text,
 )

@@ -39,13 +39,12 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from clearledgr.api.ap_items_read_routes import shared
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import TokenData
-from clearledgr.services.logging import logger as _logger
 
 logger = logging.getLogger(__name__)
 

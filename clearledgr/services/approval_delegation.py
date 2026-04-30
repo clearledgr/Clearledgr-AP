@@ -8,7 +8,6 @@ Delegation rules are per-org, per-user, with optional date range
 """
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone

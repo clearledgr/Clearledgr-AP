@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, Request, status
 from fastapi.responses import JSONResponse, Response
 
 from clearledgr.core.database import get_db

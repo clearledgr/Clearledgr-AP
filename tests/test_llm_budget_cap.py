@@ -15,24 +15,15 @@ monkeypatch fixture pattern used across the rest of the suite.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData
 from clearledgr.core.llm_gateway import (
-    LLMAction,
     LLMBudgetExceededError,
     LLMGateway,
     reset_llm_gateway,

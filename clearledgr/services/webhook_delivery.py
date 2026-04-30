@@ -35,9 +35,8 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-import httpx
 from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)

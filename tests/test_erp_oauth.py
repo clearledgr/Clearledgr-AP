@@ -1,7 +1,7 @@
 """Tests for clearledgr.api.erp_oauth — OAuth callback + token flows."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -61,7 +61,7 @@ class TestQuickBooksCallback:
         with patch("clearledgr.api.erp_oauth.validate_oauth_state", return_value={"organization_id": "acme"}):
             with patch("clearledgr.api.erp_oauth.exchange_quickbooks_code", new_callable=AsyncMock, return_value=tokens):
                 with patch("clearledgr.api.erp_oauth.save_erp_connection") as mock_save:
-                    response = _run(quickbooks_callback(code="c", state="s", realmId="realm-1", error=None))
+                    _run(quickbooks_callback(code="c", state="s", realmId="realm-1", error=None))
                     mock_save.assert_called_once()
                     record = mock_save.call_args[0][0]
                     assert record.erp_type == "quickbooks"
@@ -96,7 +96,7 @@ class TestXeroCallback:
         with patch("clearledgr.api.erp_oauth.validate_oauth_state", return_value={"organization_id": "acme"}):
             with patch("clearledgr.api.erp_oauth.exchange_xero_code", new_callable=AsyncMock, return_value=tokens):
                 with patch("clearledgr.api.erp_oauth.save_erp_connection") as mock_save:
-                    response = _run(xero_callback(code="c", state="s", error=None))
+                    _run(xero_callback(code="c", state="s", error=None))
                     mock_save.assert_called_once()
                     record = mock_save.call_args[0][0]
                     assert record.erp_type == "xero"

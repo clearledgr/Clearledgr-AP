@@ -13,16 +13,9 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 

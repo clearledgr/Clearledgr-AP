@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services import fx_conversion  # noqa: E402
 from clearledgr.services.fx_conversion import (  # noqa: E402
     convert,
     get_exchange_rate,

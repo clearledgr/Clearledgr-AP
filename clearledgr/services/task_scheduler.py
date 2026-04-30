@@ -10,8 +10,8 @@ Autonomous task follow-ups and reminders:
 import uuid
 from clearledgr.core.database import get_db
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
-from clearledgr.services.email_tasks import get_overdue_tasks, get_tasks, get_task
+from typing import Dict
+from clearledgr.services.email_tasks import get_overdue_tasks, get_tasks
 from clearledgr.services.task_notifications import (
     send_task_notification, send_overdue_summary
 )

@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -29,7 +29,6 @@ from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.services.reclassification_je import (
     NotPostedError,
-    ReclassificationError,
     build_reclassification_proposal,
     list_reclassifications,
     record_reclassification,

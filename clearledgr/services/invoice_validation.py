@@ -1885,7 +1885,6 @@ class InvoiceValidationMixin:
             # to catch potential duplicates that would otherwise be missed entirely.
             try:
                 if hasattr(self.db, "get_ap_items_by_vendor") and invoice.amount:
-                    from datetime import timedelta
                     recent_items = self.db.get_ap_items_by_vendor(
                         self.organization_id,
                         invoice.vendor_name,
@@ -2110,7 +2109,6 @@ class InvoiceValidationMixin:
             if invoice.vendor_name:
                 from clearledgr.services.vendor_domain_lock import (
                     get_vendor_domain_lock_service,
-                    STATUS_MISMATCH,
                 )
 
                 lock_svc = get_vendor_domain_lock_service(
@@ -2216,10 +2214,9 @@ class InvoiceValidationMixin:
         # 5a-pre2) GL code validation against cached chart of accounts.
         try:
             if invoice.line_items:
-                from clearledgr.integrations.erp_router import get_chart_of_accounts
                 import asyncio as _aio
                 try:
-                    loop = _aio.get_running_loop()
+                    _aio.get_running_loop()
                     coa = []  # Can't await in sync context; skip if no loop
                 except RuntimeError:
                     coa = []

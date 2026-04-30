@@ -8,10 +8,8 @@ Validates that:
 - autonomy_action_thresholds() respects org_id or returns defaults
 """
 import copy
-import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from clearledgr.services.finance_runtime_autonomy import (
     _AUTONOMY_ACTION_THRESHOLDS,

@@ -11,23 +11,16 @@ evidence lives in:
 - ``tests/test_ap_workflow_runtime.py`` (declarative workflow adapter/runtime)
 """
 
-import json
 import os
-import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from clearledgr.core.ap_states import (
-    APState,
     IllegalTransitionError,
     VALID_TRANSITIONS,
     classify_post_failure_recoverability,
@@ -35,6 +28,8 @@ from clearledgr.core.ap_states import (
     transition_or_raise,
     validate_transition,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +43,7 @@ def _get_db():
     connection per ``connect()`` call, and :memory: databases are not shared
     across connections.
     """
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
 
     tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
     tmp.close()
@@ -438,7 +433,6 @@ class TestFullPipeline:
 class TestSecurityHardening:
     def test_no_hardcoded_secrets(self):
         """Grep-equivalent: no hardcoded 'clearledgr-dev-secret' in AP path."""
-        import re
         ap_path_files = [
             ROOT / "clearledgr" / "core" / "database.py",
             ROOT / "clearledgr" / "core" / "auth.py",

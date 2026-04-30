@@ -78,7 +78,7 @@ def _walk_to_posted(
     created_at = (
         base + timedelta(hours=created_offset_hours)
     ).isoformat()
-    item = db.create_ap_item({
+    db.create_ap_item({
         "id": item_id,
         "organization_id": org,
         "vendor_name": "Vendor X",

@@ -10,7 +10,6 @@ by ap_item_id, profile stats are recomputed from history each time).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.utils import safe_float_or_none

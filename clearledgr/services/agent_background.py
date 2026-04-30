@@ -1925,7 +1925,7 @@ async def _sync_vendor_master_data(org_id: str):
             alerts.append(f"{terms_changed} vendor(s) changed payment terms")
         if alerts:
             await _slack_alert(
-                f":arrows_counterclockwise: *Vendor Master Sync*\n"
+                ":arrows_counterclockwise: *Vendor Master Sync*\n"
                 + "\n".join(f"• {a}" for a in alerts),
                 organization_id=org_id,
             )
@@ -2028,7 +2028,7 @@ async def _check_queue_depth_and_concurrency() -> Dict[str, Any]:
     # 2. Workspace concurrency limit check
     try:
         from clearledgr.services.workspace_semaphore import (
-            WorkspaceSemaphore, TIER_LIMITS,
+            WorkspaceSemaphore,
         )
         from clearledgr.core.database import get_db
         db = get_db()

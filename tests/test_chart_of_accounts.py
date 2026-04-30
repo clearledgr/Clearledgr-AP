@@ -9,7 +9,6 @@ Follows existing test patterns:
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -613,7 +612,6 @@ class TestChartOfAccountsEndpoint:
     """Test the workspace API endpoint for chart of accounts."""
 
     def test_endpoint_returns_accounts(self, db):
-        from unittest.mock import PropertyMock
 
         org_id = "org_api_coa"
         db.create_organization(organization_id=org_id, name="API COA Org", settings={})
@@ -644,7 +642,7 @@ class TestChartOfAccountsEndpoint:
                 "clearledgr.integrations.erp_router.get_chart_of_accounts",
                 new_callable=AsyncMock,
                 return_value=mock_accounts,
-            ) as mock_coa:
+            ):
                 result = asyncio.run(
                     get_chart_of_accounts_endpoint(
                         organization_id=org_id,

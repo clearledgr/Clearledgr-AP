@@ -17,7 +17,6 @@ import json
 import os
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures" / "synthetic_invoices" / "invoices.json"
 
@@ -145,7 +144,6 @@ class TestExtractionFromFixtures:
 
         for inv in exception_invoices:
             email = inv["email"]
-            expected = inv["expected"]
 
             result = parse_email(
                 subject=email["subject"],
@@ -157,9 +155,7 @@ class TestExtractionFromFixtures:
             assert result is not None, f"Fixture {inv['id']}: parse_email returned None"
 
             # Missing field cases should have empty/null extraction for that field
-            if expected.get("vendor_name") == "":
-                vendor = (result.get("vendor_name") or "").strip()
-                # May or may not extract — the point is validation catches it
+            # May or may not extract — the point is validation catches it
 
 
 class TestValidationGateFromFixtures:

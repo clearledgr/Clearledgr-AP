@@ -19,15 +19,16 @@ This module is the dispatch layer. ERP-specific implementations live in:
 All public names are re-exported here so existing callers do not break.
 """
 
+import asyncio as _asyncio_for_lock
 import logging
-import httpx
-from clearledgr.core.http_client import get_http_client
-import re
-from typing import Dict, Any, Optional, List
+import secrets as _secrets_for_lock
+import time as _time_for_lock
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import get_db as _canonical_get_db
+from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -250,10 +251,6 @@ def _erp_connection_from_row(conn: Dict[str, Any]) -> ERPConnection:
 # same behaviour as the original ship — so dev (no Redis) and Redis
 # outages still work, just without the cross-process guarantee.
 # ---------------------------------------------------------------------------
-import asyncio as _asyncio_for_lock
-import secrets as _secrets_for_lock
-import time as _time_for_lock
-
 _REFRESH_LOCKS: Dict[str, _asyncio_for_lock.Lock] = {}
 
 # How long the Redis lock TTL is — bounds blast radius if the holder
@@ -514,7 +511,7 @@ def _enforce_erp_rate_limit(organization_id: str, erp_type: str) -> Optional[Dic
     Every ERP-calling function must invoke this before making the API call.
     """
     try:
-        from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter, ERPRateLimitError
+        from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter
         get_erp_rate_limiter().check_and_consume(organization_id, erp_type)
         return None
     except Exception as exc:

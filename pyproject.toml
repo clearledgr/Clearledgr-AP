@@ -1,0 +1,49 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "ui/gmail-extension/node_modules",
+    "ui/admin/node_modules",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# E: pycodestyle errors. F: pyflakes (undefined names, unused imports,
+# real bug detectors). The codebase is clean against this set as of the
+# harness commit; expand cautiously — every new rule that fires on
+# existing code is a tax on PRs until it's cleaned.
+select = ["E", "F"]
+ignore = [
+    "E501",  # line-too-long: handled by black formatting, not enforced
+    "E731",  # lambda assignments are fine in this codebase
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `clearledgr/_envboot.py` is a side-effect import that loads .env
+# before anything else. Its only consumer is `main.py`, which imports
+# the module purely for the side effect.
+"clearledgr/_envboot.py" = ["F401"]
+# Test files commonly use star imports from local fixture modules and
+# capture-then-discard patterns; tighter rules belong in the source tree.
+"tests/conftest.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# CI runs `pytest -n auto`; pytest-xdist is the parallel runner.
+# `loadfile` keeps tests from the same file on a single worker so
+# per-file fixtures (notably the session-scoped Postgres container)
+# share state correctly.
+addopts = "-ra --strict-markers --strict-config --dist=loadfile"
+# Strict mode matches the existing convention — async tests carry an
+# explicit @pytest.mark.asyncio decorator. Switching to "auto" would
+# silently treat any `async def test_` as asyncio, including tests that
+# are intentionally sync wrappers around async helpers.
+asyncio_mode = "strict"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"' for fast iteration)",
+    "integration: tests that exercise multiple services end-to-end",
+    "external: tests that require network or external services (skipped in CI by default)",
+]

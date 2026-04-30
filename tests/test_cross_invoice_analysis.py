@@ -7,7 +7,6 @@ import pytest
 
 from clearledgr.services.cross_invoice_analysis import (
     CrossInvoiceAnalyzer,
-    CrossInvoiceAnalysis,
 )
 
 

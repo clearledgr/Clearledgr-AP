@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from clearledgr.core.money import money_sum, money_to_float
-from collections import defaultdict
 
 from clearledgr.core.database import get_db
 
@@ -332,7 +331,7 @@ class ProactiveInsightsService:
                     f"Yesterday: ${yesterday_total:,.2f}"
                     if yesterday_total > 0 else "No invoices yesterday for comparison."
                 ),
-                data={"today_total": today_total, "yesterday_total": yesterday_total},
+                data={"today_total": today_total, "yesterday_total": yesterday_total, "today_count": today_count},
                 actionable=False,
             ))
 

@@ -6,12 +6,12 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -834,7 +834,6 @@ def _evaluate_monitoring_thresholds(
     - ``AP_ALERT_DUPLICATE_POST_COUNT``   (default 1)    — duplicate-posting circuit breaker
     """
     from datetime import datetime, timedelta, timezone
-    import json as _json
 
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=window_hours)).isoformat()

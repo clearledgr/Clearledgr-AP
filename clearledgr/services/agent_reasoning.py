@@ -284,55 +284,22 @@ class AgentReasoningService:
         text: str,
         attachments: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Extract invoice data using chain-of-thought prompt."""
-        
-        # Chain-of-thought prompt that asks LLM to reason step by step
-        prompt = f"""You are a finance expert analyzing an invoice. Think step by step.
+        """Extract invoice data and synthesize a reasoning summary.
 
-DOCUMENT:
-{text[:3000]}
-
-TASK: Extract invoice data and explain your reasoning.
-
-Think through these steps:
-1. IDENTIFY: What type of document is this? (Invoice, Payment, Receipt, Refund, Credit Note, Payment Request, Statement, Other)
-2. VENDOR: Who is the sender/vendor? Look for company name, logo, letterhead.
-3. AMOUNT: What is the total amount due? Look for "Total", "Amount Due", "Balance".
-4. DATES: What are the invoice date and due date?
-5. REFERENCE: What is the invoice number or reference?
-6. CONFIDENCE: How confident are you in each extraction? Why?
-
-Return JSON with this structure:
-{{
-  "document_type": "invoice|payment|receipt|refund|credit_note|payment_request|statement|other",
-  "vendor": "Company Name",
-  "total_amount": 123.45,
-  "currency": "USD",
-  "invoice_number": "INV-123",
-  "invoice_date": "2026-01-15",
-  "due_date": "2026-02-15",
-  "line_items": [...],
-  "extraction_confidence": 0.0-1.0,
-  "reasoning": {{
-    "document_type_reason": "Why you identified this document type",
-    "vendor_reason": "How you identified the vendor",
-    "amount_reason": "How you found the total amount",
-    "confidence_reason": "Why your confidence is this level"
-  }}
-}}
-
-Be precise. If uncertain about a field, say so in the reasoning."""
-
-        # Check circuit breaker before calling LLM
+        Reasoning prose is built post-hoc from the extraction result —
+        the LLMMultimodal client owns its own prompt and we don't have
+        a hook to inject a chain-of-thought variant without forking
+        that path. Result fields drive a deterministic reasoning dict
+        when the model didn't emit one.
+        """
         if not _llm_circuit_breaker.can_proceed():
             logger.warning("LLM circuit breaker OPEN - using fallback extraction")
             return self._fallback_extraction(text)
-        
+
         try:
             result = self._extract_with_retry(text, attachments)
             _llm_circuit_breaker.record_success()
-            
-            # Add reasoning if not present
+
             if "reasoning" not in result:
                 result["reasoning"] = {
                     "document_type_reason": "Extracted from document content",
@@ -340,9 +307,9 @@ Be precise. If uncertain about a field, say so in the reasoning."""
                     "amount_reason": f"Total: {result.get('total_amount', 'Unknown')}",
                     "confidence_reason": "Based on extraction quality",
                 }
-            
+
             return result
-            
+
         except Exception as e:
             _llm_circuit_breaker.record_failure()
             logger.warning(f"LLM extraction failed after retries: {e}")

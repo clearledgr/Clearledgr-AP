@@ -18,7 +18,7 @@ Changelog:
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 
 from clearledgr.core.database import get_db

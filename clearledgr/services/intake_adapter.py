@@ -39,9 +39,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, runtime_checkable
 
-from clearledgr.core.ap_states import APState, validate_transition
+from clearledgr.core.ap_states import validate_transition
 from clearledgr.core.database import get_db
 from clearledgr.services.invoice_models import InvoiceData
 

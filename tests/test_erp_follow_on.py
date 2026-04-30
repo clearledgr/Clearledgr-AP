@@ -6,16 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.core.ap_states import APState
@@ -29,6 +23,7 @@ from clearledgr.services.ap_item_service import (
 from clearledgr.services.erp_connector_strategy import (
     ERPConnectorStrategy,
 )
+from clearledgr.services.erp_follow_on_reconciliation import reconcile_erp_follow_on_state
 from clearledgr.services.erp_follow_on_result import (
     _ERP_FOLLOW_ON_APPLIED_STATUSES,
     _ERP_FOLLOW_ON_PENDING_STATUSES,
@@ -796,9 +791,6 @@ class TestERPFollowOnStatusSets:
 # ===================================================================
 # Category 6: reconcile_erp_follow_on_state() tests
 # ===================================================================
-
-
-from clearledgr.services.erp_follow_on_reconciliation import reconcile_erp_follow_on_state
 
 
 class TestERPFollowOnReconciliation:

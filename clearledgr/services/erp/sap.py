@@ -6,8 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-logger = logging.getLogger(__name__)
-
 from clearledgr.models.erp import (
     ERPDocumentResult,
     ParkedAPInvoiceRequest,
@@ -26,6 +24,8 @@ from clearledgr.models.erp import (
     SAPValidationResult,
     SAPSyncPayload,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SAPAdapter:

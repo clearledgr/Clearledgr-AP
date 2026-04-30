@@ -16,10 +16,8 @@ import json
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -883,7 +881,7 @@ class TestPollOverduePayments:
             fake_status,
         )
 
-        result = _run(mod._poll_payment_statuses("org-1"))
+        _run(mod._poll_payment_statuses("org-1"))
         # The payment should have been checked for ERP status but NOT re-alerted as overdue
         assert "PAY-DUE-2" not in updated_payments or updated_payments.get("PAY-DUE-2", {}).get("status") != "overdue"
 
@@ -981,7 +979,7 @@ class TestPaymentEventsStore:
             assert evt1["event_type"] == "payment_detected"
             assert evt1["amount"] == 500.0
 
-            evt2 = db.append_payment_event(
+            db.append_payment_event(
                 payment_id=payment["id"],
                 org_id="org-1",
                 event_type="partial_payment",

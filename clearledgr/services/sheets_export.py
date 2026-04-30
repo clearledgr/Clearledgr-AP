@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from clearledgr.core.http_client import get_http_client
 
@@ -87,7 +87,6 @@ async def export_report_to_sheets(
 
 async def _ensure_tab(client, spreadsheet_id: str, sheet_name: str) -> None:
     """Create a tab if it doesn't exist. Silently ignores if it already exists."""
-    import httpx
 
     meta = await client.get_spreadsheet_metadata(spreadsheet_id)
     existing_sheets = [s.get("properties", {}).get("title", "") for s in meta.get("sheets", [])]

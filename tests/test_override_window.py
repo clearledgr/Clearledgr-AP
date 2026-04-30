@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, Dict, Optional
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,7 +30,7 @@ import pytest
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     """Fresh temp-file ClearledgrDB wired as the singleton."""
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()
@@ -450,7 +450,6 @@ class TestOverrideWindowServiceLifecycle:
             erp_type="xero",
             action_type="erp_post",
         )
-        after = datetime.now(timezone.utc)
         assert window["state"] == "pending"
         assert window["action_type"] == "erp_post"
         expires = datetime.fromisoformat(
@@ -1097,7 +1096,7 @@ class TestReverseAPItemEndpoint:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB, get_db
+        from clearledgr.core.database import get_db
         from clearledgr.core import database as db_module
         import importlib
         import main

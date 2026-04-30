@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Mapping, Optional
 from clearledgr.core.ap_states import APState
 from clearledgr.core.erp_webhook_verify import verify_sap_signature
 from clearledgr.services.intake_adapter import (
-    IntakeAdapter,
     IntakeEnvelope,
     StateUpdate,
     register_adapter,

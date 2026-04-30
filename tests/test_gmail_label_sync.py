@@ -14,16 +14,10 @@ These tests lock in the contract:
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.api import gmail_webhooks
 from clearledgr.core.events import AgentEvent, AgentEventType

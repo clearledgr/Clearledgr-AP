@@ -7,7 +7,6 @@ import logging
 import urllib.parse
 from typing import Any, Dict, Optional
 
-import httpx
 from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -1064,12 +1063,10 @@ async def _handle_mention_reply_sync(
         runtime = None
         db = get_db()
         orgs = db.list_organizations() if hasattr(db, "list_organizations") else []
-        org_id = "default"
         for org in orgs:
             rt = resolve_slack_runtime(org.get("id", "default"))
             if rt and rt.get("team_id") == team_id:
                 runtime = rt
-                org_id = org.get("id", "default")
                 break
         if not runtime:
             runtime = resolve_slack_runtime("default")
@@ -1316,7 +1313,7 @@ def _answer_query_rule_based(query: str, items: list) -> str:
     Produces thesis-quality responses with individual invoice detail.
     """
     q = query.lower()
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     from clearledgr.core.clock import now_utc
 
     _state_labels = {
@@ -1356,11 +1353,12 @@ def _answer_query_rule_based(query: str, items: list) -> str:
         return f"{len(open_items)} open items totalling {total:,.0f}."
 
     if "due" in q:
-        now = now_utc()
-        week_end = now + timedelta(days=7)
+        week_end_iso = (now_utc() + timedelta(days=7)).isoformat()[:10]
         due_items = [
             i for i in items
-            if i.get("due_date") and i.get("state") not in ("closed", "rejected")
+            if i.get("due_date")
+            and i.get("due_date")[:10] <= week_end_iso
+            and i.get("state") not in ("closed", "rejected")
         ]
         due_items.sort(key=lambda i: i.get("due_date") or "")
         if not due_items:

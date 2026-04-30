@@ -25,7 +25,6 @@ from typing import FrozenSet, Optional
 
 from clearledgr.core.permissions import (
     PERMISSION_APPROVE_INVOICES,
-    has_permission as _has_permission_in_set,
     standard_role_permissions,
 )
 

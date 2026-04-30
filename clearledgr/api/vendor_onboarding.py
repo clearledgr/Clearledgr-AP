@@ -37,7 +37,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import (
@@ -267,7 +267,7 @@ def invite_vendor(
         # Run the async dispatch in the current event loop if available,
         # otherwise run synchronously for tests.
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're already in an async context — await directly.
             # But we're in a sync FastAPI endpoint, so schedule and let
             # the loop pick it up. Use asyncio.run for simplicity since
@@ -442,7 +442,6 @@ async def import_vendors_csv(
     - column_map: mapping from CSV column names to vendor fields
       e.g. {"Company Name": "vendor_name", "VAT": "vat_number", ...}
     """
-    import json as _json
 
     try:
         body = await request.json()

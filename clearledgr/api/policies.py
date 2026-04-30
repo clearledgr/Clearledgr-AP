@@ -26,13 +26,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import get_current_user
 from clearledgr.services.policy_service import (
-    POLICY_KINDS,
     PolicyKindError,
     PolicyService,
     PolicyVersionNotFound,

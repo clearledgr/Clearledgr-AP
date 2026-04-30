@@ -17,6 +17,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from clearledgr.core.database import get_db
+
 logger = logging.getLogger(__name__)
 
 # Supported report types

@@ -7,8 +7,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from clearledgr.api.ap_item_contracts import (
@@ -37,16 +35,17 @@ from clearledgr.api.ap_item_contracts import (
     UpdateApItemFieldsRequest,
     UpdateApItemTaskStatusRequest,
 )
+from clearledgr.api.deps import verify_org_access
 from clearledgr.core.ap_states import APState
 from clearledgr.core.auth import require_ops_user
 from clearledgr.core.errors import safe_error
 from clearledgr.core.idempotency import (
     IDEMPOTENCY_HEADER,
     load_idempotent_response,
-    resolve_idempotency_key,
     save_idempotent_response,
 )
-from clearledgr.api.deps import verify_org_access
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()

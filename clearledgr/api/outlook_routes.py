@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -85,7 +83,7 @@ async def outlook_callback(
 
     # If state contains user_id:org_id, use it; otherwise use token's user_id
     if ":" in state:
-        user_id, org_id = state.split(":", 1)
+        user_id = state.split(":", 1)[0]
         token = OutlookToken(
             user_id=user_id,
             access_token=token.access_token,
@@ -93,8 +91,6 @@ async def outlook_callback(
             expires_at=token.expires_at,
             email=token.email,
         )
-    else:
-        org_id = "default"
 
     outlook_token_store.store(token)
 

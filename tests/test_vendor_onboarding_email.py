@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,7 +22,7 @@ import pytest
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()

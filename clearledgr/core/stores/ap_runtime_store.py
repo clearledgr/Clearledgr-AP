@@ -637,7 +637,6 @@ class APRuntimeStore:
         slack_channel: Optional[str] = None,
     ) -> None:
         """Persist a clarifying question for later retrieval."""
-        import uuid as _uuid
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()

@@ -10,16 +10,14 @@ Manage per-organization settings:
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
+from clearledgr.core.auth import get_current_user, TokenData
 from clearledgr.core.org_config import (
-    OrganizationConfig,
+    DATA_REGIONS,
     GLAccountMapping,
-    ConfidenceThresholds,
-    LocaleSettings,
-    FeatureFlags,
     PaymentGatewayConfig,
     get_org_config,
     save_org_config,
@@ -28,7 +26,6 @@ from clearledgr.core.org_config import (
     get_preset_configs,
     create_default_config,
 )
-from clearledgr.core.auth import get_current_user, TokenData
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -620,8 +617,6 @@ async def list_presets():
 
 
 # ==================== DATA RESIDENCY & GDPR ====================
-
-from clearledgr.core.org_config import DataResidencyConfig, DATA_REGIONS
 
 
 class DataResidencyRequest(BaseModel):

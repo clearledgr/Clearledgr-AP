@@ -7,12 +7,10 @@ This module implements the ERP posting pipeline:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-import hashlib
-
-logger = logging.getLogger(__name__)
 
 from clearledgr.core.database import ClearledgrDB, get_db
 from clearledgr.core.launch_controls import (
@@ -27,12 +25,14 @@ from clearledgr.integrations.erp_router import (
     get_erp_connection,
     post_bill,
 )
+from clearledgr.services.ap_agent_sync import sync_ap_execution_event
 from clearledgr.services.erp.contracts import (
     get_erp_bill_adapter,
     get_erp_finance_action_adapter,
 )
-from clearledgr.services.ap_agent_sync import sync_ap_execution_event
 from clearledgr.services.erp_connector_strategy import get_erp_connector_strategy
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:

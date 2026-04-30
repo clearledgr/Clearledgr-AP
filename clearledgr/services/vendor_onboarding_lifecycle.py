@@ -103,13 +103,10 @@ async def chase_stale_sessions(
 
     for session in sessions:
         session_id = session.get("id") or ""
-        org_id = session.get("organization_id") or ""
-        vendor_name = session.get("vendor_name") or ""
         state = session.get("state") or ""
         invited_at = session.get("invited_at") or ""
         last_chase_at = session.get("last_chase_at")
         chase_count = int(session.get("chase_count") or 0)
-        meta = session.get("metadata") or {}
 
         hours = _hours_since(invited_at)
         if hours is None:
@@ -219,7 +216,6 @@ async def _send_chase(
     # Post Slack preview with Hold/Send buttons
     try:
         from clearledgr.services.slack_notifications import _post_slack_blocks
-        import os
 
         blocks = [
             {
@@ -606,6 +602,6 @@ async def _dispatch_erp_create_vendor(
             organization_id,
         )
         return f"local_{vendor_name}"
-    except Exception as exc:
+    except Exception:
         # Re-raise so the caller can decide whether to retry.
         raise

@@ -20,15 +20,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Optional
 
 from clearledgr.core.ap_states import APState
-from clearledgr.core.ap_states import VALID_TRANSITIONS as AP_VALID_TRANSITIONS
-from clearledgr.core.vendor_onboarding_states import (
-    PRE_ACTIVE_STATES as VO_PRE_ACTIVE_STATES,
-)
 from clearledgr.core.vendor_onboarding_states import (
     TERMINAL_STATES as VO_TERMINAL_STATES,
-)
-from clearledgr.core.vendor_onboarding_states import (
-    VALID_TRANSITIONS as VO_VALID_TRANSITIONS,
 )
 from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
 

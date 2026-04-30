@@ -12,23 +12,15 @@ orchestration behavior; that coverage lives in:
 - ``tests/test_channel_approval_contract.py``
 """
 
-import json
 import os
-import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-from clearledgr.core.ap_states import APState, IllegalTransitionError
-from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.ap_states import IllegalTransitionError
+from clearledgr.core.database import get_db
 
 
 # ---------------------------------------------------------------------------

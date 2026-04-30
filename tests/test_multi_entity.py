@@ -9,7 +9,6 @@ Covers:
 """
 from __future__ import annotations
 
-import json
 
 from clearledgr.core.database import ClearledgrDB
 from clearledgr.core.ap_entity_routing import (
@@ -429,7 +428,6 @@ def test_entity_unique_code_per_org(tmp_path, monkeypatch):
     db = ClearledgrDB(str(tmp_path / "entity.db"))
 
     db.create_entity(organization_id="org-1", name="Entity A", code="NG")
-    import sqlite3
     try:
         db.create_entity(organization_id="org-1", name="Entity B", code="NG")
         assert False, "Should have raised due to unique constraint"

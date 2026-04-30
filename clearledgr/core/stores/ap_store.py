@@ -2402,7 +2402,6 @@ class APStore:
             "latest_error_by_kind": latest_error_by_kind,
             "webhooks": webhooks,
         }
-        return int(deleted)
 
     # ------------------------------------------------------------------
     # Webhook delivery log (Module 7 v1 Pass 3)

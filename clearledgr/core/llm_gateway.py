@@ -963,6 +963,10 @@ class LLMGateway:
         temperature: Optional[float] = None,
         max_tokens_override: Optional[int] = None,
         model_override: Optional[str] = None,
+        ap_item_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        box_id: Optional[str] = None,
+        box_type: Optional[str] = None,
     ):
         """Async generator that yields text chunks as Claude emits them.
 
@@ -997,7 +1001,6 @@ class LLMGateway:
         if system_prompt:
             body["system"] = system_prompt
 
-        import httpx
         import json as _json
         import time as _time
 

@@ -28,7 +28,7 @@ from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
 from clearledgr.core.ap_entity_routing import (
     resolve_entity_routing,
 )
-from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.database import ClearledgrDB
 from clearledgr.core.ap_states import APState
 from clearledgr.core.utils import safe_float
 from clearledgr.services.ap_context_connectors import build_multi_system_context

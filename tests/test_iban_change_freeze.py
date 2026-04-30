@@ -18,8 +18,7 @@ import asyncio
 import importlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from typing import Dict
 
 import pytest
 
@@ -38,7 +37,7 @@ SAMPLE_ADVERSARIAL = {
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()
@@ -566,7 +565,7 @@ class TestIbanVerificationAPI:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import ClearledgrDB, get_db
+        from clearledgr.core.database import get_db
         from clearledgr.core import database as db_module
         import main
 

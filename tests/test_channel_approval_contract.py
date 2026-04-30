@@ -7,21 +7,13 @@ DB-direct and service-level tests.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
-import sys
 import time
 import urllib.parse
-from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from main import app
 from clearledgr.core import database as db_module

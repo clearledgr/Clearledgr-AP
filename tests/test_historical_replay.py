@@ -13,11 +13,8 @@ This harness:
 4. Reports disagreements for manual review
 """
 
-import json
 import logging
-import pytest
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)

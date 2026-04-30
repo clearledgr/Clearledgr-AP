@@ -119,7 +119,6 @@ def test_non_state_update_does_not_write_audit_row(db):
     state_transition row. The audit is specifically for state moves.
     """
     _seed(db, "AP-ATOM-3")
-    before = len(db.list_ap_audit_events("AP-ATOM-3"))
 
     db.update_ap_item(
         "AP-ATOM-3",

@@ -13,8 +13,6 @@ Naming conventions
 """
 
 import logging
-import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any, Dict, Optional
@@ -815,7 +813,13 @@ def get_user_by_email(email: str) -> Optional[User]:
     return _row_to_user(row) if row else None
 
 
-def create_user_from_google(email: str, google_id: str, organization_id: str) -> User:
+def create_user_from_google(
+    email: str,
+    google_id: str,
+    organization_id: str,
+    *,
+    name: Optional[str] = None,
+) -> User:
     """
     Create or update a user from Google identity.
 
@@ -824,6 +828,10 @@ def create_user_from_google(email: str, google_id: str, organization_id: str) ->
     configure the ERP, complete onboarding steps, invite teammates. Any
     subsequent Google sign-in uses the default ap_clerk seat; existing
     users keep their role on re-auth.
+
+    The Microsoft entra-id callback also funnels through this helper
+    (with a `ms:` google_id prefix) and supplies the Graph displayName
+    via ``name``. Falls back to deriving from email when not provided.
     """
     db = _get_db()
     domain = email.split("@")[1] if "@" in email else None
@@ -838,7 +846,7 @@ def create_user_from_google(email: str, google_id: str, organization_id: str) ->
         email=email,
         google_id=google_id,
         organization_id=organization_id,
-        name=email.split("@")[0].replace(".", " ").title(),
+        name=name or email.split("@")[0].replace(".", " ").title(),
         role=role,
     )
     # Promote the sole user in an org to owner if they aren't already.

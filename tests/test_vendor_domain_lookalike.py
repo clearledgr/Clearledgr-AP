@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from clearledgr.services.vendor_domain_lookalike import (
     _canonicalize_homoglyphs,

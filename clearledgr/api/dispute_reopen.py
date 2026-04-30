@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
 from clearledgr.services.dispute_reopen import (
-    DisputeReopenError,
     OriginalNotReopenableError,
     get_correction_chain,
     reopen_for_dispute,

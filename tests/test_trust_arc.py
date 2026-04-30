@@ -19,8 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -171,7 +170,7 @@ class TestWeek1Banner:
 class TestDay14Baseline:
 
     def test_fires_at_day_14(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
+        from clearledgr.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=15)
@@ -265,7 +264,6 @@ class TestWeeklySignal:
         monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
 
         # Force today to be a Monday.
-        import datetime as dt_mod
         real_now = datetime.now(timezone.utc)
         # Find the next Monday.
         days_ahead = (0 - real_now.weekday()) % 7  # 0 = Monday

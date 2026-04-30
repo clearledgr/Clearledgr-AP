@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from clearledgr.core.plan import Action, CoordinationResult, Plan
 
@@ -752,7 +751,6 @@ class CoordinationEngine:
             return {"ok": True}
         try:
             wf = self._get_workflow()
-            from clearledgr.services.invoice_workflow import InvoiceData
             invoice = self._build_invoice_from_ctx(ctx)
             gate = await wf._evaluate_deterministic_validation(invoice)
             ctx["validation_gate"] = gate
@@ -1499,18 +1497,28 @@ class CoordinationEngine:
         return {"ok": True, "next": "flag_for_review"}
 
     async def _handle_kyc_validate(self, action: Action, plan: Plan) -> dict:
-        """§10: Validate KYC document against requirements checklist."""
+        """§10: Validate KYC document against requirements checklist.
+
+        Records the submitted ``document_type`` against the active
+        onboarding session so the lifecycle worker can advance the
+        checklist on the next sweep. The session presence-check is the
+        load-bearing gate; full per-document field validation lives in
+        the onboarding lifecycle service.
+        """
         vendor_id = action.params.get("vendor_id", "")
         document_type = action.params.get("document_type", "")
         if not vendor_id:
             return {"ok": True}
         try:
-            # KYC validation is handled by the onboarding lifecycle —
-            # document type checked against the requirements checklist
             if hasattr(self.db, "get_active_onboarding_session"):
                 session = self.db.get_active_onboarding_session(self.organization_id, vendor_id)
                 if session:
-                    return {"ok": True, "valid": True, "session_id": session.get("id")}
+                    return {
+                        "ok": True,
+                        "valid": True,
+                        "session_id": session.get("id"),
+                        "document_type": document_type or None,
+                    }
             return {"ok": True, "valid": False, "reason": "no_active_session"}
         except Exception as exc:
             logger.debug("[CoordinationEngine] kyc_validate non-fatal: %s", exc)
@@ -1757,7 +1765,7 @@ class CoordinationEngine:
                 from clearledgr.integrations.erp_router import find_vendor
                 # Very short timeout probe
                 import asyncio as _aio
-                result = await _aio.wait_for(
+                await _aio.wait_for(
                     find_vendor(self.organization_id, vendor_name="__probe_erp_health__"),
                     timeout=5.0,
                 )
@@ -1887,7 +1895,6 @@ class CoordinationEngine:
         """§3: Split a Gmail thread at a specific message."""
         # Gmail API doesn't support native thread splitting.
         # Clearledgr simulates this by creating a new AP item for the message.
-        ctx = self._ensure_ctx(plan)
         logger.info("[CoordinationEngine] split_thread requested — creating new Box for split message")
         return {"ok": True}
 
@@ -1913,7 +1920,13 @@ class CoordinationEngine:
             return {"_abort": True, "error": str(exc)}
 
     async def _handle_lookup_vendor_master(self, action: Action, plan: Plan) -> dict:
-        """§3: Query the ERP vendor master for a match."""
+        """§3: Query the ERP vendor master for a match.
+
+        Tries vendor_name first, then falls back to the sender's full
+        address, then the sender's domain — bills routed through a
+        finance@ alias are common, so the domain catch lets us match
+        by company even when the local-part is generic.
+        """
         ctx = self._ensure_ctx(plan)
         sender = ctx.get("sender", "")
         vendor_name = ctx.get("extracted_fields", {}).get("vendor_name", "")
@@ -1923,12 +1936,17 @@ class CoordinationEngine:
             connection = get_erp_connection(self.organization_id)
             if not connection:
                 return {"ok": True, "found": False, "reason": "no_erp"}
-            # Check vendor profiles in DB as proxy for ERP vendor master
             if hasattr(self.db, "get_vendor_profile"):
-                profile = self.db.get_vendor_profile(self.organization_id, vendor_name or sender)
+                profile = None
+                for candidate in (vendor_name, sender, domain):
+                    if not candidate:
+                        continue
+                    profile = self.db.get_vendor_profile(self.organization_id, candidate)
+                    if profile:
+                        break
                 if profile:
                     ctx["vendor_profile"] = profile
-                    return {"ok": True, "found": True, "vendor": vendor_name}
+                    return {"ok": True, "found": True, "vendor": vendor_name or sender or domain}
             return {"ok": True, "found": False}
         except Exception as exc:
             logger.debug("[CoordinationEngine] lookup_vendor_master: %s", exc)
@@ -1976,7 +1994,6 @@ class CoordinationEngine:
 
     async def _handle_send_slack_exception(self, action: Action, plan: Plan) -> dict:
         """§3: Post an exception notification to the AP Slack channel."""
-        ctx = self._ensure_ctx(plan)
         if not plan.box_id:
             return {"ok": True}
         try:

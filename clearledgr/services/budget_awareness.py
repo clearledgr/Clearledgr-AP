@@ -15,7 +15,7 @@ Changelog:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -332,7 +332,7 @@ class BudgetAwarenessService:
         elif after_status == BudgetStatus.CRITICAL:
             warning = f"Only ${remaining_after:,.2f} remaining after approval"
         elif after_status == BudgetStatus.WARNING and status == BudgetStatus.HEALTHY:
-            warning = f"Will cross 70% threshold"
+            warning = "Will cross 70% threshold"
         
         return BudgetCheck(
             budget=budget,

@@ -17,10 +17,8 @@ import hmac
 import hashlib
 import logging
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-import httpx
 from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
@@ -574,7 +572,7 @@ class SlackAPIClient:
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"*Agentic telemetry*"
+                        "*Agentic telemetry*"
                         + (f" ({window_hours}h window)" if window_hours > 0 else "")
                         + "\n"
                         f"Straight-through: {straight_through:.1f}% · Human intervention: {human_intervention:.1f}%\n"

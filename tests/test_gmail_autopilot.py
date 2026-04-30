@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 from clearledgr.services import gmail_autopilot as autopilot_module
 

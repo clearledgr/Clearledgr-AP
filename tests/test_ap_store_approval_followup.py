@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.database import get_db
 
 
 def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, monkeypatch):

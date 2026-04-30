@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

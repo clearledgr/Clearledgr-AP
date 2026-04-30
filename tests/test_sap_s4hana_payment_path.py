@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import sys
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -38,7 +37,6 @@ from clearledgr.integrations.erp_sap import (  # noqa: E402
 from clearledgr.integrations.erp_sap_s4hana_intake_adapter import (  # noqa: E402
     SapS4HanaIntakeAdapter,
 )
-from clearledgr.services import erp_payment_dispatcher as dispatcher  # noqa: E402
 from clearledgr.services.erp_payment_dispatcher import (  # noqa: E402
     _parse_sap_s4hana_payment_envelope,
     dispatch_sap_s4hana_payment_webhook,

@@ -17,7 +17,6 @@ Skips for non-NetSuite bills + bills that don't have an
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
 
 from clearledgr.services.annotation_targets.base import (
     AnnotationContext,

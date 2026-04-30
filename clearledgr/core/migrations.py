@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -1489,7 +1489,7 @@ def _v38_rename_vendor_onboarding_states(cur, db):
     }
     for row in rows:
         try:
-            stage_id, slug, source_states_raw = row[0], row[1], row[2]
+            stage_id, source_states_raw = row[0], row[2]
             states = _json.loads(source_states_raw or "[]")
             remapped = []
             for s in states:

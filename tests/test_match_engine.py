@@ -22,7 +22,7 @@ No Postgres / Docker dependency — pure logic + mocked DB.
 from __future__ import annotations
 
 import pytest
-from typing import Any, Dict, List
+from typing import Any, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 

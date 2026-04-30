@@ -129,7 +129,7 @@ def screen_vendor(
 
     # Drive the async provider call from a sync caller.
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # We're inside an existing event loop (ASGI handler). Schedule
         # via run_coroutine_threadsafe-like detour — but since
         # FastAPI handlers are async themselves, the typical caller

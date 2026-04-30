@@ -226,7 +226,7 @@ def test_search_paginates_with_cursor(db, client_factory):
     cursor = None
     pages = 0
     while True:
-        url = f"/api/workspace/audit/search?organization_id=default&box_id=ap-paginate&limit=2"
+        url = "/api/workspace/audit/search?organization_id=default&box_id=ap-paginate&limit=2"
         if cursor:
             url += f"&cursor={cursor}"
         resp = client.get(url)

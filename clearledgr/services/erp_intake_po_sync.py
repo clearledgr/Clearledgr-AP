@@ -33,7 +33,6 @@ from typing import Any, Dict, List, Optional
 from clearledgr.services.purchase_orders import (
     POStatus,
     PurchaseOrderService,
-    GRStatus,
 )
 
 logger = logging.getLogger(__name__)

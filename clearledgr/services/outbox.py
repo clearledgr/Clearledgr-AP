@@ -46,7 +46,7 @@ import json
 import logging
 import random
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -312,7 +312,6 @@ class OutboxWorker:
             return []
         db.initialize()
         now = datetime.now(timezone.utc).isoformat()
-        events: List[OutboxEvent] = []
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(

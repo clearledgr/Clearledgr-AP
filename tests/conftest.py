@@ -3,8 +3,21 @@ Shared pytest fixtures and hooks for the Clearledgr test suite.
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# Ensure repo root is on sys.path so individual test files can ``from main
+# import app`` without each one re-injecting the path. Pytest does this
+# automatically when invoked from rootdir; doing it explicitly here means
+# tests stay importable from editor language servers and ad-hoc scripts
+# that bypass pytest's discovery layer, AND lets us keep all module-level
+# imports at the top of each test file (no inline ``sys.path.append``
+# between import lines, which trips ruff E402).
+_TEST_ROOT = Path(__file__).resolve().parents[1]
+if str(_TEST_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TEST_ROOT))
 
 os.environ.setdefault("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", "true")
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
@@ -315,3 +328,130 @@ def _reset_postgres_test_db_between_tests(request, postgres_test_db):
             conn.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# httpx.MockTransport boundary helper
+# ---------------------------------------------------------------------------
+#
+# Tests that exercise outbound HTTP (ERP adapters, LLM gateway, Slack,
+# Gmail) historically monkey-patch the function above httpx — which means
+# a regression in how the request is shaped on the wire (URL, headers,
+# JSON body) slips through, because the test never sees the actual HTTP
+# call. The `mock_http` fixture replaces the shared httpx.AsyncClient
+# with a MockTransport-backed one. Tests register response handlers and
+# assert against the recorded calls. No autouse: tests opt in.
+
+class HttpMock:
+    """Lightweight router around an :class:`httpx.MockTransport`.
+
+    Usage::
+
+        async def test_post_bill_to_xero(mock_http):
+            mock_http.handle("POST", "api.xero.com/api.xro/2.0/Invoices",
+                             status=200, json={"Invoices": [{"InvoiceID": "abc"}]})
+            # ... call code under test ...
+            mock_http.assert_called("POST", "api.xero.com/api.xro/2.0/Invoices")
+            assert mock_http.calls[0].json_body["Invoices"][0]["Type"] == "ACCPAY"
+
+    The routing is substring-based on the request URL — the simplest
+    contract that keeps tests focused on shape, not on URL fragments.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: list[tuple[str, str, "_HandlerFn"]] = []
+        self.calls: list[_RecordedCall] = []
+
+    def handle(
+        self,
+        method: str,
+        url_substr: str,
+        *,
+        status: int = 200,
+        json: object | None = None,
+        text: str | None = None,
+        headers: dict | None = None,
+    ) -> None:
+        """Register a canned response for any request whose method matches
+        and whose URL contains ``url_substr``."""
+        method_upper = method.upper()
+
+        def _respond(_request):
+            import httpx as _httpx
+            if json is not None:
+                return _httpx.Response(status, json=json, headers=headers or {})
+            return _httpx.Response(status, text=text or "", headers=headers or {})
+
+        self._handlers.append((method_upper, url_substr, _respond))
+
+    def handle_dynamic(
+        self,
+        method: str,
+        url_substr: str,
+        responder,
+    ) -> None:
+        """Register a callable that produces a response from the request."""
+        self._handlers.append((method.upper(), url_substr, responder))
+
+    def assert_called(self, method: str, url_substr: str) -> "_RecordedCall":
+        method_upper = method.upper()
+        for call in self.calls:
+            if call.method == method_upper and url_substr in call.url:
+                return call
+        raise AssertionError(
+            f"Expected HTTP call {method_upper} ~{url_substr!r}; "
+            f"got {[(c.method, c.url) for c in self.calls]}"
+        )
+
+    def _resolve(self, request) -> "_HandlerFn":
+        for method_upper, url_substr, responder in self._handlers:
+            if request.method.upper() == method_upper and url_substr in str(request.url):
+                return responder
+        raise AssertionError(
+            f"Unmocked HTTP call: {request.method} {request.url}. "
+            "Register a handler with mock_http.handle(...)."
+        )
+
+
+class _RecordedCall:
+    __slots__ = ("method", "url", "headers", "content")
+
+    def __init__(self, request) -> None:
+        self.method = request.method.upper()
+        self.url = str(request.url)
+        self.headers = dict(request.headers)
+        self.content = bytes(request.content or b"")
+
+    @property
+    def json_body(self):
+        import json as _json
+        return _json.loads(self.content) if self.content else None
+
+    @property
+    def text_body(self) -> str:
+        return self.content.decode("utf-8", errors="replace")
+
+
+_HandlerFn = "callable"
+
+
+@pytest.fixture
+def mock_http(monkeypatch):
+    """Swap the shared async client for a MockTransport. Opt-in."""
+    import httpx as _httpx
+    from clearledgr.core import http_client as _http_client_mod
+
+    helper = HttpMock()
+
+    def _transport_handler(request: _httpx.Request) -> _httpx.Response:
+        helper.calls.append(_RecordedCall(request))
+        responder = helper._resolve(request)
+        return responder(request)
+
+    transport = _httpx.MockTransport(_transport_handler)
+    fake_client = _httpx.AsyncClient(transport=transport, timeout=30.0)
+
+    _http_client_mod._reset_for_testing()
+    monkeypatch.setattr(_http_client_mod, "_shared_client", fake_client)
+    yield helper
+    _http_client_mod._reset_for_testing()

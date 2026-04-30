@@ -18,13 +18,9 @@ Coverage:
 """
 from __future__ import annotations
 
-import json
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
@@ -34,7 +30,6 @@ if str(ROOT) not in sys.path:
 
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.services.sod_check import (  # noqa: E402
-    SODCheckResult,
     _resolve_mode,
     check_sod,
 )

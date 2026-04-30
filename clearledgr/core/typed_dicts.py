@@ -14,7 +14,7 @@ Usage::
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class APItemDict(TypedDict, total=False):

@@ -37,7 +37,6 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 from clearledgr.services.vendor_revalidation import (  # noqa: E402
     HIGH_SEVERITY_REASONS,
     MEDIUM_SEVERITY_REASONS,
-    RevalidationResult,
     revalidate_in_flight_ap_items,
 )
 
@@ -114,7 +113,7 @@ def test_revalidation_flags_in_flight_items(db):
 
 def test_revalidation_severity_for_archived_status(db):
     _seed_ap_item(db, item_id="ap-rv-arch-1", vendor_name="AcmeRVArch", state="needs_approval")
-    out = revalidate_in_flight_ap_items(
+    revalidate_in_flight_ap_items(
         db, organization_id="default", vendor_name="AcmeRVArch",
         reason="vendor_status_archived", actor="bob@example.test",
     )
@@ -125,7 +124,7 @@ def test_revalidation_severity_for_archived_status(db):
 
 def test_revalidation_severity_for_iban_change(db):
     _seed_ap_item(db, item_id="ap-rv-iban-1", vendor_name="AcmeRVIban", state="needs_approval")
-    out = revalidate_in_flight_ap_items(
+    revalidate_in_flight_ap_items(
         db, organization_id="default", vendor_name="AcmeRVIban",
         reason="vendor_iban_change_pending", actor="system:iban",
     )

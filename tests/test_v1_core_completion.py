@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import json
-import sys
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 import main as _main
 from clearledgr.core import database as db_module

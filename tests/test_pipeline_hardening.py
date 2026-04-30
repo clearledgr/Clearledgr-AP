@@ -168,7 +168,7 @@ class TestRetryQueueDispatch:
 
     def test_dispatches_slack_response_url(self, db):
         """Retry queue should dispatch slack_response_url channel."""
-        notif_id = db.enqueue_notification(
+        db.enqueue_notification(
             organization_id="system",
             channel="slack_response_url",
             payload={"response_url": "https://hooks.slack.com/x", "body": {"text": "ok"}},

@@ -9,7 +9,7 @@ Provides intelligent matching beyond exact/tolerance comparisons:
 """
 import logging
 import unicodedata
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 import re
 from difflib import SequenceMatcher
 

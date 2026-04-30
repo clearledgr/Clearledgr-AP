@@ -15,10 +15,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-logger = logging.getLogger(__name__)
-
-import httpx
-from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -27,10 +23,13 @@ from clearledgr.core.auth import (
     TokenResponse, User,
     create_user,
     create_access_token,
-    decode_token, get_current_user, get_optional_user, TokenData,
+    get_current_user, get_optional_user, TokenData,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from clearledgr.core.database import get_db
+from clearledgr.core.http_client import get_http_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -582,7 +581,6 @@ async def invite_user(
     """
     from clearledgr.core.database import get_db
     from clearledgr.core.auth import get_user_by_id, get_user_by_email
-    import uuid
     
     from clearledgr.core.auth import has_admin_access, normalize_user_role, ROLE_RANK
     requesting_user = get_user_by_id(current_user.user_id)
@@ -997,7 +995,12 @@ async def microsoft_web_auth_callback(
         # Reuse the Google upsert helper — it's identity-provider-agnostic
         # in practice; we just don't track ms_user_id separately yet
         # (acceptable: future calls re-resolve by email).
-        user = create_user_from_google(email=email, google_id=f"ms:{ms_user_id}", organization_id=org_id)
+        user = create_user_from_google(
+            email=email,
+            google_id=f"ms:{ms_user_id}",
+            organization_id=org_id,
+            name=name,
+        )
     else:
         db.update_user(user.id, is_active=True)
         user = get_user_by_email(email)

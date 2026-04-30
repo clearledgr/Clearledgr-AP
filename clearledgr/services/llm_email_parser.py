@@ -119,7 +119,6 @@ def _build_vendor_context(sender: str, subject: str, organization_id: str) -> st
 
         # Search vendor profiles by sender domain
         try:
-            from clearledgr.services.fuzzy_matching import normalize_vendor
             # Extract potential vendor name from subject
             subject_lower = subject.lower()
             for keyword in ["invoice from", "bill from", "payment from"]:

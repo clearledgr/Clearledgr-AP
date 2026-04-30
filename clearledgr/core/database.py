@@ -18,16 +18,14 @@ sufficient for the expected AP workload.
 """
 from __future__ import annotations
 
+import atexit as _atexit
+import base64
+import hashlib
 import json
 import logging
 import os
-import base64
-import hashlib
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
-
-from clearledgr.core.utils import safe_float
+from typing import Any, Dict, Optional, Tuple
 
 import psycopg
 
@@ -114,7 +112,6 @@ def _close_all_pools_atexit():
     _PG_POOLS_BY_DSN.clear()
 
 
-import atexit as _atexit
 _atexit.register(_close_all_pools_atexit)
 
 

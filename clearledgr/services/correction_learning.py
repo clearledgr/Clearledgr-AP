@@ -25,7 +25,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from enum import Enum
@@ -871,11 +871,11 @@ class CorrectionLearningService:
 
         for row in rows:
             record = dict(row)
-            for field in ("last_original_value", "last_corrected_value"):
+            for col in ("last_original_value", "last_corrected_value"):
                 try:
-                    record[field] = json.loads(record.get(field) or "null")
+                    record[col] = json.loads(record.get(col) or "null")
                 except Exception:
-                    record[field] = record.get(field)
+                    record[col] = record.get(col)
             stats.append(record)
         return stats
 
@@ -1624,7 +1624,7 @@ class CorrectionLearningService:
             return {
                 "adjustment": prefs["auto_approve_threshold_adj"],
                 "bias": prefs.get("approval_bias", "neutral"),
-                "message": f"Adjusted based on previous corrections",
+                "message": "Adjusted based on previous corrections",
             }
         
         return None
@@ -1651,7 +1651,7 @@ class CorrectionLearningService:
                 messages.append(f"Created {learned['rules_created']} new rule(s)")
         
         if learned.get("rules_updated", 0) > 0:
-            messages.append(f"Updated existing rule (now more confident)")
+            messages.append("Updated existing rule (now more confident)")
         
         if learned.get("preferences_updated"):
             prefs = ", ".join(learned["preferences_updated"])

@@ -40,9 +40,9 @@ from __future__ import annotations
 import base64
 import logging
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ def parse_and_validate_saml_response(
         raise SAMLValidationError("destination_mismatch")
 
     # StatusCode must be Success
-    status_code_el = root.find(f"samlp:Status/samlp:StatusCode", _NS)
+    status_code_el = root.find("samlp:Status/samlp:StatusCode", _NS)
     if status_code_el is None or status_code_el.get("Value") != \
             "urn:oasis:names:tc:SAML:2.0:status:Success":
         raise SAMLValidationError("status_not_success")

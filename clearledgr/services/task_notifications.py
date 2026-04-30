@@ -7,8 +7,7 @@ Uses the native app integrations for rich interactive messages.
 
 import os
 import asyncio
-from typing import Dict, Optional, List
-from datetime import datetime
+from typing import Dict, List
 
 import logging
 
@@ -16,16 +15,14 @@ _logger = logging.getLogger(__name__)
 
 # Import the app notification functions
 try:
-    from ui.slack.app import notify_task_reminder as slack_notify_task
-    from ui.slack.app import send_slack_message, build_tasks_blocks
+    from ui.slack.app import send_slack_message
     SLACK_AVAILABLE = True
 except ImportError as exc:
     _logger.warning("Slack notifications unavailable: %s", exc)
     SLACK_AVAILABLE = False
 
 try:
-    from ui.teams.app import notify_task_reminder as teams_notify_task
-    from ui.teams.app import send_teams_message, create_tasks_card
+    import ui.teams.app  # noqa: F401  # availability probe
     TEAMS_AVAILABLE = True
 except ImportError as exc:
     _logger.warning("Teams notifications unavailable: %s", exc)
@@ -77,13 +74,13 @@ def send_task_notification(
 
     # Send via Teams app
     if TEAMS_AVAILABLE and config.get("teams_conversation_id"):
-        try:
-            card = build_task_notification_card(notification_type, task, additional_context)
-            # Teams uses Bot Framework for proactive messaging
-            # This would use the stored conversation reference
-            success = True
-        except Exception as e:
-            _logger.warning("Teams app notification error: %s", e)
+        # Teams proactive messaging needs the Bot Framework adapter
+        # plus a stored conversation reference; that wiring isn't here
+        # yet, so we log instead of pretending the send succeeded.
+        _logger.info(
+            "Teams notification skipped (proactive-messaging not wired): type=%s task_id=%s",
+            notification_type, task.get("id"),
+        )
     
     return success
 

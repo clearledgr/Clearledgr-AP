@@ -8,14 +8,8 @@ gate.
 """
 from __future__ import annotations
 
-import pytest
 
 from clearledgr.core.prompt_guard import (
-    MAX_ATTACHMENT_LENGTH,
-    MAX_BODY_LENGTH,
-    MAX_SUBJECT_LENGTH,
-    MAX_VENDOR_NAME_LENGTH,
-    InjectionDetection,
     clip_untrusted,
     detect_injection,
     scan_invoice_fields,
@@ -304,7 +298,7 @@ class TestValidationGateBlocksInjection:
 
     def _make_workflow(self, tmp_path):
         """Build an InvoiceWorkflowService over a fresh temp-file DB."""
-        from clearledgr.core.database import ClearledgrDB, get_db
+        from clearledgr.core.database import get_db
         from clearledgr.core import database as db_module
         from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 

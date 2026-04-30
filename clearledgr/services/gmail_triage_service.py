@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 from clearledgr.services.agent_reflection import get_agent_reflection
 from clearledgr.services.audit_trail import AuditEventType, get_audit_trail
 from clearledgr.services.budget_awareness import get_budget_awareness
@@ -19,6 +17,8 @@ from clearledgr.workflows.gmail_activities import (
     classify_email_activity,
     extract_email_data_activity,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def run_inline_gmail_triage(

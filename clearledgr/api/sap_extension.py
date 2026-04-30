@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -44,7 +44,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from clearledgr.api.ap_items_read_routes import shared
 from clearledgr.api.deps import verify_org_access
-from clearledgr.core.auth import TokenData, create_access_token, decode_token, _token_data_from_payload
+from clearledgr.core.auth import create_access_token, decode_token, _token_data_from_payload
 from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ async def _verify_xsuaa_jwt(token: str, *, jwks_url: str, expected_audience: Opt
         raise HTTPException(status_code=401, detail="sap_xsuaa: kid not in JWKS")
 
     try:
-        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from cryptography.hazmat.primitives.asymmetric import padding
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
         n = int.from_bytes(_b64url_decode(matching["n"]), "big")

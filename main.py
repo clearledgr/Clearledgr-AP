@@ -19,39 +19,159 @@ Run Instructions:
      -H "Content-Type: application/json" \
      -d '{"intent":"read_ap_workflow_health","input":{"limit":25},"organization_id":"default"}'
 """
-from dotenv import load_dotenv
-load_dotenv()
+import clearledgr._envboot  # noqa: F401  -- side-effect: load .env before any other import
 
+import os
+import re
+import secrets
+import time
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
-from pydantic import BaseModel
-import os
-import re
-import secrets
-from typing import Optional, List, Dict, Any
-from clearledgr.services.auth import get_api_key_optional
-from clearledgr.services.rate_limit import RateLimitMiddleware
-from clearledgr.services.errors import ClearledgrError, to_http_exception
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+# Eager-import the IntakeAdapter implementations so the registry is
+# populated before any webhook fires. Each module calls
+# `register_adapter(...)` at import time.
+import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401
+
+# Eager-import the MatchEngine implementations (Gap 3) so the
+# registry is populated before any matching call.
+import clearledgr.services.match_engines  # noqa: F401
+
+# Eager-import state_observers (Gap 4) so the outbox observer-prefix
+# handler is registered before the OutboxWorker starts polling. The
+# worker process needs this even though it doesn't construct an
+# InvoiceWorkflowService.
+import clearledgr.services.state_observers  # noqa: F401
+
+# Eager-import annotation targets (Gap 5) so the annotation-prefix
+# handler is registered + every target instance is in the registry
+# before any annotation outbox row is processed.
+import clearledgr.services.annotation_targets  # noqa: F401
+
+# Eager-import box projection (Gap 6) so the projection-prefix
+# outbox handler is registered + BoxSummaryProjector +
+# VendorSummaryProjector are in the projector registry before the
+# OutboxWorker drains its first projection row.
+import clearledgr.services.box_projection  # noqa: F401
+
+from clearledgr.api.agent_intents import router as agent_intents_router
+from clearledgr.api.accrual_journal_entry import (
+    router as accrual_je_router,
+)
+from clearledgr.api.africa_einvoice import (
+    router as africa_einvoice_router,
+)
+from clearledgr.api.ap_audit import router as ap_audit_router
+from clearledgr.api.ap_items import router as ap_items_router
+from clearledgr.api.ap_policies import router as ap_policies_router
+from clearledgr.api.auth import router as auth_router
+from clearledgr.api.bank_statements import router as bank_statements_router
+from clearledgr.api.box_exceptions_admin import router as box_exceptions_admin_router
+from clearledgr.api.cycle_time_metrics import (
+    router as cycle_time_metrics_router,
+)
+from clearledgr.api.dispute_reopen import (
+    router as dispute_reopen_router,
+)
+from clearledgr.api.dual_approval import router as dual_approval_router
+from clearledgr.api.erp_connection_ops import (
+    router as erp_connection_ops_router,
+)
+from clearledgr.api.erp_webhooks import router as erp_webhooks_router
+from clearledgr.api.fraud_controls import router as fraud_controls_router
+from clearledgr.api.gdpr import router as gdpr_router
+from clearledgr.api.gmail_extension import router as gmail_extension_router
+from clearledgr.api.gmail_schedule import router as gmail_schedule_router
+from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
+from clearledgr.api.iban_verification import router as iban_verification_router
+from clearledgr.api.journal_entry_preview import (
+    router as journal_entry_preview_router,
+)
+from clearledgr.api.leads import router as leads_router
+from clearledgr.api.multi_invoice_split import (
+    router as multi_invoice_split_router,
+)
+from clearledgr.api.netsuite_panel import router as netsuite_panel_router
+from clearledgr.api.ops import router as ops_router
+from clearledgr.api.outbox_ops import router as outbox_ops_router
+from clearledgr.api.outlook_routes import router as outlook_router
+from clearledgr.api.payment_confirmations import router as payment_confirmations_router
+from clearledgr.api.peppol import router as peppol_router
+from clearledgr.api.pipelines import (
+    router as pipelines_router,
+    saved_views_router,
+    box_links_router,
+)
+from clearledgr.api.policies import router as policies_router
+from clearledgr.api.projections_ops import (
+    ops_router as projections_ops_router,
+    vendors_router as projections_vendors_router,
+)
+from clearledgr.api.reclassification_je import (
+    router as reclassification_je_router,
+)
+from clearledgr.api.saml import (
+    saml_admin_router as _saml_admin_router,
+    saml_public_router as _saml_public_router,
+)
+from clearledgr.api.sanctions import router as sanctions_router
+from clearledgr.api.sap_extension import router as sap_extension_router
+from clearledgr.api.settings import router as settings_router
+from clearledgr.api.slack_invoices import (
+    legacy_router as slack_legacy_router,
+    router as slack_invoices_router,
+)
+from clearledgr.api.teams_invoices import router as teams_invoices_router
+from clearledgr.api.three_way_match import (
+    router as three_way_match_router,
+)
+from clearledgr.api.threshold_policy import (
+    router as threshold_policy_router,
+)
+from clearledgr.api.ui_perf import router as ui_perf_router
+from clearledgr.api.user_preferences import router as user_preferences_router
+from clearledgr.api.v1 import router as v1_router
+from clearledgr.api.vat import router as vat_router
+from clearledgr.api.vendor_domains import router as vendor_domains_router
+from clearledgr.api.vendor_inquiry import (
+    router as vendor_inquiry_router,
+)
+from clearledgr.api.vendor_kyc import router as vendor_kyc_router
+from clearledgr.api.vendor_match import router as vendor_match_router
+from clearledgr.api.vendor_onboarding import (
+    router as vendor_onboarding_router,
+    ops_router as vendor_onboarding_ops_router,
+)
+from clearledgr.api.vendor_portal import (
+    router as vendor_portal_router,
+    shortcut_router as vendor_portal_shortcut_router,
+)
+from clearledgr.api.vendor_status import router as vendor_status_router
+from clearledgr.api.workspace_shell import router as workspace_shell_router
 from clearledgr.core.errors import safe_error
+from clearledgr.services.auth import get_api_key_optional
+from clearledgr.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
+from clearledgr.services.errors import ClearledgrError
 from clearledgr.services.logging import log_request, log_error, logger
 from clearledgr.services.metrics import record_request, record_error, get_metrics
+from clearledgr.services.rate_limit import RateLimitMiddleware
 
 # Surface the persistent-metrics mode on /health without calling
 # get_metrics() (which would run 9 SELECTs per call, see L1247).
 _PERSISTENT_METRICS = str(os.getenv("ENV", "dev")).strip().lower() in {
     "prod", "production", "staging", "stage",
 }
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-import time
-import uuid
-from datetime import datetime, timezone
-
-from clearledgr.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
 
 
 @asynccontextmanager
@@ -754,16 +874,6 @@ def _apply_runtime_surface_profile() -> None:
 
 STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective"))
 
-from clearledgr.api.v1 import router as v1_router
-from clearledgr.api.gmail_extension import router as gmail_extension_router
-from clearledgr.api.netsuite_panel import router as netsuite_panel_router
-from clearledgr.api.sap_extension import router as sap_extension_router
-from clearledgr.api.slack_invoices import (
-    legacy_router as slack_legacy_router,
-    router as slack_invoices_router,
-)
-from clearledgr.api.teams_invoices import router as teams_invoices_router
-
 app.include_router(v1_router)
 app.include_router(gmail_extension_router)
 app.include_router(netsuite_panel_router)
@@ -772,50 +882,16 @@ app.include_router(slack_invoices_router)
 app.include_router(slack_legacy_router)
 app.include_router(teams_invoices_router)
 
-# Eager-import the IntakeAdapter implementations so the registry is
-# populated before any webhook fires. Each module calls
-# `register_adapter(...)` at import time.
-import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401,E402
-import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401,E402
-
-# Eager-import the MatchEngine implementations (Gap 3) so the
-# registry is populated before any matching call.
-import clearledgr.services.match_engines  # noqa: F401,E402
-
-# Eager-import state_observers (Gap 4) so the outbox observer-prefix
-# handler is registered before the OutboxWorker starts polling. The
-# worker process needs this even though it doesn't construct an
-# InvoiceWorkflowService.
-import clearledgr.services.state_observers  # noqa: F401,E402
-
-# Eager-import annotation targets (Gap 5) so the annotation-prefix
-# handler is registered + every target instance is in the registry
-# before any annotation outbox row is processed.
-import clearledgr.services.annotation_targets  # noqa: F401,E402
-
-# Eager-import box projection (Gap 6) so the projection-prefix
-# outbox handler is registered + BoxSummaryProjector +
-# VendorSummaryProjector are in the projector registry before the
-# OutboxWorker drains its first projection row.
-import clearledgr.services.box_projection  # noqa: F401,E402
-
 # Policies router (Gap 2 — versioned policy + replay)
-from clearledgr.api.policies import router as policies_router  # noqa: E402
 app.include_router(policies_router)
 
 # Outbox ops router (Gap 4 — transactional outbox inspection / retry / replay)
-from clearledgr.api.outbox_ops import router as outbox_ops_router  # noqa: E402
 app.include_router(outbox_ops_router)
 
 # Projection routers (Gap 6 — vendor summary + ops rebuild + introspection)
-from clearledgr.api.projections_ops import (  # noqa: E402
-    ops_router as projections_ops_router,
-    vendors_router as projections_vendors_router,
-)
 app.include_router(projections_ops_router)
 app.include_router(projections_vendors_router)
 
-from clearledgr.api.leads import router as leads_router  # noqa: E402
 app.include_router(leads_router)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -1230,7 +1306,6 @@ app.add_middleware(
 # gate it on an env var, NOT on import failure.
 
 # Core + auth
-from clearledgr.api.auth import router as auth_router
 app.include_router(auth_router)
 
 # Organization Config API — not mounted in strict AP-v1 profile
@@ -1241,74 +1316,52 @@ if not STRICT_PROFILE_ACTIVE:
 # Fraud Controls API — CFO-gated writes of architectural fraud params
 # (payment ceiling, velocity limits, first-payment dormancy). See
 # DESIGN_THESIS.md §8.
-from clearledgr.api.fraud_controls import router as fraud_controls_router
 app.include_router(fraud_controls_router)
 
 # IBAN Change Verification API — Phase 2.1.b. Three-factor CFO-gated
 # workflow that lifts the IBAN change freeze. See DESIGN_THESIS.md §8.
-from clearledgr.api.iban_verification import router as iban_verification_router
 app.include_router(iban_verification_router)
 
 # Vendor Trusted-Domains API — Phase 2.2. CFO-gated allowlist of sender
 # domains the validation gate trusts for each vendor. See DESIGN_THESIS.md §8.
-from clearledgr.api.vendor_domains import router as vendor_domains_router
 app.include_router(vendor_domains_router)
 
 # Module 4 Pass B — vendor allowlist/blocklist (admin gated). Status
 # writes flow through the vendor profile and the bill-validation gate
 # refuses to post for blocked vendors.
-from clearledgr.api.vendor_status import router as vendor_status_router
 app.include_router(vendor_status_router)
 
 # Vendor KYC API — Phase 2.4. First-class KYC fields + computed signals.
 # Reads = any org member; writes = Financial Controller+. See DESIGN_THESIS.md §3.
-from clearledgr.api.vendor_kyc import router as vendor_kyc_router
 app.include_router(vendor_kyc_router)
 
 # Vendor Onboarding control API — Phase 3.1.b. Customer-side session
 # lifecycle + ops list endpoint. See DESIGN_THESIS.md §9.
-from clearledgr.api.vendor_onboarding import (
-    router as vendor_onboarding_router,
-    ops_router as vendor_onboarding_ops_router,
-)
 app.include_router(vendor_onboarding_router)
 app.include_router(vendor_onboarding_ops_router)
 
 # Vendor Portal — Phase 3.1.b. The ONLY unauthenticated surface
 # (magic-link tokens, 14-day TTL). See DESIGN_THESIS.md §9.
-from clearledgr.api.vendor_portal import (
-    router as vendor_portal_router,
-    shortcut_router as vendor_portal_shortcut_router,
-)
 app.include_router(vendor_portal_router)
 app.include_router(vendor_portal_shortcut_router)
 
 # Gmail integration
-from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
 app.include_router(gmail_webhooks_router)
 
-from clearledgr.api.gmail_schedule import router as gmail_schedule_router
 app.include_router(gmail_schedule_router)
 
 # §5.1 Object Model — Pipeline / SavedView / BoxLink endpoints
-from clearledgr.api.pipelines import (
-    router as pipelines_router,
-    saved_views_router,
-    box_links_router,
-)
 app.include_router(pipelines_router)
 app.include_router(saved_views_router)
 app.include_router(box_links_router)
 
 # Organization settings (thresholds, GL mappings, migration)
-from clearledgr.api.settings import router as settings_router
 app.include_router(settings_router)
 
 # Outlook / Microsoft 365 routes (OAuth + webhooks) — optional surface,
 # currently not in strict AP-v1 scope but shipped so admins who toggle
 # Outlook intake get real endpoints. Keep required so it fails loudly
 # if the module breaks.
-from clearledgr.api.outlook_routes import router as outlook_router
 app.include_router(outlook_router)
 
 # ERP Connections API (OAuth flows). Strict profile exposes only the
@@ -1334,157 +1387,102 @@ else:
 # Inbound ERP webhook endpoints (HMAC-signed; QBO/Xero/NetSuite/SAP).
 # Each route verifies signature before processing — unconfigured
 # secrets fail-closed with 503 "webhook_not_configured".
-from clearledgr.api.erp_webhooks import router as erp_webhooks_router
 app.include_router(erp_webhooks_router)
 
 # Wave 2 / C4: manual payment confirmation surface
-from clearledgr.api.payment_confirmations import router as payment_confirmations_router
 app.include_router(payment_confirmations_router)
 
 # Wave 2 / C6: bank statement import + reconciliation surface
-from clearledgr.api.bank_statements import router as bank_statements_router
 app.include_router(bank_statements_router)
 
 # Wave 3 / E1: sanctions screening surface
-from clearledgr.api.sanctions import router as sanctions_router
 app.include_router(sanctions_router)
 
 # Wave 3 / E2: VAT modeling + returns
-from clearledgr.api.vat import router as vat_router
 app.include_router(vat_router)
 
 # Wave 3 / E3: GDPR retention + right-to-erasure
-from clearledgr.api.gdpr import router as gdpr_router
 app.include_router(gdpr_router)
 
 # Wave 3 / E4: JE preview on approval cards
-from clearledgr.api.journal_entry_preview import (
-    router as journal_entry_preview_router,
-)
 app.include_router(journal_entry_preview_router)
 
 # Wave 4 / F1+F2: PEPPOL UBL inbound import + outbound credit notes
-from clearledgr.api.peppol import router as peppol_router
 app.include_router(peppol_router)
 
 # Wave 4 / F4: Africa e-invoice formats (NG FIRS, KE eTIMS, ZA SARS)
-from clearledgr.api.africa_einvoice import (
-    router as africa_einvoice_router,
-)
 app.include_router(africa_einvoice_router)
 
 # Wave 5 / G1: 3-way match runner
-from clearledgr.api.three_way_match import (
-    router as three_way_match_router,
-)
 app.include_router(three_way_match_router)
 
 # Wave 5 / G2: multi-attribute vendor match
-from clearledgr.api.vendor_match import router as vendor_match_router
 app.include_router(vendor_match_router)
 
 # Wave 5 / G3: multi-invoice PDF splitter
-from clearledgr.api.multi_invoice_split import (
-    router as multi_invoice_split_router,
-)
 app.include_router(multi_invoice_split_router)
 
 # Wave 5 / G4: configurable confidence thresholds
-from clearledgr.api.threshold_policy import (
-    router as threshold_policy_router,
-)
 app.include_router(threshold_policy_router)
 
 # Wave 5 / G5: accrual JE for received-not-billed
-from clearledgr.api.accrual_journal_entry import (
-    router as accrual_je_router,
-)
 app.include_router(accrual_je_router)
 
 # Wave 5 / G6: cycle-time + touchless-rate metrics
-from clearledgr.api.cycle_time_metrics import (
-    router as cycle_time_metrics_router,
-)
 app.include_router(cycle_time_metrics_router)
 
 # Wave 6 / H1: dual approval (two-person rule)
-from clearledgr.api.dual_approval import router as dual_approval_router
 app.include_router(dual_approval_router)
 
 # Wave 6 / H2: vendor inquiry status surface
-from clearledgr.api.vendor_inquiry import (
-    router as vendor_inquiry_router,
-)
 app.include_router(vendor_inquiry_router)
 
 # Wave 6 / H3: dispute reopen ceremony
-from clearledgr.api.dispute_reopen import (
-    router as dispute_reopen_router,
-)
 app.include_router(dispute_reopen_router)
 
 # Wave 6 / H4: reclassification JE
-from clearledgr.api.reclassification_je import (
-    router as reclassification_je_router,
-)
 app.include_router(reclassification_je_router)
 
 # Agent intent runtime contract (preview/execute)
-from clearledgr.api.agent_intents import router as agent_intents_router
 app.include_router(agent_intents_router)
 
 # AP item routes (sources/context/audit/merge/split)
-from clearledgr.api.ap_items import router as ap_items_router
 app.include_router(ap_items_router)
 
 # AP audit feeds for admin/activity surfaces
-from clearledgr.api.ap_audit import router as ap_audit_router
 app.include_router(ap_audit_router)
 
 # Frontend performance telemetry (DESIGN_THESIS.md §4.07)
-from clearledgr.api.ui_perf import router as ui_perf_router
 app.include_router(ui_perf_router)
 
 # AP business policy management (versioned + auditable)
-from clearledgr.api.ap_policies import router as ap_policies_router
 app.include_router(ap_policies_router)
 
 # Ops health/KPI endpoints
-from clearledgr.api.ops import router as ops_router
 app.include_router(ops_router)
 
 # Workspace shell support APIs — always mounted. The standalone HTML
 # page at /workspace is gated separately (§4 Principle 01).
-from clearledgr.api.workspace_shell import router as workspace_shell_router
 app.include_router(workspace_shell_router)
 
 # Module 5 carry-over: ERP test-connection + credential-rotation
 # endpoints. Closes the audit gap where ERP admins couldn't re-test
 # or rotate credentials without re-running the connect flow.
-from clearledgr.api.erp_connection_ops import (
-    router as erp_connection_ops_router,
-)
 app.include_router(erp_connection_ops_router)
 
 # Module 6 Pass C — SAML SSO. Two routers: admin CRUD under
 # /api/workspace/saml/, plus IdP-facing flows (metadata, login,
 # ACS) under /saml/. The latter must NOT require auth — they're
 # the entry/exit points of a federated login.
-from clearledgr.api.saml import (
-    saml_admin_router as _saml_admin_router,
-    saml_public_router as _saml_public_router,
-)
 app.include_router(_saml_admin_router)
 app.include_router(_saml_public_router)
 
 # Phase 9 Backoffice surface — Box exceptions admin UI endpoints.
-from clearledgr.api.box_exceptions_admin import router as box_exceptions_admin_router
 app.include_router(box_exceptions_admin_router)
 
 # Per-user preferences — /api/user/* prefix, not /api/workspace/*, because
 # preferences are per-user data (UI state, saved views, template choices)
 # not org-level admin data. No ops-role gate applies.
-from clearledgr.api.user_preferences import router as user_preferences_router
 app.include_router(user_preferences_router)
 
 # Serve static files (standalone workspace shell)

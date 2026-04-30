@@ -2033,7 +2033,7 @@ class TestExtensionEndpoints:
                         "classification": {"type": "INVOICE"},
                     }
                 ),
-            ) as triage_mock:
+            ):
                 response = client.post(
                     "/extension/process",
                     json={

@@ -25,16 +25,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
-logger = logging.getLogger(__name__)
-
-import httpx
-from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.core.http_client import get_http_client
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
@@ -2775,7 +2773,7 @@ def list_vendor_profiles(
             cur = conn.cursor()
             cur.execute(sql, (org_id,))
             rows = [dict(r) for r in cur.fetchall()]
-    except Exception as exc:
+    except Exception:
         rows = []
     return {"organization_id": org_id, "profiles": rows, "count": len(rows)}
 

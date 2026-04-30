@@ -196,7 +196,7 @@ async def test_netsuite_stamps_custom_fields_at_top_level():
 
     with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=fake_client), \
          patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
-        result = await post_bill_to_netsuite(
+        await post_bill_to_netsuite(
             connection, bill,
             custom_fields={
                 "custbody_acme_state": "approved",

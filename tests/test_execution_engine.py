@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -87,10 +86,6 @@ class TestLLMBoundaryFence:
         # coarse grep but catches any new handler that quietly adds an
         # LLM call without spec review.
         import re
-        handler_defs = re.findall(
-            r"def (_handle_\w+)\b[\s\S]+?(?=\n    def |\nclass |\Z)",
-            source,
-        )
         llm_handlers = []
         # inspect.getsource is monolithic; use a different parse that
         # slices on def boundaries.

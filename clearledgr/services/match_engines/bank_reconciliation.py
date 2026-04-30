@@ -22,11 +22,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from clearledgr.services.match_engine import (
     MatchCandidate,
-    MatchEngine,
     MatchInput,
     MatchStatus,
     get_tolerance_for,

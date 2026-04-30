@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from main import app
 from clearledgr.api import ops as ops_module

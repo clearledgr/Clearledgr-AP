@@ -22,9 +22,8 @@ fake DB.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, Dict, List
+from unittest.mock import patch
 
 import pytest
 

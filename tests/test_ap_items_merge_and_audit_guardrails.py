@@ -2,17 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.api.ap_item_contracts import MergeItemsRequest, ResubmitRejectedItemRequest
 from clearledgr.api.ap_items_action_routes import merge_ap_items, resubmit_rejected_item

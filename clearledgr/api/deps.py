@@ -2,11 +2,11 @@
 import logging
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request
-
-logger = logging.getLogger(__name__)
+from fastapi import HTTPException, Request
 
 from clearledgr.di.container import container
+
+logger = logging.getLogger(__name__)
 
 
 def get_audit_service():
@@ -45,13 +45,10 @@ async def soft_org_guard(request: Request, user: Optional[object] = None) -> Non
     Unauthenticated callers (Slack webhooks, ERP callbacks, autopilot) pass
     through unchanged — backwards-compatible.
     """
-    from clearledgr.core.auth import get_optional_user
 
     # Resolve the optional user from the request directly so this works as a
     # plain function dependency (FastAPI will inject Request automatically).
     try:
-        from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-        from fastapi import Header
         auth_header = request.headers.get("Authorization", "")
         api_key = request.headers.get("X-API-Key")
         resolved_user = None

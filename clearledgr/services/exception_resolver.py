@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,8 @@ class ExceptionResolver:
     ) -> str:
         """Ask Claude to reason about an unresolved exception with full context."""
         try:
-            import os, json, httpx
+            import os
+            import json
             api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             if not api_key:
                 return ""
@@ -286,7 +287,8 @@ Respond in 2-3 sentences: the likely root cause, what to do, and who should hand
     ) -> str:
         """Ask Claude to reason about why the invoice amount differs from history."""
         try:
-            import os, json, httpx
+            import os
+            import json
             api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             if not api_key:
                 return ""
@@ -492,7 +494,6 @@ Respond in ONE sentence with the most likely explanation and whether this needs 
             return {"resolved": False, "reason": "no_vendor_name"}
 
         # Load known vendor profiles for this org
-        profiles: list = []
         try:
             if hasattr(self.db, "get_vendor_profiles_bulk"):
                 # Fall back to listing via AP items if no dedicated list method

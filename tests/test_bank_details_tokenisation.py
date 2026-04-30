@@ -23,10 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import tempfile
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from typing import Dict, List, Optional
 
 import pytest
 
@@ -47,7 +44,7 @@ SAMPLE_BANK_DETAILS: Dict[str, str] = {
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()

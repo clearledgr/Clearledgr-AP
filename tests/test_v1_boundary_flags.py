@@ -11,7 +11,6 @@ Covers the three behaviours the boundary relies on:
 """
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
@@ -213,7 +212,7 @@ class TestOutlookAutopilotGating:
         # Make start_outlook_autopilot a spy — if the flag skip fires,
         # the import (and therefore the spy) is never reached.
         import clearledgr.services.app_startup as app_startup_mod
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         spy = AsyncMock()
         fake_module = MagicMock()

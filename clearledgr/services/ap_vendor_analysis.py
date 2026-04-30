@@ -10,26 +10,23 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
 from clearledgr.core.database import ClearledgrDB
-from clearledgr.core.ap_states import APState
 from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.policy_compliance import get_approval_automation_policy
 
 # Lazy import helpers — these are imported at call-time from ap_item_service
 # to avoid circular imports.  The functions themselves are defined in
 # ap_field_review.py and re-exported through ap_item_service.
-from clearledgr.core.utils import safe_float, safe_int
+from clearledgr.core.utils import safe_float
 from clearledgr.services.ap_field_review import (
     _parse_json,
-    _normalize_document_type_token,
 )
 from clearledgr.services.vendor_risk import (
-    VendorRiskScore,
     compute_risk_from_profile,
 )
 

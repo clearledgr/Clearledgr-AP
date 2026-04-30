@@ -12,7 +12,6 @@ Behaviours covered:
 """
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -109,7 +108,6 @@ class TestRoutingWithCalendarOOO:
         db = MagicMock()
         db.get_active_delegation.return_value = None
 
-        from clearledgr.core.database import get_db as _real_get_db
         monkeypatch.setattr("clearledgr.core.database.get_db", lambda: db)
 
         org_settings = {

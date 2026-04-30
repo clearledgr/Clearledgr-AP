@@ -10,9 +10,8 @@ import os
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
-import httpx
 from clearledgr.core.http_client import get_http_client
-from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from clearledgr.api.gmail_extension_models import (  # noqa: F401 — re-exported for back-compat
@@ -46,7 +45,7 @@ from clearledgr.api.gmail_extension_common import (
     resolve_org_id_for_user as _resolve_org_id_for_user,
 )
 from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
-from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email
+from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email, has_admin_access
 from clearledgr.core.database import get_db
 from clearledgr.core.idempotency import (
     load_idempotent_response,
@@ -315,7 +314,7 @@ def _resolve_invoice_repair_user(
             "email": actor_email or _authenticated_actor(user, fallback="gmail_extension"),
         }
 
-    if not _is_admin_user(user):
+    if not has_admin_access(getattr(user, "role", None)):
         raise HTTPException(status_code=403, detail="target_user_requires_admin")
 
     target_user = get_user_by_email(requested_email)
@@ -619,7 +618,7 @@ async def bulk_scan_emails(
             if triage.get("action") != "skipped":
                 results["labeled"] += 1
         except Exception as exc:
-            logger.warning("Triage failed for email %s: %s", entry.get("email_id", "?"), exc)
+            logger.warning("Triage failed for email %s: %s", email_id, exc)
 
     return results
 
@@ -667,7 +666,6 @@ async def get_extension_worklist(
 
     §3 Multi-entity: optional entity_id scopes the worklist to a single entity.
     """
-    from fastapi import HTTPException
     from clearledgr.services.gmail_autopilot import ensure_gmail_autopilot_progress
 
     org_id = _resolve_org_id_for_user(user, organization_id)

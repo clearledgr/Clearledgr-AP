@@ -37,7 +37,6 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)

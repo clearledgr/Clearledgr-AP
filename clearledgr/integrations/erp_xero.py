@@ -381,7 +381,7 @@ async def post_bill_to_xero(
             try:
                 if invoice_id:
                     journal_resp = await client.get(
-                        f"https://api.xero.com/api.xro/2.0/Journals",
+                        "https://api.xero.com/api.xro/2.0/Journals",
                         params={"invoiceID": invoice_id},
                         headers={
                             "Authorization": f"Bearer {connection.access_token}",

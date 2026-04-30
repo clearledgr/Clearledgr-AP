@@ -12,7 +12,6 @@ Covers:
 """
 
 import asyncio
-import json
 import sys
 import types
 from datetime import datetime, timezone, timedelta

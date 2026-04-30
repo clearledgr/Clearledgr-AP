@@ -19,7 +19,7 @@ No Postgres / Docker — pure logic + mocks.
 from __future__ import annotations
 
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -406,7 +406,7 @@ async def test_dispatch_observer_noop_when_no_active_targets():
 async def test_outbox_handler_dispatches_to_registered_target():
     from clearledgr.services.annotation_targets.base import (
         AnnotationContext, AnnotationResult, _outbox_handler_annotation,
-        _TARGET_REGISTRY, register_target,
+        _TARGET_REGISTRY,
     )
     from clearledgr.services.outbox import OutboxEvent
 

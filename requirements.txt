@@ -65,6 +65,14 @@ sentry-sdk[fastapi]>=2.0.0   # error tracking (opt-in via SENTRY_DSN)
 # Development
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+# Parallel test runner. CI uses `pytest -n auto` to fan out across
+# cores; the `loadfile` distribution keeps tests from the same file
+# on the same worker so per-file fixtures (e.g. testcontainer reuse)
+# work as written.
+pytest-xdist>=3.5.0
+# Coverage reporting. CI uploads the report; threshold-gating is
+# left for a follow-up once we have a baseline.
+pytest-cov>=4.1.0
 black>=24.1.0
 ruff>=0.2.0
 # Spins up an ephemeral Postgres 15 container for test sessions so

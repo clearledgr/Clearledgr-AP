@@ -20,7 +20,6 @@ from clearledgr.services.adaptive_thresholds import (  # noqa: E402
     MIN_HISTORY_FOR_ADJUSTMENT,
     MIN_THRESHOLD,
     MAX_THRESHOLD,
-    ADJUSTMENT_STEP,
     AdaptiveThresholdService,
 )
 

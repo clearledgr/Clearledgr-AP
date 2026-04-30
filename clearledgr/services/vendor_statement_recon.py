@@ -14,7 +14,7 @@ Never raises — returns empty report on error.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from clearledgr.core.money import money_sum, money_to_float
 from typing import Any, Dict, List, Optional

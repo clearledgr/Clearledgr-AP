@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from clearledgr.services import agent_background as agent_background_module
 

@@ -12,22 +12,15 @@ Tests:
 """
 from __future__ import annotations
 
-import sys
 import threading
-import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from main import _apply_runtime_surface_profile, app
 from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData, create_access_token, get_current_user
+from clearledgr.core.auth import create_access_token
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +206,6 @@ def test_metadata_merge_concurrent_safe(db):
 
 def test_approval_reminder_no_duplicate(db, monkeypatch):
     """Approval reminders already stored in metadata milestones are NOT re-sent."""
-    import json as _json
     from clearledgr.services import agent_background
 
     item_id = "dup-remind-1"

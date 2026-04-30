@@ -16,8 +16,7 @@ import secrets
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, asdict
-import httpx
+from dataclasses import dataclass
 from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)

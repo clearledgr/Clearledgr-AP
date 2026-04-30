@@ -12,7 +12,6 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
 
 from clearledgr.api.erp_connections import _classify_erp_connect_error
 from clearledgr.api.workspace_shell import _is_ap_policy_configured

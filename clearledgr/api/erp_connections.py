@@ -19,13 +19,12 @@ import secrets
 import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
-from datetime import datetime, timezone, timedelta
-from urllib.parse import urlencode, parse_qs, urlparse
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
-import httpx
 from clearledgr.core.http_client import get_http_client
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from clearledgr.core.auth import TokenData, get_current_user
@@ -789,7 +788,7 @@ async def netsuite_connect(
     )
     
     # Test connection
-    from clearledgr.integrations.erp_router import get_netsuite_accounts, build_netsuite_oauth_header
+    from clearledgr.integrations.erp_router import get_netsuite_accounts
     
     try:
         accounts = await get_netsuite_accounts(connection)

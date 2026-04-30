@@ -13,11 +13,10 @@ versioned :class:`PolicyService` and are replayable.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from clearledgr.services.match_engine import (
     MatchCandidate,
-    MatchEngine,
     MatchInput,
     MatchStatus,
     get_tolerance_for,

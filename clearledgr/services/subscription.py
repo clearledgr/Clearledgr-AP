@@ -11,7 +11,7 @@ Handles:
 
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
@@ -704,7 +704,7 @@ class SubscriptionService:
             amount = AI_CREDIT_COSTS.get(action, 1)
 
         from clearledgr.services.agent_credit_pool import (
-            consume_credit, get_balance,
+            consume_credit,
         )
 
         result = consume_credit(
@@ -897,6 +897,12 @@ class SubscriptionService:
             "llm_calls_count": llm_cost.get("call_count", 0),
             "estimated_total": round(seat_price * active_seats + read_only_cost + volume_cost, 2),
             "annual_savings_pct": 20 if sub.billing_cycle == "yearly" else 0,
+            "limits": {
+                "users_max": limits.users_max,
+                "invoices_per_month": limits.invoices_per_month,
+                "ai_credits_per_month": limits.ai_credits_per_month,
+                "monthly_llm_cost_usd_hard_cap": getattr(limits, "monthly_llm_cost_usd_hard_cap", None),
+            },
         }
 
     def get_effective_llm_cost_cap(self, organization_id: str) -> float:

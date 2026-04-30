@@ -181,7 +181,7 @@ class PipelineStore:
         placeholders = ", ".join("%s" for _ in source_states)
         state_col = "state"
 
-        where_parts = [f"organization_id = %s", f"{state_col} IN ({placeholders})"]
+        where_parts = ["organization_id = %s", f"{state_col} IN ({placeholders})"]
         params: list = [organization_id, *source_states]
 
         if entity_id and source_table == "ap_items":

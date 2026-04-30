@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -81,7 +81,6 @@ def post_accrual_je_endpoint(
     from clearledgr.services.accrual_journal_entry_post import (
         run_month_end_close,
     )
-    from fastapi import HTTPException
 
     db = get_db()
     try:
@@ -137,7 +136,6 @@ def get_run(
     from clearledgr.services.accrual_journal_entry_post import (
         get_accrual_run,
     )
-    from fastapi import HTTPException
 
     db = get_db()
     row = get_accrual_run(db, run_id)

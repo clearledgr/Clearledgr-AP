@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
 
 import pytest
 
@@ -28,7 +27,7 @@ import pytest
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()

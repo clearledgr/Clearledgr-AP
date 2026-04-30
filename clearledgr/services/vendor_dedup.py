@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from clearledgr.services.fuzzy_matching import normalize_vendor, vendor_similarity
 

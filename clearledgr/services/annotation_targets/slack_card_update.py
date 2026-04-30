@@ -24,7 +24,7 @@ Skipped when:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from clearledgr.services.annotation_targets.base import (
     AnnotationContext,
@@ -97,7 +97,7 @@ class SlackCardUpdateTarget:
         blocks = self._build_status_blocks(context, show_actor)
 
         try:
-            response = await client._request(
+            await client._request(
                 "POST", "chat.update",
                 data={
                     "channel": channel_id,

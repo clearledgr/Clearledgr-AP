@@ -38,7 +38,6 @@ if str(ROOT) not in sys.path:
 from clearledgr.core import database as db_module  # noqa: E402
 from clearledgr.services import erp_payment_dispatcher as dispatcher  # noqa: E402
 from clearledgr.services.erp_payment_dispatcher import (  # noqa: E402
-    ParsedPaymentEvent,
     dispatch_netsuite_payment_webhook,
     dispatch_quickbooks_payment_webhook,
     dispatch_xero_payment_webhook,

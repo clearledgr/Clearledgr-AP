@@ -12,22 +12,16 @@ from __future__ import annotations
 
 import csv
 import io
-import sys
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from main import app
 from clearledgr.api import workspace_shell as ws_module
 from clearledgr.core import database as db_module
 from clearledgr.core.auth import TokenData
-from clearledgr.services.report_export import generate_report, rows_to_csv, REPORT_TYPES
+from clearledgr.services.report_export import generate_report, rows_to_csv
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ Exception paths:
 from __future__ import annotations
 
 from dataclasses import asdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from clearledgr.core.ap_states import APState, TERMINAL_STATES

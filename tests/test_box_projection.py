@@ -26,9 +26,8 @@ No Postgres / Docker — pure logic + mocks.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -581,7 +580,7 @@ async def test_observer_no_op_when_registry_empty():
     """If no projectors are registered for the box_type, observer
     must enqueue nothing."""
     from clearledgr.services.box_projection import (
-        BoxProjectionObserver, _PROJECTOR_REGISTRY,
+        BoxProjectionObserver,
     )
 
     enqueue_calls: List[Dict[str, Any]] = []
@@ -618,7 +617,7 @@ async def test_observer_no_op_when_registry_empty():
 @pytest.mark.asyncio
 async def test_outbox_handler_dispatches_to_named_projector():
     from clearledgr.services.box_projection import (
-        _outbox_handler_projection, register_projector, _PROJECTOR_REGISTRY,
+        _outbox_handler_projection, _PROJECTOR_REGISTRY,
     )
 
     captured: List[Any] = []
@@ -803,7 +802,7 @@ def test_list_vendor_summaries_returns_rows():
 @pytest.mark.asyncio
 async def test_rebuild_projections_walks_all_items():
     from clearledgr.services.box_projection import (
-        rebuild_projections, register_projector, _PROJECTOR_REGISTRY,
+        rebuild_projections, _PROJECTOR_REGISTRY,
     )
 
     handled: List[str] = []

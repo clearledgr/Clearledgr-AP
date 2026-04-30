@@ -196,9 +196,8 @@ def _make_test_pdf_with_pages(page_texts: list) -> bytes:
     """
     from pypdf import PdfWriter
     from pypdf.generic import (
-        ArrayObject, ContentStream, DecodedStreamObject,
-        DictionaryObject, FloatObject, NameObject, NumberObject,
-        TextStringObject,
+        DecodedStreamObject,
+        DictionaryObject, NameObject,
     )
 
     writer = PdfWriter()

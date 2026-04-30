@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -714,7 +714,7 @@ class TestReverseSAP:
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     """Fresh temp-file DB wired as the singleton."""
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()

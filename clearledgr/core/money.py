@@ -48,7 +48,7 @@ class widgets where a 0.01 drift is invisible.
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable
 
 from pydantic import BeforeValidator, PlainSerializer
 from typing_extensions import Annotated

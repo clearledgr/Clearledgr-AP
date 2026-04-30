@@ -10,8 +10,6 @@ These tests lock in that contract.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,15 +18,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from clearledgr.api import ap_items_action_routes as action_routes
 from clearledgr.api.ap_item_contracts import (
     BulkApproveRequest,
     BulkRejectRequest,
-    BulkRetryPostRequest,
     BulkSnoozeRequest,
 )
 from clearledgr.core import database as db_module

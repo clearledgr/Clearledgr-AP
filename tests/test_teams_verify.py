@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import httpx
 import jwt
 import pytest
 from fastapi import HTTPException
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import teams_verify as teams_verify_module
 

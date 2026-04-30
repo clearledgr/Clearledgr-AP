@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-import secrets
 import time
 from html import escape
 from datetime import datetime, timezone
@@ -23,18 +22,18 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from clearledgr.core.errors import safe_error
-from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.ap_confidence import evaluate_critical_field_confidence
-
+from clearledgr.core.auth import TokenData, get_current_user
+from clearledgr.core.database import get_db
+from clearledgr.core.errors import safe_error
+from clearledgr.core.models import FinanceEmail
 from clearledgr.services.gmail_api import (
     GmailAPIClient,
     GmailWatchService,
     token_store,
     exchange_code_for_tokens,
 )
-from clearledgr.core.database import get_db
-from clearledgr.core.models import FinanceEmail
+from clearledgr.services.gmail_labels import sync_finance_labels
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +305,6 @@ async def _sync_message_finance_labels(
     )
 
 router = APIRouter(prefix="/gmail", tags=["gmail"])
-
-from clearledgr.services.gmail_labels import sync_finance_labels
 
 _ORG_ADMIN_ROLES = {"admin", "owner", "api"}
 
@@ -1421,7 +1418,7 @@ async def process_invoice_email(
     except Exception as sub_exc:
         logger.warning("Subscription check failed for org %s, proceeding: %s", organization_id, sub_exc)
 
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService, InvoiceData
+    from clearledgr.services.invoice_workflow import InvoiceData
     from clearledgr.workflows.gmail_activities import extract_email_data_activity
 
     logger.info(f"Processing invoice email: {message.subject}")
@@ -1717,7 +1714,6 @@ async def process_invoice_email(
         "conflict_actions": conflict_actions,
         "exception_code": extraction_exception_code,
         "exception_severity": extraction_exception_severity,
-        "document_type": document_type,
     }
 
     try:

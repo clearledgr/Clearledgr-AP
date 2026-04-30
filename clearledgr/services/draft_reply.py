@@ -18,7 +18,7 @@ cost, and review surface bounded for the first ship.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from clearledgr.services.vendor_communication_templates import (
     VENDOR_TEMPLATES,

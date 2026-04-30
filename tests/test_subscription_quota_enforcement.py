@@ -8,9 +8,7 @@ Covers the three quotas added in commit 2:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
-import pytest
 
 from clearledgr.services.subscription import PlanLimits, PlanTier
 

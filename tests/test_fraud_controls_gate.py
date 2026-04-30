@@ -18,9 +18,8 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict
 from unittest.mock import patch
 
 import pytest
@@ -34,7 +33,7 @@ from fastapi.testclient import TestClient
 
 def _make_db(tmp_path, name: str = "fc_test.db"):
     """Create a fresh temp-file ClearledgrDB and wire it as the singleton."""
-    from clearledgr.core.database import ClearledgrDB, get_db
+    from clearledgr.core.database import get_db
     from clearledgr.core import database as db_module
 
     db = get_db()
@@ -674,7 +673,7 @@ class TestFraudControlsAPI:
 
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
-        from clearledgr.core.database import ClearledgrDB, get_db
+        from clearledgr.core.database import get_db
         from clearledgr.core import database as db_module
         import importlib
         import main

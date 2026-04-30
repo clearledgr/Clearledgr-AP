@@ -9,16 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-from pathlib import Path
-from typing import Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.integrations.erp_router import (
@@ -32,8 +25,6 @@ from clearledgr.integrations.erp_router import (
     apply_settlement,
     get_account_code,
     post_bill,
-    post_bill_to_quickbooks,
-    post_bill_to_xero,
     post_bill_to_netsuite,
     post_bill_to_sap,
 )

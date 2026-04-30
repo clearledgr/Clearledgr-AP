@@ -8,9 +8,8 @@ a fallback to the latest known rates (updated via background sync).
 """
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import httpx

@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from clearledgr.core import database as db_module
 from clearledgr.services.ap_item_service import _build_vendor_detail_payload, _build_vendor_summary_rows

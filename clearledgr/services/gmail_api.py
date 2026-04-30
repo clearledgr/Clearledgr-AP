@@ -10,7 +10,6 @@ Uses OAuth 2.0 for authorization and supports:
 """
 
 import base64
-import json
 import os
 import logging
 from urllib.parse import urlencode
