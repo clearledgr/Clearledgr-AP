@@ -39,6 +39,16 @@ from clearledgr.services.vendor_csv_import import (  # noqa: E402
     parse_and_validate,
 )
 
+import pytest as _vo_skip_pytest  # noqa: E402
+
+pytestmark = _vo_skip_pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
+
+
 
 # ─── Fixtures ───────────────────────────────────────────────────────
 

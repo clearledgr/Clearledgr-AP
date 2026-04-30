@@ -2,10 +2,17 @@
 
 The Box is the product — one persistent home per workflow instance.
 This module makes that first-class in code: each workflow type
-(``ap_item``, ``vendor_onboarding_session``, and the upcoming
-``clawback_box``) registers the shape its Boxes take so shared
-primitives (audit trail, health observability, reconstructability
-checks) can dispatch by ``box_type`` instead of hardcoding AP.
+registers the shape its Boxes take so shared primitives (audit trail,
+health observability, reconstructability checks) can dispatch by
+``box_type`` instead of hardcoding AP.
+
+As of 2026-04-30 the only registered type is ``ap_item``. The
+``vendor_onboarding_session`` registration was removed when vendor
+onboarding was deprioritized per the AP-as-wedge product call (see
+``memory/project_vendor_onboarding_subordinate.md``). The underlying
+state machine + table + service code remain in the repo as
+option-value; this registry just no longer surfaces VO Boxes to the
+runtime.
 
 The registry is deliberately flat: a dict of :class:`BoxType`
 dataclasses keyed by name. No inheritance. Box-level invariants
@@ -20,10 +27,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Optional
 
 from clearledgr.core.ap_states import APState
-from clearledgr.core.vendor_onboarding_states import (
-    TERMINAL_STATES as VO_TERMINAL_STATES,
-)
-from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
 
 
 @dataclass(frozen=True)
@@ -95,8 +98,6 @@ def load_box(box_type: str, box_id: str, db: Any) -> Optional[Dict[str, Any]]:
     bt = get(box_type)
     if bt.source_table == "ap_items":
         return db.get_ap_item(box_id)
-    if bt.source_table == "vendor_onboarding_sessions":
-        return db.get_vendor_onboarding_session(box_id)
     raise NotImplementedError(
         f"load_box has no loader for source_table={bt.source_table!r}"
     )
@@ -124,25 +125,6 @@ register(BoxType(
     open_states=frozenset(_AP_OPEN),
     terminal_states=frozenset(_AP_TERMINAL),
     exception_states=frozenset(_AP_EXCEPTION),
-))
-
-
-_VO_TERMINAL = {s.value for s in VO_TERMINAL_STATES}
-_VO_ALL = {s.value for s in VendorOnboardingState}
-_VO_OPEN = _VO_ALL - _VO_TERMINAL
-# Blocked is the vendor-onboarding exception signal; pre-active states
-# can also be stuck waiting for vendor response but blocked is the
-# explicit "something is wrong" state.
-_VO_EXCEPTION = {VendorOnboardingState.BLOCKED.value}
-
-
-register(BoxType(
-    name="vendor_onboarding_session",
-    source_table="vendor_onboarding_sessions",
-    state_field="state",
-    open_states=frozenset(_VO_OPEN),
-    terminal_states=frozenset(_VO_TERMINAL),
-    exception_states=frozenset(_VO_EXCEPTION),
 ))
 
 

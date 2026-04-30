@@ -16,6 +16,12 @@ from unittest.mock import MagicMock
 import pytest
 
 
+@pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
 class TestVendorOnboardingAtomicTransition:
     """§7.6 — vendor onboarding state UPDATE and audit INSERT
     share one transaction. If either fails, neither commits.
@@ -284,6 +290,12 @@ class TestBoxKeyedAuditWrites:
         assert box_id == "ap-box-1"
         assert box_type == "ap_item"
 
+    @pytest.mark.skip(
+        reason=(
+            "vendor_onboarding_deferred_2026_04_30 "
+            "— see memory/project_vendor_onboarding_subordinate.md"
+        ),
+    )
     def test_vendor_transition_writes_session_id_as_box_id(self, tmp_path, monkeypatch):
         db = self._fresh_db(tmp_path, monkeypatch)
         session = db.create_vendor_onboarding_session(

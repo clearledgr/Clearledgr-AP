@@ -667,11 +667,13 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # Gate only runs when vendor_master_gate is enabled in org settings.
         # Org settings cached on the instance to avoid DB hit per invoice.
         vendor_profile = None
+        # Org-settings cache stays for downstream consumers (parallel
+        # migration mode, etc.). The vendor-master gate itself runs
+        # post-save below — see the `vendor_master_check` block.
         if not hasattr(self, "_cached_org_settings"):
             self._cached_org_settings = None
             self._cached_org_settings_at = None
 
-        _vendor_gate_enabled = False
         _parallel_mode_from_cache = None
         try:
             now_ts = datetime.now(timezone.utc)
@@ -689,97 +691,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 self._cached_org_settings = org_settings or {}
                 self._cached_org_settings_at = now_ts
                 self._cached_migration_status = (org or {}).get("migration_status")
-            _vendor_gate_enabled = bool(self._cached_org_settings.get("vendor_master_gate", False))
             _parallel_mode_from_cache = self._cached_migration_status
         except Exception:
             pass
-
-        if _vendor_gate_enabled and hasattr(self.db, "get_vendor_profile"):
-            vendor_profile = self.db.get_vendor_profile(
-                invoice.vendor_name, self.organization_id
-            )
-        else:
-            vendor_profile = True  # Skip gate when not enabled
-        # Vendor is "known" if they have a profile at all (even with zero invoices).
-        vendor_is_active = bool(vendor_profile)
-        # Also check if vendor has an active onboarding session
-        vendor_onboarding_active = False
-        if not vendor_is_active and hasattr(self.db, "get_active_onboarding_session"):
-            try:
-                session = self.db.get_active_onboarding_session(
-                    self.organization_id, invoice.vendor_name
-                )
-                if session and session.get("state") in ("active", "bank_verified", "ready_for_erp"):
-                    vendor_is_active = True
-                elif session:
-                    vendor_onboarding_active = True
-            except Exception:
-                pass
-
-        if not vendor_is_active and vendor_onboarding_active:
-            # Vendor is in onboarding — create the Box but note it
-            logger.info(
-                "[InvoiceWorkflow] Vendor '%s' is in active onboarding — "
-                "Box created but flagged for onboarding context.",
-                invoice.vendor_name,
-            )
-            # Apply onboarding label — Gmail-only side effect.
-            if getattr(invoice, "source_type", "gmail") == "gmail" and not getattr(invoice, "erp_native", False):
-                try:
-                    from clearledgr.services.gmail_labels import apply_label
-                    from clearledgr.services.gmail_api import GmailAPIClient
-                    client = GmailAPIClient(organization_id=self.organization_id)
-                    await apply_label(client, invoice.gmail_id, "vendor_onboarding")
-                except Exception:
-                    pass
-
-        if not vendor_is_active and not vendor_onboarding_active:
-            # Unknown vendor — do NOT create a Box. Apply Review Required
-            # label and notify AP Manager per thesis §6.4.
-            logger.info(
-                "[InvoiceWorkflow] Unknown vendor '%s' — no Box created. "
-                "Applying Review Required label.",
-                invoice.vendor_name,
-            )
-            if getattr(invoice, "source_type", "gmail") == "gmail" and not getattr(invoice, "erp_native", False):
-                try:
-                    from clearledgr.services.gmail_labels import apply_label
-                    from clearledgr.services.gmail_api import GmailAPIClient
-                    client = GmailAPIClient(organization_id=self.organization_id)
-                    await apply_label(client, invoice.gmail_id, "review_required")
-                except Exception:
-                    pass
-
-            # Notify AP Manager via Slack
-            try:
-                from clearledgr.services.slack_notifications import _post_slack_blocks
-                await _post_slack_blocks(
-                    blocks=[{
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": (
-                                f"*Invoice from unknown vendor*\n"
-                                f"Sender: {invoice.sender}\n"
-                                f"Vendor: {invoice.vendor_name} — not in vendor master.\n"
-                                f"Amount: {invoice.currency} {invoice.amount:,.2f}\n"
-                                f"_Initiate onboarding or reject. No Box created until vendor is activated._"
-                            ),
-                        },
-                    }],
-                    text=f"Invoice from unknown vendor: {invoice.vendor_name}",
-                    organization_id=self.organization_id,
-                )
-            except Exception:
-                pass
-
-            return {
-                "status": "unknown_vendor",
-                "reason": "vendor_not_in_master",
-                "vendor_name": invoice.vendor_name,
-                "sender": invoice.sender,
-                "message": "No Box created. Initiate vendor onboarding or reject.",
-            }
 
         existing = self.db.get_invoice_status(invoice.gmail_id)
         if existing:
@@ -798,6 +712,53 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     "slack_ts": thread.get("thread_ts") if thread else None,
                     "existing": True,
                 }
+            # Resume hook for vendor-master gate. If the AP item is
+            # parked in needs_info because the vendor wasn't in the
+            # ERP master, retry the lookup. If the customer has since
+            # added the vendor, advance the item back to received and
+            # let the rest of the workflow run; otherwise return the
+            # same needs_info status without re-running extraction.
+            existing_state = (existing.get("state") or existing.get("status") or "").lower()
+            existing_exception = (existing.get("exception_code") or "").lower()
+            if existing_state == "needs_info" and existing_exception == "vendor_not_in_erp_master":
+                from clearledgr.services.vendor_master_check import (
+                    check_vendor_in_erp_master,
+                    needs_info_message,
+                    VENDOR_NOT_IN_ERP_MASTER,
+                )
+                resume_status = await check_vendor_in_erp_master(
+                    organization_id=self.organization_id,
+                    vendor_name=invoice.vendor_name,
+                    sender_email=getattr(invoice, "sender", None),
+                )
+                if resume_status == "found":
+                    existing_id = existing.get("id") or invoice.gmail_id
+                    self.db.update_ap_item(
+                        existing_id,
+                        state="received",
+                        exception_code=None,
+                        last_error=None,
+                        _actor_type="agent",
+                        _actor_id="vendor_master_check",
+                    )
+                    logger.info(
+                        "[InvoiceWorkflow] %s found in ERP master on resume — "
+                        "AP item %s back to received.",
+                        invoice.vendor_name, existing_id,
+                    )
+                    # Fall through to the normal save/process flow so
+                    # the rest of the pipeline runs against the now-
+                    # known vendor. save_invoice_status is upsert-shaped
+                    # via the (org_id, invoice_key) UNIQUE constraint.
+                else:
+                    return {
+                        "status": "needs_info",
+                        "reason": VENDOR_NOT_IN_ERP_MASTER,
+                        "invoice_id": existing.get("id") or invoice.gmail_id,
+                        "vendor_name": invoice.vendor_name,
+                        "message": needs_info_message(invoice.vendor_name),
+                        "existing": True,
+                    }
 
         # Save invoice to database (canonical AP state: received).
         # Phase 2.1.a: bank_details flow through as a typed kwarg so they
@@ -827,20 +788,53 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         logger.info(f"New invoice detected: {invoice.vendor_name} ${invoice.amount} (confidence: {invoice.confidence})")
 
-        # §5.1 Box linking: auto-link invoice Box ↔ vendor onboarding Box
+        # AP-side ERP master-check gate (replaces the deprecated
+        # vendor-onboarding-session lookup). If the vendor isn't in
+        # the customer's ERP master, route to needs_info with a clear
+        # operator message; the customer adds them in their ERP and
+        # the invoice resumes on the next workflow tick. Skipped
+        # outcome (no ERP wired, transient failure) does NOT gate —
+        # AP keeps moving and the resume hook retries later.
         try:
-            if hasattr(self.db, "get_active_onboarding_session") and hasattr(self.db, "link_boxes"):
-                onboarding = self.db.get_active_onboarding_session(self.organization_id, invoice.vendor_name)
-                if onboarding and onboarding.get("id"):
-                    self.db.link_boxes(
-                        source_box_id=invoice_id,
-                        source_box_type="invoice",
-                        target_box_id=onboarding["id"],
-                        target_box_type="vendor_onboarding",
-                        link_type="vendor",
-                    )
-        except Exception:
-            pass  # Non-fatal — linking is informational
+            from clearledgr.services.vendor_master_check import (
+                check_vendor_in_erp_master,
+                needs_info_message,
+                VENDOR_NOT_IN_ERP_MASTER,
+            )
+
+            master_status = await check_vendor_in_erp_master(
+                organization_id=self.organization_id,
+                vendor_name=invoice.vendor_name,
+                sender_email=getattr(invoice, "sender", None),
+            )
+            if master_status == "not_found":
+                self.db.update_ap_item(
+                    invoice_id,
+                    state="needs_info",
+                    exception_code=VENDOR_NOT_IN_ERP_MASTER,
+                    last_error=needs_info_message(invoice.vendor_name),
+                    _actor_type="agent",
+                    _actor_id="vendor_master_check",
+                )
+                logger.info(
+                    "[InvoiceWorkflow] %s (%s) not in ERP master — "
+                    "AP item %s gated to needs_info.",
+                    invoice.vendor_name, invoice.sender, invoice_id,
+                )
+                return {
+                    "status": "needs_info",
+                    "reason": VENDOR_NOT_IN_ERP_MASTER,
+                    "invoice_id": invoice_id,
+                    "vendor_name": invoice.vendor_name,
+                    "message": needs_info_message(invoice.vendor_name),
+                }
+        except Exception as exc:
+            # Master-check failure is never fatal — AP advances and
+            # the resume hook retries on workflow re-fire.
+            logger.warning(
+                "[InvoiceWorkflow] vendor_master_check failed (org=%s, vendor=%s): %s",
+                self.organization_id, invoice.vendor_name, exc,
+            )
 
         # §5.2 Shared Inbox: if email arrived in an individual inbox
         # (not the shared ap@), notify the team that it's been added

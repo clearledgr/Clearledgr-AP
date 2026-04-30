@@ -6,6 +6,8 @@ is a thin wrapper over it.
 """
 from __future__ import annotations
 
+import pytest
+
 
 def _fresh_db(tmp_path, monkeypatch):
     import clearledgr.core.database as db_module
@@ -45,6 +47,12 @@ class TestListBoxAuditEvents:
         assert len(events) == 1
         assert events[0].get("box_id") == "ap-delegate"
 
+    @pytest.mark.skip(
+        reason=(
+            "vendor_onboarding_deferred_2026_04_30 "
+            "— see memory/project_vendor_onboarding_subordinate.md"
+        ),
+    )
     def test_vendor_reader_uses_box_id(self, tmp_path, monkeypatch):
         db = _fresh_db(tmp_path, monkeypatch)
         session = db.create_vendor_onboarding_session(
@@ -64,6 +72,12 @@ class TestListBoxAuditEvents:
         assert len(events) == 1
         assert events[0].get("event_type") == "vendor_onboarding_state_transition"
 
+    @pytest.mark.skip(
+        reason=(
+            "vendor_onboarding_deferred_2026_04_30 "
+            "— see memory/project_vendor_onboarding_subordinate.md"
+        ),
+    )
     def test_ap_reader_does_not_leak_vendor_rows(self, tmp_path, monkeypatch):
         """If a vendor onboarding session shares an id with an AP
         item (unlikely but possible), the reader must not mix them.

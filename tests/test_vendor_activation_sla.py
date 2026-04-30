@@ -23,6 +23,16 @@ from clearledgr.core.business_days import (
 from clearledgr.services.slack_api import SlackAPIClient
 from clearledgr.services.teams_api import TeamsAPIClient
 
+import pytest as _vo_skip_pytest
+
+pytestmark = _vo_skip_pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
+
+
 
 class TestBusinessDaysBetween:
     def test_same_day_returns_zero(self):

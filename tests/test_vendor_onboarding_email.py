@@ -14,6 +14,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import pytest as _vo_skip_pytest
+
+pytestmark = _vo_skip_pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
+
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

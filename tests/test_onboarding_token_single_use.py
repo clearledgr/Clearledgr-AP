@@ -23,6 +23,16 @@ if str(ROOT) not in sys.path:
 
 from clearledgr.core import database as db_module  # noqa: E402
 
+import pytest as _vo_skip_pytest  # noqa: E402
+
+pytestmark = _vo_skip_pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
+
+
 
 @pytest.fixture()
 def db(tmp_path, monkeypatch):

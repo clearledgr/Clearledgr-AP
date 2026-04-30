@@ -1283,19 +1283,22 @@ class CoordinationEngine:
         return {"ok": True}
 
     async def _handle_send_vendor_email(self, action: Action, plan: Plan) -> dict:
-        """§3: Send a templated email to a vendor using the AP inbox."""
+        """§3: Send a templated email to a vendor using the AP inbox.
+
+        Dormant per the 2026-04-30 product call — Solden does not
+        send chase emails to vendors anymore. The handler stays
+        registered so plans referencing the action don't blow up,
+        but it's a no-op (returns ok with a marker).
+        """
         template = action.params.get("template", "chase")
         ctx = self._ensure_ctx(plan)
         vendor_name = ctx.get("extracted_fields", {}).get("vendor_name", "")
-        if not vendor_name:
-            return {"ok": True}
-        try:
-            from clearledgr.services.vendor_onboarding_lifecycle import chase_stale_sessions
-            await chase_stale_sessions(db=self.db)
-            return {"ok": True, "template": template, "vendor": vendor_name}
-        except Exception as exc:
-            logger.debug("[CoordinationEngine] send_vendor_email non-fatal: %s", exc)
-            return {"ok": True}
+        return {
+            "ok": True,
+            "template": template,
+            "vendor": vendor_name,
+            "noop_reason": "vendor_onboarding_dormant_2026_04_30",
+        }
 
     async def _handle_classify_vendor(self, action: Action, plan: Plan) -> dict:
         """§3 LLM: Classify a vendor's reply to an onboarding or chase email.
@@ -2196,22 +2199,20 @@ class CoordinationEngine:
             return {"ok": True, "clear": True, "flags": [], "error": str(exc)}
 
     async def _handle_activate_vendor(self, action: Action, plan: Plan) -> dict:
-        """§3: Create or activate the vendor in the ERP vendor master."""
+        """§3: Create or activate the vendor in the ERP vendor master.
+
+        Dormant per the 2026-04-30 product call — Solden does NOT
+        push vendors into the ERP. The customer creates them in
+        their own ERP. This handler stays registered so plans
+        referencing it don't blow up, but it's a no-op.
+        """
         vendor_id = action.params.get("vendor_id", "")
-        if not vendor_id:
-            return {"ok": True}
-        try:
-            from clearledgr.services.vendor_onboarding_lifecycle import activate_vendor_in_erp
-            result = await activate_vendor_in_erp(
-                organization_id=self.organization_id,
-                vendor_name=vendor_id,
-                db=self.db,
-            )
-            activated = result.activated if hasattr(result, "activated") else (result.get("activated") if isinstance(result, dict) else False)
-            return {"ok": True, "activated": activated}
-        except Exception as exc:
-            logger.debug("[CoordinationEngine] activate_vendor_in_erp: %s", exc)
-            return {"ok": True, "activated": False}
+        return {
+            "ok": True,
+            "activated": False,
+            "vendor_id": vendor_id,
+            "noop_reason": "vendor_onboarding_dormant_2026_04_30",
+        }
 
     async def _handle_flag_internal(self, action: Action, plan: Plan) -> dict:
         """§3: Detect emails from internal senders instructing payment actions."""

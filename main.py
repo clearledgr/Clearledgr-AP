@@ -149,14 +149,11 @@ from clearledgr.api.vendor_inquiry import (
 )
 from clearledgr.api.vendor_kyc import router as vendor_kyc_router
 from clearledgr.api.vendor_match import router as vendor_match_router
-from clearledgr.api.vendor_onboarding import (
-    router as vendor_onboarding_router,
-    ops_router as vendor_onboarding_ops_router,
-)
-from clearledgr.api.vendor_portal import (
-    router as vendor_portal_router,
-    shortcut_router as vendor_portal_shortcut_router,
-)
+# Vendor onboarding + magic-link portal are dormant per the
+# 2026-04-30 product call (memory: project_vendor_onboarding_subordinate.md).
+# Solden does NOT onboard vendors — AP gates on the ERP master and the
+# customer adds vendors in their ERP. Imports stay out so the surfaces
+# can't accidentally re-mount; revival is a clean re-add.
 from clearledgr.api.vendor_status import router as vendor_status_router
 from clearledgr.api.workspace_shell import router as workspace_shell_router
 from clearledgr.core.errors import safe_error
@@ -1335,15 +1332,11 @@ app.include_router(vendor_status_router)
 # Reads = any org member; writes = Financial Controller+. See DESIGN_THESIS.md §3.
 app.include_router(vendor_kyc_router)
 
-# Vendor Onboarding control API — Phase 3.1.b. Customer-side session
-# lifecycle + ops list endpoint. See DESIGN_THESIS.md §9.
-app.include_router(vendor_onboarding_router)
-app.include_router(vendor_onboarding_ops_router)
-
-# Vendor Portal — Phase 3.1.b. The ONLY unauthenticated surface
-# (magic-link tokens, 14-day TTL). See DESIGN_THESIS.md §9.
-app.include_router(vendor_portal_router)
-app.include_router(vendor_portal_shortcut_router)
+# Vendor onboarding control API + public portal: dormant per the
+# 2026-04-30 product call (see project_vendor_onboarding_subordinate.md).
+# The routers exist on disk but are intentionally not mounted — the
+# AP-side ERP master-check gate handles the "vendor missing" case
+# instead.
 
 # Gmail integration
 app.include_router(gmail_webhooks_router)

@@ -453,27 +453,12 @@ async def _run_loop():
                     except Exception as cb_exc:
                         logger.debug("[background] circuit breaker check failed: %s", cb_exc)
 
-            # Every hour (4 ticks): chase stale vendor onboarding sessions
-            # Phase 3.1.e — scans all orgs in a single pass, dispatches
-            # 24h/48h chase emails, escalates after 72h, abandons after 30d.
-            if tick % 4 == 0:
-                try:
-                    from clearledgr.services.vendor_onboarding_lifecycle import (
-                        chase_stale_sessions,
-                    )
-                    chase_result = await chase_stale_sessions()
-                    if chase_result.chases_sent or chase_result.escalations or chase_result.abandonments:
-                        logger.info(
-                            "[background] vendor onboarding chase: scanned=%d chases=%d escalations=%d abandonments=%d",
-                            chase_result.sessions_scanned,
-                            chase_result.chases_sent,
-                            chase_result.escalations,
-                            chase_result.abandonments,
-                        )
-                except Exception as chase_exc:
-                    logger.warning(
-                        "[background] vendor onboarding chase failed: %s", chase_exc
-                    )
+            # Vendor-onboarding chase loop is dormant per the 2026-04-30
+            # product call (memory: project_vendor_onboarding_subordinate.md).
+            # Solden does NOT chase vendors — the AP-side master-check
+            # gate routes "unknown vendor" to needs_info instead. The
+            # `chase_stale_sessions` service stays on disk for option-
+            # value but is no longer scheduled.
 
             # Every hour (4 ticks)
             if tick % 4 == 0:

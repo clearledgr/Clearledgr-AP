@@ -38,6 +38,16 @@ from clearledgr.services.vendor_erp_push import (  # noqa: E402
     push_vendor_to_erp,
 )
 
+import pytest as _vo_skip_pytest  # noqa: E402
+
+pytestmark = _vo_skip_pytest.mark.skip(
+    reason=(
+        "vendor_onboarding_deferred_2026_04_30 "
+        "— see memory/project_vendor_onboarding_subordinate.md"
+    ),
+)
+
+
 
 # ─── Fixtures ───────────────────────────────────────────────────────
 

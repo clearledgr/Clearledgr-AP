@@ -206,6 +206,12 @@ class TestBoxHealthAcrossBoxTypes:
         assert health_default["stuck_count"] == health_explicit["stuck_count"]
         assert health_explicit["box_type"] == "ap_item"
 
+    @pytest.mark.skip(
+        reason=(
+            "vendor_onboarding_deferred_2026_04_30 "
+            "— see memory/project_vendor_onboarding_subordinate.md"
+        ),
+    )
     def test_vendor_onboarding_box_health(self, tmp_path, monkeypatch):
         db = _fresh_db(tmp_path, monkeypatch)
 
