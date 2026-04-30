@@ -3940,3 +3940,45 @@ def _v72_audit_events_entity_id(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_audit_events_org_entity_ts "
         "ON audit_events (organization_id, entity_id, ts DESC)"
     )
+
+
+@migration(
+    73,
+    "ap_items.is_sample: sandbox-data flag for Module 10 sample data mode",
+)
+def _v73_ap_items_is_sample(cur, db):
+    """Add ``is_sample`` to ap_items so sample / sandbox invoices can
+    coexist with production rows in the same table without polluting
+    production reads.
+
+    Per spec §320 ("Sample data mode: customer can run sample
+    invoices through the system before going live with real data")
+    + acceptance §329 ("Sample data mode does not contaminate
+    production data"):
+
+      - Sample rows carry ``is_sample = true``.
+      - Production reads filter ``is_sample = false`` (the default).
+      - The sample-data API endpoints explicitly target the
+        ``is_sample = true`` slice so the leader can browse + clear
+        without touching production data.
+
+    A flag on the existing table (rather than a separate table) means
+    schema changes apply uniformly and there's no risk of "sample
+    data missed a code path." Default FALSE makes every existing row
+    production by definition; new sample data is opt-in.
+
+    Index choice: a partial index on (organization_id) WHERE
+    is_sample = true keeps the typical "exclude samples" production
+    read fast (the column has a default, so the planner can short-
+    circuit) while making the rare sample-only listing cheap.
+    """
+    cur.execute(
+        "ALTER TABLE ap_items ADD COLUMN IF NOT EXISTS is_sample BOOLEAN NOT NULL DEFAULT FALSE"
+    )
+    # Partial index: optimise the rare "show me only the sample
+    # rows for this org" query without bloating the index for the
+    # common case.
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_org_sample "
+        "ON ap_items (organization_id) WHERE is_sample = TRUE"
+    )

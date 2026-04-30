@@ -147,6 +147,7 @@ from clearledgr.api.notification_preferences import (
     router as notification_preferences_router,
 )
 from clearledgr.api.fx_rates import router as fx_rates_router
+from clearledgr.api.sample_data import router as sample_data_router
 from clearledgr.api.team_offboarding import (
     router as team_offboarding_router,
 )
@@ -1485,6 +1486,12 @@ app.include_router(team_offboarding_router)
 # workspace_fx.convert reads from this table for cross-currency
 # aggregation in the Volume report.
 app.include_router(fx_rates_router)
+
+# Module 10 — sample data mode for self-serve onboarding.
+# Loader synthesises a curated set of AP items tagged is_sample=true;
+# production reads (worklist + reports) filter samples out so they
+# never contaminate live data per spec §329.
+app.include_router(sample_data_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)
