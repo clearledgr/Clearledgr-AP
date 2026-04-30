@@ -146,6 +146,7 @@ from clearledgr.api.escalation_policies import (
 from clearledgr.api.notification_preferences import (
     router as notification_preferences_router,
 )
+from clearledgr.api.fx_rates import router as fx_rates_router
 from clearledgr.api.team_offboarding import (
     router as team_offboarding_router,
 )
@@ -1478,6 +1479,12 @@ app.include_router(workspace_rules_router)
 # Cascade revokes API keys on the same write so X-API-Key auth
 # also stops working immediately.
 app.include_router(team_offboarding_router)
+
+# Module 9 — FX rates for multi-currency reporting.
+# Operator-managed (or ERP-sourced) rates per spec §304;
+# workspace_fx.convert reads from this table for cross-currency
+# aggregation in the Volume report.
+app.include_router(fx_rates_router)
 
 # Wave 5 / G2: multi-attribute vendor match
 app.include_router(vendor_match_router)

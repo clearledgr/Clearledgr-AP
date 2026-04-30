@@ -144,6 +144,7 @@ def _load_store_symbols() -> None:
     global ReportSubscriptionStore
     global EscalationPolicyStore
     global RulesStore
+    global FxRateStore
 
     if "APStore" in globals():
         return
@@ -202,6 +203,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.rules_store import (
         RulesStoreMixin as _RulesStore,
     )
+    from clearledgr.core.stores.fx_rate_store import (
+        FxRateStoreMixin as _FxRateStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -231,6 +235,7 @@ def _load_store_symbols() -> None:
     ReportSubscriptionStore = _ReportSubscriptionStore
     EscalationPolicyStore = _EscalationPolicyStore
     RulesStore = _RulesStore
+    FxRateStore = _FxRateStore
 
 
 class _ClearledgrDBBase:
@@ -1543,6 +1548,7 @@ def _get_db_impl_class():
             ReportSubscriptionStore,
             EscalationPolicyStore,
             RulesStore,
+            FxRateStore,
             _ClearledgrDBBase,
         ):
             pass

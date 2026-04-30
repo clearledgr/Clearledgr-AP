@@ -157,10 +157,20 @@ def generate_volume_report(
 ) -> Dict[str, Any]:
     """Invoice volume over time, by entity, by vendor.
 
+    Multi-currency aware (Module 9): the SQL groups by
+    ``(bucket, currency)`` and ``(vendor_name, currency)`` so the
+    Python layer can convert each row to the org's functional
+    currency before aggregating. ``summary.total_amount`` is in the
+    functional currency; ``summary.currencies_seen`` lists the
+    invoice currencies that contributed; ``summary.unconverted`` is
+    the count of rows where no FX rate was available.
+
     Returns:
-      summary:    {total_invoices, total_amount, currency, distinct_vendors}
-      series:     [{bucket, invoice_count, total_amount}, ...]   ordered asc by bucket
-      breakdown:  [{vendor_name, invoice_count, total_amount}, ...]  top 10 by amount
+      summary:    {total_invoices, total_amount, currency,
+                   distinct_vendors, currencies_seen, unconverted}
+      series:     [{bucket, invoice_count, total_amount,
+                    by_currency: [{currency, amount}, ...]}, ...]
+      breakdown:  [{vendor_name, invoice_count, total_amount}, ...]
     """
     params = _resolve_window(
         period=period, from_ts=from_ts, to_ts=to_ts,
@@ -170,18 +180,21 @@ def generate_volume_report(
     trunc = _PERIOD_TO_PG_TRUNC[params.period]
     where_extra, where_args = _common_where(params)
 
+    # Per-(bucket, currency) — Python converts each row to functional
+    # before aggregating into the bucket total.
     series_sql = (
         f"SELECT date_trunc('{trunc}', created_at::timestamptz) AS bucket, "
+        "       currency, "
         "       COUNT(*)::bigint AS invoice_count, "
         "       COALESCE(SUM(amount), 0)::numeric AS total_amount "
         "FROM ap_items "
         "WHERE organization_id = %s "
         "  AND created_at >= %s AND created_at < %s "
         f"  {where_extra} "
-        "GROUP BY bucket ORDER BY bucket ASC"
+        "GROUP BY bucket, currency ORDER BY bucket ASC"
     )
     breakdown_sql = (
-        "SELECT vendor_name, "
+        "SELECT vendor_name, currency, "
         "       COUNT(*)::bigint AS invoice_count, "
         "       COALESCE(SUM(amount), 0)::numeric AS total_amount "
         "FROM ap_items "
@@ -189,13 +202,11 @@ def generate_volume_report(
         "  AND created_at >= %s AND created_at < %s "
         "  AND vendor_name IS NOT NULL AND vendor_name <> '' "
         f"  {where_extra} "
-        "GROUP BY vendor_name ORDER BY total_amount DESC LIMIT 10"
+        "GROUP BY vendor_name, currency"
     )
     summary_sql = (
         "SELECT COUNT(*)::bigint AS total_invoices, "
-        "       COALESCE(SUM(amount), 0)::numeric AS total_amount, "
-        "       COUNT(DISTINCT vendor_name)::bigint AS distinct_vendors, "
-        "       MAX(currency) AS currency "
+        "       COUNT(DISTINCT vendor_name)::bigint AS distinct_vendors "
         "FROM ap_items "
         "WHERE organization_id = %s "
         "  AND created_at >= %s AND created_at < %s "
@@ -217,27 +228,102 @@ def generate_volume_report(
         logger.warning("[reports.volume] failed for org=%s: %s", organization_id, exc)
         return _empty_response("volume", params)
 
-    series = [
-        {
-            "bucket": _bucket_label(row[0], params.period),
-            "invoice_count": int(row[1] or 0),
-            "total_amount": float(row[2] or 0),
-        }
-        for row in series_rows
-    ]
-    breakdown = [
-        {
-            "vendor_name": row[0],
-            "invoice_count": int(row[1] or 0),
-            "total_amount": float(row[2] or 0),
-        }
-        for row in breakdown_rows
-    ]
+    # Convert each row to the org's functional currency before
+    # aggregating. As-of date is the bucket's right edge, so a rate
+    # entered for a given week applies to all invoices in that week.
+    from clearledgr.services import workspace_fx
+
+    functional_ccy = workspace_fx.get_functional_currency(db, organization_id)
+    unconverted_count = 0
+    currencies_seen: set = set()
+
+    # Series rollup: bucket → {invoice_count, total, by_currency: {ccy: amount}}
+    series_buckets: Dict[Any, Dict[str, Any]] = {}
+    for row in series_rows:
+        bucket_value = row[0]
+        currency = (row[1] or functional_ccy).upper()
+        invoice_count = int(row[2] or 0)
+        amount = float(row[3] or 0)
+        currencies_seen.add(currency)
+
+        as_of = _bucket_as_of_iso(bucket_value)
+        result = workspace_fx.convert(
+            db, organization_id=organization_id,
+            amount=amount, from_currency=currency, to_currency=functional_ccy,
+            as_of_date=as_of,
+        )
+        if result is None:
+            unconverted_count += invoice_count
+            converted_amount = 0.0
+            path = "none"
+        else:
+            converted_amount = result.converted_amount
+            path = result.path
+
+        bucket_key = bucket_value
+        if bucket_key not in series_buckets:
+            series_buckets[bucket_key] = {
+                "bucket": _bucket_label(bucket_value, params.period),
+                "invoice_count": 0,
+                "total_amount": 0.0,
+                "by_currency": [],
+            }
+        slot = series_buckets[bucket_key]
+        slot["invoice_count"] += invoice_count
+        slot["total_amount"] += converted_amount
+        slot["by_currency"].append({
+            "currency": currency,
+            "amount": amount,
+            "converted_amount": converted_amount,
+            "conversion_path": path,
+        })
+
+    series = [series_buckets[k] for k in sorted(series_buckets.keys(), key=lambda v: str(v))]
+
+    # Breakdown rollup: vendor → {invoice_count, total} after FX conversion
+    vendor_rollup: Dict[str, Dict[str, Any]] = {}
+    for row in breakdown_rows:
+        vendor = row[0]
+        currency = (row[1] or functional_ccy).upper()
+        invoice_count = int(row[2] or 0)
+        amount = float(row[3] or 0)
+        currencies_seen.add(currency)
+
+        # Use the window's end as the conversion as-of for the
+        # vendor breakdown. The vendor breakdown is a snapshot view,
+        # not a time series, so a single as-of is the right choice.
+        result = workspace_fx.convert(
+            db, organization_id=organization_id,
+            amount=amount, from_currency=currency, to_currency=functional_ccy,
+            as_of_date=params.to_ts,
+        )
+        if result is None:
+            converted_amount = 0.0
+        else:
+            converted_amount = result.converted_amount
+
+        if vendor not in vendor_rollup:
+            vendor_rollup[vendor] = {
+                "vendor_name": vendor,
+                "invoice_count": 0,
+                "total_amount": 0.0,
+            }
+        vendor_rollup[vendor]["invoice_count"] += invoice_count
+        vendor_rollup[vendor]["total_amount"] += converted_amount
+
+    breakdown = sorted(
+        vendor_rollup.values(),
+        key=lambda v: v["total_amount"],
+        reverse=True,
+    )[:10]
+
     summary = {
         "total_invoices": int((summary_row[0] if summary_row else 0) or 0),
-        "total_amount": float((summary_row[1] if summary_row else 0) or 0),
-        "distinct_vendors": int((summary_row[2] if summary_row else 0) or 0),
-        "currency": (summary_row[3] if summary_row else None) or None,
+        "total_amount": sum(s["total_amount"] for s in series),
+        "distinct_vendors": int((summary_row[1] if summary_row else 0) or 0),
+        "currency": functional_ccy,
+        "currencies_seen": sorted(currencies_seen),
+        "unconverted": unconverted_count,
     }
     return {
         "report_type": "volume",
@@ -247,6 +333,24 @@ def generate_volume_report(
         "breakdown": breakdown,
         "generated_at": _now_iso(),
     }
+
+
+def _bucket_as_of_iso(value: Any) -> str:
+    """Pick a sensible as-of date for FX conversion of a bucket.
+
+    Postgres ``date_trunc('week', t)`` returns the Monday of that
+    week. For FX lookups we want the date the bucket *covers*, so
+    we use the truncated value directly — rates pinned to that date
+    or earlier apply.
+    """
+    if value is None:
+        return datetime.now(timezone.utc).date().isoformat()
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    try:
+        return value.isoformat()
+    except Exception:
+        return str(value)[:10]
 
 
 # ---------------------------------------------------------------------------

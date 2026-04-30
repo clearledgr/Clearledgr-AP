@@ -3809,3 +3809,69 @@ def _v70_rules(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_rule_versions_org "
         "ON rule_versions (organization_id, changed_at DESC)"
     )
+
+
+@migration(
+    71,
+    "fx_rates: per-org currency conversion table for multi-currency reporting (Module 9)",
+)
+def _v71_fx_rates(cur, db):
+    """Storage for currency conversion rates.
+
+    Mid-market customers run multiple legal entities across
+    currencies. The dashboard's reporting layer needs to convert
+    every invoice's amount into the org's functional currency
+    (org settings_json["functional_currency"], default USD) so
+    cross-currency aggregates (Volume report, Cycle Time totals)
+    don't add £100 + €100 + $100 = 300.
+
+    Schema:
+      - One row per (org, from_ccy, to_ccy, as_of_date, source).
+      - rate stored as NUMERIC(18, 8) for sub-cent precision on
+        thin-margin currencies (e.g. JPY).
+      - source tracks provenance: 'erp' (auto-fetched), 'manual'
+        (operator typed it), 'system' (default identity / inverse).
+      - as_of_date is the rate's effective date. Lookups pick the
+        latest rate WHERE as_of_date <= invoice_date.
+
+    What lives elsewhere:
+      - organizations.settings_json["functional_currency"] — the
+        target currency for org-wide aggregates.
+      - entities.default_currency (already exists) — the per-entity
+        operating currency. Reports convert invoice currency →
+        functional currency for cross-entity rollups.
+
+    The unique key (org, from, to, as_of, source) means an operator
+    can save a manual override for the same date+pair as an ERP-
+    sourced rate; the lookup prefers manual when both exist (manual
+    is the operator's last word).
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fx_rates (
+            id              TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            from_currency   CHAR(3) NOT NULL,
+            to_currency     CHAR(3) NOT NULL,
+            rate            NUMERIC(18, 8) NOT NULL,
+            as_of_date      DATE NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'manual',
+            note            TEXT,
+            created_by      TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (organization_id, from_currency, to_currency, as_of_date, source),
+            CHECK (rate > 0),
+            CHECK (source IN ('manual', 'erp', 'system')),
+            CHECK (length(from_currency) = 3),
+            CHECK (length(to_currency) = 3)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fx_rates_lookup "
+        "ON fx_rates (organization_id, from_currency, to_currency, as_of_date DESC)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fx_rates_org_recent "
+        "ON fx_rates (organization_id, as_of_date DESC)"
+    )
