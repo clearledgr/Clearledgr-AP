@@ -27,6 +27,7 @@ import { useBootstrap } from './BootstrapContext.js';
  * (no redirect) — better to show something than to deadlock.
  */
 const ONBOARDING_PASSTHROUGH = new Set([
+  '/',
   '/onboarding',
   '/connections',
   '/settings',
@@ -34,6 +35,22 @@ const ONBOARDING_PASSTHROUGH = new Set([
   '/audit',
   '/plan',
   '/health',
+  // Daily-work surfaces. The original gate kept these locked until
+  // onboarding_completed flipped server-side, but the wizard itself
+  // is best-effort (steps 3+4 are integration go-lives the user may
+  // already have done, step 4 is optional). Locking the workspace
+  // owner out of their own Pipeline/Reports/Vendors while we wait
+  // for a counter to advance is hostile. Pages render empty-state
+  // messages when there's no data — that's the right teaching moment.
+  '/home',
+  '/pipeline',
+  '/review',
+  '/exceptions',
+  '/vendors',
+  '/reconciliation',
+  '/activity',
+  '/reports',
+  '/approval-rules',
   // Public + auth flows
   '/signup/accept',
   '/status',

@@ -600,8 +600,14 @@ class SubscriptionService:
         if step > sub.onboarding_step:
             sub.onboarding_step = step
 
-        # Steps: 1=Welcome, 2=Connect ERP, 3=Configure GL, 4=Quick Tour, 5=Complete
-        if step >= 5:
+        # Frontend ships a 4-step wizard:
+        #   1=Connect ERP, 2=Set AP policy, 3=Connect Slack/Teams,
+        #   4=Install Gmail extension (optional for ERP-native intake).
+        # Steps 1-3 are required. Once the operator has acked through
+        # step 3 (manually or via integration go-live) the workspace
+        # is past the wizard and the OnboardingGate should stop
+        # redirecting daily-work surfaces back here.
+        if sub.onboarding_step >= 3:
             sub.onboarding_completed = True
 
         sub.updated_at = datetime.now(timezone.utc).isoformat()
