@@ -78,7 +78,19 @@ function InviteRow({ invite, onRevoke, canManage }) {
 }
 
 export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, routeId, navigate }) {
-  const invites = bootstrap?.teamInvites || [];
+  // Team invites aren't part of the bootstrap response — fetch from
+  // /api/workspace/team/invites on mount and refetch when orgId
+  // changes. The previous code read bootstrap?.teamInvites which
+  // was always undefined, so the invite list rendered empty even
+  // when invites existed in the DB.
+  const [invites, setInvites] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/workspace/team/invites?organization_id=${encodeURIComponent(orgId)}`)
+      .then((res) => { if (!cancelled) setInvites(Array.isArray(res?.invites) ? res.invites : []); })
+      .catch(() => { if (!cancelled) setInvites([]); });
+    return () => { cancelled = true; };
+  }, [api, orgId]);
   const org = bootstrap?.organization || {};
   const sub = bootstrap?.subscription || {};
   const usage = sub.usage || {};
@@ -106,13 +118,17 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   // Module 9 — FX rates section.
   const fxRatesRef = useRef(null);
 
-  // ERP + integration state from bootstrap
+  // ERP + integration state from bootstrap. Backend identifies each
+  // integration via `name` (workspace_shell.py:_*_status_for_org);
+  // ERP type lives on the first item of `connections[]` rather than
+  // top-level on the erp integration object.
   const integrations = bootstrap?.integrations || [];
-  const gmail = integrations.find((i) => i.type === 'gmail') || {};
-  const slack = integrations.find((i) => i.type === 'slack') || {};
-  const teams = integrations.find((i) => i.type === 'teams') || {};
-  const erp = integrations.find((i) => i.type === 'erp') || {};
-  const erpType = (erp.erp_type || '').charAt(0).toUpperCase() + (erp.erp_type || '').slice(1);
+  const gmail = integrations.find((i) => i.name === 'gmail') || {};
+  const slack = integrations.find((i) => i.name === 'slack') || {};
+  const teams = integrations.find((i) => i.name === 'teams') || {};
+  const erp = integrations.find((i) => i.name === 'erp') || {};
+  const erpKind = erp?.connections?.[0]?.erp_type || '';
+  const erpType = erpKind.charAt(0).toUpperCase() + erpKind.slice(1);
 
   const [activeSection, setActiveSection] = useState('erp');
   const scrollToSection = (ref, key) => {
@@ -792,7 +808,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           api=${api}
           toast=${toast}
           orgId=${orgId}
-          actorEmail=${(bootstrap?.user?.email || '').toLowerCase()}
+          actorEmail=${(bootstrap?.current_user?.email || '').toLowerCase()}
           canManage=${canManageTeam} />
       </div>
 
@@ -859,8 +875,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                     ? html`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>`
                     : html`<button class="btn-secondary btn-sm" onClick=${() => {
                         api('/api/workspace/subscription/plan', {
-                          method: 'POST',
-                          body: JSON.stringify({ organization_id: orgId, plan: tier.id }),
+                          method: 'PATCH',
+                          body: { organization_id: orgId, plan: tier.id },
                         }).then(() => { toast('Plan updated to ' + tier.name, 'success'); onRefresh?.(); })
                           .catch(() => toast('Plan change failed', 'error'));
                       }}>Switch to ${tier.name}</button>`

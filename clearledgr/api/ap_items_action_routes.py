@@ -38,6 +38,7 @@ from clearledgr.api.ap_item_contracts import (
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.ap_states import APState
 from clearledgr.core.auth import require_ops_user
+from clearledgr.core.database import get_db
 from clearledgr.core.errors import safe_error
 from clearledgr.core.idempotency import (
     IDEMPOTENCY_HEADER,
@@ -296,7 +297,7 @@ async def resolve_ap_item_field_review(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     result = await shared._execute_field_review_resolution(
         db,
         ap_item_id=ap_item_id,
@@ -314,7 +315,7 @@ async def bulk_resolve_ap_item_field_review(
     organization_id: str = Query(default="default"),
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     ap_item_ids = [
         str(ap_item_id or "").strip()
         for ap_item_id in (request.ap_item_ids or [])
@@ -382,7 +383,7 @@ async def resolve_non_invoice_review(
     statement-to-reconciliation artifact path when applicable, and
     audits the resolution with full agent context.
     """
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
@@ -441,7 +442,7 @@ async def resolve_ap_item_entity_route(
     matches the operator's selection against it, mutates entity_*
     metadata, and audits the decision with full agent context.
     """
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
@@ -493,7 +494,7 @@ def link_ap_item_source(
     request: LinkSourceRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     source = db.link_ap_item_source(
@@ -516,7 +517,7 @@ def link_ap_item_gmail_thread(
     request: LinkGmailThreadRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -591,7 +592,7 @@ def link_ap_item_compose_draft(
     request: LinkComposeDraftRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -685,7 +686,7 @@ def create_compose_record(
     request: CreateComposeRecordRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     actor_id = shared._authenticated_actor(_user)
     organization_id = str(getattr(_user, "organization_id", None) or "default").strip() or "default"
     draft_id = str(request.draft_id or "").strip() or None
@@ -821,7 +822,7 @@ async def update_ap_item_fields(
     through the column-whitelisted ``update_ap_item`` path, and audits
     the diff with full agent context.
     """
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
 
@@ -883,7 +884,7 @@ def create_ap_item_task(
 ) -> Dict[str, Any]:
     from clearledgr.services.email_tasks import create_task_from_email
 
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -935,7 +936,7 @@ def update_ap_item_task_status(
 ) -> Dict[str, Any]:
     from clearledgr.services.email_tasks import get_task, update_task_status
 
-    db = shared.get_db()
+    db = get_db()
     task = get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task_not_found")
@@ -959,7 +960,7 @@ def assign_ap_item_task(
 ) -> Dict[str, Any]:
     from clearledgr.services.email_tasks import assign_task, get_task
 
-    db = shared.get_db()
+    db = get_db()
     task = get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task_not_found")
@@ -978,7 +979,7 @@ def add_ap_item_task_comment(
 ) -> Dict[str, Any]:
     from clearledgr.services.email_tasks import add_comment, get_task
 
-    db = shared.get_db()
+    db = get_db()
     task = get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task_not_found")
@@ -996,7 +997,7 @@ def add_ap_item_note(
     request: AddApItemNoteRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -1051,7 +1052,7 @@ def add_ap_item_comment(
     request: AddApItemCommentRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -1103,7 +1104,7 @@ def add_ap_item_file_link(
     request: AddApItemFileRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(item.get("organization_id") or "default", _user)
     actor_id = shared._authenticated_actor(_user)
@@ -1164,7 +1165,7 @@ async def resubmit_rejected_item(
     source links, and emits a runtime audit event on each side of
     the chain.
     """
-    db = shared.get_db()
+    db = get_db()
     source = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(source.get("organization_id") or "default", _user)
 
@@ -1233,7 +1234,7 @@ async def merge_ap_items(ap_item_id: str, request: MergeItemsRequest, _user=Depe
     (target → merge_history; source → suppressed_from_worklist), and
     audits both sides.
     """
-    db = shared.get_db()
+    db = get_db()
     target = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(target.get("organization_id") or "default", _user)
 
@@ -1285,7 +1286,7 @@ async def split_ap_item(ap_item_id: str, request: SplitItemRequest, _user=Depend
     propagates thread/message IDs where applicable, audits each child
     creation, and tracks subscription quota usage.
     """
-    db = shared.get_db()
+    db = get_db()
     parent = shared._require_item(db, ap_item_id, expected_organization_id=getattr(_user, "organization_id", None))
     verify_org_access(parent.get("organization_id") or "default", _user)
 
@@ -1341,7 +1342,7 @@ async def retry_erp_post(
     _user=Depends(require_ops_user),
 ):
     verify_org_access(organization_id, _user)
-    db = shared.get_db()
+    db = get_db()
 
     if idempotency_key:
         replay = load_idempotent_response(db, idempotency_key)
@@ -1464,7 +1465,7 @@ async def reverse_ap_item_post(
     route after the intent settles so a Slack outage never breaks
     the API contract.
     """
-    db = shared.get_db()
+    db = get_db()
     item = shared._require_item(db, ap_item_id, expected_organization_id=getattr(user, "organization_id", None))
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
@@ -1599,7 +1600,7 @@ async def snooze_ap_item(
     every surface (workspace, Slack, Gmail extension) shares the same
     contract and audit shape.
     """
-    db = shared.get_db()
+    db = get_db()
     verify_org_access(organization_id, user)
     item = db.get_ap_item(ap_item_id)
     if not item:
@@ -1663,7 +1664,7 @@ async def unsnooze_ap_item(
     user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
     """Manually unsnooze an AP item via the ``unsnooze_invoice`` intent."""
-    db = shared.get_db()
+    db = get_db()
     verify_org_access(organization_id, user)
     item = db.get_ap_item(ap_item_id)
     if not item:
@@ -1723,7 +1724,7 @@ async def classify_ap_item(
     """
     from clearledgr.api.deps import verify_org_access as _verify
     org_id = _verify(user, organization_id)
-    db = shared.get_db()
+    db = get_db()
     item = db.get_ap_item(ap_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="ap_item_not_found")
@@ -1792,7 +1793,7 @@ async def bulk_approve_ap_items(
     """Approve N items in one call. Each runs through approve_invoice
     intent so the validation gate and ERP post still fire per item."""
     verify_org_access(organization_id, user)
-    db = shared.get_db()
+    db = get_db()
 
     if request.idempotency_key:
         replay = load_idempotent_response(db, request.idempotency_key)
@@ -1881,7 +1882,7 @@ async def bulk_reject_ap_items(
 ) -> Dict[str, Any]:
     """Reject N items with a shared reason."""
     verify_org_access(organization_id, user)
-    db = shared.get_db()
+    db = get_db()
 
     if request.idempotency_key:
         replay = load_idempotent_response(db, request.idempotency_key)
@@ -1973,7 +1974,7 @@ async def bulk_snooze_ap_items(
     from datetime import timedelta
 
     verify_org_access(organization_id, user)
-    db = shared.get_db()
+    db = get_db()
 
     if request.idempotency_key:
         replay = load_idempotent_response(db, request.idempotency_key)
@@ -2078,7 +2079,7 @@ async def bulk_retry_post_ap_items(
 ) -> Dict[str, Any]:
     """Retry ERP posting for N items stuck in failed_post."""
     verify_org_access(organization_id, user)
-    db = shared.get_db()
+    db = get_db()
 
     if request.idempotency_key:
         replay = load_idempotent_response(db, request.idempotency_key)

@@ -3,6 +3,7 @@
  * Keeps recent finance activity reachable without turning Gmail into a KPI dashboard.
  */
 import { h } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { eventBadge, fmtDateTime, useAction } from '../route-helpers.js';
 import { EmptyState } from '../../components/StatePrimitives.js';
@@ -16,9 +17,20 @@ function SummaryCard({ label, value }) {
   </div>`;
 }
 
-export default function ActivityPage({ bootstrap, onRefresh, navigate }) {
+export default function ActivityPage({ bootstrap, api, orgId, onRefresh, navigate }) {
   const dash = bootstrap?.dashboard || {};
-  const events = Array.isArray(bootstrap?.recentActivity) ? bootstrap.recentActivity.slice(0, 12) : [];
+  // Bootstrap doesn't carry recent activity events — fetch from
+  // /api/ap/audit/recent on mount and after each refresh. Reading
+  // bootstrap?.recentActivity (always undefined) was leaving the
+  // feed permanently empty.
+  const [events, setEvents] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/ap/audit/recent?organization_id=${encodeURIComponent(orgId)}&limit=30`)
+      .then((res) => { if (!cancelled) setEvents(Array.isArray(res?.events) ? res.events.slice(0, 12) : []); })
+      .catch(() => { if (!cancelled) setEvents([]); });
+    return () => { cancelled = true; };
+  }, [api, orgId, onRefresh]);
   const [refresh, refreshing] = useAction(onRefresh);
 
   return html`
