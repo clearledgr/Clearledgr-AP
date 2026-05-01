@@ -144,6 +144,27 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                     <div class="secondary-card-meta">
                       ${vendor.primary_email || 'No primary sender'} · Last activity ${vendor.last_activity_at ? fmtDateTime(vendor.last_activity_at) : '—'}
                     </div>
+                    ${(() => {
+                      // Module 4 spec line 153: payment terms, last bill,
+                      // exception rate, IBAN status. Pull from the
+                      // existing vendor summary fields (terms +
+                      // last_invoice_at) and derive exception rate from
+                      // issue_count / invoice_count.
+                      const total = Number(vendor.invoice_count || 0);
+                      const issues = Number(vendor.issue_count || 0);
+                      const exceptionRate = total > 0 ? Math.round((issues / total) * 100) : null;
+                      const ibanStatus = vendor.profile?.iban_verified
+                        ? 'IBAN verified'
+                        : (vendor.profile?.iban_change_pending ? 'IBAN change pending' : null);
+                      const terms = vendor.profile?.terms || vendor.terms;
+                      const lastBill = vendor.last_invoice_at || vendor.last_bill_at;
+                      return html`<div class="cl-vendor-spec-row">
+                        ${terms ? html`<span class="cl-vendor-fact"><span class="muted">Terms:</span> ${terms}</span>` : null}
+                        ${lastBill ? html`<span class="cl-vendor-fact"><span class="muted">Last bill:</span> ${fmtDateTime(lastBill)}</span>` : null}
+                        ${exceptionRate !== null ? html`<span class="cl-vendor-fact"><span class="muted">Exception rate:</span> ${exceptionRate}% (${issues}/${total})</span>` : null}
+                        ${ibanStatus ? html`<span class="cl-vendor-fact"><span class="muted">IBAN:</span> ${ibanStatus}</span>` : null}
+                      </div>`;
+                    })()}
                     <div class="secondary-card-tags">
                       ${(vendor.top_states || []).map((row) => html`
                         <span key=${row.state} class="secondary-chip">
@@ -463,7 +484,7 @@ function VendorBulkImportModal({ api, orgId, toast, onClose, onCommitted }) {
             <code>vendor_name</code>. Optional columns:
             <code>email</code>, <code>address</code>, <code>terms</code>,
             <code>vat_number</code>, <code>registration_number</code>,
-            <code>status</code> (active|blocked|archived). 5 000 rows max.
+            <code>status</code> (active|blocked|archived). 10 000 rows max.
           </p>
           <textarea
             value=${csvText}

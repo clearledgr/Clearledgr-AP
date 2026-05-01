@@ -3688,6 +3688,10 @@ class EntityCreateRequest(BaseModel):
     gl_mapping: Optional[Dict[str, Any]] = None
     approval_rules: Optional[Dict[str, Any]] = None
     default_currency: str = Field(default="USD", max_length=10)
+    # Module 9 spec line 296: "Entity hierarchy: parent and subsidiary
+    # structure mirrored from ERP." Optional parent — top-level
+    # entities have parent_entity_id=null.
+    parent_entity_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class EntityUpdateRequest(BaseModel):
@@ -3698,6 +3702,7 @@ class EntityUpdateRequest(BaseModel):
     gl_mapping: Optional[Dict[str, Any]] = None
     approval_rules: Optional[Dict[str, Any]] = None
     default_currency: Optional[str] = Field(default=None, max_length=10)
+    parent_entity_id: Optional[str] = Field(default=None, max_length=64)
 
 
 @router.get("/entities")
@@ -3719,6 +3724,16 @@ def create_entity(
 ):
     org_id = _resolve_org_id(user, request.organization_id)
     db = get_db()
+    # Validate parent if provided — must belong to the same org and
+    # not create a cycle. Cycle prevention is shallow (we don't walk
+    # the chain on every create) because the depth cap of "small
+    # number of legal entities per org" makes cycles operationally
+    # implausible; the UI prevents the obvious self-parent case.
+    parent_id = (request.parent_entity_id or "").strip() or None
+    if parent_id:
+        parent = db.get_entity(parent_id)
+        if not parent or parent.get("organization_id") != org_id:
+            raise HTTPException(status_code=400, detail="parent_entity_not_found")
     entity = db.create_entity(
         organization_id=org_id,
         name=request.name,
@@ -3727,6 +3742,7 @@ def create_entity(
         gl_mapping=request.gl_mapping,
         approval_rules=request.approval_rules,
         currency=request.default_currency,
+        parent_entity_id=parent_id,
     )
     return {"success": True, "entity": entity}
 
@@ -3754,6 +3770,15 @@ def update_entity(
         updates["gl_mapping"] = request.gl_mapping
     if request.approval_rules is not None:
         updates["approval_rules"] = request.approval_rules
+    if request.parent_entity_id is not None:
+        parent_id = (request.parent_entity_id or "").strip() or None
+        if parent_id == entity_id:
+            raise HTTPException(status_code=400, detail="parent_cannot_be_self")
+        if parent_id:
+            parent = db.get_entity(parent_id)
+            if not parent or parent.get("organization_id") != org_id:
+                raise HTTPException(status_code=400, detail="parent_entity_not_found")
+        updates["parent_entity_id"] = parent_id
     if request.default_currency is not None:
         updates["default_currency"] = request.default_currency
     if not updates:

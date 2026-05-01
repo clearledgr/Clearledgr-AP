@@ -410,10 +410,32 @@ function WebhooksPanel({ api, canManage, toast }) {
   const [events, setEvents] = useState('*');
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
+  // Module 5 spec line 184 — surface the delivery log in the UI.
+  const [deliveriesByWebhook, setDeliveriesByWebhook] = useState({});
+  const [openDeliveryFor, setOpenDeliveryFor] = useState(null);
 
   useEffect(() => {
     api('/api/workspace/webhooks').then((d) => setWebhooks(d?.webhooks || [])).catch(() => {});
   }, []);
+
+  const loadDeliveries = async (webhookId) => {
+    if (deliveriesByWebhook[webhookId]) return; // cache once per session
+    try {
+      const resp = await api(`/api/workspace/webhooks/${webhookId}/deliveries?limit=20`);
+      setDeliveriesByWebhook((prev) => ({ ...prev, [webhookId]: resp?.deliveries || [] }));
+    } catch (e) {
+      setDeliveriesByWebhook((prev) => ({ ...prev, [webhookId]: [] }));
+    }
+  };
+
+  const toggleDeliveryLog = async (webhookId) => {
+    if (openDeliveryFor === webhookId) {
+      setOpenDeliveryFor(null);
+      return;
+    }
+    setOpenDeliveryFor(webhookId);
+    await loadDeliveries(webhookId);
+  };
 
   const isValidUrl = (raw) => {
     try {
@@ -467,17 +489,52 @@ function WebhooksPanel({ api, canManage, toast }) {
       ${webhooks.length === 0 && html`<div class="secondary-empty" style="padding:8px 0">No webhooks configured</div>`}
       ${webhooks.length > 0 && html`
         <div class="secondary-card-list">
-          ${webhooks.map((wh) => html`
-            <div key=${wh.id} class="secondary-card">
-              <div class="secondary-card-head">
-                <div class="secondary-card-copy">
-                  <span class="secondary-card-title">${wh.url}</span>
-                  <div class="secondary-card-meta">${Array.isArray(wh.event_types) && wh.event_types.length ? wh.event_types.join(', ') : '*'}</div>
+          ${webhooks.map((wh) => {
+            const open = openDeliveryFor === wh.id;
+            const deliveries = deliveriesByWebhook[wh.id] || [];
+            return html`
+              <div key=${wh.id} class="secondary-card">
+                <div class="secondary-card-head">
+                  <div class="secondary-card-copy">
+                    <span class="secondary-card-title">${wh.url}</span>
+                    <div class="secondary-card-meta">${Array.isArray(wh.event_types) && wh.event_types.length ? wh.event_types.join(', ') : '*'}</div>
+                  </div>
+                  <div class="secondary-inline-actions">
+                    <button class="btn-secondary btn-sm" onClick=${() => toggleDeliveryLog(wh.id)}>
+                      ${open ? 'Hide log' : 'Delivery log'}
+                    </button>
+                    ${canManage && html`<button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button>`}
+                  </div>
                 </div>
-                ${canManage && html`<div class="secondary-inline-actions"><button class="btn-secondary btn-sm" onClick=${() => removeWebhook(wh.id)}>Remove</button></div>`}
+                ${open ? html`
+                  <div class="cl-webhook-deliveries">
+                    ${deliveries.length === 0 ? html`<div class="muted" style="padding:8px 0">No deliveries yet for this webhook.</div>` : html`
+                      <table class="cl-settings-table">
+                        <thead>
+                          <tr><th>Event</th><th>Status</th><th>HTTP</th><th>Attempts</th><th>Sent</th></tr>
+                        </thead>
+                        <tbody>
+                          ${deliveries.map((d) => {
+                            const tone = d.status === 'delivered' ? 'success'
+                              : d.status === 'failed' ? 'danger'
+                              : d.status === 'pending' ? 'warning' : 'muted';
+                            return html`
+                              <tr key=${d.id}>
+                                <td><code>${d.event_type || '—'}</code></td>
+                                <td><span class=${`cl-record-chip cl-record-chip-${tone}`}>${d.status || 'unknown'}</span></td>
+                                <td>${d.last_response_status_code ?? '—'}</td>
+                                <td>${d.attempt_count ?? d.attempts ?? '—'}</td>
+                                <td class="muted">${d.last_attempted_at || d.created_at ? fmtDateTime(d.last_attempted_at || d.created_at) : '—'}</td>
+                              </tr>`;
+                          })}
+                        </tbody>
+                      </table>
+                    `}
+                  </div>
+                ` : null}
               </div>
-            </div>
-          `)}
+            `;
+          })}
         </div>
       `}
       ${canManage && html`

@@ -59,8 +59,9 @@ class EntityStore:
         gl_mapping: Optional[Dict[str, Any]] = None,
         approval_rules: Optional[Dict[str, Any]] = None,
         currency: str = "USD",
+        parent_entity_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a new entity within an organization."""
+        """Create a new entity within an organization (Module 9 hierarchy)."""
         self.initialize()
         now = datetime.now(timezone.utc).isoformat()
         entity_id = f"ENT-{uuid.uuid4().hex}"
@@ -71,14 +72,15 @@ class EntityStore:
             INSERT INTO entities
             (id, organization_id, name, code, erp_connection_id,
              gl_mapping_json, approval_rules_json, default_currency,
-             is_active, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+             parent_entity_id, is_active, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
         """
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (
                 entity_id, organization_id, name, code, erp_connection_id,
                 gl_mapping_json, approval_rules_json, currency or "USD",
+                parent_entity_id,
                 now, now,
             ))
             conn.commit()
@@ -137,7 +139,8 @@ class EntityStore:
 
     _ENTITY_ALLOWED_COLUMNS = frozenset({
         "name", "code", "erp_connection_id", "gl_mapping_json",
-        "approval_rules_json", "default_currency", "is_active", "updated_at",
+        "approval_rules_json", "default_currency", "parent_entity_id",
+        "is_active", "updated_at",
     })
 
     def update_entity(self, entity_id: str, **kwargs) -> bool:

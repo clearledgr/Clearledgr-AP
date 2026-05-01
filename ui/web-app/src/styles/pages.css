@@ -3741,3 +3741,64 @@
   font-size: 10px;
   color: #047857;
 }
+
+
+/* ─── Module 4 — vendor list spec columns ──────────────────────── */
+
+.cl-vendor-spec-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.cl-vendor-fact {
+  white-space: nowrap;
+  color: var(--cl-ink);
+}
+.cl-vendor-fact .muted {
+  margin-right: 4px;
+}
+
+/* ─── Module 5 — webhook delivery log ──────────────────────────── */
+
+.cl-webhook-deliveries {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cl-line);
+}
+
+
+/* ─── Module 3 — rule list filters ──────────────────────────────── */
+
+.cl-rules-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #F8FAFC;
+  border: 1px solid var(--cl-line);
+  border-radius: 8px;
+}
+.cl-rules-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.cl-rules-filter span {
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cl-rules-filter input,
+.cl-rules-filter select {
+  border: 1px solid var(--cl-line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}

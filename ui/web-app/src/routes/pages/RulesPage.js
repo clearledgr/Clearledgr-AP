@@ -27,20 +27,31 @@ export default function RulesPage({ api, toast }) {
   const [editor, setEditor] = useState(null);  // {mode, rule}
   const [tester, setTester] = useState(false);
   const [versionsForRule, setVersionsForRule] = useState(null);
+  // Module 3 spec line 121: rule list "sortable, filterable by entity,
+  // workflow, trigger type". Backend already accepts these query params
+  // (workspace_rules.py:108-129); this is just the UI surface.
+  const [filterStatus, setFilterStatus] = useState('all');     // all|active|paused|archived
+  const [filterEntity, setFilterEntity] = useState('');         // free-text entity_id
+  const [filterWorkflow, setFilterWorkflow] = useState('all');  // all|ap|...
 
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await api(
-        '/api/workspace/rules?include_inactive=true',
-      );
-      setRules(resp?.rules || []);
+      const params = new URLSearchParams({ include_inactive: 'true' });
+      if (filterEntity.trim()) params.set('entity_id', filterEntity.trim());
+      if (filterWorkflow !== 'all') params.set('workflow', filterWorkflow);
+      const resp = await api(`/api/workspace/rules?${params.toString()}`);
+      let rows = resp?.rules || [];
+      if (filterStatus !== 'all') {
+        rows = rows.filter((r) => String(r.status || '').toLowerCase() === filterStatus);
+      }
+      setRules(rows);
     } catch (exc) {
       toast(`Failed to load rules: ${String(exc?.message || exc)}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [api, toast]);
+  }, [api, toast, filterStatus, filterEntity, filterWorkflow]);
 
   const loadTemplates = useCallback(async () => {
     try {
@@ -105,6 +116,40 @@ export default function RulesPage({ api, toast }) {
         templates=${templates}
         onApply=${onApplyTemplate}
       />
+
+      <section class="cl-rules-filters" aria-label="Rule filters">
+        <label class="cl-rules-filter">
+          <span>Status</span>
+          <select value=${filterStatus} onChange=${(e) => setFilterStatus(e.target.value)}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+        <label class="cl-rules-filter">
+          <span>Workflow</span>
+          <select value=${filterWorkflow} onChange=${(e) => setFilterWorkflow(e.target.value)}>
+            <option value="all">All</option>
+            <option value="ap">AP</option>
+          </select>
+        </label>
+        <label class="cl-rules-filter">
+          <span>Entity</span>
+          <input
+            type="text"
+            placeholder="entity id or blank"
+            value=${filterEntity}
+            onInput=${(e) => setFilterEntity(e.target.value)} />
+        </label>
+        ${(filterStatus !== 'all' || filterEntity || filterWorkflow !== 'all') ? html`
+          <button type="button" class="btn btn-tertiary btn-sm" onClick=${() => {
+            setFilterStatus('all');
+            setFilterEntity('');
+            setFilterWorkflow('all');
+          }}>Clear</button>
+        ` : null}
+      </section>
 
       <${RuleList}
         rules=${rules}

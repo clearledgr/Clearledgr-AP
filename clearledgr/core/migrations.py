@@ -4008,3 +4008,28 @@ def _v74_api_keys_scopes(cur, db):
     cur.execute(
         "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes JSONB"
     )
+
+
+@migration(
+    75,
+    "entities.parent_entity_id: Module 9 entity hierarchy column",
+)
+def _v75_entities_parent_entity_id(cur, db):
+    """Module 9 spec line 296: 'Entity hierarchy: parent and subsidiary
+    structure mirrored from ERP.' Adds the column the workspace UI now
+    reads and writes. Top-level entities carry NULL — the absence of a
+    parent is the spec-shape root, not a sentinel.
+
+    Self-referential FK (entities.id) so we get the orphan-prevention
+    free at the DB level. ON DELETE SET NULL means deleting a parent
+    flattens its subsidiaries up to the next level rather than cascading
+    them away — safer default.
+    """
+    cur.execute(
+        "ALTER TABLE entities ADD COLUMN IF NOT EXISTS parent_entity_id TEXT "
+        "REFERENCES entities(id) ON DELETE SET NULL"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_org_parent "
+        "ON entities (organization_id, parent_entity_id)"
+    )

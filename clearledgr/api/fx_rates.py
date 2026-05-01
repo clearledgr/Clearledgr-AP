@@ -144,3 +144,41 @@ def delete_rate(
     if not deleted:
         raise HTTPException(status_code=404, detail="rate_not_found")
     return {"deleted": True, "rate_id": rate_id}
+
+
+# ─── Module 9 — Sync from ERP ─────────────────────────────────────
+#
+# Spec line 298: "Multi-currency support: invoices in any currency,
+# FX rates pulled from ERP, conversion to functional currency for
+# reporting." Operator-entered manual rates already work; this
+# endpoint adds the ERP-pull side. QuickBooks ships first because
+# its API exposes /v3/company/{realm}/exchangerate cleanly. Xero,
+# NetSuite, and SAP fetchers are TODO — `not_supported` for now,
+# guarded so callers know to fall back to manual.
+
+@router.post("/sync-from-erp")
+def sync_from_erp(
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Fetch latest FX rates from the org's primary ERP connection.
+
+    Behaviour by ERP:
+      - QuickBooks: pulls /v3/company/{realm_id}/exchangerate for each
+        currency that appears on this org's open AP items, against
+        the org's functional currency.
+      - Xero / NetSuite / SAP: returns ``not_supported`` with a 200
+        envelope so the SPA can surface an actionable hint instead
+        of a generic error toast. Connector implementations are
+        scheduled for a follow-up commit (each requires its own auth
+        path + endpoint shape).
+
+    The endpoint always succeeds at the HTTP layer — failures are
+    returned as part of the per-currency result list so the UI can
+    show partial progress when one of three currencies syncs cleanly
+    and another doesn't.
+    """
+    from clearledgr.services.fx_erp_sync import sync_fx_rates_from_erp
+    db = get_db()
+    actor = getattr(user, "user_id", "") or getattr(user, "email", "") or "system"
+    result = sync_fx_rates_from_erp(db, user.organization_id, actor=actor)
+    return result

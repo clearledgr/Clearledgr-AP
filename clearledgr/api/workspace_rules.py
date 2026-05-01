@@ -105,6 +105,54 @@ def list_templates(
     return {"templates": rule_engine.get_starter_templates()}
 
 
+@router.post("/seed-defaults")
+def seed_default_rules(
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Module 10 spec line 322: default rule sets pre-built for common patterns.
+
+    Idempotent — refuses to re-seed if the org already has any rules.
+    The leader can still delete + re-run, but accidental duplicate
+    seeds are a no-op so the wizard's "Apply default rules" button
+    is safe to click twice.
+
+    Pulls the 4 starter templates (under-$1K auto-approve, $1K-$10K
+    to manager, $10K-$50K to controller, $50K+ dual approval) and
+    creates each as an active rule on the org.
+    """
+    db = get_db()
+    org_id = getattr(user, "organization_id", None) or "default"
+
+    existing = db.list_workspace_rules(org_id, include_inactive=True) if hasattr(db, "list_workspace_rules") else []
+    if existing:
+        return {
+            "status": "already_seeded",
+            "existing_count": len(existing),
+            "message": "Org already has rules; skipping seed to avoid duplicates.",
+        }
+
+    templates = rule_engine.get_starter_templates()
+    created = []
+    for tpl in templates:
+        try:
+            rule = db.create_workspace_rule(
+                organization_id=org_id,
+                name=tpl.get("name") or "Untitled rule",
+                description=tpl.get("description") or "",
+                priority=int(tpl.get("priority") or 100),
+                workflow=str(tpl.get("workflow") or "ap"),
+                conditions=tpl.get("conditions") or {},
+                actions=tpl.get("actions") or [],
+                status="active",
+                created_by=getattr(user, "email", None) or getattr(user, "user_id", None) or "system",
+            )
+            created.append(rule)
+        except Exception as exc:
+            logger.exception("[rules.seed-defaults] failed for template %s: %s", tpl.get("name"), exc)
+            continue
+    return {"status": "seeded", "created_count": len(created), "rules": created}
+
+
 @router.get("")
 def list_rules(
     workflow: Optional[str] = Query(None),

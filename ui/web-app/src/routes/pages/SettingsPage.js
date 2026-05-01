@@ -2695,14 +2695,48 @@ function FxRatesPanel({ api, toast, panelRef }) {
     }
   }, [api, toast, load]);
 
+  // Module 9 spec line 298: rates pulled from ERP. The "Sync from
+  // ERP" button hits /api/workspace/fx-rates/sync-from-erp which
+  // dispatches per ERP type (QuickBooks shipped today; Xero /
+  // NetSuite / SAP return not_supported with helpful copy).
+  const [syncing, setSyncing] = useState(false);
+  const onSyncFromErp = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const resp = await api('/api/workspace/fx-rates/sync-from-erp', { method: 'POST' });
+      const status = resp?.status || 'unknown';
+      if (status === 'ok' || status === 'partial') {
+        toast?.(`Synced ${resp.rates_synced || 0} rates from ${resp.erp_type || 'ERP'}.`, 'success');
+        await load();
+      } else if (status === 'not_supported') {
+        toast?.(resp?.message || 'FX sync not yet supported for this ERP — use manual entry.', 'info');
+      } else if (status === 'no_currencies_needed') {
+        toast?.('No non-functional-currency invoices need a rate right now.', 'info');
+      } else if (status === 'no_erp_connected') {
+        toast?.('Connect an ERP first; FX sync needs a source.', 'info');
+      } else {
+        toast?.(resp?.message || `Sync returned: ${status}`, 'info');
+      }
+    } catch (exc) {
+      toast?.(`Sync failed: ${String(exc?.message || exc)}`, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }, [api, load, toast]);
+
   return html`
     <div class="panel" ref=${panelRef}>
       <div class="panel-head">
-        <strong>FX rates</strong>
-        <span class="muted">
-          Functional currency: <code>${functionalCcy}</code>. Reports convert every
-          invoice to this currency before aggregating across entities.
-        </span>
+        <div>
+          <strong>FX rates</strong>
+          <span class="muted">
+            Functional currency: <code>${functionalCcy}</code>. Reports convert every
+            invoice to this currency before aggregating across entities.
+          </span>
+        </div>
+        <button class="btn-secondary btn-sm" onClick=${onSyncFromErp} disabled=${syncing}>
+          ${syncing ? 'Syncing…' : 'Sync from ERP'}
+        </button>
       </div>
 
       <form class="cl-settings-row" onSubmit=${onSave}>

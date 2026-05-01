@@ -44,8 +44,8 @@ from typing import Any, Dict, Iterable, List, Optional
 logger = logging.getLogger(__name__)
 
 
-MAX_ROWS = 5_000
-MAX_CSV_BYTES = 1_000_000
+MAX_ROWS = 10_000  # Module 4 spec line 164: bulk import handles 10,000+ vendors
+MAX_CSV_BYTES = 2_000_000  # ~2MB room for 10K rows of typical vendor CSV
 
 _VALID_STATUSES = {"active", "blocked", "archived"}
 
