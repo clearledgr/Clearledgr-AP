@@ -726,6 +726,13 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/ap/items/[^/]+/retry-post$",
         # Phase 1.4: override-window reversal endpoint
         r"^/api/ap/items/[^/]+/reverse$",
+        # Snooze / unsnooze and classifier-rerun — these mount on the
+        # action router but were missing from the dynamic allowlist,
+        # so the strict-profile boot stripped them and every call
+        # 404'd at FastAPI before reaching the handler.
+        r"^/api/ap/items/[^/]+/snooze$",
+        r"^/api/ap/items/[^/]+/unsnooze$",
+        r"^/api/ap/items/[^/]+/classify$",
         # Phase 2.1.b: IBAN change verification workflow endpoints
         r"^/api/vendors/[^/]+/iban-verification$",
         r"^/api/vendors/[^/]+/iban-verification/factors/(phone|sign-off|email-domain)$",
