@@ -447,3 +447,73 @@
   margin-top: 12px;
   text-align: center;
 }
+
+
+/* ─── Module 1 — System status footer ──────────────────────────── */
+
+.cl-home-status {
+  margin-top: 24px;
+  padding: 16px 20px;
+  background: #FFFFFF;
+  border: 1px solid var(--cl-line);
+  border-radius: 12px;
+}
+.cl-home-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cl-home-status-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cl-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cl-home-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.cl-home-status-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #FAFAFA;
+  border: 1px solid var(--cl-line);
+  border-radius: 8px;
+}
+.cl-home-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.cl-home-status-dot-good { background: #10B981; }
+.cl-home-status-dot-warn { background: #F59E0B; }
+.cl-home-status-dot-off { background: #94A3B8; }
+.cl-home-status-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--cl-ink);
+}
+.cl-home-status-sub {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  margin-top: 2px;
+}
+
+/* Exception queue row suggestion line */
+.cl-home-row-exception {
+  align-items: flex-start;
+}
+.cl-home-row-suggestion {
+  font-size: 12px;
+  color: var(--cl-ink-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}

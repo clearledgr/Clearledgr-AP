@@ -81,6 +81,11 @@ export function HomePage() {
   const [metrics, setMetrics] = useState({ status: 'loading', data: null });
   const [aging, setAging] = useState({ status: 'loading', data: null });
   const [workload, setWorkload] = useState({ status: 'loading', data: null });
+  // Module 1 spec line 71: "Exceptions queue: every invoice currently
+  // stuck and needing human judgment, sorted by age, with vendor,
+  // amount, exception type, who's blocking, days stuck, agent's
+  // suggestion. Click through to Module 2."
+  const [exceptions, setExceptions] = useState({ status: 'loading', data: null });
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +95,8 @@ export function HomePage() {
       api(`/api/ap/items/metrics/aggregation?${orgQuery}&vendor_limit=5`),
       api(`/api/ap/items/aging?${orgQuery}`),
       api('/api/workspace/dashboard/approver-workload'),
-    ]).then(([up, met, age, wl]) => {
+      api('/api/admin/box/exceptions?box_type=ap_item&limit=10'),
+    ]).then(([up, met, age, wl, exc]) => {
       if (cancelled) return;
       setUpcoming(
         up.status === 'fulfilled'
@@ -112,6 +118,11 @@ export function HomePage() {
           ? { status: 'ready', data: wl.value }
           : { status: 'error', data: null, error: wl.reason?.message || 'load_failed' }
       );
+      setExceptions(
+        exc.status === 'fulfilled'
+          ? { status: 'ready', data: exc.value }
+          : { status: 'error', data: null, error: exc.reason?.message || 'load_failed' }
+      );
     });
     return () => { cancelled = true; };
   }, [orgId]);
@@ -123,14 +134,32 @@ export function HomePage() {
   const m = metrics.data?.metrics || metrics.data || {};
   const totalsByCurrency = m.outstanding_total_by_currency || m.totals_by_currency || {};
   const primaryCurrency = Object.keys(totalsByCurrency)[0] || 'USD';
-  const outstandingTotal = totalsByCurrency[primaryCurrency] || 0;
 
-  const exceptionCount = m.exceptions_count || m.exception_count || 0;
-  const avgDpo = m.avg_days_to_pay ?? m.avg_dpo ?? null;
-  const itemsTotal = m.total_items || m.count || 0;
+  // Module 1 spec stat cards (line 76):
+  //   in flight | awaiting approval | processed this week | agent exceptions
+  const dash = bootstrap?.dashboard_stats || bootstrap?.dashboard || {};
+  const inFlight = Number(dash.in_flight || 0);
+  const awaitingApproval = Number(dash.pending_approval || 0);
+  const processedWeek = Number(dash.processed_this_week || 0);
+  const exceptionCount = Number(
+    exceptions.data?.count
+    ?? m.exceptions_count
+    ?? m.exception_count
+    ?? 0,
+  );
 
-  const items = upcoming.data?.items || upcoming.data?.upcoming || [];
+  const upcomingItems = upcoming.data?.items || upcoming.data?.upcoming || [];
+  const exceptionItems = Array.isArray(exceptions.data?.items) ? exceptions.data.items : [];
   const topVendors = m.top_vendors || m.vendors || [];
+
+  // Module 1 spec line 78: "System status footer: agent active, last
+  // action timestamp, sync status with each connected ERP, inbox,
+  // Slack workspace." Pulled from the bootstrap.integrations array.
+  const integrations = Array.isArray(bootstrap?.integrations) ? bootstrap.integrations : [];
+  const agentLastAction = bootstrap?.dashboard_stats?.last_action_at
+    || bootstrap?.dashboard?.last_action_at
+    || dash.last_action_at
+    || null;
 
   const now = useMemo(() => new Date(), []);
   const today = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -168,69 +197,87 @@ export function HomePage() {
 
       <section class="cl-home-tiles">
         <${KpiTile}
-          label="Outstanding AP"
-          value=${metrics.status === 'loading' ? '…' : fmtCurrency(outstandingTotal, primaryCurrency)}
-          hint=${metrics.status === 'ready' && itemsTotal ? `${itemsTotal} open invoice${itemsTotal === 1 ? '' : 's'}` : ''}
+          label="In flight"
+          value=${inFlight}
+          hint=${inFlight === 0 ? 'No invoices in progress' : 'Across all open states'}
           accent="primary"
+          onClick=${() => navigate('/pipeline')}
         />
         <${KpiTile}
-          label="Open exceptions"
-          value=${metrics.status === 'loading' ? '…' : exceptionCount}
-          hint=${exceptionCount > 0 ? 'Need attention' : 'Clean'}
-          accent=${exceptionCount > 0 ? 'warn' : 'good'}
-          onClick=${() => exceptionCount > 0 && navigate('/exceptions')}
+          label="Awaiting approval"
+          value=${awaitingApproval}
+          hint=${awaitingApproval === 0 ? 'No bottleneck' : 'In approver queues'}
+          accent=${awaitingApproval > 0 ? 'pending' : 'good'}
+          onClick=${() => navigate('/pipeline?scope=approvals')}
         />
         <${KpiTile}
-          label="Avg days to pay"
-          value=${avgDpo == null ? '—' : `${Number(avgDpo).toFixed(1)}d`}
-          hint="Last 30 days"
+          label="Processed this week"
+          value=${processedWeek}
+          hint="Last 7 days · posted or closed"
           accent="neutral"
         />
         <${KpiTile}
-          label="Past due"
-          value=${aging.status === 'loading'
-            ? '…'
-            : fmtCurrency(aging.data?.total_past_due || 0, primaryCurrency)}
-          hint=${(aging.data?.bucket_30_60 || 0) > 0 ? '> 30 days bucket open' : 'Within tolerance'}
-          accent=${(aging.data?.total_past_due || 0) > 0 ? 'warn' : 'good'}
+          label="Agent exceptions"
+          value=${exceptionCount}
+          hint=${exceptionCount > 0 ? 'Need judgment' : 'Clean'}
+          accent=${exceptionCount > 0 ? 'warn' : 'good'}
+          onClick=${() => exceptionCount > 0 && navigate('/exceptions')}
         />
       </section>
 
       <section class="cl-home-grid">
         <div class="cl-home-panel">
           <header class="cl-home-panel-header">
-            <h2>Recent activity</h2>
-            <button class="cl-home-link" onClick=${() => navigate('/activity')}>View all →</button>
+            <h2>Exception queue</h2>
+            <button class="cl-home-link" onClick=${() => navigate('/exceptions')}>View all →</button>
           </header>
-          ${upcoming.status === 'loading'
+          ${exceptions.status === 'loading'
             ? html`<div class="cl-home-skeleton">Loading…</div>`
-            : items.length === 0
+            : exceptionItems.length === 0
               ? html`
                   <div class="cl-home-empty">
-                    <div class="cl-home-empty-title">No invoices yet.</div>
+                    <div class="cl-home-empty-title">${upcomingItems.length === 0 ? 'No invoices yet.' : 'Nothing stuck right now.'}</div>
                     <div class="cl-home-empty-sub">
-                      Connect Gmail or your ERP to start ingesting invoices automatically.
+                      ${upcomingItems.length === 0
+                        ? "Connect Gmail or your ERP to start ingesting invoices automatically."
+                        : "Every invoice is moving. The agent will surface anything that needs your judgment here."}
                     </div>
-                    <button class="cl-home-btn cl-home-btn-secondary" onClick=${() => navigate('/connections')}>
-                      Connect a source
-                    </button>
+                    ${upcomingItems.length === 0 ? html`
+                      <button class="cl-home-btn cl-home-btn-secondary" onClick=${() => navigate('/connections')}>
+                        Connect a source
+                      </button>
+                    ` : null}
                   </div>
                 `
               : html`
                   <ul class="cl-home-list">
-                    ${items.slice(0, 7).map((item) => html`
-                      <li class="cl-home-row" key=${item.id} onClick=${() => navigate(`/items/${encodeURIComponent(item.id)}`)}>
+                    ${exceptionItems.slice(0, 8).map((row) => html`
+                      <li class="cl-home-row cl-home-row-exception" key=${row.id || row.exception_id || row.box_id}
+                        onClick=${() => navigate(`/exceptions/${encodeURIComponent(row.box_id || row.id || '')}`)}>
                         <div class="cl-home-row-main">
-                          <div class="cl-home-row-vendor">${item.vendor_name || item.vendor || 'Unknown vendor'}</div>
-                          <div class="cl-home-row-meta">
-                            ${item.invoice_number ? `#${item.invoice_number}` : ''}
-                            ${item.invoice_number && item.updated_at ? ' · ' : ''}
-                            ${fmtRelative(item.updated_at || item.created_at)}
+                          <div class="cl-home-row-vendor">
+                            ${row.vendor_name || row.vendor || row.box_summary?.vendor_name || 'Unknown vendor'}
                           </div>
+                          <div class="cl-home-row-meta">
+                            ${humanizeExceptionType(row.exception_type)}
+                            ${row.box_summary?.invoice_number ? html` · #${row.box_summary.invoice_number}` : null}
+                            ${row.raised_at ? html` · ${exceptionAgeDays(row.raised_at)}d stuck` : null}
+                          </div>
+                          ${row.reason || row.metadata?.suggested_action ? html`
+                            <div class="cl-home-row-suggestion">
+                              ${row.metadata?.suggested_action || row.reason}
+                            </div>
+                          ` : null}
                         </div>
                         <div class="cl-home-row-right">
-                          <div class="cl-home-row-amount">${fmtCurrency(item.amount, item.currency)}</div>
-                          ${statePill(item.state)}
+                          ${row.box_summary?.amount != null ? html`
+                            <div class="cl-home-row-amount">
+                              ${fmtCurrency(row.box_summary.amount, row.box_summary.currency)}
+                            </div>
+                          ` : null}
+                          <span class=${`cl-home-pill cl-home-pill-${severityTone(row.severity)}`}>
+                            ${row.severity || 'medium'}
+                          </span>
                         </div>
                       </li>
                     `)}
@@ -274,6 +321,11 @@ export function HomePage() {
 
       <${ApproverWorkloadStrip}
         state=${workload}
+        navigate=${navigate} />
+
+      <${SystemStatusFooter}
+        integrations=${integrations}
+        agentLastAction=${agentLastAction}
         navigate=${navigate} />
 
       <footer class="cl-home-quick-actions">
@@ -400,4 +452,96 @@ function QuickAction({ label, desc, onClick }) {
       <div class="cl-home-qa-desc">${desc}</div>
     </button>
   `;
+}
+
+
+// ─── Module 1 — System status footer ──────────────────────────────
+//
+// Spec line 78: "agent active, last action timestamp, sync status
+// with each connected ERP, inbox, Slack workspace." A green/amber
+// dot per integration; aggregate "agent active" indicator on the
+// left. Source: bootstrap.integrations (already populated by the
+// /api/workspace/bootstrap call upstream — no extra fetch).
+
+function SystemStatusFooter({ integrations, agentLastAction, navigate }) {
+  const watch = integrations.find((i) => i.name === 'gmail') || {};
+  const slack = integrations.find((i) => i.name === 'slack') || {};
+  const teams = integrations.find((i) => i.name === 'teams') || {};
+  const erp = integrations.find((i) => i.name === 'erp') || {};
+
+  const allConnected = [watch, slack, teams, erp].every((i) => i.connected || i.name === 'teams');
+  const agentTone = allConnected ? 'good' : 'warn';
+  const agentLabel = allConnected ? 'Agent active' : 'Agent partially configured';
+
+  return html`
+    <section class="cl-home-status" aria-label="System status">
+      <header class="cl-home-status-head">
+        <h3>System status</h3>
+        <button class="cl-home-link" onClick=${() => navigate('/connections')}>
+          Manage connections →
+        </button>
+      </header>
+      <div class="cl-home-status-grid">
+        <div class=${`cl-home-status-cell cl-home-status-cell-${agentTone}`}>
+          <span class=${`cl-home-status-dot cl-home-status-dot-${agentTone}`}></span>
+          <div>
+            <div class="cl-home-status-label">${agentLabel}</div>
+            <div class="cl-home-status-sub">
+              ${agentLastAction
+                ? `Last action ${fmtRelative(agentLastAction)}`
+                : 'No actions recorded yet'}
+            </div>
+          </div>
+        </div>
+        <${StatusCell} label="Gmail" integration=${watch} fallbackLabel="Inbox not connected" />
+        <${StatusCell} label="Approval surface" integration=${slack.connected ? slack : teams} fallbackLabel="No Slack/Teams approval surface" />
+        <${StatusCell} label="ERP" integration=${erp} fallbackLabel="ERP not connected" />
+      </div>
+    </section>
+  `;
+}
+
+function StatusCell({ label, integration, fallbackLabel }) {
+  const connected = !!integration?.connected;
+  const reauth = !!integration?.requires_reconnect || !!integration?.requires_reauthorization;
+  const tone = !connected ? 'off' : reauth ? 'warn' : 'good';
+  const stamp = integration?.last_sync_at || integration?.connected_at;
+  return html`
+    <div class=${`cl-home-status-cell cl-home-status-cell-${tone}`}>
+      <span class=${`cl-home-status-dot cl-home-status-dot-${tone}`}></span>
+      <div>
+        <div class="cl-home-status-label">${label}</div>
+        <div class="cl-home-status-sub">
+          ${connected
+            ? (reauth ? 'Reconnect required' : (stamp ? `Synced ${fmtRelative(stamp)}` : 'Connected'))
+            : fallbackLabel}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
+// ─── Module 1 — Exception queue helpers ───────────────────────────
+
+function humanizeExceptionType(t) {
+  const s = String(t || '').toLowerCase();
+  if (!s) return 'Exception';
+  return s
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function exceptionAgeDays(raisedAt) {
+  if (!raisedAt) return 0;
+  const t = new Date(raisedAt).getTime();
+  if (isNaN(t)) return 0;
+  return Math.max(0, Math.round((Date.now() - t) / 86400000));
+}
+
+function severityTone(sev) {
+  const s = String(sev || '').toLowerCase();
+  if (s === 'critical' || s === 'high') return 'warn';
+  if (s === 'low') return 'good';
+  return 'pending';
 }

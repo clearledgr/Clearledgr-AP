@@ -31,6 +31,7 @@ const REPORTS = [
     label: 'Volume',
     endpoint: '/api/workspace/reports/volume',
     csvEndpoint: '/api/workspace/reports/volume.csv',
+    pdfEndpoint: '/api/workspace/reports/volume.pdf',
     description: 'Invoices processed over time, by entity and vendor.',
     summaryShape: 'volume',
     seriesShape: 'volume',
@@ -42,6 +43,7 @@ const REPORTS = [
     label: 'Agent Performance',
     endpoint: '/api/workspace/reports/agent-performance',
     csvEndpoint: '/api/workspace/reports/agent-performance.csv',
+    pdfEndpoint: '/api/workspace/reports/agent-performance.pdf',
     description: 'Auto-resolution rate, exception rate, and confidence trend.',
     summaryShape: 'agent_performance',
     seriesShape: 'agent_performance',
@@ -53,6 +55,7 @@ const REPORTS = [
     label: 'Cycle Time',
     endpoint: '/api/workspace/reports/cycle-time',
     csvEndpoint: '/api/workspace/reports/cycle-time.csv',
+    pdfEndpoint: '/api/workspace/reports/cycle-time.pdf',
     description: 'Days from invoice receipt to ERP post (avg / p50 / p90).',
     summaryShape: 'cycle_time',
     seriesShape: 'cycle_time',
@@ -64,6 +67,7 @@ const REPORTS = [
     label: 'Exception Breakdown',
     endpoint: '/api/workspace/reports/exception-breakdown',
     csvEndpoint: '/api/workspace/reports/exception-breakdown.csv',
+    pdfEndpoint: '/api/workspace/reports/exception-breakdown.pdf',
     description: 'Which exception types are most common, and trending up or down.',
     summaryShape: 'exception_breakdown',
     seriesShape: 'exception_breakdown',
@@ -75,6 +79,7 @@ const REPORTS = [
     label: 'Vendor Quality',
     endpoint: '/api/workspace/reports/vendor-quality',
     csvEndpoint: '/api/workspace/reports/vendor-quality.csv',
+    pdfEndpoint: '/api/workspace/reports/vendor-quality.pdf',
     description: 'Vendors ranked by exception rate. Identifies relationships that need a conversation.',
     summaryShape: 'vendor_quality',
     seriesShape: null,
@@ -139,6 +144,13 @@ export default function ReportsPage({ api, orgId, toast }) {
     toast(`Preparing ${activeReport.label} CSV…`, 'info');
   }, [activeReport, queryString, toast]);
 
+  const downloadPdf = useCallback(() => {
+    if (!activeReport.pdfEndpoint) return;
+    const url = `${activeReport.pdfEndpoint}${queryString ? `?${queryString}` : ''}`;
+    window.location.href = url;
+    toast(`Preparing ${activeReport.label} PDF…`, 'info');
+  }, [activeReport, queryString, toast]);
+
   return html`
     <div class="cl-reports">
       <header class="cl-reports-header">
@@ -173,6 +185,7 @@ export default function ReportsPage({ api, orgId, toast }) {
         onTo=${setTo}
         onEntity=${setEntityId}
         onExport=${downloadCsv}
+        onExportPdf=${downloadPdf}
         busy=${loading}
       />
 
@@ -201,7 +214,7 @@ export default function ReportsPage({ api, orgId, toast }) {
 function FilterBar({
   period, from, to, entityId, showPeriod,
   onPeriod, onFrom, onTo, onEntity,
-  onExport, busy,
+  onExport, onExportPdf, busy,
 }) {
   return html`
     <section class="cl-reports-filter-bar" aria-label="Report filters">
@@ -235,6 +248,11 @@ function FilterBar({
       <button class="btn btn-secondary cl-reports-export" onClick=${onExport} disabled=${busy}>
         Export CSV
       </button>
+      ${onExportPdf ? html`
+        <button class="btn btn-secondary cl-reports-export" onClick=${onExportPdf} disabled=${busy}>
+          Export PDF
+        </button>
+      ` : null}
     </section>
   `;
 }

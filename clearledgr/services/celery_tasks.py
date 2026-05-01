@@ -1014,9 +1014,61 @@ def generate_audit_export(self, export_id: str) -> dict:
             if not cursor:
                 break
 
-        csv_bytes = buf.getvalue().encode("utf-8")
         org_id = str(export.get("organization_id") or "default")
         date_part = started_at.replace(":", "").replace("-", "")[:15]
+        export_format = str(export.get("export_format") or "csv").lower()
+        if export_format == "pdf":
+            # Re-fetch the events as dicts for the PDF renderer. We
+            # already streamed them through the CSV writer above, but
+            # the PDF helper takes a list of dicts so we re-page (cap
+            # at 5K rows for PDF to keep filesize reasonable — the
+            # spec calls PDF a "share with auditor" surface, not a
+            # bulk-data dump; CSV remains the dump format).
+            from clearledgr.services.workspace_reports import audit_events_to_pdf
+            pdf_events = []
+            cursor2 = None
+            pdf_cap = 5000
+            while len(pdf_events) < pdf_cap:
+                page = db.search_audit_events(
+                    organization_id=export.get("organization_id"),
+                    from_ts=filters.get("from_ts") or None,
+                    to_ts=filters.get("to_ts") or None,
+                    event_types=filters.get("event_types") or None,
+                    actor_id=filters.get("actor_id") or None,
+                    box_type=filters.get("box_type") or None,
+                    box_id=filters.get("box_id") or None,
+                    limit=500,
+                    cursor=cursor2,
+                    entity_scope=filters.get("entity_scope"),
+                )
+                ev = page.get("events") or []
+                pdf_events.extend(ev)
+                cursor2 = page.get("next_cursor")
+                if not cursor2 or not ev:
+                    break
+            pdf_bytes = audit_events_to_pdf(
+                pdf_events[:pdf_cap],
+                org_id=org_id,
+                params=filters,
+            )
+            filename = f"audit-{org_id}-{date_part}.pdf"
+            db.set_audit_export_content(
+                export_id, content=pdf_bytes, content_filename=filename,
+            )
+            db.update_audit_export_status(
+                export_id,
+                status="done",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                total_rows=total_rows,
+            )
+            return {
+                "status": "done",
+                "export_id": export_id,
+                "rows": total_rows,
+                "bytes": len(pdf_bytes),
+            }
+
+        csv_bytes = buf.getvalue().encode("utf-8")
         filename = f"audit-{org_id}-{date_part}.csv"
         db.set_audit_export_content(
             export_id, content=csv_bytes, content_filename=filename,

@@ -29,6 +29,7 @@ google-auth-httplib2>=0.2.0
 # PDF Processing
 PyPDF2>=3.0.0
 pdfplumber>=0.10.0          # Enhanced table extraction
+fpdf2>=2.7.0                # Pure-Python PDF writer for reports + audit export
 
 # OCR (for scanned documents and images)
 pytesseract>=0.3.10         # OCR engine wrapper

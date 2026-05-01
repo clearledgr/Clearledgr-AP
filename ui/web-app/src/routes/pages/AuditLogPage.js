@@ -50,14 +50,15 @@ const COMMON_BOX_TYPES = [
 
 function FilterBar({ filters, setFilters, onApply, onReset, onExport, exportState, busy }) {
   const setField = (key, value) => setFilters({ ...filters, [key]: value });
+  const fmt = (exportState?.export_format || exportState?.format || 'csv').toUpperCase();
   const exportLabel = (() => {
-    if (!exportState) return 'Export CSV';
+    if (!exportState) return 'Export';
     switch (exportState.status) {
-      case 'queued': return 'Queued…';
-      case 'running': return 'Building…';
-      case 'done': return 'Download CSV';
+      case 'queued': return `Queued ${fmt}…`;
+      case 'running': return `Building ${fmt}…`;
+      case 'done': return `Download ${fmt}`;
       case 'failed': return 'Export failed';
-      default: return 'Export CSV';
+      default: return 'Export';
     }
   })();
   const exportBusy = exportState && (exportState.status === 'queued' || exportState.status === 'running');
@@ -126,12 +127,19 @@ function FilterBar({ filters, setFilters, onApply, onReset, onExport, exportStat
         </button>
         <button
           class=${`btn btn-sm ${exportState?.status === 'failed' ? 'btn-danger' : 'btn-secondary'}`}
-          onClick=${onExport}
+          onClick=${() => onExport('csv')}
           disabled=${busy || exportBusy}
           title=${exportState?.status === 'failed' && exportState?.error_message
             ? exportState.error_message
             : 'Download the current filter set as CSV'}>
-          ${exportLabel}
+          ${(exportState?.export_format || exportState?.format || 'csv') === 'csv' ? exportLabel : 'Export CSV'}
+        </button>
+        <button
+          class="btn btn-sm btn-secondary"
+          onClick=${() => onExport('pdf')}
+          disabled=${busy || exportBusy}
+          title="Download the current filter set as PDF (capped at 5K rows; CSV is unbounded)">
+          ${(exportState?.export_format || exportState?.format) === 'pdf' ? exportLabel : 'Export PDF'}
         </button>
         <button class="btn btn-sm btn-tertiary" onClick=${onReset} disabled=${busy}>
           Reset
@@ -823,7 +831,7 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
   // 2s. When status flips to 'done', the next button click (label
   // becomes "Download CSV") triggers a fresh GET ?download=true that
   // the browser handles as a file download via Content-Disposition.
-  const onExport = useCallback(async () => {
+  const onExport = useCallback(async (format) => {
     if (!api || !orgId) return;
 
     // Already done? Trigger the download.
@@ -839,7 +847,8 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
         }
         const blob = await resp.blob();
         const objUrl = URL.createObjectURL(blob);
-        const filename = exportState.content_filename || `audit-${orgId}-${Date.now()}.csv`;
+        const ext = exportState.export_format || exportState.format || 'csv';
+        const filename = exportState.content_filename || `audit-${orgId}-${Date.now()}.${ext}`;
         const a = document.createElement('a');
         a.href = objUrl;
         a.download = filename;
@@ -853,7 +862,10 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
       return;
     }
 
-    // Otherwise kick off a new job.
+    // Otherwise kick off a new job. Optional `format` arg picks
+    // between csv (default, unbounded) and pdf (capped at 5K rows;
+    // intended for "share with auditor" not bulk dump).
+    const exportFormat = format === 'pdf' ? 'pdf' : 'csv';
     const filtersPayload = {
       organization_id: orgId,
       from_ts: filters.from_ts ? new Date(filters.from_ts).toISOString() : null,
@@ -864,6 +876,7 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
       actor_id: filters.actor_id?.trim() || null,
       box_type: filters.box_type || null,
       box_id: filters.box_id?.trim() || null,
+      format: exportFormat,
     };
     try {
       const resp = await api('/api/workspace/audit/export', {
@@ -873,9 +886,10 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
       setExportState({
         job_id: resp.job_id,
         status: resp.status || 'queued',
+        export_format: exportFormat,
       });
     } catch (exc) {
-      setExportState({ status: 'failed', error_message: String(exc?.message || exc) });
+      setExportState({ status: 'failed', error_message: String(exc?.message || exc), export_format: exportFormat });
     }
   }, [api, orgId, exportState, filters]);
 

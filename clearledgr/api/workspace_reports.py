@@ -143,6 +143,19 @@ def _csv_response(payload: Dict[str, Any]) -> Response:
     )
 
 
+def _pdf_response(payload: Dict[str, Any]) -> Response:
+    pdf_bytes = workspace_reports.report_to_pdf(payload)
+    filename = workspace_reports.pdf_filename(
+        payload.get("report_type", "report"),
+        payload.get("params", {}),
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/volume.csv")
 def export_volume_csv(
     period: str = Query("weekly"),
@@ -225,3 +238,93 @@ def export_vendor_quality_csv(
         limit=limit,
     )
     return _csv_response(payload)
+
+
+# ─── PDF exports — Module 8 spec line 276 ──────────────────────────
+#
+# Mirror the .csv routes above. Reuse the same generator + the new
+# report_to_pdf helper. Filename hint via Content-Disposition; the
+# browser handles save-as.
+
+@router.get("/volume.pdf")
+def export_volume_pdf(
+    period: str = Query("weekly"),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    entity_id: Optional[str] = Query(None),
+    vendor_name: Optional[str] = Query(None),
+    user: TokenData = Depends(get_current_user),
+) -> Response:
+    payload = workspace_reports.generate_volume_report(
+        organization_id=user.organization_id,
+        period=period, from_ts=from_ts, to_ts=to_ts,
+        entity_id=entity_id, vendor_name=vendor_name,
+    )
+    return _pdf_response(payload)
+
+
+@router.get("/agent-performance.pdf")
+def export_agent_performance_pdf(
+    period: str = Query("weekly"),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    entity_id: Optional[str] = Query(None),
+    user: TokenData = Depends(get_current_user),
+) -> Response:
+    payload = workspace_reports.generate_agent_performance_report(
+        organization_id=user.organization_id,
+        period=period, from_ts=from_ts, to_ts=to_ts,
+        entity_id=entity_id,
+    )
+    return _pdf_response(payload)
+
+
+@router.get("/cycle-time.pdf")
+def export_cycle_time_pdf(
+    period: str = Query("weekly"),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    entity_id: Optional[str] = Query(None),
+    user: TokenData = Depends(get_current_user),
+) -> Response:
+    payload = workspace_reports.generate_cycle_time_report(
+        organization_id=user.organization_id,
+        period=period, from_ts=from_ts, to_ts=to_ts,
+        entity_id=entity_id,
+    )
+    return _pdf_response(payload)
+
+
+@router.get("/exception-breakdown.pdf")
+def export_exception_breakdown_pdf(
+    period: str = Query("weekly"),
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    entity_id: Optional[str] = Query(None),
+    user: TokenData = Depends(get_current_user),
+) -> Response:
+    payload = workspace_reports.generate_exception_breakdown_report(
+        organization_id=user.organization_id,
+        period=period, from_ts=from_ts, to_ts=to_ts,
+        entity_id=entity_id,
+    )
+    return _pdf_response(payload)
+
+
+@router.get("/vendor-quality.pdf")
+def export_vendor_quality_pdf(
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    entity_id: Optional[str] = Query(None),
+    min_invoices: int = Query(3, ge=1, le=100),
+    limit: int = Query(25, ge=1, le=100),
+    user: TokenData = Depends(get_current_user),
+) -> Response:
+    payload = workspace_reports.generate_vendor_quality_report(
+        organization_id=user.organization_id,
+        from_ts=from_ts, to_ts=to_ts,
+        entity_id=entity_id,
+        min_invoices=min_invoices,
+        limit=limit,
+    )
+    return _pdf_response(payload)

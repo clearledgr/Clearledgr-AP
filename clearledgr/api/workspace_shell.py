@@ -1115,12 +1115,29 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
     try:
         db = get_db()
         pipeline = db.get_invoice_pipeline(org_id) if hasattr(db, "get_invoice_pipeline") else {}
-        from datetime import date as _date
+        from datetime import date as _date, datetime as _dt, timedelta as _td, timezone as _tz
         today = _date.today().isoformat()
-        total = sum(len(v) for v in pipeline.values()) if pipeline else 0
+        seven_days_ago_iso = (_dt.now(_tz.utc) - _td(days=7)).isoformat()
+        # Module 1 spec stat cards (Live Operations, line 76):
+        #   in flight | awaiting approval | processed this week | agent exceptions
+        # "in flight" = anything not in a terminal state. Terminals are
+        # closed / reversed / rejected per ap_states.py.
+        open_states = (
+            "received", "validated", "needs_info", "needs_approval",
+            "pending_approval", "approved", "ready_to_post",
+        )
+        in_flight = sum(len(pipeline.get(s, [])) for s in open_states) if pipeline else 0
         pending = len(pipeline.get("needs_approval", []) + pipeline.get("pending_approval", []))  if pipeline else 0
         posted = sum(1 for inv in pipeline.get("posted_to_erp", []) + pipeline.get("closed", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
         rejected = sum(1 for inv in pipeline.get("rejected", []) if isinstance(inv, dict) and str(inv.get("created_at", "")).startswith(today)) if pipeline else 0
+        # Last 7 calendar days, posted-or-closed terminals.
+        processed_week = sum(
+            1
+            for state in ("posted_to_erp", "closed")
+            for inv in pipeline.get(state, [])
+            if isinstance(inv, dict) and str(inv.get("updated_at") or inv.get("created_at") or "") >= seven_days_ago_iso
+        ) if pipeline else 0
+        total = sum(len(v) for v in pipeline.values()) if pipeline else 0
         approval_sla_minutes = _approval_sla_minutes_for_org(org_id)
         kpis = db.get_ap_kpis(org_id, approval_sla_minutes=approval_sla_minutes) if hasattr(db, "get_ap_kpis") else {}
         agentic_snapshot = _build_agentic_snapshot(kpis)
@@ -1128,7 +1145,9 @@ def _safe_dashboard_stats(org_id: str) -> Dict[str, Any]:
         proof_snapshot = _build_proof_snapshot(kpis)
         return {
             "total_invoices": total,
+            "in_flight": in_flight,
             "pending_approval": pending,
+            "processed_this_week": processed_week,
             "posted_today": posted,
             "rejected_today": rejected,
             "auto_approved_rate": round(_metric_percent((kpis or {}).get("touchless_rate")), 2),
@@ -2406,6 +2425,9 @@ class AuditExportRequest(BaseModel):
     actor_id: Optional[str] = None
     box_type: Optional[str] = None
     box_id: Optional[str] = None
+    # Module 7 spec line 244: "Export: CSV and PDF". Default keeps the
+    # existing CSV behaviour for callers that don't pass it.
+    format: str = Field(default="csv", pattern="^(csv|pdf)$")
 
 
 @router.post("/audit/export")
@@ -2454,7 +2476,7 @@ def start_audit_export(
         organization_id=org_id,
         requested_by=actor,
         filters_json=_json.dumps(filters_payload, separators=(",", ":")),
-        export_format="csv",
+        export_format=request.format,
         retention_hours=24,
     )
 
@@ -2515,14 +2537,20 @@ def get_audit_export_status(
         content = export.get("content")
         if content is None:
             raise HTTPException(status_code=410, detail="audit_export_content_expired")
-        filename = export.get("content_filename") or f"audit-{job_id}.csv"
+        export_format = str(export.get("export_format") or "csv").lower()
+        filename = export.get("content_filename") or f"audit-{job_id}.{export_format}"
+        media_type = (
+            "application/pdf"
+            if export_format == "pdf"
+            else "text/csv; charset=utf-8"
+        )
         from fastapi.responses import Response
         # Convert memoryview / bytes from psycopg cleanly.
         if isinstance(content, memoryview):
             content = bytes(content)
         return Response(
             content=content,
-            media_type="text/csv; charset=utf-8",
+            media_type=media_type,
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Cache-Control": "private, no-store",
@@ -2534,7 +2562,8 @@ def get_audit_export_status(
     return {
         "job_id": export.get("id"),
         "status": export.get("status"),
-        "format": export.get("format"),
+        "format": export.get("format") or export.get("export_format"),
+        "export_format": export.get("export_format"),
         "total_rows": export.get("total_rows"),
         "content_size_bytes": export.get("content_size_bytes"),
         "content_filename": export.get("content_filename"),
