@@ -1418,7 +1418,12 @@ app.include_router(outlook_router)
 # ERP Connections API (OAuth flows). Strict profile exposes only the
 # OAuth-callback completion routes; full profile exposes the whole router.
 if STRICT_PROFILE_ACTIVE:
-    from clearledgr.api.erp_connections import quickbooks_callback, xero_callback
+    from clearledgr.api.erp_connections import (
+        quickbooks_callback,
+        xero_callback,
+        get_gl_account_map,
+        update_gl_account_map,
+    )
     app.add_api_route(
         "/erp/quickbooks/callback",
         quickbooks_callback,
@@ -1429,6 +1434,20 @@ if STRICT_PROFILE_ACTIVE:
         "/erp/xero/callback",
         xero_callback,
         methods=["GET"],
+        tags=["ERP Connections"],
+    )
+    # Per-tenant GL account mapping. Settings page reads on every
+    # render; writes when the operator saves the org's mapping.
+    app.add_api_route(
+        "/erp/gl-map",
+        get_gl_account_map,
+        methods=["GET"],
+        tags=["ERP Connections"],
+    )
+    app.add_api_route(
+        "/erp/gl-map",
+        update_gl_account_map,
+        methods=["PUT"],
         tags=["ERP Connections"],
     )
 else:
