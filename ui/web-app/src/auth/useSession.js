@@ -89,6 +89,21 @@ async function loadSession() {
   return cachedSession;
 }
 
+// Listen for session-stale events dispatched by client.js on any
+// 401 response. Re-probe /auth/me; if it now 401s too, AuthGate sees
+// isAuthenticated=false on the next render and redirects to /login.
+// Without this hook the cached session can outlive the cookie's
+// 60-min TTL and the user is stuck staring at a shell where every
+// API call silently 401s.
+if (typeof window !== 'undefined') {
+  let probing = false;
+  window.addEventListener('clearledgr:session-stale', async () => {
+    if (probing) return;
+    probing = true;
+    try { await loadSession(); } finally { probing = false; }
+  });
+}
+
 export async function refreshSession() {
   return loadSession();
 }

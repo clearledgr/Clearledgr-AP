@@ -84,7 +84,21 @@ export async function api(path, options = {}) {
       const text = await response.text();
       const json = text ? safeJson(text) : null;
 
-      if (!response.ok) throw new ApiError(response.status, json);
+      if (!response.ok) {
+        // Stale-session escape hatch: when the workspace session
+        // cookie expires the SPA's cachedSession in useSession.js
+        // doesn't auto-invalidate (it's a module-level variable that
+        // outlives the cookie's 60-min TTL), so AuthGate keeps
+        // rendering the shell while every actual API call 401s. On
+        // any 401 we dispatch a custom event so useSession can
+        // re-probe /auth/me and AuthGate can redirect to /login.
+        // Skip /auth/me itself — its 401 is the normal logged-out
+        // signal that loadSession() handles directly.
+        if (response.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/me')) {
+          try { window.dispatchEvent(new CustomEvent('clearledgr:session-stale')); } catch { /* old browsers */ }
+        }
+        throw new ApiError(response.status, json);
+      }
       return json;
     } catch (err) {
       lastError = err;
