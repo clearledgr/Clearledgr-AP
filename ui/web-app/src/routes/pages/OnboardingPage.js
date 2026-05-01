@@ -68,23 +68,29 @@ export function OnboardingPage() {
   };
 
   const stepStatus = (id) => {
+    // Two completion signals: (a) the structural one — actual ERP /
+    // Slack / Teams / Gmail connection is live, or AP policy exists;
+    // (b) the operator pressed "Mark done manually", which advances
+    // onboarding.step server-side. Either signal flips the step to
+    // 'done' so the badge clears immediately on manual ack.
     if (id === 1) {
       const ok = isConnected('erp', 'netsuite', 'sap', 'xero', 'quickbooks');
-      return ok ? 'done' : (onboarding.step >= 1 ? 'done' : 'next');
+      if (ok || onboarding.step >= 1) return 'done';
+      return 'next';
     }
     if (id === 2) {
       const settings = bootstrap?.organization?.settings || {};
       const has = !!(settings.ap_policy || settings.workflow_controls);
-      if (has) return 'done';
+      if (has || onboarding.step >= 2) return 'done';
       return onboarding.step >= 1 ? 'next' : 'pending';
     }
     if (id === 3) {
       const ok = isConnected('slack', 'teams');
-      if (ok) return 'done';
+      if (ok || onboarding.step >= 3) return 'done';
       return onboarding.step >= 2 ? 'next' : 'pending';
     }
     if (id === 4) {
-      if (isConnected('gmail')) return 'done';
+      if (isConnected('gmail') || onboarding.step >= 4) return 'done';
       return onboarding.step >= 3 ? 'optional' : 'pending';
     }
     return 'pending';
