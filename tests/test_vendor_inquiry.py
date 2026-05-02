@@ -1,4 +1,4 @@
-"""Tests for Wave 6 / H2 — vendor inquiry surface.
+"""Tests for Wave 6 / H2 — vendor inquiry lookup.
 
 Covers:
   * Sanitized status mapping: each AP state maps to the right
@@ -9,15 +9,14 @@ Covers:
       - sender domain not on any vendor profile → not recognised
       - invoice number doesn't match anything for that vendor →
         invoice_not_found_for_vendor
-      - happy match → found=True with status + narrative
+      - happy match → found=True with status
   * Sub-domain matching: ap@billing.vendor-x.com matches a
     vendor profile with sender_domains=['vendor-x.com'].
   * Paid status: payment_reference + settlement_at populated from
     the payment_confirmations row.
-  * No vendor data leaked: vendor_name not in reply body.
-  * Reply renderer: subject + narrative for found cases; "more
-    information needed" for not-found.
-  * API: lookup + reply endpoints; org-scoped.
+  * Tenant isolation.
+  * API: lookup endpoint; org-scoped. Reply rendering deleted
+    2026-05-02 — Solden does not author vendor-facing email bodies.
 """
 from __future__ import annotations
 
@@ -39,7 +38,6 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 from clearledgr.services.vendor_inquiry import (  # noqa: E402
     _AP_STATE_TO_VENDOR_STATUS,
     lookup_vendor_inquiry,
-    render_inquiry_reply,
 )
 
 
@@ -229,7 +227,6 @@ def test_lookup_under_review(db):
     )
     assert result.found is True
     assert result.status == "under_review"
-    assert result.narrative
 
 
 def test_lookup_paid_includes_payment_reference(db):
@@ -302,49 +299,6 @@ def test_lookup_tenant_isolation(db):
     assert result.found is False
 
 
-# ─── Reply renderer ────────────────────────────────────────────────
-
-
-def test_reply_for_found_includes_status(db):
-    db.upsert_vendor_profile(
-        "orgA", "Vendor X",
-        sender_domains=["vendor-x.com"],
-    )
-    _make_ap_item_with_invoice(
-        db, item_id="AP-vi-render", state="approved",
-        invoice_number="INV-R1",
-    )
-    result = lookup_vendor_inquiry(
-        db, organization_id="orgA",
-        sender_email="ap@vendor-x.com",
-        invoice_number="INV-R1",
-    )
-    rendered = render_inquiry_reply(
-        organization_name="Acme UK Ltd",
-        vendor_name=None,
-        invoice_number="INV-R1",
-        result=result,
-    )
-    assert "INV-R1" in rendered["body"]
-    assert "approved" in rendered["body"].lower()
-    assert "Vendor X" not in rendered["body"]
-
-
-def test_reply_for_not_found_says_more_info_needed(db):
-    result = lookup_vendor_inquiry(
-        db, organization_id="orgA",
-        sender_email="ap@unknown.com", invoice_number="INV-X",
-    )
-    rendered = render_inquiry_reply(
-        organization_name="Acme UK Ltd",
-        vendor_name=None,
-        invoice_number="INV-X",
-        result=result,
-    )
-    assert "more information needed" in rendered["subject"].lower()
-    assert "could not locate" in rendered["body"].lower()
-
-
 # ─── API ───────────────────────────────────────────────────────────
 
 
@@ -368,30 +322,6 @@ def test_api_lookup_returns_status(db, client_orgA):
     data = resp.json()
     assert data["found"] is True
     assert data["status"] == "awaiting_approval"
-
-
-def test_api_reply_returns_subject_and_body(db, client_orgA):
-    db.upsert_vendor_profile(
-        "orgA", "Vendor X",
-        sender_domains=["vendor-x.com"],
-    )
-    _make_ap_item_with_invoice(
-        db, item_id="AP-vi-api-2", state="approved",
-        invoice_number="INV-API-2",
-    )
-    resp = client_orgA.post(
-        "/api/workspace/vendor-inquiries/reply",
-        json={
-            "sender_email": "ap@vendor-x.com",
-            "invoice_number": "INV-API-2",
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["found"] is True
-    assert "INV-API-2" in data["reply_subject"]
-    assert "INV-API-2" in data["reply_body"]
-    assert "Acme UK Ltd" in data["reply_body"]
 
 
 def test_api_lookup_unknown_returns_no_match_reason(client_orgA):

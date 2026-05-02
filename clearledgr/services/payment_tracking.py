@@ -288,35 +288,10 @@ def record_payment_confirmation(
         "metadata": audit_metadata,
     })
 
-    # ── 5. Remittance advice (Wave 2 / C5 + carry-over) ────────────
-    # Fire-and-forget: failures must NOT roll back the confirmation.
-    # The remittance service is itself idempotent (audit event keyed
-    # by payment_id) so re-invocation is safe.
-    # C5 carry-over: resolve a Gmail-token-bound sender for the org
-    # so connected workspaces actually send the email rather than
-    # landing 'no_gmail' audit stubs.
-    if clean_status == "confirmed" and ap_item is not None:
-        try:
-            from clearledgr.services.remittance_advice import (
-                send_remittance_advice,
-            )
-            from clearledgr.services.remittance_advice_sender import (
-                resolve_gmail_sender_for_org,
-            )
-            sender = resolve_gmail_sender_for_org(db, organization_id)
-            send_remittance_advice(
-                db,
-                organization_id=organization_id,
-                ap_item_id=ap_item_id,
-                payment_id=payment_id,
-                confirmation=confirmation,
-                sender=sender,  # None if no Gmail-connected user
-            )
-        except Exception:
-            logger.exception(
-                "payment_tracking: remittance advice hook failed "
-                "ap_item=%s payment_id=%s", ap_item_id, payment_id,
-            )
+    # Outbound remittance-advice email to the vendor was deleted on
+    # 2026-05-02. Solden does not send any email to a vendor — the
+    # operator notifies the vendor of payment from their own inbox if
+    # they choose to. Payment confirmation still records audit + state.
 
     return PaymentConfirmationResult(
         confirmation=confirmation,

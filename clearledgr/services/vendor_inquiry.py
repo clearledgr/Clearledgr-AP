@@ -1,34 +1,24 @@
-"""Vendor inquiry status surface (Wave 6 / H2).
+"""Vendor inquiry status lookup (Wave 6 / H2).
 
 Vendors regularly email AP teams asking "where's my payment for
-invoice INV-9001?". Today the AP team digs through the inbox and
-ERP to answer; H2 makes the answer a one-click (or auto-reply)
-operation. The response is intentionally minimal — only the
-canonical status the vendor would already see on their own bank
-statement / portal — so we don't leak internal data.
+invoice INV-9001?". This service is a **read-only lookup** that
+returns the sanitized status the AP operator can copy into their
+own reply (composed in their own email client). Solden does not
+author the body and does not send.
 
-Two layers:
-
-  * **Lookup**: given a (sender_email, invoice_number), find the
-    AP item if any matches the vendor's stored sender_domains and
-    the invoice_number agrees. Returns a sanitized status block.
-  * **Reply formatting**: produces a plain-text email body that
-    the AP team can review + send (or that the auto-reply hook can
-    fire after a confidence check).
-
-What the vendor sees:
+Given a (sender_email, invoice_number), find the AP item if any
+matches the vendor's stored sender_domains and the invoice_number
+agrees. Returns a sanitized status block:
 
   * Status bucket: received / under_review / awaiting_approval /
     approved / scheduled_for_payment / paid / on_hold / rejected.
   * Last update timestamp.
   * Payment reference + settlement date IF status=paid.
 
-What the vendor does NOT see:
-
-  * Internal AP item id.
-  * Approver names / decision_reason fields.
-  * Internal note metadata.
-  * Other invoices for the same vendor.
+The operator gets only the canonical state buckets a vendor would
+already see on their own bank statement / portal — we don't leak
+internal AP item ids, approver names, decision_reason fields, or
+other invoices for the same vendor.
 """
 from __future__ import annotations
 
@@ -65,42 +55,6 @@ _AP_STATE_TO_VENDOR_STATUS: Dict[str, str] = {
 }
 
 
-_STATUS_NARRATIVES: Dict[str, str] = {
-    "received": (
-        "We have received your invoice and it is queued for "
-        "processing. You can expect an update within a few business days."
-    ),
-    "under_review": (
-        "Your invoice is currently being reviewed by our team. "
-        "We will follow up if any clarifying information is needed."
-    ),
-    "awaiting_approval": (
-        "Your invoice has been validated and is awaiting approval "
-        "from the assigned approver(s)."
-    ),
-    "approved": (
-        "Your invoice has been approved and is queued to be posted "
-        "to our ledger."
-    ),
-    "scheduled_for_payment": (
-        "Your invoice has been posted to our ledger and is "
-        "scheduled for payment per our standard payment terms."
-    ),
-    "paid": (
-        "This invoice has been paid. The payment reference and "
-        "settlement details are listed below."
-    ),
-    "on_hold": (
-        "There is an issue with this invoice that requires "
-        "attention. Our team will reach out shortly."
-    ),
-    "rejected": (
-        "This invoice has not been processed for payment. Our "
-        "team will reach out with more details."
-    ),
-}
-
-
 # ── Output shapes ──────────────────────────────────────────────────
 
 
@@ -112,7 +66,6 @@ class VendorInquiryResult:
     invoice_number: Optional[str] = None
     payment_reference: Optional[str] = None
     settlement_at: Optional[str] = None
-    narrative: Optional[str] = None
     no_match_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -123,7 +76,6 @@ class VendorInquiryResult:
             "invoice_number": self.invoice_number,
             "payment_reference": self.payment_reference,
             "settlement_at": self.settlement_at,
-            "narrative": self.narrative,
             "no_match_reason": self.no_match_reason,
         }
 
@@ -279,64 +231,4 @@ def lookup_vendor_inquiry(
         invoice_number=row_dict.get("invoice_number"),
         payment_reference=payment_reference,
         settlement_at=settlement_at,
-        narrative=_STATUS_NARRATIVES.get(sanitized_status),
     )
-
-
-# ── Reply formatting ──────────────────────────────────────────────
-
-
-def render_inquiry_reply(
-    *,
-    organization_name: str,
-    vendor_name: Optional[str],
-    invoice_number: Optional[str],
-    result: VendorInquiryResult,
-) -> Dict[str, str]:
-    """Plain-text reply ready to send (or attach as a Gmail draft).
-
-    Returns ``{"subject": str, "body": str}``.
-    """
-    inv_label = invoice_number or "your invoice"
-    subject = (
-        f"Status of invoice {inv_label}"
-        if result.found
-        else f"Status of invoice {inv_label} - more information needed"
-    )
-
-    if not result.found:
-        body = (
-            f"Hello{(' ' + vendor_name) if vendor_name else ''},\n\n"
-            f"Thank you for your inquiry about invoice {inv_label}. "
-            f"We could not locate this invoice in our records under "
-            f"the email address you contacted us from.\n\n"
-            f"Could you confirm the invoice number and the email "
-            f"address it was originally sent from? We'll follow up "
-            f"as soon as we can match it.\n\n"
-            f"Regards,\n{organization_name} Accounts Payable\n"
-        )
-        return {"subject": subject, "body": body}
-
-    status = result.status or "under_review"
-    narrative = result.narrative or _STATUS_NARRATIVES.get(status, "")
-    payment_block = ""
-    if status == "paid":
-        ref = result.payment_reference or "—"
-        date = result.settlement_at or "—"
-        payment_block = (
-            f"\n  Payment reference: {ref}"
-            f"\n  Settlement date:   {date}\n"
-        )
-
-    body = (
-        f"Hello{(' ' + vendor_name) if vendor_name else ''},\n\n"
-        f"Thank you for your inquiry about invoice "
-        f"{result.invoice_number or inv_label}.\n\n"
-        f"Current status: {status.replace('_', ' ').title()}\n"
-        f"{narrative}\n"
-        f"{payment_block}"
-        f"\n"
-        f"If you need anything further, please reply to this thread.\n\n"
-        f"Regards,\n{organization_name} Accounts Payable\n"
-    )
-    return {"subject": subject, "body": body}
