@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useRef, useState, useEffect, useCallback } from 'preact/hooks';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import htm from 'htm';
 import { hasCapability, useAction } from '../route-helpers.js';
 
