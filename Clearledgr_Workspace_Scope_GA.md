@@ -153,7 +153,6 @@ The vendor list, with what the agent needs to know about each. Vendor data lives
 - Vendor list: all vendors, with status, payment terms, last bill, exception rate, IBAN verification status
 - Vendor detail: ERP data (name, address, tax ID, terms) plus Clearledgr layer (verified IBANs, fraud flags, custom routing rules, agent confidence with this vendor)
 - Bulk import: from ERP on connection, refreshable, handles 10,000+ vendors without blocking
-- **Vendor onboarding workflow**: backed by the existing `vendor_onboarding_session` Box type (per memory: registered Box type alongside `ap_item`). The dashboard surfaces in-flight onboarding sessions and resolves them through the same harness pattern as AP exceptions.
 - Verification: agent attempts auto-verification on creation (IBAN check, business registry lookup, prior payment match). Surfaces unverified vendors for human review.
 - **Basic fraud signals** (rule-based, not ML): new IBAN doesn't match prior payments; unusually large invoice from low-frequency vendor; vendor created within last 30 days with first invoice over $X. Configurable per customer. Surfaced as exception types.
 - Vendor performance view: exception rate per vendor over time. Identifies upstream data quality issues. Not a vendor leaderboard.
@@ -164,9 +163,8 @@ The vendor list, with what the agent needs to know about each. Vendor data lives
 - Bulk import handles 10,000 vendors without blocking
 - Fraud signal rules are customer-configurable and audit-logged when triggered
 - Vendor performance shows trends, not just current snapshots
-- Onboarding sessions are first-class Boxes — Module 4 surfaces what's already in `vendor_onboarding_sessions`
 
-**Out of scope:** vendor self-service portal; sophisticated ML-based fraud detection (basic rule-based signals only); vendor onboarding as a separate product.
+**Out of scope:** vendor onboarding as a workflow (AP-side ERP-master-check is the gate; Solden does not own vendor onboarding — see project memory entry from 2026-04-30); vendor self-service portal; sophisticated ML-based fraud detection (basic rule-based signals only).
 
 ---
 
