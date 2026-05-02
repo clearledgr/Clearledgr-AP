@@ -1,43 +1,45 @@
 import { html } from '../utils/htm.js';
 
 /**
- * The Solden brand mark — three stacked slabs forming a stylized
- * "S" (per the brand kit shipped 2026-05-02).
+ * The Solden brand mark — the canonical S-mark, inlined directly
+ * from the brand-kit SVG (`public/solden-mark.svg`). Two stylized
+ * angular slabs forming the silhouette of an "S".
  *
- * Two render variants:
- *   primary  — navy slabs + teal middle stripe. For light surfaces
- *              (login card, footer, body content).
- *   on-dark  — single-fill white. For the navy sidebar rail and
- *              any teal/dark hero treatment.
+ * Fill is `currentColor`, so the mark inherits its color from the
+ * CSS `color` property of its parent. This lets a single component
+ * render in any tone without per-variant assets:
  *
- * Inline SVG so it ships with the bundle, scales cleanly at any
- * size, and inherits CSS sizing without a network round-trip.
+ *   tone="primary"   → navy (--cl-navy) on light surfaces
+ *   tone="on-dark"   → white on dark / teal surfaces
+ *   tone="accent"    → teal (--cl-teal-500), for special hero use
  *
- * Props:
- *   size  — pixel size of the square (default 24).
- *   tone  — 'primary' (default) | 'on-dark'.
- *   class — additional CSS class for layout / spacing.
+ * Path data is the literal export from the brand kit. Only the
+ * fill color and viewBox crop are parameterized.
  */
+const TONE_COLORS = {
+  primary: 'var(--cl-navy)',
+  'on-dark': '#FFFFFF',
+  accent: 'var(--cl-teal-500)',
+};
+
 export function BrandMark({ size = 24, tone = 'primary', class: className = '' }) {
-  const isOnDark = tone === 'on-dark';
-  const slabFill = isOnDark ? '#FFFFFF' : '#0A1F44';
-  const stripeFill = isOnDark ? '#FFFFFF' : '#18BFB0';
+  const color = TONE_COLORS[tone] || TONE_COLORS.primary;
   return html`
     <svg
       class=${`cl-brand-mark ${className}`.trim()}
       width=${size}
       height=${size}
-      viewBox="0 0 24 24"
-      fill="none"
+      viewBox="326 365 165 180"
+      fill="currentColor"
+      preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label="Solden"
+      style=${`color: ${color}`}
       xmlns="http://www.w3.org/2000/svg">
-      <!-- Top slab — extends right at the bottom (▟ shape) -->
-      <path d="M 3 5 L 16 5 L 19 9 L 3 9 Z" fill=${slabFill} />
-      <!-- Middle teal diagonal stripe — runs upper-right to lower-left -->
-      <path d="M 7 10 L 19 10 L 17 14 L 5 14 Z" fill=${stripeFill} />
-      <!-- Bottom slab — extends left at the top (▙ shape, mirror of top) -->
-      <path d="M 5 15 L 21 15 L 21 19 L 8 19 Z" fill=${slabFill} />
+      <g transform="translate(0, 910) scale(0.1, -0.1)">
+        <path d="M3699 5352 c-53 -37 -173 -118 -268 -181 -140 -93 -171 -118 -169 -135 l3 -21 785 -2 c483 -2 791 1 800 7 12 7 16 42 18 184 3 115 0 181 -8 195 -11 21 -14 21 -538 21 l-527 0 -96 -68z" />
+        <path d="M3273 4073 c-16 -6 -19 -368 -3 -378 5 -3 248 -7 538 -7 l529 -1 259 175 c186 126 260 181 262 197 l3 21 -788 -1 c-433 0 -794 -3 -800 -6z" />
+      </g>
     </svg>
   `;
 }
