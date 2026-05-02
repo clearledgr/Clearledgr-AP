@@ -2,7 +2,7 @@
  * Review Page — exception and blocker workbench for AP operators.
  * Keeps blocked finance work in one place without turning Gmail into a generic dashboard.
  */
-import { h } from 'preact';
+import { h, Fragment } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import ActionDialog, { useActionDialog } from '../../components/ActionDialog.js';
@@ -303,37 +303,37 @@ function FieldReviewCard({ item, blockers, onResolve, resolvingField }) {
               </div>
               <div class="review-block-facts">
                 ${blocker.kind === 'confidence' && html`
-                  <>
+                  <${Fragment}>
                     <span class="review-block-fact-label">Solden read</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.current_value_display, 'Not found')}</span>
-                  </>
+                  </${Fragment}>
                 `}
                 ${blocker.kind === 'confidence' && blocker.current_source_label && html`
-                  <>
+                  <${Fragment}>
                     <span class="review-block-fact-label">Read from</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.current_source_label, 'Source')}</span>
-                  </>
+                  </${Fragment}>
                 `}
                 ${blocker.email_value !== null && blocker.email_value !== undefined && html`
-                  <>
+                  <${Fragment}>
                     <span class="review-block-fact-label">Email says</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.email_value_display, 'Not found')}</span>
-                  </>
+                  </${Fragment}>
                 `}
                 ${blocker.attachment_value !== null && blocker.attachment_value !== undefined && html`
-                  <>
+                  <${Fragment}>
                     <span class="review-block-fact-label">Attachment says</span>
                     <span class="review-block-fact-value">${safeDisplayText(blocker.attachment_value_display, 'Not found')}</span>
-                  </>
+                  </${Fragment}>
                 `}
                 ${blocker.kind === 'source_conflict' && html`
-                  <>
+                  <${Fragment}>
                     <span class="review-block-fact-label">Current choice</span>
                     <span class="review-block-fact-value">
                       ${safeDisplayText(blocker.winning_source_label, 'Needs review')}
                       ${safeDisplayText(blocker.winning_value_display, '') ? ` (${safeDisplayText(blocker.winning_value_display, '')})` : ''}
                     </span>
-                  </>
+                  </${Fragment}>
                 `}
               </div>
             </div>
