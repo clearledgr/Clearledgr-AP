@@ -1738,6 +1738,155 @@ def get_onboarding_status(
     }
 
 
+@router.get("/fraud-thresholds")
+def get_fraud_thresholds(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the org's customer-configurable fraud rule thresholds.
+
+    Module 4 spec line 158: "Basic fraud signals (rule-based, not ML):
+    new IBAN doesn't match prior payments; unusually large invoice
+    from low-frequency vendor; vendor created within last 30 days
+    with first invoice over $X. Configurable per customer."
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    org = get_db().get_organization(org_id) or {}
+    settings = _load_org_settings(org)
+    cfg = settings.get("fraud_thresholds") or {}
+    defaults = {
+        "bank_change_alert_days": 14,
+        "bank_change_warn_days": 30,
+        "low_frequency_invoice_count_threshold": 3,
+        "low_frequency_invoice_multiplier": 3.0,
+        "new_vendor_days": 30,
+        "new_vendor_first_invoice_max": 10000.0,
+    }
+    return {
+        "organization_id": org_id,
+        "configured": {k: cfg.get(k) for k in defaults},
+        "defaults": defaults,
+    }
+
+
+class FraudThresholdsRequest(BaseModel):
+    organization_id: Optional[str] = None
+    bank_change_alert_days: Optional[int] = Field(default=None, ge=0, le=365)
+    bank_change_warn_days: Optional[int] = Field(default=None, ge=0, le=365)
+    low_frequency_invoice_count_threshold: Optional[int] = Field(default=None, ge=0, le=100)
+    low_frequency_invoice_multiplier: Optional[float] = Field(default=None, ge=1.0, le=100.0)
+    new_vendor_days: Optional[int] = Field(default=None, ge=0, le=365)
+    new_vendor_first_invoice_max: Optional[float] = Field(default=None, ge=0, le=10_000_000)
+
+
+@router.patch("/fraud-thresholds")
+def patch_fraud_thresholds(
+    request: FraudThresholdsRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Save customer-configurable fraud thresholds. None values keep
+    the org's existing setting (or fall through to the default at
+    risk-score time). Validation in the request model enforces
+    sensible bounds — e.g. you can't set new_vendor_first_invoice_max
+    above $10M; thresholds outside the cap need an engineering
+    decision."""
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    org = db.get_organization(org_id) or {}
+    settings = _load_org_settings(org)
+    current = dict(settings.get("fraud_thresholds") or {})
+    payload = request.dict(exclude_none=True)
+    payload.pop("organization_id", None)
+    current.update(payload)
+    settings["fraud_thresholds"] = current
+    db.update_organization(org_id, settings_json=settings)
+    return {"organization_id": org_id, "configured": current}
+
+
+@router.post("/onboarding/integration-health-gate")
+def run_integration_health_gate(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Module 10 spec line 321: "Integration health checks: confirms
+    each integration is correctly configured before allowing go-live."
+
+    Runs the test-transaction probe against the org's primary ERP
+    plus inspects Gmail / Slack / Teams connection state from the
+    bootstrap-side helpers. Returns a per-integration result so the
+    onboarding wizard can light up green per row and gate the
+    "complete onboarding" CTA.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+
+    results: Dict[str, Any] = {"organization_id": org_id, "checks": []}
+
+    # 1. ERP — actually probe the connection, not just check that
+    #    a row exists. This catches expired tokens.
+    from clearledgr.services.erp_test_probe import probe_erp_connection
+    erp_probe = probe_erp_connection(db, org_id)
+    results["checks"].append({
+        "name": "erp",
+        "label": "ERP connection",
+        "status": "ok" if erp_probe.get("status") == "ok" else (
+            "skip" if erp_probe.get("status") == "no_connection" else "fail"
+        ),
+        "detail": erp_probe.get("error") or (
+            f"{(erp_probe.get('erp_type') or '').title()} responded in {erp_probe.get('latency_ms')} ms"
+            if erp_probe.get("status") == "ok" else None
+        ),
+        "raw": erp_probe,
+    })
+
+    # 2. Gmail — bootstrap status helper already classifies durable
+    #    vs reconnect-required. Reuse it.
+    gmail_status = _gmail_status_for_org(org_id, user)
+    results["checks"].append({
+        "name": "gmail",
+        "label": "Gmail integration",
+        "status": "ok" if gmail_status.get("connected") and not gmail_status.get("requires_reconnect") else (
+            "fail" if gmail_status.get("connected") else "skip"
+        ),
+        "detail": (
+            "Reconnect required" if gmail_status.get("requires_reconnect")
+            else f"Connected as {gmail_status.get('email')}" if gmail_status.get("connected")
+            else "Not connected"
+        ),
+    })
+
+    # 3. Approval surface — Slack OR Teams must be live (the spec
+    #    onboarding wizard treats these as a single "approvals" step).
+    slack = _slack_status_for_org(org_id)
+    teams = _teams_status_for_org(org_id)
+    approvals_ok = bool(
+        (slack.get("connected") and not slack.get("requires_reauthorization"))
+        or teams.get("connected"),
+    )
+    results["checks"].append({
+        "name": "approvals",
+        "label": "Approval surface (Slack or Teams)",
+        "status": "ok" if approvals_ok else "fail",
+        "detail": (
+            "Slack ready" if slack.get("connected") and not slack.get("requires_reauthorization")
+            else "Teams ready" if teams.get("connected")
+            else "Connect Slack or Teams"
+        ),
+    })
+
+    # Aggregate verdict — fail if any required check failed.
+    required_failed = any(
+        c["status"] == "fail" and c["name"] in ("erp", "gmail", "approvals")
+        for c in results["checks"]
+    )
+    results["status"] = "fail" if required_failed else "ok"
+    results["ready_for_go_live"] = not required_failed
+    return results
+
+
 @router.post("/onboarding/step")
 def complete_onboarding_step(
     request: OnboardingStepRequest,

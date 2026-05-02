@@ -584,11 +584,29 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             vendor_risk: Optional[Dict[str, Any]] = None
             try:
                 from clearledgr.services.ap_decision import compute_vendor_risk_score
+                # Module 4 spec line 158 — load org's customer-configurable
+                # fraud thresholds. Defaults applied inside the score
+                # function when org hasn't customised.
+                org_thresholds = {}
+                try:
+                    org_row = self.db.get_organization(self.organization_id) or {}
+                    settings = org_row.get("settings_json") or org_row.get("settings") or {}
+                    if isinstance(settings, str):
+                        import json as _json
+                        try:
+                            settings = _json.loads(settings)
+                        except Exception:
+                            settings = {}
+                    org_thresholds = (settings or {}).get("fraud_thresholds") or {}
+                except Exception:
+                    org_thresholds = {}
                 vendor_risk = compute_vendor_risk_score(
                     vendor_profile=vendor_profile,
                     cross_invoice_analysis=cross_analysis_dict,
                     anomaly_signals=anomaly_signals,
                     decision_feedback=decision_feedback,
+                    ap_item=ap_item,
+                    org_thresholds=org_thresholds,
                 )
             except Exception as exc:
                 logger.debug("[APDecision] Risk score computation skipped (non-fatal): %s", exc)

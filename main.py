@@ -516,6 +516,7 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/workspace/notification-preferences",  # Module 11 — per-user prefs
     "/api/workspace/account",                   # Module 11 — full-account data export
     "/api/workspace/saml",                      # Module 6 — SAML config (admin)
+    "/api/workspace/fraud-thresholds",          # Module 4 — customer fraud rules
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -607,6 +608,9 @@ STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
     "/api/workspace/integrations/teams/webhook",
     "/api/workspace/onboarding/status",
     "/api/workspace/onboarding/step",
+    "/api/workspace/onboarding/integration-health-gate",
+    "/api/workspace/audit/retention",
+    "/api/workspace/integrations/erp/test",
     "/api/workspace/chart-of-accounts",
     "/api/workspace/ops/connector-readiness",
     "/api/workspace/ops/learning-calibration",
@@ -745,6 +749,7 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/vendors/import/commit$",
         r"^/api/vendors/[^/]+/status$",
         r"^/api/vendors/[^/]+/sync-erp$",
+        r"^/api/vendors/[^/]+/verify-registration$",
         r"^/api/vendors/[^/]+/trusted-domains$",
         r"^/api/vendors/[^/]+/trusted-domains/[^/]+$",
         # Phase 2.4: vendor KYC + risk score endpoints

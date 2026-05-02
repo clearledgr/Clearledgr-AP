@@ -938,6 +938,12 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         toast=${toast}
         panelRef=${notificationsRef} />
 
+      <${FraudThresholdsPanel}
+        api=${api}
+        orgId=${orgId}
+        toast=${toast}
+        canManage=${canManageCompany} />
+
       <${DataExportPanel}
         orgId=${orgId}
         toast=${toast}
@@ -2090,6 +2096,113 @@ function ApiKeysPanel({ api, toast, panelRef }) {
           </tbody>
         </table>
       ` : null}
+    </div>
+  `;
+}
+
+
+// ─── Module 4 — Customer-configurable fraud rules ──────────────────
+//
+// Spec line 158: "new IBAN doesn't match prior payments; unusually
+// large invoice from low-frequency vendor; vendor created within
+// last 30 days with first invoice over $X. Configurable per
+// customer."
+//
+// Six knobs map to the three fraud rule types. Defaults preserve
+// the historical hardcoded behaviour; overrides land in
+// settings_json["fraud_thresholds"] and feed into compute_vendor_risk_score.
+
+function FraudThresholdsPanel({ api, orgId, toast, canManage }) {
+  const [cfg, setCfg] = useState(null);
+  const [defaults, setDefaults] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/workspace/fraud-thresholds?organization_id=${encodeURIComponent(orgId)}`)
+      .then((r) => {
+        if (cancelled) return;
+        setDefaults(r?.defaults || {});
+        setCfg(r?.configured || {});
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [api, orgId]);
+
+  const merged = useMemo(() => {
+    const out = { ...(defaults || {}) };
+    for (const [k, v] of Object.entries(cfg || {})) {
+      if (v !== null && v !== undefined && v !== '') out[k] = v;
+    }
+    return out;
+  }, [cfg, defaults]);
+
+  const setField = (key) => (e) => {
+    const raw = e.target.value;
+    const value = raw === '' ? null : (key.includes('multiplier') || key.includes('max') ? parseFloat(raw) : parseInt(raw, 10));
+    setCfg((prev) => ({ ...(prev || {}), [key]: value }));
+  };
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      const payload = { organization_id: orgId };
+      for (const k of Object.keys(merged || {})) {
+        if (merged[k] !== null && merged[k] !== undefined && merged[k] !== '') payload[k] = merged[k];
+      }
+      const resp = await api('/api/workspace/fraud-thresholds', { method: 'PATCH', body: payload });
+      setCfg(resp?.configured || {});
+      toast?.('Fraud thresholds saved.', 'success');
+    } catch (exc) {
+      toast?.(`Save failed: ${exc?.message || exc}`, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!cfg || !defaults) return null;
+
+  const fields = [
+    { key: 'bank_change_alert_days', label: 'Bank change alert window (days)', help: 'High-severity flag when IBAN changed within this many days.' },
+    { key: 'bank_change_warn_days', label: 'Bank change warn window (days)', help: 'Medium flag for changes between alert and warn windows.' },
+    { key: 'low_frequency_invoice_count_threshold', label: 'Low-frequency vendor threshold', help: 'Vendors with fewer invoices than this are flagged "low_history".' },
+    { key: 'low_frequency_invoice_multiplier', label: 'Low-frequency amount multiplier', step: '0.1', help: 'Flag if invoice amount > N × vendor avg.' },
+    { key: 'new_vendor_days', label: 'New vendor window (days)', help: 'Vendors created within this many days are "new".' },
+    { key: 'new_vendor_first_invoice_max', label: 'New vendor first-invoice max ($)', help: 'Flag invoices above this amount from new vendors.' },
+  ];
+
+  return html`
+    <div class="panel">
+      <div class="panel-head compact">
+        <div>
+          <h3 style="margin-top:0">Fraud rules</h3>
+          <p class="muted" style="margin:0">
+            Three configurable signals: new IBAN mismatch, large invoice from low-frequency vendor,
+            and new vendor with first invoice over a threshold. Triggers feed into the agent's
+            vendor risk score; high risk forces human review.
+          </p>
+        </div>
+      </div>
+      <div class="cl-fraud-grid">
+        ${fields.map((f) => html`
+          <label class="cl-fraud-field" key=${f.key}>
+            <span>${f.label}</span>
+            <input
+              type="number"
+              step=${f.step || '1'}
+              value=${merged[f.key] ?? ''}
+              placeholder=${String(defaults[f.key])}
+              onInput=${setField(f.key)}
+              disabled=${!canManage || saving} />
+            <small class="muted">${f.help}</small>
+          </label>
+        `)}
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding-top:8px">
+        <button class="btn-primary" onClick=${onSave} disabled=${!canManage || saving}>
+          ${saving ? 'Saving…' : 'Save thresholds'}
+        </button>
+      </div>
     </div>
   `;
 }

@@ -18,6 +18,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -315,3 +316,57 @@ def commit_vendor_csv_import(
             "error_rows": preview.error_rows,
         },
     }
+
+
+@router.post("/{vendor_name}/verify-registration")
+def verify_vendor_registration(
+    vendor_name: str,
+    organization_id: Optional[str] = Query(default=None),
+    registration_number: Optional[str] = Query(default=None),
+    jurisdiction: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Module 4 spec line 158 — business registry vendor verification.
+
+    Defaults to OpenCorporates (broad jurisdiction coverage, free
+    tier for low volume). Can switch to Companies House (UK) by
+    setting REGISTRY_PROVIDER=companies_house in the environment.
+
+    The result is stamped on the vendor profile so the next time
+    someone views the vendor detail page they see the verification
+    state without re-querying.
+    """
+    from clearledgr.services.opencorporates_verifier import verify_vendor_registration as _verify
+    org_id = getattr(user, "organization_id", None) or "default"
+    if organization_id and organization_id != org_id:
+        raise HTTPException(status_code=403, detail="org_access_denied")
+
+    db = get_db()
+    profile = db.get_vendor_profile(org_id, vendor_name) if hasattr(db, "get_vendor_profile") else None
+    if not profile:
+        # Auto-create a stub profile so we have somewhere to stamp the result.
+        if hasattr(db, "ensure_vendor_profile"):
+            profile = db.ensure_vendor_profile(org_id, vendor_name)
+        else:
+            profile = {"organization_id": org_id, "vendor_name": vendor_name}
+
+    result = _verify(
+        company_name=vendor_name,
+        registration_number=registration_number or profile.get("registration_number"),
+        jurisdiction=jurisdiction or profile.get("jurisdiction"),
+    )
+
+    # Persist the verification result on the vendor profile.
+    if hasattr(db, "update_vendor_profile"):
+        try:
+            db.update_vendor_profile(
+                org_id, vendor_name,
+                registry_verified=(result.get("status") == "verified"),
+                registry_verification_at=datetime.now(timezone.utc).isoformat(),
+                registry_verification_provider=result.get("registry"),
+                registry_verification_payload=result,
+            )
+        except Exception as exc:
+            logger.debug("[vendor.verify-registration] persist failed: %s", exc)
+
+    return {"vendor_name": vendor_name, **result}

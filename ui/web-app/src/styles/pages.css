@@ -3862,3 +3862,113 @@
   font-size: 12px;
   font-family: 'Geist Mono', monospace;
 }
+
+
+/* ─── Module 4 — fraud thresholds + Module 10 health gate ────── */
+
+.cl-fraud-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 12px 0;
+}
+.cl-fraud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cl-fraud-field span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cl-ink);
+}
+.cl-fraud-field input {
+  border: 1px solid var(--cl-line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+
+.cl-onb-health-gate {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: #FFFFFF;
+  border: 1px solid var(--cl-line);
+  border-radius: 10px;
+}
+.cl-onb-health-gate-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cl-onb-health-gate-head p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.cl-onb-health-gate-results {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-onb-health-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 6px 8px;
+  background: #FAFAFA;
+  border-radius: 6px;
+}
+.cl-onb-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cl-onb-health-dot-ok { background: #10B981; }
+.cl-onb-health-dot-fail { background: #EF4444; }
+.cl-onb-health-dot-skip { background: #94A3B8; }
+.cl-onb-health-verdict {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cl-onb-health-verdict-ok { color: #047857; }
+.cl-onb-health-verdict-fail { color: #B91C1C; }
+
+.cl-conn-health-tile-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+
+/* ─── Module 4 — registry verify banner ────────────────────────── */
+
+.cl-vendor-registry-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: #FFFFFF;
+  border: 1px solid var(--cl-line);
+  border-radius: 10px;
+}
+.cl-vendor-registry-banner p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cl-vendor-registry-banner code {
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  color: var(--cl-ink);
+}

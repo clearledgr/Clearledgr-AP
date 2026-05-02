@@ -116,6 +116,28 @@ export function OnboardingPage() {
 
   const finishLater = () => navigate('/');
 
+  // Module 10 spec line 321 — pre-go-live integration health gate.
+  // Runs the test-tx probe + Gmail / approval status checks and
+  // returns a per-check result. Surfaced as a banner above the
+  // step list so the leader sees blockers before clicking
+  // "Finish setup".
+  const [healthGate, setHealthGate] = useState(null);
+  const [probingHealth, setProbingHealth] = useState(false);
+  const runHealthGate = async () => {
+    setProbingHealth(true);
+    try {
+      const resp = await api(
+        `/api/workspace/onboarding/integration-health-gate?organization_id=${encodeURIComponent(orgId)}`,
+        { method: 'POST' },
+      );
+      setHealthGate(resp);
+    } catch (err) {
+      toast(err?.message || 'Health check failed', 'error');
+    } finally {
+      setProbingHealth(false);
+    }
+  };
+
   const completed = onboarding.completed === true;
   const steps = onboarding.steps || [];
 
@@ -138,6 +160,39 @@ export function OnboardingPage() {
             : 'Four steps; the last one is optional. Each step links to the page where you actually configure the integration — come back here when you\'re done.'}
         </p>
       </header>
+
+      ${!completed ? html`
+        <div class="cl-onb-health-gate">
+          <div class="cl-onb-health-gate-head">
+            <div>
+              <strong>Pre-go-live health check</strong>
+              <p class="muted">
+                Runs an actual test transaction against your ERP plus checks Gmail + approval-surface state.
+                Catches expired tokens or misconfigured connections before bills start flowing.
+              </p>
+            </div>
+            <button class="cl-onb-btn cl-onb-btn-secondary" onClick=${runHealthGate} disabled=${probingHealth}>
+              ${probingHealth ? 'Running…' : 'Run health check'}
+            </button>
+          </div>
+          ${healthGate ? html`
+            <ul class="cl-onb-health-gate-results">
+              ${(healthGate.checks || []).map((c) => html`
+                <li key=${c.name} class=${`cl-onb-health-row cl-onb-health-row-${c.status}`}>
+                  <span class=${`cl-onb-health-dot cl-onb-health-dot-${c.status}`}></span>
+                  <strong>${c.label}</strong>
+                  ${c.detail ? html`<span class="muted"> · ${c.detail}</span>` : null}
+                </li>
+              `)}
+            </ul>
+            <p class=${`cl-onb-health-verdict cl-onb-health-verdict-${healthGate.status}`}>
+              ${healthGate.ready_for_go_live
+                ? 'All required integrations responded. Ready to go live.'
+                : 'One or more integrations need attention before go-live.'}
+            </p>
+          ` : null}
+        </div>
+      ` : null}
 
       <ol class="cl-onb-steps">
         ${steps.map((step) => {

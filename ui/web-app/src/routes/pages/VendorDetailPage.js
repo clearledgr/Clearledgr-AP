@@ -106,6 +106,13 @@ export default function VendorDetailPage({ api, orgId, navigate, toast, vendorNa
         profile=${profile}
         summary=${summary} />
 
+      <${RegistryVerifyBanner}
+        api=${api}
+        vendorName=${vendorName}
+        profile=${profile}
+        toast=${toast}
+        onChanged=${load} />
+
       <div class="cl-vendor-grid">
         <${ErpDataPanel} erp=${erp} profile=${profile} />
         <${ClearledgrLayerPanel}
@@ -408,6 +415,74 @@ function RecentInvoicesPanel({ invoices, navigate }) {
           `)}
         </tbody>
       </table>
+    </section>
+  `;
+}
+
+
+// ─── Module 4 — Business registry verification banner ────────────
+//
+// Spec line 158: "Verification: agent attempts auto-verification on
+// creation (IBAN check, business registry lookup, prior payment
+// match)." This banner exposes the registry-lookup verb with a
+// click-to-verify button. Persists the result on the vendor profile
+// so subsequent views show the verified state without re-querying.
+
+function RegistryVerifyBanner({ api, vendorName, profile, toast, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const verified = !!profile?.registry_verified;
+  const provider = profile?.registry_verification_provider;
+  const verifiedAt = profile?.registry_verification_at;
+  const payload = profile?.registry_verification_payload || {};
+
+  const onVerify = async () => {
+    setBusy(true);
+    try {
+      const params = new URLSearchParams();
+      if (profile?.registration_number) params.set('registration_number', profile.registration_number);
+      if (profile?.jurisdiction) params.set('jurisdiction', profile.jurisdiction);
+      const resp = await api(
+        `/api/vendors/${encodeURIComponent(vendorName)}/verify-registration${params.toString() ? `?${params.toString()}` : ''}`,
+        { method: 'POST' },
+      );
+      if (resp?.status === 'verified') {
+        toast?.(`Verified at ${resp.registry || 'registry'}: ${resp.company_name || vendorName}`, 'success');
+      } else if (resp?.status === 'not_found') {
+        toast?.('Not found in the registry. Add a registration number on the vendor profile and try again.', 'info');
+      } else if (resp?.status === 'ambiguous') {
+        toast?.(`Ambiguous match. ${(resp.candidates || []).length} candidates returned.`, 'info');
+      } else {
+        toast?.(resp?.error || 'Verification failed.', 'error');
+      }
+      onChanged?.();
+    } catch (exc) {
+      toast?.(`Verification failed: ${exc?.message || exc}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return html`
+    <section class="cl-vendor-registry-banner">
+      <div>
+        <strong>Business registry</strong>
+        ${verified ? html`
+          <p class="cl-record-muted">
+            Verified via ${provider || 'registry'}${verifiedAt ? ` · ${new Date(verifiedAt).toLocaleDateString()}` : ''}
+            ${payload.company_number ? html` · <code>${payload.company_number}</code>` : null}
+            ${payload.jurisdiction ? html` · ${String(payload.jurisdiction).toUpperCase()}` : null}
+            ${typeof payload.match_score === 'number' ? html` · match ${Math.round(payload.match_score * 100)}%` : null}
+          </p>
+        ` : html`
+          <p class="cl-record-muted">
+            Confirm this vendor exists in the official business registry. Defaults to OpenCorporates.
+            ${profile?.jurisdiction === 'gb' ? ' UK customers can switch to Companies House via REGISTRY_PROVIDER.' : ''}
+          </p>
+        `}
+      </div>
+      <button class="btn btn-secondary btn-sm" onClick=${onVerify} disabled=${busy}>
+        ${busy ? 'Verifying…' : (verified ? 'Re-verify' : 'Verify in registry')}
+      </button>
     </section>
   `;
 }
