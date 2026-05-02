@@ -51,8 +51,8 @@
 }
 
 .cl-sidebar-mark {
-  color: var(--cl-mint);
-  font-size: 18px;
+  flex-shrink: 0;
+  display: block;
 }
 
 .cl-sidebar-group {
@@ -361,11 +361,17 @@
 }
 
 .cl-auth-brand {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--cl-mint-strong);
-  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 24px;
+}
+
+.cl-auth-brand-name {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--cl-ink-primary);
+  letter-spacing: -0.01em;
 }
 
 .cl-auth-title {

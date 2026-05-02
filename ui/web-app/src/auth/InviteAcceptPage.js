@@ -3,6 +3,7 @@ import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { api, ApiError } from '../api/client.js';
 import { refreshSession, useSession } from './useSession.js';
+import { BrandMark } from '../shell/BrandMark.js';
 
 /**
  * /signup/accept?token=<invite-token>
@@ -42,7 +43,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand">Clearledgr</div>
+          <div class="cl-auth-brand"><${BrandMark} size=${28} /><span class="cl-auth-brand-name">Clearledgr</span></div>
           <h1 class="cl-auth-title">Invite link incomplete</h1>
           <p class="cl-auth-sub">
             The invite token is missing from this URL. Open the link from
@@ -101,7 +102,7 @@ export function InviteAcceptPage() {
   return html`
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
-        <div class="cl-auth-brand">Clearledgr</div>
+        <div class="cl-auth-brand"><${BrandMark} size=${28} /><span class="cl-auth-brand-name">Clearledgr</span></div>
         <h1 class="cl-auth-title">Join your team</h1>
         <p class="cl-auth-sub">
           Set a password to finish accepting your invite. You'll sign in

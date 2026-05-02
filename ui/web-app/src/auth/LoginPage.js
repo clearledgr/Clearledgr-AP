@@ -3,6 +3,7 @@ import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { useSession, refreshSession } from './useSession.js';
 import { api, ApiError } from '../api/client.js';
+import { BrandMark } from '../shell/BrandMark.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
 const MICROSOFT_START_PATH = '/auth/microsoft/start';
@@ -86,7 +87,10 @@ export function LoginPage() {
   return html`
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
-        <div class="cl-auth-brand">Clearledgr</div>
+        <div class="cl-auth-brand">
+          <${BrandMark} size=${28} />
+          <span class="cl-auth-brand-name">Clearledgr</span>
+        </div>
         <h1 class="cl-auth-title">Sign in</h1>
         <p class="cl-auth-sub">Coordination layer for finance teams.</p>
 

@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
+import { BrandMark } from './BrandMark.js';
 
 /**
  * Hub navigation. The route IDs match the existing Gmail-extension
@@ -35,7 +36,7 @@ export function SidebarNav() {
   return html`
     <nav class="cl-sidebar-nav" aria-label="Primary">
       <div class="cl-sidebar-brand">
-        <span class="cl-sidebar-mark">●</span>
+        <${BrandMark} size=${22} class="cl-sidebar-mark" />
         <span class="cl-sidebar-wordmark">Clearledgr</span>
       </div>
       ${groups.map(
