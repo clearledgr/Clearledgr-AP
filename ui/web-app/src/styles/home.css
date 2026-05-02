@@ -1,10 +1,13 @@
-/* Home dashboard — KPI tiles, activity grid, quick actions */
+/* Workspace Home — foyer pattern (DESIGN.md §Home Pattern).
+ * Welcome → onboarding banner → quick-access strip → 2-col panels →
+ * approver workload → system status. KPI numbers live as a thin
+ * inline glance line under the welcome, never as a tile row. */
 
 .cl-home {
-  max-width: 1280px;
+  max-width: 1240px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 24px;
 }
 
 .cl-home-header {
@@ -15,6 +18,10 @@
   flex-wrap: wrap;
 }
 
+.cl-home-headline {
+  min-width: 0;
+}
+
 .cl-home-eyebrow {
   font-size: 12px;
   color: var(--cl-ink-muted);
@@ -23,16 +30,39 @@
 }
 
 .cl-home-title {
-  font-size: 26px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 700;
   letter-spacing: -0.02em;
   margin: 4px 0 4px;
 }
 
 .cl-home-sub {
-  margin: 0;
+  margin: 0 0 10px;
   color: var(--cl-ink-secondary);
   font-size: 14px;
+}
+
+/* Thin "at a glance" metrics line — Stripe-discreet, not BILL-loud. */
+.cl-home-glance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 13px;
+  color: var(--cl-ink-secondary);
+}
+.cl-home-glance-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.cl-home-glance-item strong {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--cl-ink-primary);
+}
+.cl-home-glance-warn strong {
+  color: var(--cl-warning);
 }
 
 .cl-home-actions {
@@ -80,56 +110,12 @@
   color: var(--cl-ink-primary);
 }
 
-/* KPI tiles */
-.cl-home-tiles {
+/* Quick-access strip (foyer position #3 — horizontal row near the top) */
+.cl-home-quick-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
-
-.cl-home-tile {
-  padding: 18px 18px 16px;
-  background: var(--cl-surface);
-  border: 1px solid var(--cl-border);
-  border-radius: var(--cl-radius);
-  transition: transform 0.08s, box-shadow 0.12s, border-color 0.12s;
-}
-
-.cl-home-tile-clickable {
-  cursor: pointer;
-}
-.cl-home-tile-clickable:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--cl-shadow);
-  border-color: var(--cl-border-strong);
-}
-
-.cl-home-tile-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--cl-ink-muted);
-}
-
-.cl-home-tile-value {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  margin: 8px 0 4px;
-  color: var(--cl-ink-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.cl-home-tile-hint {
-  font-size: 12px;
-  color: var(--cl-ink-secondary);
-}
-
-.cl-home-tile-good .cl-home-tile-value { color: var(--cl-mint-strong); }
-.cl-home-tile-warn .cl-home-tile-value { color: var(--cl-warning); }
-.cl-home-tile-pending .cl-home-tile-value { color: #B45309; }
-.cl-home-tile-primary { border-color: rgba(0, 214, 126, 0.3); }
 
 /* Activity + vendors grid */
 .cl-home-grid {
@@ -269,6 +255,10 @@
   margin-bottom: 6px;
 }
 
+.cl-home-empty-error {
+  color: var(--cl-warning);
+}
+
 .cl-home-empty-sub {
   font-size: 13px;
   margin-bottom: 14px;
@@ -281,21 +271,7 @@
   font-size: 13px;
 }
 
-/* Quick actions */
-.cl-home-quick-actions h3 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--cl-ink-secondary);
-  letter-spacing: 0.02em;
-  margin: 0 0 10px;
-}
-
-.cl-home-quick-actions-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-}
-
+/* Quick-access cards (used by .cl-home-quick-row) */
 .cl-home-qa {
   text-align: left;
   padding: 14px 16px;

@@ -148,6 +148,23 @@
   - long explanatory copy
   - admin/settings sprawl
 
+## Workspace Home Pattern
+- The workspace Home (`workspace.clearledgr.com/`) inherits the foyer doctrine. It is **not** a BILL.com / Ramp / Mixmax admin overview, even though it's the leader's daily landing page.
+- Reference hierarchy: **Streak Home** (foyer minimalism), **Stripe Dashboard** (discreet metric strip + typography discipline), **Mercury** (resume-work calm). Never BILL.com or Ramp.
+- Module 1 spec asks for four numbers — in flight, awaiting approval, processed this week, agent exceptions. They live as a **thin inline glance line** under the welcome header (one row of muted text with bolded tabular-nums values), never as a row of large KPI tiles. Numbers are visible at a glance; they do not dominate.
+- Order on the workspace Home:
+  1. Welcome header with date eyebrow, name, org sub, inline glance line, and one secondary + one primary action
+  2. Onboarding banner (only when `onboarding.completed === false`)
+  3. Horizontal quick-access strip (4 cards: Open pipeline, Reconciliation, Invite teammate, Connect integration)
+  4. Two-column main panels: Exception queue (1.4fr) + Top vendors (1fr)
+  5. Approver workload (logistics, not scoring)
+  6. System status footer (agent + Gmail + approval surface + ERP)
+- Anti-patterns specific to the workspace Home:
+  - Big KPI tile row leading the page
+  - Dashboard-shaped "control center" framing
+  - Sticky `Loading…` placeholders — every panel must fall through to a real empty or error state. Each panel fetches independently; one slow endpoint never gates the rest of the page.
+  - Modeling the page on BILL.com / Ramp / Mixmax
+
 ## Pipeline Pattern
 - Pipeline is the main operating surface for finance teams.
 - It should be denser than Home and optimized for sorting, filtering, batch work, and reopening records.
@@ -227,3 +244,4 @@
 | 2026-03-23 | Defined “Streak for finance ops” as the Gmail/AP interaction model | Streak is the right model for the first wedge, not the full product boundary |
 | 2026-03-23 | Home redefined as a hub, not a dashboard | The product should resume work quickly instead of explaining itself |
 | 2026-03-23 | Primary Gmail work path narrowed to Home, Pipeline, Review, Upcoming | Keeps the product legible and operational inside Gmail |
+| 2026-05-02 | Workspace Home defined as a foyer, not a BILL.com / Ramp dashboard | Page was leading with a big KPI tile row, modeled on Bill / Ramp / Mixmax. Mo flagged it. Numbers belong as a thin glance line under the welcome; quick access lifts to position #3; two-column panels carry the work. Streak / Stripe / Mercury references stand. |
