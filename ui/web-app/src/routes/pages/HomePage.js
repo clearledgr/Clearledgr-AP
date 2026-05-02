@@ -86,6 +86,10 @@ export function HomePage() {
   // amount, exception type, who's blocking, days stuck, agent's
   // suggestion. Click through to Module 2."
   const [exceptions, setExceptions] = useState({ status: 'loading', data: null });
+  // Module 1 spec line 92: SSE-pushed dashboard stats. Updated by
+  // the EventSource subscription below; merged into `dash` so the
+  // tiles auto-refresh.
+  const [liveDashboard, setLiveDashboard] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +131,43 @@ export function HomePage() {
     return () => { cancelled = true; };
   }, [orgId]);
 
+  // Module 1 spec line 92: "max 30s lag" on stat-card refresh.
+  // Subscribe to /api/workspace/dashboard/stream (SSE, 15s tick).
+  // The stream emits {type: 'stats'|'workload', data: ...} on
+  // change; we merge into the existing state so the rest of the
+  // page (exception queue, top vendors) stays as the initial fetch
+  // populated. EventSource auto-reconnects on network blips.
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') return undefined;
+    const source = new EventSource('/api/workspace/dashboard/stream', { withCredentials: true });
+    source.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data);
+        if (!frame?.type) return;
+        if (frame.type === 'stats' && frame.data && bootstrap) {
+          // Merge fresh stats into the bootstrap-derived dash. We
+          // can't mutate bootstrap (it's a context-provided object)
+          // but we can stamp into a sibling state slice that the
+          // tile reads override over bootstrap.
+          setLiveDashboard(frame.data);
+        } else if (frame.type === 'workload' && frame.data) {
+          setWorkload({ status: 'ready', data: frame.data });
+        }
+      } catch (err) {
+        // Bad frame — ignore; EventSource will deliver the next.
+      }
+    };
+    source.onerror = () => {
+      // EventSource reconnects automatically on transient errors.
+      // We only act on terminal CLOSED so we don't double-flip
+      // state during normal reconnection.
+      if (source.readyState === 2 /* CLOSED */) {
+        source.close();
+      }
+    };
+    return () => source.close();
+  }, [orgId]);
+
   const userName = bootstrap?.current_user?.name || bootstrap?.current_user?.email?.split('@')[0] || 'there';
   const orgName = bootstrap?.organization?.name || 'your workspace';
   const onboardingPending = bootstrap?.onboarding && bootstrap.onboarding.completed === false;
@@ -137,7 +178,10 @@ export function HomePage() {
 
   // Module 1 spec stat cards (line 76):
   //   in flight | awaiting approval | processed this week | agent exceptions
-  const dash = bootstrap?.dashboard_stats || bootstrap?.dashboard || {};
+  // SSE-pushed liveDashboard overrides the bootstrap snapshot so
+  // tiles refresh within 15s of the agent acting (spec acceptance
+  // line 80: "max 30s lag").
+  const dash = liveDashboard || bootstrap?.dashboard_stats || bootstrap?.dashboard || {};
   const inFlight = Number(dash.in_flight || 0);
   const awaitingApproval = Number(dash.pending_approval || 0);
   const processedWeek = Number(dash.processed_this_week || 0);

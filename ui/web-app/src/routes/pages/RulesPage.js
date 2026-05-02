@@ -428,27 +428,21 @@ function RuleEditorDialog({ api, toast, mode, rule, onClose, onSaved }) {
           />
         </label>
 
-        <label>
-          <span class="muted">Conditions (JSON)</span>
-          <textarea
-            value=${conditionsText}
-            onInput=${(e) => setConditionsText(e.target.value)}
-            disabled=${saving}
-            rows="10"
-            class="cl-rules-json"
-          ></textarea>
-        </label>
+        <${JsonEditor}
+          label="Conditions (JSON)"
+          value=${conditionsText}
+          onInput=${setConditionsText}
+          disabled=${saving}
+          rows=${10}
+        />
 
-        <label>
-          <span class="muted">Actions (JSON)</span>
-          <textarea
-            value=${actionsText}
-            onInput=${(e) => setActionsText(e.target.value)}
-            disabled=${saving}
-            rows="6"
-            class="cl-rules-json"
-          ></textarea>
-        </label>
+        <${JsonEditor}
+          label="Actions (JSON)"
+          value=${actionsText}
+          onInput=${setActionsText}
+          disabled=${saving}
+          rows=${6}
+        />
 
         ${mode === 'edit' ? html`
           <label>
@@ -740,4 +734,95 @@ function statusTone(status) {
   if (status === 'active') return 'success';
   if (status === 'paused') return 'warning';
   return 'info';
+}
+
+
+// ─── Hand-rolled JSON syntax highlighting ──────────────────────────
+//
+// Module 3 spec line 121 calls for "JSON-mode rule editor with
+// structured schema validation, syntax highlighting, and inline
+// conflict detection." The validation + conflict detection are
+// already wired (workspace_rules.py). This component adds the
+// highlighting without pulling CodeMirror (60kB) or Monaco.
+//
+// Approach: an editable <textarea> sits transparent over a <pre>
+// that mirrors the same text with colored spans. The textarea
+// captures input + caret; the pre below shows the colors. Both
+// scroll in lockstep. Robust enough for the small JSON blobs the
+// rule editor handles.
+
+function JsonEditor({ label, value, onInput, disabled, rows }) {
+  const [parseError, setParseError] = useState('');
+
+  // Validate as the user types. Errors render below the editor.
+  // Empty / whitespace-only is fine; only non-empty strings get
+  // parsed.
+  const onTextInput = (e) => {
+    const next = e.target.value;
+    onInput(next);
+    if (next.trim()) {
+      try { JSON.parse(next); setParseError(''); }
+      catch (err) { setParseError(String(err?.message || 'Invalid JSON')); }
+    } else {
+      setParseError('');
+    }
+  };
+
+  const onScroll = (e) => {
+    const pre = e.target.previousElementSibling;
+    if (pre) { pre.scrollTop = e.target.scrollTop; pre.scrollLeft = e.target.scrollLeft; }
+  };
+
+  const highlighted = highlightJson(value || '');
+
+  return html`
+    <label class="cl-rules-json-editor">
+      <span class="muted">${label}</span>
+      <div class="cl-rules-json-stack">
+        <pre class="cl-rules-json-highlight" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: highlighted + '\n' }}></pre>
+        <textarea
+          value=${value}
+          onInput=${onTextInput}
+          onScroll=${onScroll}
+          disabled=${disabled}
+          rows=${rows}
+          spellcheck="false"
+          class="cl-rules-json cl-rules-json-textarea"
+        ></textarea>
+      </div>
+      ${parseError ? html`<small class="cl-rules-json-error">JSON: ${parseError}</small>` : null}
+    </label>
+  `;
+}
+
+const _HTML_ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, (c) => _HTML_ENTITIES[c]);
+}
+
+// Tokenise JSON without a parser. We want to colour:
+//   - strings (with key vs value distinction by trailing colon)
+//   - numbers, booleans, null
+//   - punctuation (, : { } [ ])
+// The regex captures whole tokens; anything that doesn't match
+// (whitespace, partial input) flows through unchanged.
+function highlightJson(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(
+    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (match, str, colon, bool, num) => {
+      if (str !== undefined) {
+        const cls = colon ? 'cl-tok-key' : 'cl-tok-string';
+        return `<span class="${cls}">${str}</span>${colon || ''}`;
+      }
+      if (bool) {
+        const cls = bool === 'null' ? 'cl-tok-null' : 'cl-tok-bool';
+        return `<span class="${cls}">${bool}</span>`;
+      }
+      if (num) {
+        return `<span class="cl-tok-number">${num}</span>`;
+      }
+      return match;
+    },
+  );
 }

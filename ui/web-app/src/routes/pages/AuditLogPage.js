@@ -758,6 +758,40 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
   // changes; the FilterBar's button reads it to render the right
   // label (Queued… / Building… / Download CSV / Export failed).
   const [exportState, setExportState] = useState(null);
+  // Module 7 spec line 246 — configurable retention.
+  const [retention, setRetention] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/workspace/audit/retention?organization_id=${encodeURIComponent(orgId)}`)
+      .then((r) => { if (!cancelled) setRetention(r); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [api, orgId]);
+  const onChangeRetention = useCallback(async () => {
+    if (!retention) return;
+    const current = retention.configured_days || retention.tier_ceiling_days;
+    const raw = window.prompt(
+      `Audit retention (days). Plan ceiling: ${retention.tier_ceiling_days} days. Min 30.`,
+      String(current),
+    );
+    if (raw === null) return;
+    const days = parseInt(raw, 10);
+    if (!Number.isFinite(days) || days < 30) {
+      window.alert('Retention must be at least 30 days.');
+      return;
+    }
+    try {
+      const next = await api(`/api/workspace/audit/retention`, {
+        method: 'PATCH',
+        body: { organization_id: orgId, days },
+      });
+      setRetention(next);
+    } catch (exc) {
+      const detail = exc?.payload?.detail;
+      const msg = (detail && detail.message) || exc?.message || 'Update failed';
+      window.alert(msg);
+    }
+  }, [api, orgId, retention]);
 
   const buildQuery = useCallback((cur) => {
     const params = new URLSearchParams();
@@ -936,6 +970,15 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
             Append-only record of every workflow action. Search, filter, and inspect.
           </p>
         </div>
+        ${retention ? html`
+          <div class="secondary-banner-actions">
+            <span class="cl-audit-retention">
+              Retention: <strong>${retention.effective_days} days</strong>
+              <span class="muted"> (plan ceiling ${retention.tier_ceiling_days})</span>
+            </span>
+            <button class="btn-secondary btn-sm" onClick=${onChangeRetention}>Configure</button>
+          </div>
+        ` : null}
       </div>
 
       <${SiemSection} api=${api} orgId=${orgId} />

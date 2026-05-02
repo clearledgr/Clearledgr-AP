@@ -1435,6 +1435,26 @@ def set_teams_webhook(
     return {"success": True, "organization_id": org_id}
 
 
+@router.post("/integrations/erp/test")
+def test_erp_connection(
+    organization_id: Optional[str] = Query(default=None),
+    erp_type: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Module 5 spec line 183 — test transaction probe for ERP.
+
+    Pings the configured ERP's read endpoint and times the wall-clock.
+    Returns ``{status, erp_type, latency_ms, http_status, error,
+    probed_at}`` so the connection-health panel can light up green
+    on success or surface a useful error on failure.
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    from clearledgr.services.erp_test_probe import probe_erp_connection
+    return probe_erp_connection(db, org_id, erp_type=erp_type)
+
+
 @router.post("/integrations/teams/test")
 def test_teams_webhook(
     request: TeamsTestRequest,
@@ -2428,6 +2448,95 @@ class AuditExportRequest(BaseModel):
     # Module 7 spec line 244: "Export: CSV and PDF". Default keeps the
     # existing CSV behaviour for callers that don't pass it.
     format: str = Field(default="csv", pattern="^(csv|pdf)$")
+
+
+@router.get("/audit/retention")
+def get_audit_retention(
+    organization_id: Optional[str] = Query(default=None),
+    user: TokenData = Depends(get_current_user),
+):
+    """Return the current audit-log retention policy + tier ceiling.
+
+    Module 7 spec line 246: "Retention: indefinite by default.
+    Customer can configure longer retention for compliance reasons."
+    Tier ceiling is the plan's `agent_activity_retention_days` from
+    PlanLimits (Starter 1y, Growth 3y, Enterprise 7y/indefinite).
+    Customers configure within that ceiling; default = ceiling
+    (i.e. they keep what their plan affords until they shorten it).
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, organization_id)
+    db = get_db()
+    org = db.get_organization(org_id) or {}
+    settings = _load_org_settings(org)
+    sub = _get_subscription_service().get_subscription(org_id)
+    from clearledgr.services.subscription import PlanLimits, PlanTier
+    try:
+        plan_tier = PlanTier(sub.plan)
+    except Exception:
+        plan_tier = PlanTier.FREE
+    limits = PlanLimits.for_tier(plan_tier)
+    tier_ceiling = int(limits.agent_activity_retention_days or 365)
+    configured = settings.get("audit_retention_days")
+    effective = int(configured) if configured else tier_ceiling
+    return {
+        "organization_id": org_id,
+        "configured_days": int(configured) if configured else None,
+        "tier_ceiling_days": tier_ceiling,
+        "effective_days": effective,
+        "plan": sub.plan,
+    }
+
+
+class AuditRetentionRequest(BaseModel):
+    organization_id: Optional[str] = None
+    days: int = Field(..., ge=30, le=3650)
+
+
+@router.patch("/audit/retention")
+def set_audit_retention(
+    request: AuditRetentionRequest,
+    user: TokenData = Depends(get_current_user),
+):
+    """Update the org's audit retention configuration.
+
+    Validates the requested value against the plan tier ceiling so
+    a Starter-tier customer can't claim 7 years. Lower values are
+    fine — a customer might WANT to retain less to limit blast
+    radius (compliance posture varies by jurisdiction).
+    """
+    _require_admin(user)
+    org_id = _resolve_org_id(user, request.organization_id)
+    db = get_db()
+    sub = _get_subscription_service().get_subscription(org_id)
+    from clearledgr.services.subscription import PlanLimits, PlanTier
+    try:
+        plan_tier = PlanTier(sub.plan)
+    except Exception:
+        plan_tier = PlanTier.FREE
+    limits = PlanLimits.for_tier(plan_tier)
+    tier_ceiling = int(limits.agent_activity_retention_days or 365)
+    if request.days > tier_ceiling:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "reason": "exceeds_tier_ceiling",
+                "tier_ceiling_days": tier_ceiling,
+                "plan": sub.plan,
+                "message": f"{sub.plan.title()} retains for at most {tier_ceiling} days. Upgrade to extend.",
+            },
+        )
+    org = db.get_organization(org_id) or {}
+    settings = _load_org_settings(org)
+    settings["audit_retention_days"] = int(request.days)
+    db.update_organization(org_id, settings_json=settings)
+    return {
+        "organization_id": org_id,
+        "configured_days": int(request.days),
+        "tier_ceiling_days": tier_ceiling,
+        "effective_days": int(request.days),
+        "plan": sub.plan,
+    }
 
 
 @router.post("/audit/export")

@@ -3802,3 +3802,63 @@
   padding: 6px 8px;
   font-size: 13px;
 }
+
+
+/* ─── Module 3 — JSON syntax highlighting ──────────────────────── */
+
+.cl-rules-json-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cl-rules-json-stack {
+  position: relative;
+  border: 1px solid var(--cl-line);
+  border-radius: 6px;
+  background: #FFFFFF;
+  overflow: hidden;
+}
+.cl-rules-json-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 8px 10px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+  color: #0A1628;
+  overflow: hidden;
+}
+.cl-rules-json-textarea {
+  position: relative;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: transparent;
+  caret-color: #0A1628;
+  font-family: 'Geist Mono', monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  resize: vertical;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cl-rules-json-textarea::selection {
+  background: rgba(0, 214, 126, 0.25);
+  color: transparent;
+}
+.cl-tok-key { color: #0F766E; font-weight: 600; }
+.cl-tok-string { color: #B45309; }
+.cl-tok-number { color: #1D4ED8; }
+.cl-tok-bool { color: #7C3AED; font-weight: 600; }
+.cl-tok-null { color: #94A3B8; font-style: italic; }
+.cl-rules-json-error {
+  color: #B91C1C;
+  font-size: 12px;
+  font-family: 'Geist Mono', monospace;
+}

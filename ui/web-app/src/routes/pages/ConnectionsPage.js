@@ -829,6 +829,28 @@ function ConnectionHealthPanel({ api, orgId }) {
   const [error, setError] = useState(null);
   const [windowHours, setWindowHours] = useState(24);
   const [expandedKey, setExpandedKey] = useState(null);
+  // Module 5 spec line 183 — test transaction probe + line 181 latency.
+  // Probe results live here keyed by erp_type, surfaced inline on
+  // the integration tile.
+  const [probesByErp, setProbesByErp] = useState({});
+  const [probingErp, setProbingErp] = useState(null);
+  const onTestErp = useCallback(async (erpType) => {
+    setProbingErp(erpType);
+    try {
+      const resp = await api(
+        `/api/workspace/integrations/erp/test?organization_id=${encodeURIComponent(orgId)}&erp_type=${encodeURIComponent(erpType)}`,
+        { method: 'POST' },
+      );
+      setProbesByErp((prev) => ({ ...prev, [erpType]: resp }));
+    } catch (exc) {
+      setProbesByErp((prev) => ({
+        ...prev,
+        [erpType]: { status: 'failed', error: String(exc?.message || exc), latency_ms: null },
+      }));
+    } finally {
+      setProbingErp(null);
+    }
+  }, [api, orgId]);
 
   const load = useCallback(async () => {
     if (!api || !orgId) return;
@@ -951,7 +973,34 @@ function ConnectionHealthPanel({ api, orgId }) {
                       ${row.errors_24h.toLocaleString()}
                     </span>
                   </div>
+                  ${(() => {
+                    // Latency from the most recent probe of this
+                    // integration type. Empty when not yet probed.
+                    const erpProbeKey = String(row.integration_type || '').toLowerCase();
+                    const probe = probesByErp[erpProbeKey];
+                    if (!probe || probe.latency_ms == null) return null;
+                    return html`<div>
+                      <span class="muted">Last probe</span>
+                      <span class=${probe.status === 'ok' ? '' : 'cl-conn-health-errors'}>
+                        ${probe.latency_ms} ms
+                      </span>
+                    </div>`;
+                  })()}
                 </div>
+                ${(['quickbooks', 'xero', 'netsuite', 'sap']).includes(String(row.integration_type || '').toLowerCase()) ? html`
+                  <div class="cl-conn-health-tile-actions">
+                    <button class="btn-ghost btn-sm"
+                      onClick=${() => onTestErp(String(row.integration_type).toLowerCase())}
+                      disabled=${probingErp === String(row.integration_type).toLowerCase()}>
+                      ${probingErp === String(row.integration_type).toLowerCase() ? 'Probing…' : 'Run test transaction'}
+                    </button>
+                    ${probesByErp[String(row.integration_type).toLowerCase()]?.error ? html`
+                      <span class="cl-conn-health-errors" style="font-size:11px">
+                        ${probesByErp[String(row.integration_type).toLowerCase()].error}
+                      </span>
+                    ` : null}
+                  </div>
+                ` : null}
                 ${expanded && hasError ? html`
                   <div class="cl-conn-health-error-detail">
                     <div class="cl-conn-health-error-head">
