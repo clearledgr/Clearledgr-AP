@@ -200,7 +200,7 @@
 /* ── Card (one record in a section) ──────────────────────────── */
 
 .review-card {
-  padding: 16px;
+  padding: 14px 16px;
   background: var(--cl-surface);
   border: 1px solid var(--cl-border);
   border-radius: var(--cl-radius);
@@ -274,16 +274,24 @@
   color: var(--cl-ink-secondary);
 }
 
-/* ── Field-review block (the dense per-blocker grid) ─────────── */
+/* ── Field-review block (the dense per-blocker grid) ───────────
+ * Cap the layout's max width so on a wide viewport the facts
+ * column doesn't sprawl with hundreds of empty pixels between
+ * it and the "Why it stopped" sidebar. */
 
 .review-block-layout {
   display: grid;
-  grid-template-columns: 1fr 280px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 460px) 300px;
+  gap: 28px;
+  max-width: 820px;
+  align-items: start;
 }
 
-@media (max-width: 880px) {
-  .review-block-layout { grid-template-columns: 1fr; }
+@media (max-width: 820px) {
+  .review-block-layout {
+    grid-template-columns: 1fr;
+    max-width: none;
+  }
 }
 
 .review-block-main {
@@ -292,10 +300,10 @@
 
 .review-block-side {
   border-left: 1px solid var(--cl-border);
-  padding-left: 16px;
+  padding-left: 20px;
 }
 
-@media (max-width: 880px) {
+@media (max-width: 820px) {
   .review-block-side {
     border-left: 0;
     border-top: 1px solid var(--cl-border);
