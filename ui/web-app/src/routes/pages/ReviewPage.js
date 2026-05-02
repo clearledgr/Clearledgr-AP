@@ -683,7 +683,7 @@ function FocusCard({
           <span class="muted">${getDocumentTypeLabel(documentType)}</span>
           <span class="review-focus-sep">·</span>
           <span class="muted">${stateLabel}</span>
-          ${lastUpdated ? html`<><span class="review-focus-sep">·</span><span class="muted">Updated ${lastUpdated}</span></>` : null}
+          ${lastUpdated ? html`<${Fragment}><span class="review-focus-sep">·</span><span class="muted">Updated ${lastUpdated}</span></${Fragment}>` : null}
         </div>
         <p class="review-focus-summary">${summary}</p>
       </div>
