@@ -27,6 +27,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import InviteVendorModal from './InviteVendorModal.js';
 import BudgetPausedBanner from './BudgetPausedBanner.js';
 import { workspaceItemUrl } from '../utils/workspace-link.js';
+import { formatTimeAgo } from '../utils/formatters.js';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -373,19 +374,6 @@ function formatDate(iso) {
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   } catch { return iso; }
-}
-
-function formatTimeAgo(iso) {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const hours = Math.floor((now - d) / 3600000);
-    if (hours < 1) return 'just now';
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-  } catch { return ''; }
 }
 
 // For countdowns: "3m 42s" / "1h 4m"

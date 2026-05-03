@@ -77,6 +77,19 @@ export function formatAgeSeconds(value) {
   return `${Math.round(s / 86400)}d`;
 }
 
+export function formatTimeAgo(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const hours = Math.floor((now - d) / 3600000);
+    if (hours < 1) return 'just now';
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  } catch { return ''; }
+}
+
 export function trimText(value, maxLength = 96) {
   const text = String(value ?? '').trim();
   if (!text || text.length <= maxLength) return text;

@@ -19,7 +19,7 @@ import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
 import { perfMarkStart } from './utils/perf-budget.js';
 import OnboardingFlow from './components/OnboardingFlow.js';
-import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl, formatAmount } from './utils/formatters.js';
+import { STATE_LABELS, STATE_COLORS, getStateLabel, readLocalStorage, writeLocalStorage, getAssetUrl, formatAmount, formatTimeAgo } from './utils/formatters.js';
 import { resolveRecordRouteId } from './utils/record-route.js';
 import { resolveVendorRouteName } from './utils/vendor-route.js';
 import { navigateInboxRoute } from './utils/inbox-route.js';
@@ -57,7 +57,6 @@ const ATTR_PENDING_DIRECT_ROUTE = 'data-clearledgr-pending-direct-route';
 
 let sdk = null;
 let queueManager = null;
-let _pendingComposePrefill = null;
 let sidebarContainer = null;
 let sidebarPanelView = null;
 let sidebarPanelViewPromise = null;
@@ -154,24 +153,6 @@ async function setSidebarPanelOpen(shouldOpen) {
     return;
   }
   if (panelView.isActive()) panelView.close();
-}
-
-async function openComposeWithPrefill(prefill = {}) {
-  if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== 'function') {
-    throw new Error('compose_unavailable');
-  }
-  _pendingComposePrefill = {
-    to: prefill?.to || '',
-    subject: prefill?.subject || '',
-    body: prefill?.body || '',
-    recordContext: prefill?.recordContext || null,
-  };
-  try {
-    await sdk.Compose.openNewComposeView();
-  } catch (error) {
-    _pendingComposePrefill = null;
-    throw error;
-  }
 }
 
 function buildComposeRecordContext(item = null) {
@@ -838,6 +819,7 @@ function injectInvoiceBanner(threadView, item) {
   const state = String(item.state || '').toLowerCase();
   const vendor = item.vendor_name || item.vendor || 'Unknown vendor';
   const amountLabel = formatAmount(item.amount, item.currency);
+  const ageLabel = formatTimeAgo(item.created_at);
 
   // Banner color based on state
   const stateConfig = {
@@ -865,6 +847,14 @@ function injectInvoiceBanner(threadView, item) {
   summary.textContent = amountLabel === 'Amount unavailable' ? vendor : `${vendor} \u2014 ${amountLabel}`;
   el.appendChild(summary);
 
+  // Cycle time \u2014 how long this AP item has been in the pipeline.
+  if (ageLabel) {
+    const age = document.createElement('span');
+    age.style.cssText = 'font-size:11px; opacity:0.75; font-weight:500;';
+    age.textContent = ageLabel;
+    el.appendChild(age);
+  }
+
   // State pill
   const pill = document.createElement('span');
   pill.style.cssText = `
@@ -880,8 +870,10 @@ function injectInvoiceBanner(threadView, item) {
       cursor:pointer; background:${bg}; color:${color}; font-family:inherit;
     `;
 
+    // Reinforces "workspace is the home" framing \u2014 the banner surfaces
+    // status natively in Gmail, but action lives in workspace.
     const openBtn = document.createElement('button');
-    openBtn.textContent = 'Open in invoices';
+    openBtn.textContent = 'Open in workspace';
     openBtn.style.cssText = btnStyle('transparent', cfg.text, `1px solid ${cfg.border}`);
     openBtn.addEventListener('click', () => {
       openItemInPipeline(item, 'thread_banner');
@@ -990,43 +982,6 @@ function injectExceptionBanner(threadView, item) {
   el.appendChild(left);
 
   if (item?.id) {
-    const btnGroup = document.createElement('div');
-    btnGroup.style.cssText = 'display:flex; align-items:center; gap:8px;';
-
-    // Phase 3.3: "Suggest reply" — pre-fills a Gmail Compose with a
-    // template matched to the AP item's exception state. Lives on the
-    // exception banner specifically because exceptions are the most
-    // common reason to chase the vendor for missing info; approval
-    // banners go to internal approvers (Slack/Teams), not vendors.
-    const replyBtn = document.createElement('button');
-    replyBtn.textContent = 'Suggest reply';
-    replyBtn.style.cssText = `
-      border:none; border-radius:6px;
-      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
-      background:${cfg.border}; color:#fff; font-family:inherit;
-    `;
-    replyBtn.addEventListener('click', () => {
-      // Disable the button while the request is in flight so the user
-      // doesn't open multiple composes from a double-click.
-      replyBtn.disabled = true;
-      const originalText = replyBtn.textContent;
-      replyBtn.textContent = 'Drafting…';
-      Promise.resolve()
-        .then(() => suggestReplyForItem(item))
-        .catch((err) => {
-          // Best-effort surface; queue-manager already logs richly.
-          console.warn('[Clearledgr] Suggest reply failed:', err);
-          if (typeof showToast === 'function') {
-            showToast('Could not generate draft. Try again from the sidebar.', 'error');
-          }
-        })
-        .finally(() => {
-          replyBtn.disabled = false;
-          replyBtn.textContent = originalText;
-        });
-    });
-    btnGroup.appendChild(replyBtn);
-
     const detailsBtn = document.createElement('button');
     detailsBtn.textContent = 'View details';
     detailsBtn.style.cssText = `
@@ -1034,52 +989,18 @@ function injectExceptionBanner(threadView, item) {
       padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
       background:transparent; color:${cfg.text}; font-family:inherit;
     `;
-    // The sidebar is already open and bound to this thread; the click
-    // routes through the same intent the Exceptions tab uses, so
-    // clicking from the banner lands at the same context.
+    // Routes through the same intent the workspace Exceptions tab uses,
+    // so clicking from the banner lands at the same context. The
+    // companion "Suggest reply" button was deleted with the
+    // zero-vendor-email rule (Solden authors zero vendor body text);
+    // operators draft replies themselves.
     detailsBtn.addEventListener('click', () => {
       openItemInPipeline(item, 'thread_exception_banner');
     });
-    btnGroup.appendChild(detailsBtn);
-
-    el.appendChild(btnGroup);
+    el.appendChild(detailsBtn);
   }
 
   threadView.addNoticeBar({ el });
-}
-
-async function suggestReplyForItem(item) {
-  if (!item?.id) return;
-  if (!queueManager) throw new Error('queue_manager_unavailable');
-  const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || '').replace(/\/+$/, '');
-  if (!backendUrl) throw new Error('backend_url_unavailable');
-
-  const response = await queueManager.backendFetch(`${backendUrl}/extension/draft-reply`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ap_item_id: String(item.id),
-      thread_id: String(item.thread_id || store.currentThreadId || ''),
-      organization_id: queueManager?.runtimeConfig?.organizationId || 'default',
-    }),
-  });
-  if (!response?.ok) {
-    throw new Error(`draft_reply_http_${response?.status || 'unknown'}`);
-  }
-  const draft = await response.json();
-  if (!draft || (!draft.subject && !draft.body)) {
-    throw new Error('draft_reply_empty');
-  }
-
-  // Hand off to the existing compose pre-fill plumbing — same path
-  // every other "Draft vendor reply" CTA in the sidebar uses, so we
-  // get the compose-record status bar and audit linkage for free.
-  await openComposeWithPrefill({
-    to: draft.to || '',
-    subject: draft.subject || '',
-    body: draft.body || '',
-    recordContext: buildComposeRecordContext(item),
-  });
 }
 
 // Phase 3.2: contextual approval banner. Stacks above the state banner
@@ -1259,7 +1180,7 @@ function registerThreadRowLabels() {
             if (typeof threadRowView.addActionButton === 'function') {
               threadRowView.addActionButton({
                 type: 'ICON_ONLY',
-                title: 'Open in invoices',
+                title: 'Open in workspace',
                 iconUrl: getAssetUrl(LOGO_PATH) || undefined,
                 onClick: () => {
                   openItemInPipeline(item, 'thread_row');
@@ -1667,22 +1588,12 @@ async function bootstrap() {
     return;
   }
 
-  // Pre-fill compose views opened by "Draft vendor reply"
+  // Compose handler: surface AP-item linkage + vendor-duplicate warnings
+  // on operator-authored composes. Solden does not pre-fill bodies — the
+  // vendor-reply prefill flow was deleted with the zero-vendor-email rule.
   sdk.Compose.registerComposeViewHandler((composeView) => {
     let composeRecordContext = null;
     let composeStatusHandle = null;
-
-    // Prefill from "Draft vendor reply" action
-    if (_pendingComposePrefill) {
-      const prefill = _pendingComposePrefill;
-      _pendingComposePrefill = null;
-      composeRecordContext = prefill.recordContext || null;
-      try {
-        if (prefill.to) composeView.setToRecipients([{ emailAddress: prefill.to }]);
-        if (prefill.subject) composeView.setSubject(prefill.subject);
-        if (prefill.body) composeView.setBodyHTML(prefill.body.replace(/\n/g, '<br>'));
-      } catch (_) { /* ignore */ }
-    }
 
     const mountComposeRecordStatus = (recordContext) => {
       if (typeof composeView?.addStatusBar !== 'function') return;

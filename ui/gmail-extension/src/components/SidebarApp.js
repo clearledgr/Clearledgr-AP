@@ -1511,7 +1511,7 @@ function WorkPanel({ item, queueManager }) {
       `}
 
       <div class="cl-thread-links" aria-label="Record links">
-        <button class="cl-thread-link-btn" onClick=${openPipeline}>Open in invoices</button>
+        <button class="cl-thread-link-btn" onClick=${openPipeline}>Open in workspace</button>
         ${canOpenSource && html`<button class="cl-thread-link-btn" onClick=${openSource}>Open email</button>`}
         ${(item?.vendor_name || item?.vendor) && html`<button class="cl-thread-link-btn" onClick=${openVendorRecord}>Open vendor record</button>`}
       </div>

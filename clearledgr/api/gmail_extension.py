@@ -884,22 +884,6 @@ async def recover_ap_item_by_thread(
     }
 
 
-class DraftReplyRequest(BaseModel):
-    """Phase 3.3 — synthesize a vendor-reply draft for an AP item.
-
-    The extension's "Suggest reply" button on the exception banner
-    POSTs an `ap_item_id` (and optionally `thread_id`); the server
-    resolves the item, picks a template based on its exception state,
-    renders it with the org's company name + invoice context, and
-    returns a payload the extension feeds straight into InboxSDK
-    Compose pre-fill.
-    """
-
-    ap_item_id: Optional[str] = Field(default=None)
-    thread_id: Optional[str] = Field(default=None)
-    organization_id: Optional[str] = None
-
-
 @router.post("/gmail/register-token")
 async def register_gmail_token(request: RegisterGmailTokenRequest):
     """Register Gmail OAuth access token obtained by the browser extension.
