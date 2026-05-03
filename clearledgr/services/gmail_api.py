@@ -116,10 +116,14 @@ GMAIL_PROFILE_URL = f"{GMAIL_API_BASE}/users/me/profile"
 
 # Scopes needed for autonomous processing.
 # Sheets scope enables reconciliation workflows (read bank statements, write results).
+# ``gmail.send`` is intentionally NOT in this list: Solden sends zero
+# email to vendors and authors zero vendor-facing body text (memory:
+# 2026-05-02 second-pass dormant-vendor-emails decision). Operators
+# compose vendor communications in their own Gmail. The ``gmail.modify``
+# scope is sufficient for our drafts + label workflows.
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",   # Read emails
     "https://www.googleapis.com/auth/gmail.modify",     # Manage labels, create drafts
-    "https://www.googleapis.com/auth/gmail.send",       # Send emails (vendor follow-ups)
     "https://www.googleapis.com/auth/spreadsheets",     # Read/write Google Sheets (reconciliation)
 ]
 
@@ -618,111 +622,12 @@ class GmailAPIClient:
         data = response.json()
         return data.get("id", "")
 
-    async def send_draft(self, draft_id: str) -> Dict[str, Any]:
-        """Send an existing draft. Returns the sent message metadata.
-
-        Requires the ``gmail.send`` OAuth scope.  After a successful send the
-        draft is removed from the user's Drafts folder by Gmail automatically.
-        """
-        client = get_http_client()
-        response = await client.post(
-            f"{GMAIL_API_BASE}/users/me/drafts/send",
-            headers={**self._headers(), "Content-Type": "application/json"},
-            json={"id": draft_id},
-        )
-        response.raise_for_status()
-        return response.json()
-
-    async def send_message(
-        self,
-        to: str,
-        subject: str,
-        body: str,
-        thread_id: Optional[str] = None,
-        in_reply_to: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Send an email directly (no draft). Returns the sent message metadata.
-
-        Requires the ``gmail.send`` OAuth scope.  Used for automated vendor
-        follow-ups where the agent sends on behalf of the connected account.
-
-        §11.1: Respects Gmail sendEmail quota (250/day for Google Workspace).
-        Rate limiter caps at 10/hour per user — well within quota.
-        """
-        # §11.1: Gmail send rate limit check
-        try:
-            from clearledgr.integrations.erp_rate_limiter import get_erp_rate_limiter, ERPRateLimitError
-            get_erp_rate_limiter().check_and_consume(self.user_id, "gmail_send")
-        except ERPRateLimitError as exc:
-            logger.warning("Gmail send rate limit hit for %s: %s", self.user_id, exc)
-            return {"status": "rate_limited", "retry_after": exc.retry_after}
-        except Exception:
-            pass  # Rate limiter errors are non-fatal
-
-        import email.mime.text
-
-        msg = email.mime.text.MIMEText(body, "plain")
-        msg["To"] = to
-        msg["Subject"] = subject
-        if in_reply_to:
-            msg["In-Reply-To"] = in_reply_to
-            msg["References"] = in_reply_to
-
-        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-        payload: Dict[str, Any] = {"raw": raw}
-        if thread_id:
-            payload["threadId"] = thread_id
-
-        # Retry on 429 / 5xx. Gmail returns transient 5xx under load
-        # (documented at developers.google.com/workspace/gmail/api/v1/reference/quota),
-        # and a single attempt silently drops the email. Exponential
-        # backoff with jitter-free delays so two concurrent retries
-        # don't stampede. 4 total attempts (initial + 3 retries) take
-        # at most ~18s, which is acceptable for the caller — this is
-        # always invoked from a background send, not a user-facing
-        # request that's waiting for the response.
-        send_url = f"{GMAIL_API_BASE}/users/me/messages/send"
-        send_headers = {**self._headers(), "Content-Type": "application/json"}
-        retry_delays = (2, 5, 10)
-        last_exc: Optional[Exception] = None
-        client = get_http_client()
-        for attempt in range(len(retry_delays) + 1):
-            try:
-                response = await client.post(send_url, headers=send_headers, json=payload)
-                if response.status_code == 429 or 500 <= response.status_code < 600:
-                    if attempt < len(retry_delays):
-                        delay = retry_delays[attempt]
-                        logger.warning(
-                            "Gmail send got %d, retrying in %ds (attempt %d/%d)",
-                            response.status_code, delay, attempt + 1, len(retry_delays),
-                        )
-                        import asyncio as _asyncio
-                        await _asyncio.sleep(delay)
-                        continue
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                raise  # 4xx other than 429 — non-retryable
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                # Network hiccup — retry same budget as 5xx.
-                last_exc = exc
-                if attempt < len(retry_delays):
-                    delay = retry_delays[attempt]
-                    logger.warning(
-                        "Gmail send network error (%s), retrying in %ds (attempt %d/%d)",
-                        type(exc).__name__, delay, attempt + 1, len(retry_delays),
-                    )
-                    import asyncio as _asyncio
-                    await _asyncio.sleep(delay)
-                    continue
-                raise
-        # Loop exhausted all retries with a retryable failure —
-        # propagate the last exception so the caller's fallback path
-        # (e.g. save-as-draft in the vendor-onboarding flow) runs.
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError("gmail_send_exhausted_retries_without_error")
+    # ``send_draft`` + ``send_message`` removed: Solden sends zero
+    # email to vendors and authors zero vendor-facing body text
+    # (memory: 2026-05-02 second-pass dormant-vendor-emails decision).
+    # The ``gmail.send`` OAuth scope is dropped from ``GMAIL_SCOPES``
+    # accordingly. Operators compose vendor communications in their
+    # own Gmail; Solden's role is read + label, never write-and-send.
 
     async def get_draft(self, draft_id: str, format: str = "raw") -> Dict[str, Any]:
         """Retrieve a draft by ID.
@@ -744,78 +649,11 @@ class GmailAPIClient:
         response.raise_for_status()
         return response.json()
 
-    async def schedule_draft_send(
-        self,
-        draft_id: str,
-        send_at_unix_ms: int,
-    ) -> Dict[str, Any]:
-        """Send a draft as a scheduled message.
-
-        Gmail does not expose a first-class "schedule" verb in its public
-        REST API.  The supported server-side mechanism is:
-
-        1. Retrieve the draft in ``raw`` format.
-        2. Decode the MIME, inject the ``X-Google-Delayed-Sending`` header
-           with the target timestamp (seconds since epoch).
-        3. Delete the original draft.
-        4. Create a *new* draft carrying the modified MIME — Gmail's
-           backend honours the delay header and holds the message until the
-           requested time.
-
-        This keeps the message in the user's Drafts folder with a visible
-        "Scheduled" chip in Gmail, matching the behaviour of the Gmail web
-        UI "Schedule send" feature.
-
-        Args:
-            draft_id: The Gmail draft ID to schedule.
-            send_at_unix_ms: Target send time as milliseconds since epoch.
-
-        Returns:
-            The new draft resource dict (with the scheduled header baked in).
-        """
-        import email as email_lib
-
-        # 1. Fetch the raw MIME content of the existing draft.
-        draft_data = await self.get_draft(draft_id, format="raw")
-        raw_b64 = (draft_data.get("message") or {}).get("raw", "")
-        thread_id = (draft_data.get("message") or {}).get("threadId")
-        if not raw_b64:
-            raise ValueError("draft_empty_or_missing_raw")
-
-        raw_bytes = base64.urlsafe_b64decode(raw_b64)
-        msg = email_lib.message_from_bytes(raw_bytes)
-
-        # 2. Inject (or replace) the scheduled-send header.
-        #    Gmail interprets this as "hold until <epoch-seconds>".
-        send_at_secs = send_at_unix_ms // 1000
-        header_name = "X-Google-Delayed-Sending"
-        if header_name in msg:
-            del msg[header_name]
-        msg[header_name] = str(send_at_secs)
-
-        new_raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-
-        # 3. Delete the original draft so we don't leave duplicates.
-        client = get_http_client()
-        await client.delete(
-            f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
-            headers=self._headers(),
-        )
-        # Ignore 404 — draft may already have been removed.
-
-        # 4. Create a replacement draft with the schedule header.
-        payload: Dict[str, Any] = {"message": {"raw": new_raw}}
-        if thread_id:
-            payload["message"]["threadId"] = thread_id
-
-        client = get_http_client()
-        response = await client.post(
-            f"{GMAIL_API_BASE}/users/me/drafts",
-            headers={**self._headers(), "Content-Type": "application/json"},
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
+    # ``schedule_draft_send`` removed: was the helper called by the
+    # deleted ``/api/gmail/schedule-send`` endpoint to delay-send
+    # operator-composed vendor emails. Solden no longer touches the
+    # vendor-email path; operators schedule their own sends via the
+    # native Gmail UI.
 
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""

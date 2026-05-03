@@ -48,12 +48,13 @@ class LLMAction(str, Enum):
     """Every permitted LLM action. Deterministic actions are NOT listed here
     and CANNOT call Claude through the gateway."""
 
-    # §7.1 — the five spec-defined LLM actions
+    # §7.1 — spec-defined LLM actions. ``DRAFT_VENDOR_RESPONSE`` was
+    # dropped per the 2026-05-02 zero-vendor-email rule (Solden authors
+    # zero vendor-facing body text).
     CLASSIFY_EMAIL = "classify_email"
     EXTRACT_INVOICE_FIELDS = "extract_invoice_fields"
     GENERATE_EXCEPTION = "generate_exception_reason"
     CLASSIFY_VENDOR = "classify_vendor_response"
-    DRAFT_VENDOR_RESPONSE = "draft_vendor_response"
 
     # Extended actions (beyond spec — codebase already uses these)
     AP_DECISION = "ap_decision"
@@ -91,7 +92,6 @@ ACTION_REGISTRY: Dict[LLMAction, ActionConfig] = {
     LLMAction.EXTRACT_INVOICE_FIELDS: ActionConfig(max_output_tokens=4000, model_tier="sonnet"),
     LLMAction.GENERATE_EXCEPTION:     ActionConfig(max_output_tokens=1000, model_tier="haiku"),
     LLMAction.CLASSIFY_VENDOR:        ActionConfig(max_output_tokens=2000, model_tier="haiku"),
-    LLMAction.DRAFT_VENDOR_RESPONSE:  ActionConfig(max_output_tokens=3000, model_tier="sonnet"),
     LLMAction.AP_DECISION:            ActionConfig(max_output_tokens=512,  model_tier="sonnet"),
     LLMAction.AGENT_PLANNING:         ActionConfig(max_output_tokens=4096, model_tier="sonnet", timeout_seconds=120),
     LLMAction.DUPLICATE_EVALUATION:   ActionConfig(max_output_tokens=500,  model_tier="haiku", timeout_seconds=15),

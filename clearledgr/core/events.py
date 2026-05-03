@@ -42,7 +42,10 @@ class AgentEventType(str, Enum):
     VENDOR_SUBMISSION_RECEIVED = "vendor_submission_received"
     KYC_CHECK_COMPLETED = "kyc_check_completed"
     OPEN_BANKING_VERIFICATION_COMPLETED = "open_banking_verification_completed"
-    VENDOR_CHASE_DUE = "vendor_chase_due"
+    # VENDOR_CHASE_DUE removed: Solden sends zero email to vendors
+    # (memory: 2026-05-02). The chase-timer concept was the last
+    # remaining vendor-email surface; with the planner branch +
+    # dispatcher gone, the event type has no producer or consumer.
     AP_MANAGER_DECISION_RECEIVED = "ap_manager_decision_received"
     VENDOR_ACTIVATED = "vendor_activated"
 

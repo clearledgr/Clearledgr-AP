@@ -1,19 +1,9 @@
-"""Vendor onboarding lifecycle service — Phase 3.1.e.
+"""Vendor onboarding lifecycle service.
 
-Ties together the state machine (Phase 3.1.a), the chase email dispatch
-(Phase 3.1.c), and the ERP vendor-create dispatcher (existing) into
-two operational entry points:
-
-  1. **chase_stale_sessions** — called by the background loop every hour.
-     Scans all active pre-active sessions, computes hours since invite,
-     dispatches 24h/48h chase emails, escalates after 72h, abandons
-     after 30 days.
-
-  2. **activate_vendor_in_erp** — called when a session reaches
-     ``bank_verified``. Transitions to ``ready_for_erp``, dispatches
-     ``create_vendor()`` to the customer's ERP, persists the ERP vendor
-     ID, transitions to ``active``, revokes all tokens, and posts a
-     Slack confirmation.
+Solden does NOT send emails to vendors. The chase loop tracks stale
+sessions and transitions state (escalate at 72h, abandon at 30 days);
+operators chase vendors using their own Gmail. ``activate_vendor_in_erp``
+handles the terminal ERP create_vendor dispatch.
 
 Both functions are pure — they take a database handle (or use get_db)
 and return structured results. The background loop (agent_background.py)
@@ -42,7 +32,6 @@ class ChaseResult:
     """Summary of a single chase-loop run."""
 
     sessions_scanned: int = 0
-    chases_sent: int = 0
     escalations: int = 0
     abandonments: int = 0
     errors: List[str] = field(default_factory=list)
@@ -74,22 +63,17 @@ def _hours_since(iso_timestamp: str) -> Optional[float]:
 async def chase_stale_sessions(
     db: Any = None,
 ) -> ChaseResult:
-    """Scan all pre-active sessions and dispatch chases / escalations.
+    """Scan all pre-active sessions and transition stale ones.
 
     Called by the background loop. Scans across ALL organizations in
-    a single pass (the session table has an index on state +
-    last_activity_at) so the cost scales with active onboarding
-    sessions, not with total organizations.
+    a single pass.
 
-    Chase logic:
-      - 24h since invite with zero chases → send chase_24h
-      - 48h since invite with ≤ 1 chase → send chase_48h
-      - 72h since invite → escalate (transition to escalated state,
-        post Slack notification to AP Manager)
-      - 30 days since invite → abandon (terminal state, tokens revoked)
-
-    Chases are idempotent within a cadence window — the session's
-    ``chase_count`` and ``last_chase_at`` prevent double-sends.
+    State logic (Solden does not email vendors — operators chase from
+    their own Gmail; this loop only adjusts session state):
+      - 72h since invite → transition to ``blocked`` (escalation
+        signal for the AP Manager in Slack)
+      - 30 days since invite → transition to ``closed_unsuccessful``,
+        revoke all tokens
     """
     from clearledgr.core.database import get_db
 
@@ -105,8 +89,6 @@ async def chase_stale_sessions(
         session_id = session.get("id") or ""
         state = session.get("state") or ""
         invited_at = session.get("invited_at") or ""
-        last_chase_at = session.get("last_chase_at")
-        chase_count = int(session.get("chase_count") or 0)
 
         hours = _hours_since(invited_at)
         if hours is None:
@@ -132,7 +114,6 @@ async def chase_stale_sessions(
 
             # Escalate after 72h.
             if hours >= _ESCALATION_72H and state != "blocked":
-                # Only escalate if we haven't already.
                 from clearledgr.core.vendor_onboarding_states import (
                     VendorOnboardingState,
                 )
@@ -142,25 +123,7 @@ async def chase_stale_sessions(
                     actor_id="agent",
                     reason="No vendor response after 72 hours",
                 )
-                # Dispatch the 72h escalation email.
-                await _send_chase(db, session, "escalation_72h", hours)
                 result.escalations += 1
-                continue
-
-            # Chase at 48h (if ≤ 1 prior chase).
-            if hours >= _CHASE_48H and chase_count <= 1:
-                # Only send 48h chase if we haven't sent one yet
-                # (chase_count ≤ 1 means we've sent at most the 24h).
-                hours_since_last = _hours_since(last_chase_at) if last_chase_at else hours
-                if hours_since_last is None or hours_since_last >= 12:
-                    await _send_chase(db, session, "chase_48h", hours)
-                    result.chases_sent += 1
-                    continue
-
-            # Chase at 24h (if zero prior chases).
-            if hours >= _CHASE_24H and chase_count == 0:
-                await _send_chase(db, session, "chase_24h", hours)
-                result.chases_sent += 1
                 continue
 
         except Exception as exc:
@@ -173,200 +136,22 @@ async def chase_stale_sessions(
     return result
 
 
-async def _send_chase(
-    db: Any,
-    session: Dict[str, Any],
-    chase_type: str,
-    hours_since_invite: float,
-) -> None:
-    """§6.8 Vendor Onboarding Chase Notices.
-
-    "Before the agent sends a chase email to a vendor who has not responded
-    to an onboarding step, it posts a preview to the AP channel. Two buttons:
-    [Hold chase] and [Send now]. If no response within 30 minutes, agent
-    sends automatically. If held, it asks for a reason and logs it."
-    """
-    meta = session.get("metadata") or {}
-    contact_email = meta.get("invite_email_to") or ""
-    vendor_name = session.get("vendor_name") or ""
-    org_id = session.get("organization_id") or ""
-    session_id = session.get("id") or ""
-    state = str(session.get("state") or "")
-    days = int(hours_since_invite / 24)
-
-    if not contact_email:
-        logger.info("[onboarding_lifecycle] skipping chase for session %s — no contact email", session_id)
-        return
-
-    # Determine what's actually missing based on the session's current
-    # state. Thesis §6.8 calls for specificity: "About to chase Paystack
-    # for their certificate of incorporation" beats "for their
-    # onboarding response." AP Managers can only hold-vs-send
-    # intelligently if the Slack preview tells them WHAT we're chasing.
-    _state_missing = {
-        "invited": "onboarding form (they haven't opened the link yet)",
-        "kyc": "business details — registered address, registration number, directors",
-        "bank_verify": "bank details (IBAN + account holder)",
-        "blocked": "onboarding (blocker requires resolution)",
-    }
-    missing_doc = _state_missing.get(state, "onboarding response")
-    if chase_type == "escalation_72h":
-        missing_doc = f"{missing_doc} — escalated after 72h"
-
-    # Post Slack preview with Hold/Send buttons
-    try:
-        from clearledgr.services.slack_notifications import _post_slack_blocks
-
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"*About to chase {vendor_name}* ({contact_email}) for their {missing_doc} "
-                        f"— {days * 24}h since first request. Sending in 30 minutes unless you hold it."
-                    ),
-                },
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "Hold chase"},
-                        "action_id": f"hold_chase_{session_id}",
-                        "value": session_id,
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "Send now"},
-                        "style": "primary",
-                        "action_id": f"send_chase_now_{session_id}",
-                        "value": session_id,
-                    },
-                ],
-            },
-        ]
-
-        preview_result = await _post_slack_blocks(
-            blocks=blocks,
-            text=f"About to chase {vendor_name} for {missing_doc}",
-            organization_id=org_id,
-        )
-
-        if preview_result:
-            # Store pending chase in session metadata for the background reaper
-            # to send after 30 minutes if not held
-            from datetime import datetime, timezone, timedelta
-            send_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
-            pending = {
-                "pending_chase_type": chase_type,
-                "pending_chase_send_at": send_at,
-                "pending_chase_slack_ts": (preview_result or {}).get("ts"),
-                "pending_chase_slack_channel": (preview_result or {}).get("channel"),
-            }
-            try:
-                existing_meta = dict(db.get_onboarding_session_by_id(session_id).get("metadata") or {})
-                existing_meta.update(pending)
-                db.update_onboarding_session_metadata(session_id, existing_meta)
-            except Exception:
-                # If we can't store pending state, send immediately as fallback
-                await _dispatch_chase_email(db, session, chase_type, hours_since_invite)
-            return
-
-    except Exception as exc:
-        logger.debug("[onboarding_lifecycle] chase preview failed, sending directly: %s", exc)
-
-    # Fallback: send directly if Slack preview fails
-    await _dispatch_chase_email(db, session, chase_type, hours_since_invite)
-
-
-async def _dispatch_chase_email(
-    db: Any,
-    session: Dict[str, Any],
-    chase_type: str,
-    hours_since_invite: float,
-) -> None:
-    """Actually send the chase email to the vendor."""
-    from clearledgr.services.vendor_onboarding_email import dispatch_onboarding_chase
-
-    meta = session.get("metadata") or {}
-    contact_email = meta.get("invite_email_to") or ""
-    contact_name = meta.get("contact_name") or ""
-    customer_name = meta.get("customer_name") or ""
-    thread_id = meta.get("invite_thread_id")
-    in_reply_to = meta.get("invite_message_id")
-
-    # Build the real magic-link URL from the session's live tokens.
-    # Previously shipped the literal placeholder "<your-original-link>"
-    # verbatim — vendors got broken chase emails. §9 thesis: magic links
-    # must resolve to the vendor's own portal session.
-    tokens = db.list_session_tokens(session["id"], include_revoked=False)
-    magic_link = ""
-    for token_row in tokens or []:
-        raw_token = token_row.get("raw_token") or token_row.get("token")
-        if raw_token:
-            import os as _os
-            base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "https://onboard.clearledgr.com").rstrip("/")
-            magic_link = f"{base}/onboard/{raw_token}"
-            break
-    if not magic_link:
-        # No retrievable active token (raw tokens are only returned at
-        # issuance; we store hashes). Issue a fresh one so the chase
-        # still has a working link. This supersedes any prior token
-        # for the session — the one-active-token invariant.
-        try:
-            issued = db.generate_onboarding_token(
-                session_id=session["id"],
-                issued_by="agent_chase_loop",
-                purpose="full_onboarding",
-            )
-            if issued:
-                raw_token, _token_row = issued
-                import os as _os
-                base = _os.getenv("CLEARLEDGR_PORTAL_BASE_URL", "https://onboard.clearledgr.com").rstrip("/")
-                magic_link = f"{base}/onboard/{raw_token}"
-        except Exception as token_exc:  # noqa: BLE001
-            logger.warning(
-                "[onboarding_lifecycle] could not rehydrate magic link for session %s: %s",
-                session["id"], token_exc,
-            )
-        if not magic_link:
-            logger.warning(
-                "[onboarding_lifecycle] skipping chase for session %s — no valid magic link available",
-                session["id"],
-            )
-            return  # chase with no working link is worse than none
-
-    await dispatch_onboarding_chase(
-        organization_id=session.get("organization_id") or "",
-        vendor_name=session.get("vendor_name") or "",
-        contact_email=contact_email,
-        contact_name=contact_name,
-        customer_name=customer_name,
-        magic_link=magic_link,
-        session_id=session.get("id") or "",
-        chase_type=chase_type,
-        days_waiting=int(hours_since_invite / 24),
-        thread_id=thread_id,
-        in_reply_to=in_reply_to,
-    )
-
-
 async def activate_vendor_in_erp(
     session_id: str,
     db: Any = None,
 ) -> ActivationResult:
     """Transition bank_verified → ready_for_erp → active via the ERP.
 
-    This is the terminal happy path:
+    Terminal happy path:
       1. Transition to ``ready_for_erp``
       2. Call ``create_vendor()`` on the ERP dispatcher
       3. Store the ERP vendor ID on the session
       4. Transition to ``active``
       5. Revoke all magic-link tokens
-      6. Send the completion email
-      7. Post Slack confirmation
+      6. Post Slack confirmation to the customer's finance team
+
+    Solden does NOT email the vendor on completion — operators surface
+    activation through Slack and their own follow-up.
 
     If the ERP call fails, the session stays in ``ready_for_erp`` and
     the error is recorded. The background loop or a manual retry can
@@ -429,34 +214,6 @@ async def activate_vendor_in_erp(
         session_id, revoked_by="agent", reason="onboarding_complete"
     )
 
-    # Step 6: send completion email (best-effort).
-    try:
-        meta = session.get("metadata") or {}
-        contact_email = meta.get("invite_email_to") or ""
-        if contact_email:
-            from clearledgr.services.vendor_onboarding_email import (
-                send_onboarding_email,
-            )
-            from clearledgr.services.vendor_onboarding_email import (
-                _get_gmail_client_for_org,
-            )
-            gmail_client = await _get_gmail_client_for_org(org_id)
-            if gmail_client:
-                await send_onboarding_email(
-                    gmail_client=gmail_client,
-                    to=contact_email,
-                    template_id="onboarding_complete",
-                    context={
-                        "contact_name": meta.get("contact_name") or contact_email.split("@")[0],
-                        "customer_name": meta.get("customer_name") or org_id,
-                    },
-                )
-    except Exception as email_exc:
-        logger.warning(
-            "[onboarding_lifecycle] completion email failed (non-fatal): %s",
-            email_exc,
-        )
-
     # Audit event.
     try:
         db.append_audit_event(
@@ -481,7 +238,7 @@ async def activate_vendor_in_erp(
     except Exception:
         pass
 
-    # Step 7: Slack activation confirmation — DESIGN_THESIS.md §9.
+    # Step 6: Slack activation confirmation — DESIGN_THESIS.md §9.
     # "Agent posts a confirmation to the finance team's Slack channel."
     # Fire-and-forget; Slack outages don't roll back an already-
     # successful ERP activation.

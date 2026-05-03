@@ -57,14 +57,15 @@ _ACTION_TIMEOUTS = {
     "classify_email": 30,
     "extract_invoice_fields": 30,
     "classify_vendor_response": 30,
-    "draft_vendor_response": 30,
     "generate_exception_reason": 30,
     "post_bill": 10,
     "lookup_po": 10,
     "lookup_grn": 10,
     "apply_label": 5,
     "send_approval": 5,
-    "send_vendor_email": 5,
+    # ``send_vendor_email`` priority entry removed: Solden sends zero
+    # email to vendors (memory: 2026-05-02). The action no longer has
+    # a planner emitter or dispatcher.
 }
 _DEFAULT_TIMEOUT = 15
 
@@ -123,13 +124,15 @@ class CoordinationEngine:
         logic — just wiring.
         """
         self._handlers = {
-            # §3 Email and Inbox Actions (7)
+            # §3 Email and Inbox Actions
             "read_email": self._handle_read_email,
             "fetch_attachment": self._handle_fetch_attachment,
             "apply_label": self._handle_apply_label,
             "remove_label": self._handle_remove_label,
             "split_thread": self._handle_split_thread,
-            "send_email": self._handle_send_email,
+            # ``send_email`` handler removed: Solden sends zero email
+            # to vendors (memory: 2026-05-02). The Gmail OAuth scope no
+            # longer includes ``gmail.send``.
             "watch_thread": self._handle_watch_thread,
 
             # §3 Classification and Extraction Actions (5)
@@ -159,13 +162,14 @@ class CoordinationEngine:
             "clear_waiting_condition": self._handle_clear_waiting,
             "set_pending_plan": self._handle_set_pending_plan,
 
-            # §3 Communication Actions (8)
+            # §3 Communication Actions. ``send_vendor_email`` and
+            # ``draft_vendor_response`` were dropped per the 2026-05-02
+            # zero-vendor-email rule — Solden sends no email to vendors
+            # and authors no vendor-facing body text.
             "send_slack_approval": self._handle_send_approval,
             "send_slack_exception": self._handle_send_slack_exception,
             "send_slack_override_window": self._handle_override_window,
             "send_slack_digest": self._handle_send_slack_digest,
-            "send_vendor_email": self._handle_send_vendor_email,
-            "draft_vendor_response": self._handle_draft_vendor_response,
             "send_teams_approval": self._handle_send_teams_approval,
             "post_gmail_notification": self._handle_post_gmail_notification,
 
@@ -233,7 +237,9 @@ class CoordinationEngine:
             "write_vendor_to_erp": self._handle_onboarding_adapter_pending,
             "send_slack_vendor_activated": self._handle_onboarding_adapter_pending,
             "send_slack_onboarding_exception": self._handle_onboarding_adapter_pending,
-            "send_vendor_chase": self._handle_onboarding_adapter_pending,
+            # ``send_vendor_chase`` handler removed (memory:
+            # 2026-05-02). Vendor chase emails were the last
+            # vendor-facing email surface and are dropped wholesale.
             "generate_vendor_summary": self._handle_onboarding_adapter_pending,
             "resume_onboarding_from_override": self._handle_onboarding_adapter_pending,
         }
@@ -1281,23 +1287,15 @@ class CoordinationEngine:
             logger.debug("[CoordinationEngine] Escalation failed: %s", exc)
         return {"ok": True}
 
-    async def _handle_send_vendor_email(self, action: Action, plan: Plan) -> dict:
-        """§3: Send a templated email to a vendor using the AP inbox.
-
-        Dormant per the 2026-04-30 product call — Solden does not
-        send chase emails to vendors anymore. The handler stays
-        registered so plans referencing the action don't blow up,
-        but it's a no-op (returns ok with a marker).
-        """
-        template = action.params.get("template", "chase")
-        ctx = self._ensure_ctx(plan)
-        vendor_name = ctx.get("extracted_fields", {}).get("vendor_name", "")
-        return {
-            "ok": True,
-            "template": template,
-            "vendor": vendor_name,
-            "noop_reason": "vendor_onboarding_dormant_2026_04_30",
-        }
+    # ``_handle_send_vendor_email`` removed: Solden sends zero email
+    # to vendors and the handler had been a no-op stub since the
+    # 2026-04-30 product call. The 2026-05-03 full sweep deletes the
+    # stub itself, the registration in ``_handlers``, and the priority
+    # entry — keeping the stub was preserving optionality that no
+    # roadmap item plans to use, and leaving it in place was
+    # confusing readers about what the system actually does (audit
+    # trail, support docs, BFN/ICC questionnaires all benefit from
+    # "Solden literally cannot send vendor email").
 
     async def _handle_classify_vendor(self, action: Action, plan: Plan) -> dict:
         """§3 LLM: Classify a vendor's reply to an onboarding or chase email.
@@ -1486,15 +1484,17 @@ class CoordinationEngine:
             return {"ok": True}
 
     async def _handle_route_vendor(self, action: Action, plan: Plan) -> dict:
-        """§10: Route classified vendor response to appropriate onboarding step."""
+        """§10: Route classified vendor response to appropriate onboarding step.
+
+        ``question_asked`` routes to operator review — Solden does not
+        author a vendor-facing draft (zero-vendor-email rule).
+        """
         ctx = self._ensure_ctx(plan)
         classification = ctx.get("vendor_response_classification", {})
         response_type = classification.get("type", "unclassifiable")
         if response_type == "document_submitted":
             return {"ok": True, "next": "validate_kyc_document"}
-        elif response_type == "question_asked":
-            return {"ok": True, "next": "draft_vendor_response"}
-        elif response_type in ("refused", "incorrect_contact"):
+        elif response_type in ("question_asked", "refused", "incorrect_contact"):
             return {"ok": True, "next": "escalate_to_ap_manager"}
         return {"ok": True, "next": "flag_for_review"}
 
@@ -1890,26 +1890,10 @@ class CoordinationEngine:
         logger.info("[CoordinationEngine] split_thread requested — creating new Box for split message")
         return {"ok": True}
 
-    async def _handle_send_email(self, action: Action, plan: Plan) -> dict:
-        """§3: Send an email from the AP inbox via Gmail API."""
-        ctx = self._ensure_ctx(plan)
-        to = action.params.get("to", "")
-        subject = action.params.get("subject", "")
-        body = action.params.get("body", "")
-        thread_id = action.params.get("thread_id") or ctx.get("thread_id", "")
-        user_id = ctx.get("user_id", "")
-        if not to or not user_id:
-            return {"ok": True}
-        try:
-            from clearledgr.services.gmail_autopilot import GmailAPIClient
-            client = GmailAPIClient(user_id)
-            if await client.ensure_authenticated():
-                result = await client.send_message(to=to, subject=subject, body=body, thread_id=thread_id)
-                return {"ok": True, "sent": True, "message_id": result.get("id") if isinstance(result, dict) else None}
-            return {"_abort": True, "error": "Gmail auth failed"}
-        except Exception as exc:
-            logger.warning("[CoordinationEngine] send_email failed: %s", exc)
-            return {"_abort": True, "error": str(exc)}
+    # ``_handle_send_email`` removed: Solden sends zero email to vendors
+    # (memory: 2026-05-02). The Gmail OAuth scope no longer includes
+    # ``gmail.send``; the underlying ``GmailAPIClient.send_message`` is
+    # also gone. No planner emits ``send_email`` actions.
 
     async def _handle_lookup_vendor_master(self, action: Action, plan: Plan) -> dict:
         """§3: Query the ERP vendor master for a match.
@@ -2011,33 +1995,10 @@ class CoordinationEngine:
             logger.debug("[CoordinationEngine] send_slack_digest: %s", exc)
             return {"ok": True}
 
-    async def _handle_draft_vendor_response(self, action: Action, plan: Plan) -> dict:
-        """§3 LLM: Draft a contextual reply to a vendor query. Always staged for review."""
-        ctx = self._ensure_ctx(plan)
-        query = ctx.get("body", "")
-        vendor_id = action.params.get("vendor_id", "")
-        if not query:
-            return {"ok": True}
-        try:
-            from clearledgr.core.llm_gateway import get_llm_gateway, LLMAction
-            gateway = get_llm_gateway()
-            prompt = (
-                f"Draft a professional reply to this vendor query.\n\n"
-                f"Vendor: {vendor_id}\nQuery:\n{query[:2000]}\n\n"
-                "Be factual, professional, and concise. This draft will be "
-                "reviewed by an AP Manager before sending."
-            )
-            resp = gateway.call_sync(
-                LLMAction.DRAFT_VENDOR_RESPONSE,
-                messages=[{"role": "user", "content": prompt}],
-                organization_id=self.organization_id,
-            )
-            draft = str(resp.content).strip() if resp.content else ""
-            ctx["vendor_draft"] = draft
-            return {"ok": True, "draft_length": len(draft)}
-        except Exception as exc:
-            logger.debug("[CoordinationEngine] draft_vendor_response: %s", exc)
-            return {"ok": True}
+    # ``_handle_draft_vendor_response`` removed: Solden authors zero
+    # vendor-facing body text (memory: 2026-05-02). The
+    # ``DRAFT_VENDOR_RESPONSE`` LLM action is also dropped from the
+    # gateway registry; operators draft replies in Gmail themselves.
 
     async def _handle_send_teams_approval(self, action: Action, plan: Plan) -> dict:
         """§3: Microsoft Teams equivalent of send_slack_approval."""

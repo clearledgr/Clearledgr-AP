@@ -87,7 +87,11 @@ class TestApprovalReceivedPlans:
         assert [a.name for a in plan.actions] == expected
 
     def test_rejected_plan(self, engine):
-        """Rejected plan: clear → exception → label → vendor_email → timeline."""
+        """Rejected plan: clear → exception → label → timeline.
+
+        ``send_vendor_email`` was dropped per the 2026-05-02
+        zero-vendor-email rule.
+        """
         event = AgentEvent(
             type=AgentEventType.APPROVAL_RECEIVED, source="test",
             payload={"decision": "rejected", "box_id": "b1"},
@@ -96,7 +100,7 @@ class TestApprovalReceivedPlans:
         plan = engine.plan(event, {})
         expected = [
             "clear_waiting_condition", "move_box_stage", "apply_label",
-            "send_vendor_email", "post_timeline_entry",
+            "post_timeline_entry",
         ]
         assert [a.name for a in plan.actions] == expected
 

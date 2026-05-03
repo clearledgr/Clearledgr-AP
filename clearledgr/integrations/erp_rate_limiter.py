@@ -32,7 +32,10 @@ ERP_RATE_LIMITS: Dict[str, Dict[str, int]] = {
     # API calls ~1 billion quota units/day). Conservative rate limit
     # keeps us well below quotas even for high-volume workspaces.
     "gmail":      {"requests": 200, "window": 60},  # 200 per minute
-    "gmail_send": {"requests": 10,  "window": 3600},  # 10 sends per hour = 240/day
+    # ``gmail_send`` rate-limit removed: Solden sends zero email to
+    # vendors (memory: 2026-05-02). With ``gmail.send`` dropped from
+    # the OAuth scope and the send_message helper deleted, nothing
+    # meters against this key anymore.
 }
 
 DEFAULT_LIMIT = {"requests": 30, "window": 60}

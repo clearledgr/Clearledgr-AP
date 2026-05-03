@@ -25,9 +25,11 @@ class TestHandlerRegistry:
     """Every spec §3 action must have a handler."""
 
     def test_all_spec_actions_registered(self, engine):
+        # ``send_email``, ``send_vendor_email``, ``draft_vendor_response``
+        # were dropped per the 2026-05-02 zero-vendor-email rule.
         spec_actions = {
             "read_email", "fetch_attachment", "apply_label", "remove_label",
-            "split_thread", "send_email", "watch_thread",
+            "split_thread", "watch_thread",
             "classify_email", "extract_invoice_fields", "run_extraction_guardrails",
             "generate_exception_reason", "classify_vendor_response",
             "lookup_vendor_master", "lookup_po", "lookup_grn", "run_three_way_match",
@@ -35,7 +37,7 @@ class TestHandlerRegistry:
             "create_box", "update_box_fields", "move_box_stage", "post_timeline_entry",
             "link_vendor_to_box", "set_waiting_condition", "clear_waiting_condition", "set_pending_plan",
             "send_slack_approval", "send_slack_exception", "send_slack_override_window",
-            "send_slack_digest", "send_vendor_email", "draft_vendor_response",
+            "send_slack_digest",
             "send_teams_approval", "post_gmail_notification",
             "create_vendor_record", "enrich_vendor", "run_adverse_media_check",
             "activate_vendor_in_erp",
@@ -48,10 +50,11 @@ class TestHandlerRegistry:
 
 
 class TestLLMBoundaryFence:
-    """Drift fence for spec §7.1: exactly 5 actions call the LLM.
+    """Drift fence for spec §7.1.
 
     classify_email, extract_invoice_fields, generate_exception_reason,
-    classify_vendor_response, draft_vendor_response.
+    classify_vendor_response. ``draft_vendor_response`` was dropped per
+    the 2026-05-02 zero-vendor-email rule.
 
     Any growth here must be a spec change first. The deck promise is
     "Rules decide. LLM describes." Adding another LLM call without a
@@ -63,7 +66,6 @@ class TestLLMBoundaryFence:
         "extract_invoice_fields",
         "generate_exception_reason",
         "classify_vendor_response",
-        "draft_vendor_response",
     })
 
     def test_spec_llm_actions_all_have_handlers(self, engine):

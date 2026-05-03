@@ -17,16 +17,20 @@ class TestActionRegistry:
     """§7.1: Action registry enforces the DET/LLM boundary."""
 
     def test_all_spec_llm_actions_registered(self):
-        """The 5 spec-defined LLM actions must be in the registry."""
+        """Spec-defined LLM actions in scope must be in the registry.
+
+        ``draft_vendor_response`` was dropped per the 2026-05-02
+        zero-vendor-email rule.
+        """
         spec_actions = {
             "classify_email",
             "extract_invoice_fields",
             "generate_exception_reason",
             "classify_vendor_response",
-            "draft_vendor_response",
         }
         registered = {a.value for a in ACTION_REGISTRY}
         assert spec_actions.issubset(registered)
+        assert "draft_vendor_response" not in registered
 
     def test_spec_token_budgets(self):
         """§7.3: Token budgets must match spec values."""
@@ -35,7 +39,6 @@ class TestActionRegistry:
             LLMAction.EXTRACT_INVOICE_FIELDS: 4000,
             LLMAction.GENERATE_EXCEPTION: 1000,
             LLMAction.CLASSIFY_VENDOR: 2000,
-            LLMAction.DRAFT_VENDOR_RESPONSE: 3000,
         }
         for action, expected_budget in spec_budgets.items():
             assert ACTION_REGISTRY[action].max_output_tokens == expected_budget

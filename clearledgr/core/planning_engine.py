@@ -65,7 +65,9 @@ class DeterministicPlanningEngine:
             AgentEventType.VENDOR_SUBMISSION_RECEIVED: self._plan_vendor_submission_received,
             AgentEventType.KYC_CHECK_COMPLETED: self._plan_kyc_check_completed,
             AgentEventType.OPEN_BANKING_VERIFICATION_COMPLETED: self._plan_open_banking_verification_completed,
-            AgentEventType.VENDOR_CHASE_DUE: self._plan_vendor_chase_due,
+            # VENDOR_CHASE_DUE handler removed: chase emails were the
+            # last vendor-facing email surface and are dropped per the
+            # 2026-05-02 second-pass dormant-vendor-emails decision.
             AgentEventType.AP_MANAGER_DECISION_RECEIVED: self._plan_ap_manager_decision_received,
             AgentEventType.VENDOR_ACTIVATED: self._plan_vendor_activated,
         }
@@ -289,6 +291,12 @@ class DeterministicPlanningEngine:
                        "Register thread for monitoring"),
             ]
         else:  # rejected
+            # ``send_vendor_email`` action removed: Solden sends zero
+            # email to vendors and authors zero vendor-facing body
+            # text (memory: 2026-05-02 second-pass dormant-vendor-
+            # emails decision). The operator copies the rejection
+            # reason from the workspace timeline into their own
+            # Gmail reply.
             actions = [
                 Action("clear_waiting_condition", "DET", {},
                        "Clear approval waiting condition"),
@@ -298,9 +306,6 @@ class DeterministicPlanningEngine:
                 Action("apply_label", "DET",
                        {"label": "Clearledgr/Invoice/Exception"},
                        "Apply Exception stage label"),
-                Action("send_vendor_email", "DET",
-                       {"template": "payment_query_response"},
-                       "Notify vendor of rejection"),
                 Action("post_timeline_entry", "DET",
                        {"reason": event.payload.get("override_reason", "Rejected")},
                        "Record rejection to timeline"),
@@ -761,22 +766,12 @@ class DeterministicPlanningEngine:
             box_id=event.payload.get("box_id", ""),
         )
 
-    def _plan_vendor_chase_due(self, event: AgentEvent, box_state: dict) -> Plan:
-        """§5.7: Chase timer fired → send appropriate chase template."""
-        chase_type = event.payload.get("chase_type", "first_chase")
-        return Plan(
-            event_type="vendor_chase_due",
-            actions=[
-                Action("send_vendor_chase", "DET",
-                       {"chase_type": chase_type,
-                        "vendor_email": event.payload.get("vendor_email", "")},
-                       f"Send {chase_type} email to vendor"),
-                Action("post_timeline_entry", "DET",
-                       {"summary": f"Chase sent: {chase_type}"},
-                       "Record chase dispatch to timeline"),
-            ],
-            box_id=event.payload.get("box_id", ""),
-        )
+    # ``_plan_vendor_chase_due`` removed: Solden sends zero email to
+    # vendors (memory: 2026-05-02 second-pass dormant-vendor-emails
+    # decision). The chase-timer concept was the last vestige of
+    # Solden authoring vendor-facing email; with the lifecycle's
+    # ``_dispatch_chase_email`` removed downstream, this planner
+    # branch had no working dispatch path even before deletion.
 
     def _plan_ap_manager_decision_received(self, event: AgentEvent, box_state: dict) -> Plan:
         """§5.6: AP Manager approves / overrides / rejects a blocked onboarding."""
@@ -811,9 +806,9 @@ class DeterministicPlanningEngine:
                        {"summary": f"AP Manager rejected: {reason}" if reason else
                         "AP Manager rejected onboarding"},
                        "Record rejection reason"),
-                Action("send_vendor_email", "DET",
-                       {"template": "onboarding_rejection"},
-                       "Notify vendor of unsuccessful onboarding"),
+                # ``send_vendor_email`` action removed (memory:
+                # 2026-05-02). Vendor-facing communication is the
+                # operator's Gmail reply, not a Solden-authored email.
             ],
             box_id=event.payload.get("box_id", ""),
         )

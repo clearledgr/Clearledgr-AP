@@ -47,9 +47,10 @@ class TestApprovalEndToEnd:
         )
         plan = engine.plan(event, {})
         names = [a.name for a in plan.actions]
+        # ``send_vendor_email`` dropped per 2026-05-02 zero-vendor-email rule.
         assert names == [
             "clear_waiting_condition", "move_box_stage", "apply_label",
-            "send_vendor_email", "post_timeline_entry",
+            "post_timeline_entry",
         ]
 
 

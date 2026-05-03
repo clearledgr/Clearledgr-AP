@@ -6,9 +6,8 @@ promise — `APDecisionService.decide()` computes the routing recommendation
 (approve | needs_info | escalate | reject) from a fixed 10-step policy
 cascade over validation gate, vendor history, anomaly signals, and org
 config. Claude is **not** called here; narrative description belongs to
-spec §7.1 actions (`generate_exception_reason`, `draft_vendor_response`)
-that run from exception and outreach surfaces, not from inside the
-routing decision.
+spec §7.1's `generate_exception_reason` action — fired from the
+exception surface, not from inside the routing decision.
 
 `enforce_gate_constraint` remains as a defensive no-op: the rule cascade
 cannot emit `approve` on a failed gate, but the helper stays so any future

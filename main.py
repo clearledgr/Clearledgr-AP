@@ -97,7 +97,11 @@ from clearledgr.api.erp_webhooks import router as erp_webhooks_router
 from clearledgr.api.fraud_controls import router as fraud_controls_router
 from clearledgr.api.gdpr import router as gdpr_router
 from clearledgr.api.gmail_extension import router as gmail_extension_router
-from clearledgr.api.gmail_schedule import router as gmail_schedule_router
+# gmail_schedule_router removed: the /api/gmail/schedule-send endpoint
+# scheduled operator-composed vendor emails via the gmail.send OAuth
+# scope. Per the 2026-05-02 second-pass dormant-vendor-emails decision,
+# Solden sends zero email to vendors and authors zero vendor-facing
+# body text. Operators use Gmail's native Schedule send UI directly.
 from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
 from clearledgr.api.iban_verification import router as iban_verification_router
 from clearledgr.api.journal_entry_preview import (
@@ -1423,7 +1427,7 @@ app.include_router(vendor_kyc_router)
 # Gmail integration
 app.include_router(gmail_webhooks_router)
 
-app.include_router(gmail_schedule_router)
+# gmail_schedule_router include removed (see import-site comment).
 
 # §5.1 Object Model — Pipeline / SavedView / BoxLink endpoints
 app.include_router(pipelines_router)
