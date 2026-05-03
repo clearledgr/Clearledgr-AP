@@ -113,16 +113,16 @@ def _patch_httpx(monkeypatch, responses: List[FakeResponse]) -> FakeAsyncClient:
 
     monkeypatch.setattr("httpx.AsyncClient", _factory)
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_quickbooks.httpx.AsyncClient", _factory
+        "clearledgr.integrations.erp_quickbooks.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_xero.httpx.AsyncClient", _factory
+        "clearledgr.integrations.erp_xero.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_netsuite.httpx.AsyncClient", _factory
+        "clearledgr.integrations.erp_netsuite.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_sap.httpx.AsyncClient", _factory
+        "clearledgr.integrations.erp_sap.get_http_client", _factory
     )
     return fake
 

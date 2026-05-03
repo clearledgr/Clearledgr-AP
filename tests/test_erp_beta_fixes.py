@@ -180,7 +180,13 @@ def test_sap_preflight_passes_valid_bill():
     With a non-base64 access_token, the legacy path treats it as a session cookie.
     We must mock both .get (CSRF fetch) and .post (invoice creation).
     """
-    conn = ERPConnection(type="sap", access_token="tok", base_url="https://sap.example.com", company_code="1000")
+    # B1 dispatcher heuristic in is_sap_s4hana_connection treats any
+    # base_url WITHOUT ``/b1s/`` as S/4HANA. The B1 Service Layer flow
+    # this test exercises requires the ``/b1s/v1`` path segment so the
+    # dispatcher routes to ``_post_bill_to_sap_b1`` (which uses the
+    # mocked POST/CSRF flow); without it the call routes to the S/4HANA
+    # path which expects bill.line_items + a different mock surface.
+    conn = ERPConnection(type="sap", access_token="tok", base_url="https://sap.example.com/b1s/v1", company_code="1000")
     bill = _make_bill()
 
     post_response = MagicMock()
@@ -191,12 +197,15 @@ def test_sap_preflight_passes_valid_bill():
     csrf_response = MagicMock()
     csrf_response.headers = {"x-csrf-token": "test-csrf-token"}
 
-    with patch("clearledgr.integrations.erp_router.httpx.AsyncClient") as mock_client:
-        mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
-        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_client.return_value.post = AsyncMock(return_value=post_response)
-        mock_client.return_value.get = AsyncMock(return_value=csrf_response)
+    # erp_sap was refactored to call ``get_http_client()`` (singleton)
+    # rather than constructing ``httpx.AsyncClient()`` per call. Patch the
+    # factory so it returns our mock; the rest of the flow (session
+    # helper + post) remains unchanged.
+    fake_client = MagicMock()
+    fake_client.post = AsyncMock(return_value=post_response)
+    fake_client.get = AsyncMock(return_value=csrf_response)
 
+    with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=fake_client):
         result = asyncio.run(post_bill_to_sap(conn, bill))
 
     assert result["status"] == "success"
@@ -214,7 +223,11 @@ def test_qb_token_refresh_retry_on_401(db):
 
     first_call = True
 
-    async def mock_post_bill_to_qb(conn, bill, gl_map=None):
+    # Accept arbitrary kwargs so the mock keeps working when the real
+    # ``post_bill_to_quickbooks`` signature gains optional kwargs
+    # (Module 5 added ``field_mappings`` + ``custom_fields``). The test
+    # asserts on the retry behaviour, not on the kwargs themselves.
+    async def mock_post_bill_to_qb(conn, bill, **_kwargs):
         nonlocal first_call
         if first_call:
             first_call = False
@@ -245,7 +258,7 @@ def test_qb_token_refresh_retry_on_401(db):
 def test_qb_token_refresh_failure_returns_original_error(db):
     db.ensure_organization("default")
 
-    async def mock_post_bill_to_qb(conn, bill, gl_map=None):
+    async def mock_post_bill_to_qb(conn, bill, **_kwargs):
         return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
 
     async def mock_refresh_fail(conn):
@@ -303,7 +316,7 @@ def test_quickbooks_credit_application_uses_native_vendor_credit_and_bill_paymen
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
          patch("clearledgr.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
          patch("clearledgr.integrations.erp_router.find_vendor_credit_quickbooks", AsyncMock(return_value=None)), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "default",
@@ -361,7 +374,7 @@ def test_quickbooks_settlement_uses_native_bill_payment_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
          patch("clearledgr.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "default",
@@ -395,7 +408,7 @@ def test_quickbooks_refund_settlement_stays_off_native_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient") as mock_client:
+         patch("clearledgr.integrations.erp_quickbooks.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("default", application))
 
     assert result["status"] == "error"
@@ -516,7 +529,7 @@ def test_xero_credit_application_uses_native_allocation_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "default",
@@ -565,7 +578,7 @@ def test_xero_settlement_uses_native_payment_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "default",
@@ -596,7 +609,7 @@ def test_xero_refund_settlement_stays_off_native_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient") as mock_client:
+         patch("clearledgr.integrations.erp_xero.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("default", application))
 
     assert result["status"] == "error"
@@ -707,7 +720,7 @@ def test_netsuite_credit_application_uses_native_update_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "default",
@@ -758,7 +771,7 @@ def test_netsuite_settlement_uses_native_vendor_payment_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "default",
@@ -788,7 +801,7 @@ def test_netsuite_refund_settlement_stays_off_native_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient") as mock_client:
+         patch("clearledgr.integrations.erp_netsuite.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("default", application))
 
     assert result["status"] == "error"
@@ -892,7 +905,7 @@ def test_sap_credit_application_uses_native_purchase_credit_note_api():
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
          patch("clearledgr.integrations.erp_router.find_credit_note_sap", AsyncMock(return_value=None)), \
          patch("clearledgr.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "default",
@@ -955,7 +968,7 @@ def test_sap_settlement_uses_native_vendor_payment_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
          patch("clearledgr.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+         patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "default",
@@ -991,7 +1004,7 @@ def test_sap_refund_settlement_stays_off_native_api():
     )
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_router.httpx.AsyncClient") as mock_client:
+         patch("clearledgr.integrations.erp_sap.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("default", application))
 
     assert result["status"] == "error"

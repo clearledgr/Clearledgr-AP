@@ -228,7 +228,19 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         #   * per-entity role assignments (3 endpoints)
         #   * SAML admin + IdP-facing flows (6 endpoints — config
         #     CRUD + sp-metadata + login + acs)
-        assert len(paths) <= 285
+        # 2026-05-03: Path B audit-trail compose pass (Phases 2-4)
+        # added per-render-target action endpoints + the /api/workspace
+        # + /api/ops branches grew with the rebrand-era settings panel,
+        # report subscriptions, and audit exports. Cap raised 285 → 340:
+        #   * 3 NetSuite SuiteApp panel actions (/extension/ap-items/
+        #     by-netsuite-bill/{id}/{approve,reject,request-info})
+        #   * 3 SAP Fiori panel actions (/extension/ap-items/by-sap-
+        #     invoice/{approve,reject,request-info})
+        #   * accrual-journal-entry API surface
+        #   * report subscriptions CRUD
+        #   * additional bank-match + bank-statement read paths
+        #   * field-review batch + audit-export hooks
+        assert len(paths) <= 340
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -271,21 +283,31 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             # signature is the auth on ACS); per-tenant scoping is
             # enforced inside the handlers.
             "/saml/",
+            # Workspace SPA module surfaces (each surface is org-
+            # scoped + admin-role gated in the handlers). The strict
+            # profile allows the prefix; the handlers enforce auth.
+            # Modules 1, 3, 4, 6, 8, 9, 10, 11.
+            "/api/workspace/dashboard",
+            "/api/workspace/rules",
+            "/api/workspace/reports",
+            "/api/workspace/fx-rates",
+            "/api/workspace/onboarding/sample-data",
+            "/api/workspace/api-keys",
+            "/api/workspace/escalation-policies",
+            "/api/workspace/notification-preferences",
+            "/api/workspace/account",
+            "/api/workspace/saml",
+            "/api/workspace/fraud-thresholds",
+            "/api/workspace/billing",
+            "/api/webhooks/paddle",
         }
-        # Phase 2.1.b IBAN verification endpoints are mounted and pass
-        # the strict-profile route filter.
-        assert "/api/vendors/{vendor_name}/iban-verification" in paths
-        assert "/api/vendors/{vendor_name}/iban-verification/complete" in paths
-        assert "/api/vendors/{vendor_name}/iban-verification/reject" in paths
-        # Phase 3.1.b vendor onboarding endpoints are mounted (customer
-        # control + public portal magic-link surface).
-        assert "/api/vendors/{vendor_name}/onboarding/invite" in paths
-        assert "/api/vendors/{vendor_name}/onboarding/session" in paths
-        assert "/api/vendors/{vendor_name}/onboarding/escalate" in paths
-        assert "/api/vendors/{vendor_name}/onboarding/reject" in paths
-        assert "/portal/onboard/{token}" in paths
-        assert "/portal/onboard/{token}/kyc" in paths
-        assert "/portal/onboard/{token}/bank-details" in paths
+        # Phase 2.1.b IBAN-verification + Phase 3.1.b vendor-onboarding
+        # endpoints have been deprioritized (memory: 2026-04-30 — VO is
+        # AP-subordinate; the standalone VO scaffolding is parked
+        # dormant). The assertions previously here exercised endpoints
+        # that the rebrand-era cleanup unmounted. The corresponding
+        # ``vendor_inquiry.lookup`` read-only status block is the only
+        # surviving vendor-facing surface.
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

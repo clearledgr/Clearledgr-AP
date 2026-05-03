@@ -131,7 +131,7 @@ class TestChartOfAccountsQuickBooks:
             }
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_quickbooks.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
 
         assert len(result) == 3
@@ -152,7 +152,7 @@ class TestChartOfAccountsQuickBooks:
         mock_client.get.side_effect = Exception("timeout")
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        with patch("clearledgr.integrations.erp_quickbooks.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
         assert result == []
 
@@ -160,7 +160,7 @@ class TestChartOfAccountsQuickBooks:
         resp = MagicMock()
         resp.status_code = 401
         mock_client = _mock_async_client(resp)
-        with patch("clearledgr.integrations.erp_quickbooks.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
         assert result == []
 
@@ -201,7 +201,7 @@ class TestChartOfAccountsXero:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_xero.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_xero(_xero_connection()))
 
         assert len(result) == 3
@@ -250,7 +250,7 @@ class TestChartOfAccountsNetSuite:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_netsuite.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
             with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(get_chart_of_accounts_netsuite(_netsuite_connection()))
 
@@ -306,7 +306,7 @@ class TestChartOfAccountsSAP:
             return_value=session_resp,
         ):
             mock_client = _mock_async_client(_ok_response(coa_payload))
-            with patch("clearledgr.integrations.erp_sap.httpx.AsyncClient", return_value=mock_client):
+            with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
                 result = asyncio.run(get_chart_of_accounts_sap(_sap_connection()))
 
         assert len(result) == 2

@@ -152,7 +152,7 @@ class TestWebhookDelivery:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.webhook_delivery.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.services.webhook_delivery.get_http_client", return_value=mock_client):
             ok = asyncio.run(deliver_webhook(
                 url="https://example.com/hook",
                 event_type="invoice.approved",
@@ -175,7 +175,7 @@ class TestWebhookDelivery:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.webhook_delivery.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.services.webhook_delivery.get_http_client", return_value=mock_client):
             ok = asyncio.run(deliver_webhook(
                 url="https://example.com/hook",
                 event_type="test",

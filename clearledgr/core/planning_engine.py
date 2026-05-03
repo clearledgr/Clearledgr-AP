@@ -329,18 +329,13 @@ class DeterministicPlanningEngine:
                 ],
                 box_id=box_id,
             )
-        elif timer_type == "vendor_chase":
-            return Plan(
-                event_type="timer_fired",
-                actions=[
-                    Action("check_vendor_response", "DET", {},
-                           "Check if vendor has responded"),
-                    Action("send_vendor_email", "DET",
-                           {"template": "chase"},
-                           "Send chase email if no response"),
-                ],
-                box_id=box_id,
-            )
+        # ``vendor_chase`` plan removed: Solden sends zero email to
+        # vendors (memory 2026-05-02 — second-pass dormant-vendor-emails
+        # decision). The legacy ``check_vendor_response`` +
+        # ``send_vendor_email`` actions had no handlers in
+        # CoordinationEngine._handlers and would KeyError at dispatch.
+        # Operators copy-paste vendor-status text from
+        # ``vendor_inquiry.lookup`` into their own emails instead.
         elif timer_type == "approval_timeout":
             return Plan(
                 event_type="timer_fired",

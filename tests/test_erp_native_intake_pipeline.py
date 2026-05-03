@@ -309,7 +309,19 @@ async def test_sap_adapter_normalizes_abap_shape():
 
 
 @pytest.mark.asyncio
-async def test_sap_adapter_paid_event_resolves_to_closed():
+async def test_sap_adapter_paid_event_handed_off_to_payment_lifecycle():
+    """The intake adapter no longer short-circuits ``paid`` events
+    straight to ``closed``. Wave 2 / C3 routes payment events through
+    the C2 payment-tracking lifecycle (posted_to_erp →
+    awaiting_payment → payment_executed → closed) via the SAP
+    payment webhook dispatcher, which fires in parallel with this
+    adapter. ``derive_state_update`` returning ``target_state=None``
+    is the canonical handoff signal: the bill state machine doesn't
+    advance here; the payment dispatcher closes the loop downstream.
+    Without this contract, the bill would skip the
+    ``payment_confirmations`` row, the remittance advice hook, and
+    the bank-rec match link.
+    """
     import json
     from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
     adapter = SapS4HanaIntakeAdapter()
@@ -323,7 +335,7 @@ async def test_sap_adapter_paid_event_resolves_to_closed():
     env = await adapter.parse_envelope(raw, {}, "org-1")
     assert env.event_type == "paid"
     update = await adapter.derive_state_update("org-1", env)
-    assert update.target_state == "closed"
+    assert update.target_state is None  # Payment dispatcher handles the close.
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,9 @@ try:
 except Exception as e:  # pragma: no cover - optional integration in some local builds
     logging.getLogger(__name__).info("TeamsAPIClient not available: %s", e)
     TeamsAPIClient = None  # type: ignore[assignment]
+from clearledgr.services.budget_awareness import get_budget_awareness  # noqa: F401 — re-export for test patch targets + back-compat
+from clearledgr.services.policy_compliance import get_policy_compliance  # noqa: F401 — re-export for test patch targets + back-compat
+from clearledgr.services.purchase_orders import get_purchase_order_service  # noqa: F401 — re-export for test patch targets + back-compat
 from clearledgr.services.finance_learning import get_finance_learning_service
 from clearledgr.services.approval_card_builder import (
     humanize_reason_code,

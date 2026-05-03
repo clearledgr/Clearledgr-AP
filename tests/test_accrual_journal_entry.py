@@ -76,8 +76,28 @@ def _make_po_with_gr(
     received_quantities=None,
     total: float = 1000.0,
     currency: str = "USD",
+    receipt_date=None,
 ):
-    """Build a PO + GR pair. Returns the (po, gr) objects."""
+    """Build a PO + GR pair. Returns the (po, gr) objects.
+
+    ``receipt_date`` defaults to a date inside the test period (April
+    2026). The accrual builder filters GRs by ``gr.created_at``
+    (not ``gr.receipt_date``) so we set BOTH on the GR — without an
+    explicit ``created_at``, the GR's ``datetime.now()`` default lands
+    outside the fixed test window and the proposals come back empty.
+    """
+    from datetime import date as _date, datetime as _datetime, timezone as _tz
+    if receipt_date is None:
+        # Default to mid-period for the standard April 2026 test window.
+        receipt_date = _date(2026, 4, 15)
+    # Match created_at to receipt_date so the accrual builder's
+    # date filter (which inspects gr.created_at) sees the GR as
+    # in-period.
+    created_at_default = _datetime(
+        receipt_date.year, receipt_date.month, receipt_date.day,
+        12, 0, 0, tzinfo=_tz.utc,
+    )
+
     svc = get_purchase_order_service(org)
     po = svc.create_po(
         vendor_id=vendor,
@@ -107,7 +127,15 @@ def _make_po_with_gr(
         po_id=po.po_id,
         received_by="warehouse@" + org,
         line_items=gr_lines,
+        receipt_date=receipt_date,
+        created_at=created_at_default,
     )
+    # The store may persist created_at from the dataclass on save;
+    # if create_goods_receipt overwrites it with .now(), force the
+    # in-memory object back to the desired value so re-reads via
+    # ``get_goods_receipts_for_po`` see the right date. (Belt + braces:
+    # the kwarg above already sets it on the constructor.)
+    gr.created_at = created_at_default
     return po, gr
 
 

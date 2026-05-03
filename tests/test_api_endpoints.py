@@ -203,7 +203,12 @@ class TestAuthEndpoints:
                     return _Resp(200, {"email": "user@company.com", "id": "google-uid-1"})
                 return _Resp(404, {})
 
-        monkeypatch.setattr(auth_module.httpx, "AsyncClient", _FakeAsyncClient)
+        # auth.py was refactored to use the singleton ``get_http_client()``
+        # rather than constructing ``httpx.AsyncClient()`` per-call, so the
+        # old pattern of patching ``auth_module.httpx.AsyncClient`` no
+        # longer works (auth.py doesn't import httpx anymore). Patch the
+        # factory function instead so it returns our fake client.
+        monkeypatch.setattr(auth_module, "get_http_client", lambda: _FakeAsyncClient())
 
         fake_user = SimpleNamespace(
             id="user-123",
@@ -275,7 +280,7 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[get_current_user] = self._fake_user
         try:
-            with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
+            with patch("clearledgr.api.ap_items_action_routes.get_db", return_value=fake_db):
                 with patch(
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
@@ -306,7 +311,7 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[get_current_user] = self._fake_user
         try:
-            with patch("clearledgr.services.ap_item_service.get_db", return_value=fake_db):
+            with patch("clearledgr.api.ap_items_action_routes.get_db", return_value=fake_db):
                 with patch(
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
@@ -2329,7 +2334,7 @@ class TestExtensionEndpoints:
             def save_gmail_autopilot_state(self, **kwargs):
                 state_calls.append(kwargs)
 
-        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module, "get_http_client", _FakeAsyncClient)
         monkeypatch.setattr(gmail_extension_module, "_token_store", lambda: _FakeTokenStore())
         monkeypatch.setattr(gmail_extension_module, "_gmail_token_class", lambda: SimpleNamespace)
         monkeypatch.setattr(gmail_extension_module, "get_db", lambda: _FakeDB())
@@ -2387,7 +2392,7 @@ class TestExtensionEndpoints:
                     return _Resp(401, {"error": "invalid_token"})
                 return _Resp(404, {})
 
-        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module, "get_http_client", _FakeAsyncClient)
         monkeypatch.setattr(
             gmail_extension_module,
             "get_user_by_email",
@@ -2434,7 +2439,7 @@ class TestExtensionEndpoints:
                     return _Resp(200, {"emailAddress": "mo@clearledgr.com"})
                 return _Resp(404, {})
 
-        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module, "get_http_client", _FakeAsyncClient)
         monkeypatch.setattr(
             gmail_extension_module,
             "get_user_by_email",
@@ -2482,7 +2487,7 @@ class TestExtensionEndpoints:
                     return _Resp(200, {"emailAddress": "new-user@clearledgr.com"})
                 return _Resp(404, {})
 
-        monkeypatch.setattr(gmail_extension_module.httpx, "AsyncClient", _FakeAsyncClient)
+        monkeypatch.setattr(gmail_extension_module, "get_http_client", _FakeAsyncClient)
         monkeypatch.setattr(gmail_extension_module, "get_user_by_email", lambda _email: None)
 
         response = client.post(

@@ -88,6 +88,19 @@ def _seed_po_and_gr(
     line_unit: float = 200.0,
     quantity: float = 5,
 ):
+    """Seed a PO + GR. The GR's ``created_at`` is set to mid-period
+    so the accrual builder's date filter (which inspects
+    ``gr.created_at``) sees the GR as in-period for the standard
+    April 2026 test window. Without this, ``datetime.now()`` lands
+    in May 2026 (per the session date) and the proposals come back
+    empty."""
+    from datetime import date as _date, datetime as _datetime, timezone as _tz
+    receipt_date = _date(2026, 4, 15)
+    created_at = _datetime(
+        receipt_date.year, receipt_date.month, receipt_date.day,
+        12, 0, 0, tzinfo=_tz.utc,
+    )
+
     svc = get_purchase_order_service(org)
     po = svc.create_po(
         vendor_id="Vendor X",
@@ -104,7 +117,7 @@ def _seed_po_and_gr(
     from clearledgr.services.purchase_orders import _po_to_store_dict
     svc._db.save_purchase_order(_po_to_store_dict(po))
     svc.approve_po(po.po_id, approved_by="ops@" + org)
-    svc.create_goods_receipt(
+    gr = svc.create_goods_receipt(
         po_id=po.po_id,
         received_by="warehouse@" + org,
         line_items=[{
@@ -113,7 +126,10 @@ def _seed_po_and_gr(
             "description": "Server",
             "quantity_received": quantity,
         }],
+        receipt_date=receipt_date,
+        created_at=created_at,
     )
+    gr.created_at = created_at  # Belt + braces — see _make_po_with_gr.
     return po
 
 

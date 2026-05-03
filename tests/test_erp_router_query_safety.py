@@ -2,6 +2,10 @@ import asyncio
 import re
 
 from clearledgr.integrations import erp_router
+# httpx now lives in the per-vendor modules (erp_router was refactored
+# to use the get_http_client singleton). Tests monkey-patch
+# ``<module>.httpx.AsyncClient`` where the actual import lives.
+from clearledgr.integrations import erp_quickbooks, erp_netsuite, erp_xero, erp_sap
 from clearledgr.integrations.erp_router import (
     ERPConnection,
     find_vendor_credit_quickbooks,
@@ -58,7 +62,7 @@ def test_quickbooks_vendor_name_query_is_sanitized(monkeypatch):
             captured["query"] = str((params or {}).get("query") or "")
             return _FakeResponse({"QueryResponse": {"Vendor": []}})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_quickbooks.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="quickbooks", access_token="token-1", realm_id="realm-1")
     asyncio.run(find_vendor_quickbooks(conn, name="Acme' OR DisplayName LIKE '%", email=None))
@@ -90,7 +94,7 @@ def test_quickbooks_vendor_email_query_is_sanitized(monkeypatch):
             captured["query"] = str((params or {}).get("query") or "")
             return _FakeResponse({"QueryResponse": {"Vendor": []}})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_quickbooks.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="quickbooks", access_token="token-1", realm_id="realm-1")
     asyncio.run(find_vendor_quickbooks(conn, name=None, email="a%' OR 1=1 --@example.com"))
@@ -123,7 +127,7 @@ def test_quickbooks_vendor_credit_query_is_sanitized(monkeypatch):
             captured["query"] = str((params or {}).get("query") or "")
             return _FakeResponse({"QueryResponse": {"VendorCredit": []}})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_quickbooks.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="quickbooks", access_token="token-1", realm_id="realm-1")
     asyncio.run(find_vendor_credit_quickbooks(conn, "VC-1' OR 1=1 --"))
@@ -155,7 +159,7 @@ def test_netsuite_vendor_name_query_is_sanitized(monkeypatch):
             captured["query"] = str((json or {}).get("q") or "")
             return _FakeResponse({"items": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_netsuite.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(erp_router, "build_netsuite_oauth_header", lambda *args, **kwargs: "oauth")
 
     conn = ERPConnection(type="netsuite", account_id="12345")
@@ -188,7 +192,7 @@ def test_netsuite_vendor_email_query_is_sanitized(monkeypatch):
             captured["query"] = str((json or {}).get("q") or "")
             return _FakeResponse({"items": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_netsuite.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(erp_router, "build_netsuite_oauth_header", lambda *args, **kwargs: "oauth")
 
     conn = ERPConnection(type="netsuite", account_id="12345")
@@ -219,7 +223,7 @@ def test_netsuite_credit_note_query_is_sanitized(monkeypatch):
             captured["query"] = str((json or {}).get("q") or "")
             return _FakeResponse({"items": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_netsuite.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(erp_router, "build_netsuite_oauth_header", lambda *args, **kwargs: "oauth")
 
     conn = ERPConnection(type="netsuite", account_id="12345")
@@ -252,7 +256,7 @@ def test_sap_credit_note_filter_is_sanitized(monkeypatch):
             captured["filter"] = str((params or {}).get("$filter") or "")
             return _FakeResponse({"value": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_sap.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="sap", access_token="session-token", base_url="https://sap.example.com/b1s/v2")
     asyncio.run(find_credit_note_sap(conn, "CN-SAP-1' or NumAtCard eq 'CN-SAP-2"))
@@ -280,7 +284,7 @@ def test_xero_vendor_name_where_clause_is_sanitized(monkeypatch):
             captured["where"] = str((params or {}).get("where") or "")
             return _FakeResponse({"Contacts": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_xero.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="xero", access_token="token-1", tenant_id="tenant-1")
     asyncio.run(find_vendor_xero(conn, name='Acme" OR Name.Contains("x")', email=None))
@@ -310,7 +314,7 @@ def test_xero_credit_note_where_clause_is_sanitized(monkeypatch):
             captured["where"] = str((params or {}).get("where") or "")
             return _FakeResponse({"CreditNotes": []})
 
-    monkeypatch.setattr(erp_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(erp_xero.httpx, "AsyncClient", _FakeAsyncClient)
 
     conn = ERPConnection(type="xero", access_token="token-1", tenant_id="tenant-1")
     asyncio.run(find_credit_note_xero(conn, 'CN-1" OR Type=="ACCRECCREDIT'))

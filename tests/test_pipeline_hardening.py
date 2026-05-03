@@ -52,7 +52,7 @@ class TestSlackCallbackRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.api.slack_invoices.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.api.slack_invoices.get_http_client", return_value=mock_client):
             from clearledgr.api.slack_invoices import _post_to_response_url
             asyncio.run(_post_to_response_url("https://hooks.slack.com/x", {"text": "ok"}))
 
@@ -67,7 +67,7 @@ class TestSlackCallbackRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.api.slack_invoices.httpx.AsyncClient", return_value=mock_client), \
+        with patch("clearledgr.api.slack_invoices.get_http_client", return_value=mock_client), \
              patch("clearledgr.api.slack_invoices.get_db", return_value=db):
             from clearledgr.api.slack_invoices import _post_to_response_url
             asyncio.run(_post_to_response_url("https://hooks.slack.com/x", {"text": "ok"}))
@@ -150,7 +150,7 @@ class TestSlackResponseUrlRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.slack_notifications.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.services.slack_notifications.get_http_client", return_value=mock_client):
             result = asyncio.run(_retry_slack_response_url({
                 "response_url": "https://hooks.slack.com/x",
                 "body": {"text": "hi"},
@@ -353,7 +353,7 @@ class TestDownloadAttachment:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_router.get_http_client", return_value=mock_client):
             result = asyncio.run(_download_attachment("https://example.com/inv.pdf"))
         assert result == b"%PDF test"
 
@@ -364,6 +364,6 @@ class TestDownloadAttachment:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_router.get_http_client", return_value=mock_client):
             result = asyncio.run(_download_attachment("https://example.com/inv.pdf"))
         assert result is None

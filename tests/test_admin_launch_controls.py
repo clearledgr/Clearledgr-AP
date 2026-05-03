@@ -232,7 +232,7 @@ def test_admin_connect_sap_persists_connection(client, db, monkeypatch):
         async def get(self, url, headers=None):
             return _Resp(200)
 
-    monkeypatch.setattr(workspace_shell_module.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(workspace_shell_module, "get_http_client", _FakeAsyncClient)
 
     connect = client.post(
         "/api/workspace/integrations/erp/connect/sap",

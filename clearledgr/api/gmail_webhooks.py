@@ -1399,10 +1399,18 @@ async def process_invoice_email(
                     # base64 / vision step. The hash is the durable
                     # primary identifier; AP item linkage happens
                     # after the workflow creates the AP item below.
+                    #
+                    # NOTE: do NOT re-import ``get_db`` here — Python
+                    # makes ``get_db`` a function-local name as soon
+                    # as ANY assignment-or-import-from sees it inside
+                    # the function, which retroactively turns the
+                    # earlier module-level uses (lines ~966, 1023,
+                    # 1117, 1139, 1509) into ``UnboundLocalError``.
+                    # The module-level import at the top of this
+                    # file already covers this site.
                     archived_hash: Optional[str] = None
                     try:
                         from clearledgr.services.invoice_archive import archive_pdf
-                        from clearledgr.core.database import get_db
                         archived = archive_pdf(
                             get_db(),
                             organization_id=organization_id,

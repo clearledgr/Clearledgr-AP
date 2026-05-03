@@ -131,12 +131,13 @@ def test_normalize_operator_audit_event_maps_runtime_event_classes_to_plain_lang
             "event_type": "retry_recoverable_failure_completed",
         }
     )
-    followup_ready = normalize_operator_audit_event(
-        {
-            "id": "evt-13",
-            "event_type": "vendor_followup_draft_prepared",
-        }
-    )
+    # ``vendor_followup_draft_prepared`` event class was deleted with
+    # the second-pass dormant-vendor-emails decision (memory:
+    # 2026-05-02). Solden no longer authors vendor follow-up emails or
+    # drafts. The corresponding plain-language label mapping was
+    # removed from ap_operator_audit; the assertion that exercised it
+    # is dropped here. The remaining assertions still cover the
+    # canonical event-type → label normalisation.
 
     assert approval_sent["operator_title"] == "Approval requested"
     assert "routed" in str(approval_sent["operator_message"]).lower()
@@ -151,10 +152,6 @@ def test_normalize_operator_audit_event_maps_runtime_event_classes_to_plain_lang
     assert retry_done["operator_title"] == "Retry completed"
     assert "retried" in str(retry_done["operator_message"]).lower()
     assert retry_done["operator_importance"] == "medium"
-
-    assert followup_ready["operator_title"] == "Vendor follow-up prepared"
-    assert "draft is ready" in str(followup_ready["operator_message"]).lower()
-    assert followup_ready["operator_evidence_label"] == "Vendor follow-up"
 
 
 def test_normalize_operator_audit_event_prefers_canonical_mapping_over_stale_operator_payload():

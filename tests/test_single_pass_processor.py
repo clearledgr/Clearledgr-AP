@@ -71,11 +71,18 @@ class TestBuildSinglePassPrompt:
     def test_prompt_does_not_request_routing_decision(self):
         # APDecisionService is the canonical decision-maker; the
         # single-pass response must NOT include a routing recommendation.
+        # The prompt does mention the word "recommendation" as a
+        # NEGATION ("Do not include a routing recommendation; that
+        # decision is owned by another stage.") so we assert on the
+        # negation phrase being present rather than on the word being
+        # absent — this keeps the test signal aligned with the actual
+        # contract (LLM doesn't decide routing) without fighting
+        # explanatory prose in the prompt.
         prompt = _build_single_pass_prompt(
             subject="Test", sender="test@test.com", body="body",
         )
         assert "routing_decision" not in prompt
-        assert "recommendation" not in prompt
+        assert "Do not include a routing recommendation" in prompt
 
     def test_prompt_marks_advisory_fields_explicitly(self):
         prompt = _build_single_pass_prompt(
@@ -644,6 +651,7 @@ class TestSchemaDriftEvent:
                 body="body",
                 organization_id="org-1",
                 thread_id="thread-x",
+                use_cache=False,  # bypass any cached valid result from earlier tests; we want this run to hit the LLM mock + the validation gate.
             )
         assert result is None  # validation failed, fallback fires
         # One drift event with the failed path in details

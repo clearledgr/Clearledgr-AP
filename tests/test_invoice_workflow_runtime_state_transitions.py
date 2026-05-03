@@ -465,55 +465,14 @@ def test_request_budget_adjustment_records_vendor_feedback_summary(service, db, 
     assert summary["request_info_after_approve_count"] >= 1
 
 
-def test_request_budget_adjustment_creates_followup_metadata_and_draft(service, db, monkeypatch):
-    item = _create_ap_item(
-        db,
-        gmail_id="gmail-request-info-followup",
-        state="needs_approval",
-        metadata={"needs_info_question": "Please provide PO number."},
-    )
-    monkeypatch.setattr(db, "get_slack_thread", lambda _gmail_id: None)
-
-    async def _noop_async(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(service, "_update_slack_budget_adjustment_requested", _noop_async)
-
-    class _FakeGmailClient:
-        def __init__(self, user_id):
-            self.user_id = user_id
-
-        async def ensure_authenticated(self):
-            return True
-
-        async def create_draft(self, **_kwargs):
-            return "draft-followup-test-1"
-
-    monkeypatch.setattr("clearledgr.services.gmail_api.GmailAPIClient", _FakeGmailClient)
-
-    result = asyncio.run(
-        service.request_budget_adjustment(
-            gmail_id="gmail-request-info-followup",
-            requested_by="approver@example.com",
-            reason="need_po_number",
-            source_channel="slack",
-            source_channel_id="C-APPROVALS",
-            source_message_ref="1710000000.888",
-        )
-    )
-    assert result["status"] == "needs_info"
-
-    row = db.get_ap_item(item["id"])
-    assert row is not None
-    metadata = json.loads(row["metadata"]) if isinstance(row.get("metadata"), str) else dict(row.get("metadata") or {})
-    assert metadata.get("needs_info_draft_id") == "draft-followup-test-1"
-    assert metadata.get("followup_attempt_count") == 1
-    assert metadata.get("followup_next_action") == "await_vendor_response"
-    assert metadata.get("followup_last_sent_at")
-    assert metadata.get("followup_sla_due_at")
-
-    events = db.list_ap_audit_events(item["id"])
-    assert any(ev.get("event_type") == "vendor_followup_draft_prepared" for ev in events)
+# Removed: test_request_budget_adjustment_creates_followup_metadata_and_draft.
+# Solden's automated vendor-followup authoring + Gmail-draft creation
+# was deleted in the second-pass dormant-vendor-emails decision (memory:
+# 2026-05-02). The state-transition contract is still covered by
+# test_request_budget_adjustment_records_vendor_feedback_summary above;
+# this test exercised the deleted features (needs_info_draft_id,
+# followup_attempt_count, vendor_followup_draft_prepared audit event)
+# and is no longer applicable.
 
 
 def test_approve_invoice_records_vendor_outcome_and_feedback(service, db, monkeypatch):

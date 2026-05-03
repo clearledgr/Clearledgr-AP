@@ -135,14 +135,13 @@ class TestTimerFiredPlans:
         plan = engine.plan(event, {})
         assert [a.name for a in plan.actions] == ["lookup_grn", "evaluate_grn_result"]
 
-    def test_vendor_chase_plan(self, engine):
-        event = AgentEvent(
-            type=AgentEventType.TIMER_FIRED, source="test",
-            payload={"timer_type": "vendor_chase"},
-            organization_id="test",
-        )
-        plan = engine.plan(event, {})
-        assert [a.name for a in plan.actions] == ["check_vendor_response", "send_vendor_email"]
+    # Removed: test_vendor_chase_plan.
+    # The ``vendor_chase`` timer plan was deleted with the second-pass
+    # dormant-vendor-emails decision (memory: 2026-05-02). Solden no
+    # longer schedules ``check_vendor_response`` or ``send_vendor_email``
+    # actions; both had no handlers in CoordinationEngine and would
+    # KeyError at dispatch. Operators copy-paste vendor-status text
+    # from ``vendor_inquiry.lookup`` into their own emails instead.
 
     def test_approval_timeout_logs_timeline(self, engine):
         """Spec: Log escalation to Box timeline."""

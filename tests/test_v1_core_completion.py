@@ -104,15 +104,12 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
         app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_vendor_followup_endpoint_requires_auth(client):
-    response = client.post(
-        "/extension/vendor-followup",
-        json={
-            "email_id": "gmail-thread-unauth",
-            "organization_id": "default",
-        },
-    )
-    assert response.status_code == 401
+# Removed: test_vendor_followup_endpoint_requires_auth.
+# The /extension/vendor-followup endpoint was deleted in the second-
+# pass dormant-vendor-emails decision (memory: 2026-05-02). Solden
+# now sends zero email to vendors and authors zero vendor-facing
+# body text. The endpoint's deletion is the SoR-thesis-aligned
+# action; the test was the last reference to it.
 
 
 def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, client, db):

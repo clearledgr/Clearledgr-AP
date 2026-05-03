@@ -96,7 +96,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-100"))
 
         assert result is not None
@@ -113,7 +113,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-999"))
 
         assert result is None
@@ -124,7 +124,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-100"))
 
         assert result is None
@@ -152,7 +152,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-200"))
 
         assert result is not None
@@ -168,7 +168,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-999"))
 
         assert result is None
@@ -179,7 +179,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-200"))
 
         assert result is None
@@ -201,7 +201,7 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client), \
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
              patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-300"))
 
@@ -218,7 +218,7 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client), \
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
              patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-999"))
 
@@ -230,7 +230,7 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client), \
+        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
              patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-300"))
 
@@ -253,7 +253,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-400"))
 
         assert result is not None
@@ -269,7 +269,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-999"))
 
         assert result is None
@@ -280,7 +280,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.httpx.AsyncClient", return_value=mock_client):
+        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-400"))
 
         assert result is None
