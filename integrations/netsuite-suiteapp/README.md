@@ -52,7 +52,14 @@ Bill (record view)  │  │ Standard │  │ Clearledgr (subtab)│  │
 | 3 (read) | Real per-tenant HMAC JWT auth (Suitelet mints, backend verifies via `webhook_secret` in `erp_connections.credentials`) | ✅ scaffolded | 4 |
 | 1 (write) | UE `afterSubmit` fires signed webhook on bill create/update/paid; backend dispatcher creates/advances/closes Box | ✅ scaffolded | 3 |
 | 2 (write) | Slack approval routing for ERP-native bills with payment holds; remove the hold via NetSuite REST API on approval | ✅ scaffolded | 3 |
-| 4 | SuiteApp marketplace listing | not started | weeks |
+| Audit-trail compose | Panel actions dispatch via dedicated NetSuite endpoints (`/extension/ap-items/by-netsuite-bill/{id}/{approve,reject,request-info}`) so every state_transition audit row records `ui_surface=erp_native_netsuite` (Phase 1 Gap 4 SoR contract) | ✅ shipped | 1 |
+| 4 | SuiteApp marketplace listing | runbook ready | see below |
+
+**Marketplace + BFN runbooks:**
+- [BFN_CERTIFICATION.md](BFN_CERTIFICATION.md) — Built-for-NetSuite certification checklist, test scenarios, security questionnaire, performance benchmarks, customer reference prep.
+- [MARKETPLACE.md](MARKETPLACE.md) — SDN application, ACP → SuiteApp project conversion, marketplace submission, per-tenant install.
+
+Total realistic ship-to-marketplace timeline: **3–5 months** (mostly waiting on NetSuite SDN approval + BFN review).
 
 The code on disk is Phase-1+2+3 ready. What still needs human action: a NetSuite sandbox account, a TBA integration record, and a SuiteCloud CLI install. See **Deploy** below.
 
