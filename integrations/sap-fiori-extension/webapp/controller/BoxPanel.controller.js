@@ -15,12 +15,14 @@
  *   3. _loadBox calls /clearledgr-api/extension/ap-items/by-sap-invoice
  *      with the composite key, populates the Box JSON model, and binds
  *      the view.
- *   4. onApprovePress / onRejectPress call back into the same Slack-
- *      backed action endpoints the NetSuite SuiteApp uses
- *      (/extension/route-low-risk-approval and /extension/reject-invoice
- *      via the existing /extension/* surface). The Approuter prefix
- *      `/clearledgr-api/` resolves to api.clearledgr.com via the BTP
- *      Destination configured in xs-app.json.
+ *   4. onApprovePress / onRejectPress call SAP-specific action
+ *      endpoints under /extension/ap-items/by-sap-invoice/<action>?
+ *      company_code=&supplier_invoice=&fiscal_year=. Those endpoints
+ *      dispatch the runtime intent with source_channel=erp_native_sap
+ *      so Phase 1's decision_context auto-build records
+ *      ui_surface=erp_native_sap on the resulting state_transition
+ *      audit row. The Approuter prefix `/clearledgr-api/` resolves to
+ *      api.clearledgr.com via the BTP Destination in xs-app.json.
  */
 sap.ui.define([
     "sap/ui/core/mvc/Controller",
@@ -201,7 +203,7 @@ sap.ui.define([
         /* ─── Actions ───────────────────────────────────────────────── */
 
         onApprovePress: function () {
-            this._dispatchAction("approve", "/extension/route-low-risk-approval", "Approving …");
+            this._dispatchAction("approve", "Approving …");
         },
 
         onRejectPress: function () {
@@ -214,14 +216,28 @@ sap.ui.define([
                     emphasizedAction: MessageBox.Action.OK,
                     onClose: function (sAction) {
                         if (sAction === MessageBox.Action.OK) {
-                            that._dispatchAction("reject", "/extension/reject-invoice", "Rejecting …");
+                            that._dispatchAction("reject", "Rejecting …");
                         }
                     }
                 }
             );
         },
 
-        _dispatchAction: async function (sAction, sPath, sBusyText) {
+        // Maps the panel's action to the path segment on the backend's
+        // SAP-specific action endpoints. Routing through SAP-specific
+        // endpoints (vs reusing /extension/route-low-risk-approval etc.)
+        // means the dispatch carries source_channel="erp_native_sap"
+        // and the audit chain records ui_surface="erp_native_sap" on
+        // the resulting state_transition row — preserving the SoR
+        // claim that the audit identifies *which surface* the
+        // operator approved from.
+        _ACTION_PATH_SEGMENT: {
+            approve: "approve",
+            reject: "reject",
+            request_info: "request-info"
+        },
+
+        _dispatchAction: async function (sAction, sBusyText) {
             const oBoxModel = this.getOwnerComponent().getModel("box");
             const oSessionModel = this.getOwnerComponent().getModel("session");
             const sApItemId = oBoxModel.getProperty("/ap_item_id");
@@ -229,17 +245,26 @@ sap.ui.define([
                 this._showError("No AP item linked to this invoice.");
                 return;
             }
+            const sSegment = this._ACTION_PATH_SEGMENT[sAction];
+            if (!sSegment) {
+                this._showError("Unknown action: " + sAction);
+                return;
+            }
             MessageToast.show(sBusyText);
             const sToken = oSessionModel.getProperty("/clearledgr_token");
+            const sUrl = "/clearledgr-api/extension/ap-items/by-sap-invoice/" + sSegment
+                + "?company_code=" + encodeURIComponent(this._compositeKey.CompanyCode)
+                + "&supplier_invoice=" + encodeURIComponent(this._compositeKey.SupplierInvoice)
+                + "&fiscal_year=" + encodeURIComponent(this._compositeKey.FiscalYear);
             try {
-                const oResponse = await fetch("/clearledgr-api" + sPath, {
+                const oResponse = await fetch(sUrl, {
                     method: "POST",
                     headers: {
                         "Authorization": "Bearer " + sToken,
                         "Content-Type": "application/json",
                         "Accept": "application/json"
                     },
-                    body: JSON.stringify({ ap_item_id: sApItemId, source: "sap_fiori_panel" }),
+                    body: JSON.stringify({}),
                     credentials: "include"
                 });
                 if (!oResponse.ok) {

@@ -41,16 +41,25 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
-from clearledgr.api.ap_items_read_routes import shared
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import create_access_token, decode_token, _token_data_from_payload
+from clearledgr.core.database import get_db as _get_db
 from clearledgr.core.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/extension", tags=["sap-fiori-extension"])
 _security = HTTPBearer(auto_error=False)
+
+
+# Canonical ui_surface token for actions originating in the SAP Fiori
+# Vendor Invoice panel. Phase 1's decision_context auto-build records
+# this value on every state_transition audit row driven from inside
+# the Fiori extension, distinguishing SAP-rendered approvals from
+# Slack / Teams / NetSuite / web.
+SAP_PANEL_SOURCE_CHANNEL = "erp_native_sap"
 
 
 # ─── XSUAA JWKS verification ────────────────────────────────────────
@@ -276,7 +285,7 @@ async def exchange_xsuaa_for_clearledgr_jwt(
     if not issuer:
         raise HTTPException(status_code=401, detail="sap_xsuaa: missing iss claim in token")
 
-    db = shared.get_db()
+    db = _get_db()
 
     # Step 2: per-tenant config lookup. If we find a match, use the
     # tenant's JWKS URL + audience. The matched row also pins the
@@ -392,7 +401,7 @@ def get_ap_item_by_sap_invoice(
     user = _token_data_from_payload(decoded)
 
     composite_key = f"{company_code}/{supplier_invoice}/{fiscal_year}"
-    db = shared.get_db()
+    db = _get_db()
     item = db.get_ap_item_by_erp_reference(user.organization_id, composite_key)
     if not item:
         raise HTTPException(
@@ -442,3 +451,185 @@ def get_ap_item_by_sap_invoice(
         "outcome": outcome,
         "composite_key": composite_key,
     }
+
+
+# ─── Action endpoints ───────────────────────────────────────────────
+#
+# Phase 4 (audit-trail compose): the Fiori controller calls these
+# instead of the generic ``/extension/route-low-risk-approval`` etc.,
+# because those bake ``source_channel="slack"`` by default. Routing
+# through dedicated SAP endpoints means the dispatch carries
+# ``source_channel="erp_native_sap"`` and Phase 1's decision_context
+# auto-build records ``ui_surface="erp_native_sap"`` on the resulting
+# state_transition audit row — preserving the SoR claim that the
+# audit chain identifies *which surface* the operator used.
+
+
+class SapPanelActionRequest(BaseModel):
+    """Body for POST actions from the SAP Fiori Vendor Invoice panel.
+
+    The Clearledgr JWT carries the user identity + organization, and
+    the supplier-invoice composite key is in the query string, so the
+    body only needs the optional reason text + idempotency key.
+    """
+
+    reason: Optional[str] = Field(default=None, max_length=4000)
+    idempotency_key: Optional[str] = Field(default=None, max_length=200)
+
+
+async def _dispatch_sap_panel_action(
+    *,
+    intent: str,
+    company_code: str,
+    supplier_invoice: str,
+    fiscal_year: str,
+    credentials: Optional[HTTPAuthorizationCredentials],
+    request: SapPanelActionRequest,
+    default_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared pre-flight + runtime dispatch for the three SAP panel actions.
+
+    The pre-flight is identical to the GET endpoint's: validate the
+    Clearledgr JWT (which the Fiori panel obtained via the XSUAA
+    exchange), look up the AP item by the SAP composite key, verify
+    org access. The dispatch wraps ``dispatch_runtime_intent`` with the
+    canonical SAP source channel + the Fiori user's identity so the
+    audit row records the human approver, not ``actor_type="system"``.
+    """
+    from clearledgr.services.agent_command_dispatch import (
+        build_channel_runtime,
+        dispatch_runtime_intent,
+    )
+
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="sap_panel: missing bearer token")
+    try:
+        decoded = decode_token(credentials.credentials)
+    except HTTPException:
+        raise
+    if decoded.get("type") != "access":
+        raise HTTPException(status_code=401, detail="sap_panel: token is not an access token")
+    user = _token_data_from_payload(decoded)
+
+    composite_key = f"{company_code}/{supplier_invoice}/{fiscal_year}"
+    db = _get_db()
+    item = db.get_ap_item_by_erp_reference(user.organization_id, composite_key)
+    if not item:
+        raise HTTPException(
+            status_code=404,
+            detail={"reason": "no_clearledgr_item_for_invoice", "composite_key": composite_key},
+        )
+    verify_org_access(item.get("organization_id") or "default", user)
+    ap_item_id = str(item.get("id") or "").strip()
+
+    actor_id = user.user_id or user.email or "sap_fiori"
+    actor_email = user.email or actor_id
+
+    runtime = build_channel_runtime(
+        organization_id=user.organization_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        db=db,
+        fallback_actor="sap_fiori",
+    )
+    reason_text = (request.reason or default_reason or "").strip() or None
+    payload = {
+        "ap_item_id": ap_item_id,
+        "email_id": str(item.get("thread_id") or item.get("message_id") or ap_item_id),
+        "reason": reason_text,
+        "source_channel": SAP_PANEL_SOURCE_CHANNEL,
+        "source_channel_id": composite_key,
+        "source_message_ref": composite_key,
+        "actor_id": actor_id,
+        "actor_email": actor_email,
+        "actor_display": actor_email,
+    }
+    try:
+        result = await dispatch_runtime_intent(
+            runtime, intent, payload, idempotency_key=request.idempotency_key,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "sap_panel_action_failed: intent=%s ap_item_id=%s err=%s",
+            intent, ap_item_id, exc,
+        )
+        raise HTTPException(status_code=500, detail="sap_panel: action dispatch failed")
+
+    return {
+        "ap_item_id": ap_item_id,
+        "composite_key": composite_key,
+        "intent": intent,
+        "result": result,
+    }
+
+
+@router.post("/ap-items/by-sap-invoice/approve")
+async def approve_sap_invoice(
+    company_code: str = Query(..., min_length=1),
+    supplier_invoice: str = Query(..., min_length=1),
+    fiscal_year: str = Query(..., min_length=1),
+    body: SapPanelActionRequest = Body(default_factory=SapPanelActionRequest),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+) -> Dict[str, Any]:
+    """Approve the AP item linked to this SAP supplier invoice from
+    inside the Fiori Vendor Invoice panel. Dispatches the
+    ``approve_invoice`` runtime intent with
+    ``source_channel="erp_native_sap"`` so the audit chain records the
+    operator's SAP-side click.
+    """
+    return await _dispatch_sap_panel_action(
+        intent="approve_invoice",
+        company_code=company_code,
+        supplier_invoice=supplier_invoice,
+        fiscal_year=fiscal_year,
+        credentials=credentials,
+        request=body,
+        default_reason="approved_in_sap_fiori_panel",
+    )
+
+
+@router.post("/ap-items/by-sap-invoice/reject")
+async def reject_sap_invoice(
+    company_code: str = Query(..., min_length=1),
+    supplier_invoice: str = Query(..., min_length=1),
+    fiscal_year: str = Query(..., min_length=1),
+    body: SapPanelActionRequest = Body(default_factory=SapPanelActionRequest),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+) -> Dict[str, Any]:
+    """Reject the AP item linked to this SAP supplier invoice from
+    inside the Fiori Vendor Invoice panel.
+    """
+    return await _dispatch_sap_panel_action(
+        intent="reject_invoice",
+        company_code=company_code,
+        supplier_invoice=supplier_invoice,
+        fiscal_year=fiscal_year,
+        credentials=credentials,
+        request=body,
+        default_reason="rejected_in_sap_fiori_panel",
+    )
+
+
+@router.post("/ap-items/by-sap-invoice/request-info")
+async def request_info_sap_invoice(
+    company_code: str = Query(..., min_length=1),
+    supplier_invoice: str = Query(..., min_length=1),
+    fiscal_year: str = Query(..., min_length=1),
+    body: SapPanelActionRequest = Body(default_factory=SapPanelActionRequest),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+) -> Dict[str, Any]:
+    """Move the AP item to ``needs_info`` from inside the Fiori panel.
+    Used when the operator wants more documentation or vendor
+    clarification before approving / posting.
+    """
+    return await _dispatch_sap_panel_action(
+        intent="request_info",
+        company_code=company_code,
+        supplier_invoice=supplier_invoice,
+        fiscal_year=fiscal_year,
+        credentials=credentials,
+        request=body,
+        default_reason="info_requested_from_sap_fiori_panel",
+    )
