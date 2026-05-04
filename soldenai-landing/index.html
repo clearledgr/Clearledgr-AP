@@ -6,39 +6,37 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>Solden — the coordination layer for finance teams</title>
-    <meta name="description" content="Solden moves AP records through Gmail, Slack, Teams, NetSuite and SAP without dropping a thread. Capture, validate, route, and post to ERP — one auditable record across every surface your team already uses." />
-    <meta name="theme-color" content="#0A1F44" />
+    <meta name="description" content="One AP record across Gmail, Slack, Teams, NetSuite and SAP. Solden runs the cross-checks your ERP doesn't, then writes the bill back when it's approved." />
+    <meta name="theme-color" content="#050B1E" />
 
-    <!-- Open Graph / social -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Solden — the coordination layer for finance teams" />
-    <meta property="og:description" content="One AP record across Gmail, Slack, Teams, NetSuite and SAP. Capture, validate, route, and post to ERP — without dropping a thread." />
+    <meta property="og:description" content="One AP record across Gmail, Slack, Teams, NetSuite and SAP. Solden runs the cross-checks your ERP doesn't, then writes the bill back when it's approved." />
     <meta property="og:url" content="https://soldenai.com/" />
     <meta property="og:image" content="https://soldenai.com/assets/solden-lockup-dark.png" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- Favicons (architectural S-mark, see ui/web-app/public/) -->
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
-    <!-- Inter (rsms.me — same source as the workspace SPA) -->
     <link rel="preconnect" href="https://rsms.me" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
 
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="theme-dark">
+
     <!-- Topbar ─────────────────────────────────────────────── -->
     <header class="topbar">
       <div class="shell topbar__row">
         <a class="brand" href="/" aria-label="Solden home">
-          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
+          <img class="brand__lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
         </a>
         <nav class="nav" aria-label="Primary">
-          <a class="nav__link" href="/#how">How it works</a>
-          <a class="nav__link" href="/#surfaces">Surfaces</a>
+          <a class="nav__link" href="#capture">How it works</a>
+          <a class="nav__link" href="#surfaces">Surfaces</a>
           <a class="nav__link" href="/security.html">Security</a>
           <a class="nav__link" href="/about.html">About</a>
         </nav>
@@ -50,62 +48,58 @@
 
     <!-- Hero ────────────────────────────────────────────────── -->
     <section class="hero">
-      <div class="hero__grid-bg" aria-hidden="true"></div>
-      <div class="shell hero__inner">
-        <div class="hero__copy">
-          <span class="hero__eyebrow">Coordination layer for finance</span>
-          <h1 class="hero__headline">The coordination layer for finance teams.</h1>
-          <p class="hero__sub">
-            Your AP records move through <strong>Gmail, Slack, Teams, NetSuite and SAP</strong> without dropping a thread. Solden captures invoices, validates them against PO and vendor master, routes for approval, and posts to your ERP — with one auditable record behind every action.
-          </p>
-          <div class="hero__ctas">
-            <a class="btn btn--primary btn--lg" href="/contact.html">Talk to sales <span class="btn__arrow">→</span></a>
-            <a class="btn btn--secondary btn--lg" href="/#how">How it works</a>
-          </div>
-          <div class="hero__notes">
-            <span class="hero__note">SOC 2 Type 1</span>
-            <span class="hero__note">EU &amp; UK launch</span>
-            <span class="hero__note">Sits beside your ERP, not in front</span>
-          </div>
-        </div>
+      <div class="hero__glow" aria-hidden="true"></div>
+      <div class="hero__grid" aria-hidden="true"></div>
 
-        <!-- Live activity ribbon — visual representation of how
-             one AP record moves across surfaces. Static markup;
-             no live data, just the shape of the work. -->
+      <div class="shell hero__inner">
+        <span class="eyebrow">soldenai.com — coordination layer for finance</span>
+        <h1 class="hero__headline">
+          The coordination layer for <span class="hero__accent">finance teams</span>.
+        </h1>
+        <p class="hero__sub">
+          Your AP records move through <strong>Gmail, Slack, Teams, NetSuite and SAP</strong> without dropping a thread. Solden runs the cross-checks your ERP doesn't — then writes the bill back when it's approved.
+        </p>
+        <div class="hero__ctas">
+          <a class="btn btn--primary btn--lg" href="/contact.html">Talk to sales <span class="btn__arrow">→</span></a>
+          <a class="btn btn--secondary btn--lg" href="#capture">See how it works</a>
+        </div>
+      </div>
+
+      <div class="shell hero__below">
         <aside class="ribbon" aria-label="Sample agent activity">
           <div class="ribbon__head">
-            <span class="ribbon__title"><span class="ribbon__pulse" aria-hidden="true"></span> Agent activity</span>
-            <span class="ribbon__meta">live</span>
+            <span class="ribbon__title"><span class="ribbon__pulse" aria-hidden="true"></span> agent.activity</span>
+            <span class="ribbon__meta">live · production</span>
           </div>
           <ol class="ribbon__list">
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--blue" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">Captured</span> <span class="ribbon__subject">invoice from Northwind Logistics</span></span>
-              <span class="ribbon__surface">Gmail</span>
+              <span><span class="ribbon__verb">captured</span> <span class="ribbon__subject">invoice from Northwind Logistics · €18,420.00</span></span>
+              <span class="ribbon__surface">gmail</span>
               <time class="ribbon__time">just now</time>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--teal" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">Validated</span> <span class="ribbon__subject">3-way match · PO #4821 · €18,420</span></span>
-              <span class="ribbon__surface">PO</span>
+              <span><span class="ribbon__verb">validated</span> <span class="ribbon__subject">3-way match · PO #4821 · vendor verified</span></span>
+              <span class="ribbon__surface">match</span>
               <time class="ribbon__time">12s</time>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--amber" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">Routed</span> <span class="ribbon__subject">to Priya for approval (over €15k)</span></span>
-              <span class="ribbon__surface">Slack</span>
+              <span><span class="ribbon__verb">routed</span> <span class="ribbon__subject">to Priya for approval · over €15k threshold</span></span>
+              <span class="ribbon__surface">slack</span>
               <time class="ribbon__time">22s</time>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--green" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">Posted</span> <span class="ribbon__subject">bill to NetSuite · GL 5210 · vendor balance updated</span></span>
-              <span class="ribbon__surface">NetSuite</span>
+              <span><span class="ribbon__verb">posted</span> <span class="ribbon__subject">bill to NetSuite · GL 5210 · vendor balance updated</span></span>
+              <span class="ribbon__surface">netsuite</span>
               <time class="ribbon__time">1m 04s</time>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--gray" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">Logged</span> <span class="ribbon__subject">to audit trail · ref AP-9182</span></span>
-              <span class="ribbon__surface">Audit</span>
+              <span><span class="ribbon__verb">logged</span> <span class="ribbon__subject">audit event AP-9182 · append-only</span></span>
+              <span class="ribbon__surface">audit</span>
               <time class="ribbon__time">1m 06s</time>
             </li>
           </ol>
@@ -113,131 +107,310 @@
       </div>
     </section>
 
-    <!-- How it works — 4 steps ────────────────────────────── -->
-    <section class="section" id="how">
-      <div class="shell">
-        <div class="section__head">
-          <span class="section__eyebrow">How it works</span>
-          <h2 class="section__title">From inbox to ERP, with one record across every step.</h2>
-          <p class="section__sub">
-            Solden does the cross-checks the ERP doesn't run. It never replaces your ERP, never authors vendor master, never triggers payment. Treasury still owns the payment batch.
+    <!-- 01 · Capture ────────────────────────────────────────── -->
+    <section class="showcase" id="capture">
+      <div class="shell showcase__inner">
+        <div class="showcase__copy">
+          <span class="showcase__step">01 — capture</span>
+          <h2 class="showcase__title">Invoices land where your team already lives.</h2>
+          <p class="showcase__body">
+            Gmail, Outlook, an ERP queue, PEPPOL UBL — Solden lifts line items, totals, taxes and references. Structured input goes through; unstructured runs extraction with vision fallback.
           </p>
+          <ul class="showcase__notes">
+            <li>PDF · UBL · forwarded threads · attachments</li>
+            <li>Vision fallback for scans &amp; photos</li>
+            <li>Zero email auto-sent to vendors</li>
+          </ul>
         </div>
 
-        <div class="steps">
-          <article class="step">
-            <span class="step__num">1</span>
-            <h3 class="step__title">Capture</h3>
-            <p class="step__body">
-              Invoices land in Gmail, Outlook, an ERP queue, or PEPPOL. Solden lifts the line items, totals, taxes and references — structured input goes straight through, unstructured runs through extraction with vision fallback.
-            </p>
-            <span class="step__chip">PDF · UBL · email body</span>
-          </article>
-
-          <article class="step">
-            <span class="step__num">2</span>
-            <h3 class="step__title">Validate</h3>
-            <p class="step__body">
-              3-way match against PO and GRN. Vendor master and bank-detail check. Duplicate, sanctions and budget gates. Match-tolerance is a deterministic rule, not a model guess.
-            </p>
-            <span class="step__chip"><code>PO ↔ GRN ↔ Invoice</code></span>
-          </article>
-
-          <article class="step">
-            <span class="step__num">3</span>
-            <h3 class="step__title">Route</h3>
-            <p class="step__body">
-              Routes to the right approver based on your policy — amount band, vendor risk, GL account. The decision happens in Slack, Teams, NetSuite or SAP, wherever your team already works. Sidebar in Gmail shows the live state.
-            </p>
-            <span class="step__chip">Slack · Teams · NetSuite · SAP · Gmail</span>
-          </article>
-
-          <article class="step">
-            <span class="step__num">4</span>
-            <h3 class="step__title">Post</h3>
-            <p class="step__body">
-              Once approved, Solden writes the bill to your ERP — correct GL accounts, vendor balance, FX, document references. Treasury runs the payment batch out of the ERP on its own schedule.
-            </p>
-            <span class="step__chip">No payment trigger</span>
-          </article>
+        <div class="showcase__mock">
+          <div class="mock">
+            <div class="mock__header">
+              <span class="mock__chrome"><i></i></span>
+              <span class="mock__title">gmail · ap@your-co.example</span>
+              <span class="mock__status">3 new</span>
+            </div>
+            <div class="mail">
+              <div class="mail__row mail__row--hot">
+                <span class="mail__sender">Northwind Logistics</span>
+                <span class="mail__subject">
+                  <span class="mail__subject-text">Invoice INV-4821 · €18,420.00</span>
+                  <span class="mail__attach">PDF</span>
+                </span>
+                <span class="mail__right">
+                  <span class="mail__solden">solden · captured</span>
+                </span>
+              </div>
+              <div class="mail__row">
+                <span class="mail__sender">Acme Office Supplies</span>
+                <span class="mail__subject">
+                  <span class="mail__subject-text">Stationery — March 2026</span>
+                  <span class="mail__attach">UBL</span>
+                </span>
+                <span class="mail__right">8:14</span>
+              </div>
+              <div class="mail__row">
+                <span class="mail__sender">Globex Software</span>
+                <span class="mail__subject">
+                  <span class="mail__subject-text">Re: Q1 license renewal</span>
+                </span>
+                <span class="mail__right">7:52</span>
+              </div>
+              <div class="mail__row">
+                <span class="mail__sender">Initech Cleaning Co.</span>
+                <span class="mail__subject">
+                  <span class="mail__subject-text">Apr cleaning — Invoice 0322</span>
+                  <span class="mail__attach">PDF</span>
+                </span>
+                <span class="mail__right">Yesterday</span>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
+    </section>
+
+    <!-- 02 · Validate ───────────────────────────────────────── -->
+    <section class="showcase showcase--reverse" id="validate">
+      <div class="shell showcase__inner">
+        <div class="showcase__copy">
+          <span class="showcase__step">02 — validate</span>
+          <h2 class="showcase__title">3-way match, sanctions, duplicates, budget — before a human looks.</h2>
+          <p class="showcase__body">
+            Match tolerance is a deterministic rule, not a model guess. Vendor master, bank-detail check, sanctions screen, duplicate gate and budget check all run before the record reaches an approver.
+          </p>
+          <ul class="showcase__notes">
+            <li>PO ↔ GRN ↔ invoice with ±0.5% tolerance</li>
+            <li>Sanctions + duplicate gates BLOCK on hit</li>
+            <li>Budget check NEEDS_INFO if over period</li>
+          </ul>
+        </div>
+
+        <div class="showcase__mock">
+          <div class="mock">
+            <div class="mock__header">
+              <span class="mock__chrome"><i></i></span>
+              <span class="mock__title">3-way match · PO ↔ GRN ↔ invoice</span>
+              <span class="mock__status mock__status--ok">✓ matched</span>
+            </div>
+            <div class="diff">
+              <div class="diff__col">
+                <div class="diff__label">PO #4821</div>
+                <dl class="diff__list">
+                  <div class="diff__row"><dt class="diff__key">vendor</dt><dd class="diff__val">Northwind Logistics</dd></div>
+                  <div class="diff__row"><dt class="diff__key">amount</dt><dd class="diff__val">€18,420.00</dd></div>
+                  <div class="diff__row"><dt class="diff__key">date</dt><dd class="diff__val">2026-04-22</dd></div>
+                  <div class="diff__row"><dt class="diff__key">gl</dt><dd class="diff__val">5210 Logistics</dd></div>
+                </dl>
+              </div>
+              <div class="diff__col">
+                <div class="diff__label">GRN #8821</div>
+                <dl class="diff__list">
+                  <div class="diff__row"><dt class="diff__key">vendor</dt><dd class="diff__val">Northwind Logistics</dd></div>
+                  <div class="diff__row"><dt class="diff__key">amount</dt><dd class="diff__val">€18,420.00</dd></div>
+                  <div class="diff__row"><dt class="diff__key">received</dt><dd class="diff__val">2026-04-26</dd></div>
+                  <div class="diff__row"><dt class="diff__key">qty</dt><dd class="diff__val">1 / 1</dd></div>
+                </dl>
+              </div>
+              <div class="diff__col diff__col--target">
+                <div class="diff__label">invoice INV-4821</div>
+                <dl class="diff__list">
+                  <div class="diff__row"><dt class="diff__key">vendor</dt><dd class="diff__val">Northwind Logistics <span class="diff__ok">✓</span></dd></div>
+                  <div class="diff__row"><dt class="diff__key">amount</dt><dd class="diff__val">€18,420.00 <span class="diff__ok">✓</span></dd></div>
+                  <div class="diff__row"><dt class="diff__key">date</dt><dd class="diff__val">2026-04-28</dd></div>
+                  <div class="diff__row"><dt class="diff__key">tax_id</dt><dd class="diff__val">DE-128… <span class="diff__ok">✓</span></dd></div>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 · Route ──────────────────────────────────────────── -->
+    <section class="showcase" id="route">
+      <div class="shell showcase__inner">
+        <div class="showcase__copy">
+          <span class="showcase__step">03 — route</span>
+          <h2 class="showcase__title">Decisions happen where your team already decides.</h2>
+          <p class="showcase__body">
+            Slack and Teams for fast approvals. NetSuite SuiteApp and SAP Fiori extension for in-ERP review. Gmail sidebar shows live state and risks. Same record everywhere; the audit trail follows the record, not the surface.
+          </p>
+          <ul class="showcase__notes">
+            <li>Policy-driven routing on amount, vendor, GL</li>
+            <li>Override window with one-click undo</li>
+            <li>Approval is signed; sidebar reflects within seconds</li>
+          </ul>
+        </div>
+
+        <div class="showcase__mock">
+          <div class="mock">
+            <div class="mock__header">
+              <span class="mock__chrome"><i></i></span>
+              <span class="mock__title">slack · #finance-approvals</span>
+            </div>
+            <div class="slack">
+              <div class="slack__head">
+                <span class="slack__avatar">S</span>
+                <span class="slack__app">Solden</span>
+                <span class="slack__app-tag">APP</span>
+                <span>· just now</span>
+              </div>
+              <div class="slack__card">
+                <div class="slack__title">Invoice ready for approval</div>
+                <div class="slack__meta">Northwind Logistics · €18,420.00 · GL 5210 · PO #4821</div>
+                <div class="slack__notes">
+                  <span class="slack__notes-item">3-way match</span>
+                  <span class="slack__notes-item">vendor verified</span>
+                  <span class="slack__notes-item">no duplicate</span>
+                  <span class="slack__notes-item slack__notes-item--warn">over €15k threshold</span>
+                </div>
+                <div class="slack__actions">
+                  <button class="slack__btn slack__btn--primary" type="button" disabled>Approve</button>
+                  <button class="slack__btn" type="button" disabled>Ask</button>
+                  <button class="slack__btn" type="button" disabled>Escalate</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 · Post ───────────────────────────────────────────── -->
+    <section class="showcase showcase--reverse" id="post">
+      <div class="shell showcase__inner">
+        <div class="showcase__copy">
+          <span class="showcase__step">04 — post</span>
+          <h2 class="showcase__title">Bill written back to your ERP. Never to your bank.</h2>
+          <p class="showcase__body">
+            On approval, Solden writes the bill — correct GL accounts, vendor balance, FX, document references. Treasury runs the payment batch out of the ERP on its own schedule. Solden does not initiate payments.
+          </p>
+          <ul class="showcase__notes">
+            <li>NetSuite / SAP / QuickBooks / Xero / Dynamics</li>
+            <li>Idempotent retries with token auto-refresh</li>
+            <li>Append-only audit ref returned in &lt; 200ms</li>
+          </ul>
+        </div>
+
+        <div class="showcase__mock">
+          <div class="mock">
+            <div class="mock__header">
+              <span class="mock__chrome"><i></i></span>
+              <span class="mock__title">netsuite.bill · POST</span>
+              <span class="mock__status mock__status--ok">200 OK · 142ms</span>
+            </div>
+<pre class="code"><span class="code__key">vendor</span>:       <span class="code__val--str">"Northwind Logistics"</span>
+<span class="code__key">amount</span>:       <span class="code__val--num">18420.00</span> <span class="code__val--str">EUR</span>
+<span class="code__key">gl</span>:           <span class="code__val--str">"5210 Logistics"</span>
+<span class="code__key">po_ref</span>:       <span class="code__val--str">"4821"</span>
+<span class="code__key">approved_by</span>:  <span class="code__val--str">"priya@your-co.example"</span>
+<span class="code__key">audit_ref</span>:    <span class="code__val--str">"AP-9182"</span>            <span class="code__cmt"># append-only</span>
+<span class="code__key">payment</span>:      <span class="code__val--str">null</span>                  <span class="code__cmt"># solden never triggers</span>
+</pre>
+            <div class="audit">
+              <div class="audit__head">audit trail · AP-9182</div>
+              <div class="audit__row"><span class="audit__time">14:02:11</span><span class="audit__verb">captured</span><span class="audit__detail">from gmail</span></div>
+              <div class="audit__row"><span class="audit__time">14:02:23</span><span class="audit__verb">validated</span><span class="audit__detail">3-way match · PO #4821</span></div>
+              <div class="audit__row"><span class="audit__time">14:02:45</span><span class="audit__verb">routed</span><span class="audit__detail">→ Priya · #finance-approvals</span></div>
+              <div class="audit__row"><span class="audit__time">14:03:18</span><span class="audit__verb">approved</span><span class="audit__detail">by priya@your-co</span></div>
+              <div class="audit__row"><span class="audit__time">14:03:21</span><span class="audit__verb audit__verb--ok">posted</span><span class="audit__detail">netsuite bill #8821</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Decision rules ─────────────────────────────────────── -->
+    <section class="rules">
+      <div class="shell shell--tight rules__head">
+        <span class="eyebrow eyebrow--teal">deterministic by default</span>
+        <h2 class="section-title">Routing decisions are rules. The model never gets a vote.</h2>
+        <p class="section-sub" style="margin-left:auto;margin-right:auto;text-align:center;">
+          Match tolerance, sanctions, duplicates, budget gates, 3-way logic — all deterministic. Claude reads invoices and writes operator-facing prose; it doesn't decide anything routing-relevant.
+        </p>
+      </div>
+      <div class="shell">
+<pre class="rules__pre"><span class="rules__op">match</span>   PO ↔ GRN ↔ invoice              <span class="rules__cmt"># tolerance ±0.5% on amount</span>
+<span class="rules__op">gate</span>    sanctions(vendor)                <span class="rules__cmt"># BLOCK on hit</span>
+<span class="rules__op">gate</span>    duplicate(invoice_no, vendor)    <span class="rules__cmt"># BLOCK</span>
+<span class="rules__op">gate</span>    budget(gl, period)               <span class="rules__cmt"># NEEDS_INFO if over</span>
+<span class="rules__op">gate</span>    bank_detail_change(vendor)       <span class="rules__cmt"># NEEDS_INFO + verify</span>
+
+<span class="rules__op">route</span>   amount &gt; 15_000                  <span class="rules__arrow">→</span> CFO
+<span class="rules__op">route</span>   amount &gt; 5_000                   <span class="rules__arrow">→</span> Controller
+<span class="rules__op">route</span>   default                          <span class="rules__arrow">→</span> AP Lead
+
+<span class="rules__op">post</span>    erp.bill                         <span class="rules__cmt"># on approve · idempotent</span>
+<span class="rules__op">log</span>     audit_event                      <span class="rules__cmt"># append-only · DB trigger</span>
+</pre>
       </div>
     </section>
 
     <!-- Render targets ─────────────────────────────────────── -->
-    <section class="section section--dark" id="surfaces">
+    <section class="surfaces" id="surfaces">
       <div class="shell">
-        <div class="section__head">
-          <span class="section__eyebrow">Render targets</span>
-          <h2 class="section__title">One record. Five surfaces. No translation tax.</h2>
-          <p class="section__sub">
+        <div class="surfaces__head">
+          <span class="eyebrow">render targets</span>
+          <h2 class="section-title">Five surfaces. One record.</h2>
+          <p class="section-sub">
             Finance teams don't pick a tool — they live across them. Solden renders the same AP record in every surface so the work doesn't fork.
           </p>
         </div>
-
-        <div class="surfaces">
-          <article class="surface">
-            <span class="surface__icon">G</span>
-            <h3 class="surface__name">Gmail</h3>
-            <p class="surface__role">Capture &amp; context. Sidebar shows live state, history, and risks.</p>
-          </article>
-          <article class="surface">
-            <span class="surface__icon">S</span>
-            <h3 class="surface__name">Slack</h3>
-            <p class="surface__role">Decision surface. Approve, reject, ask, escalate — without leaving the channel.</p>
-          </article>
-          <article class="surface">
-            <span class="surface__icon">T</span>
-            <h3 class="surface__name">Teams</h3>
-            <p class="surface__role">Decision surface for Microsoft-first orgs. Same actions, same audit trail.</p>
-          </article>
-          <article class="surface">
-            <span class="surface__icon">N</span>
-            <h3 class="surface__name">NetSuite</h3>
-            <p class="surface__role">Native SuiteApp. Approve and review inside the system of record.</p>
-          </article>
-          <article class="surface">
-            <span class="surface__icon">F</span>
-            <h3 class="surface__name">SAP Fiori</h3>
-            <p class="surface__role">Fiori extension for S/4HANA shops. Decisions never leave SAP.</p>
-          </article>
+        <div class="surfaces__list">
+          <div class="surface-row">
+            <span class="surface-row__name">Gmail</span>
+            <span class="surface-row__role">Capture &amp; context. Sidebar shows live state, history, and risks.</span>
+            <span class="surface-row__verb">read · label · sidebar</span>
+          </div>
+          <div class="surface-row">
+            <span class="surface-row__name">Slack</span>
+            <span class="surface-row__role">Decision surface. Approve, reject, ask, escalate without leaving the channel.</span>
+            <span class="surface-row__verb">approval cards · queries</span>
+          </div>
+          <div class="surface-row">
+            <span class="surface-row__name">Teams</span>
+            <span class="surface-row__role">Decision surface for Microsoft-first orgs. Same actions, same audit trail.</span>
+            <span class="surface-row__verb">adaptive cards · queries</span>
+          </div>
+          <div class="surface-row">
+            <span class="surface-row__name">NetSuite</span>
+            <span class="surface-row__role">Native SuiteApp. Approve and review inside the system of record.</span>
+            <span class="surface-row__verb">SuiteApp · BFN-ready</span>
+          </div>
+          <div class="surface-row">
+            <span class="surface-row__name">SAP Fiori</span>
+            <span class="surface-row__role">Fiori extension for S/4HANA shops. Decisions never leave SAP.</span>
+            <span class="surface-row__verb">Fiori · ICC-ready</span>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- Trust block ────────────────────────────────────────── -->
-    <section class="section section--alt">
+    <!-- Trust row ──────────────────────────────────────────── -->
+    <section class="trust-row">
       <div class="shell">
-        <div class="section__head">
-          <span class="section__eyebrow">Built for finance, not consumers</span>
-          <h2 class="section__title">Defaults that an audit committee can sign off on.</h2>
+        <div class="trust-row__head">
+          <span class="eyebrow">defaults</span>
+          <h2 class="section-title">An audit committee can sign off on this.</h2>
         </div>
-
-        <div class="trust">
-          <article class="trust__card">
-            <h3 class="trust__title">Auditable by default</h3>
-            <p class="trust__body">
-              Every action — capture, validation, routing, post — lands in an <strong>append-only audit trail</strong> tied to the record. Tamper-protected via database triggers, not application logic. Your auditors get a single ref ID per AP item.
-            </p>
-          </article>
-          <article class="trust__card">
-            <h3 class="trust__title">Deterministic where it matters</h3>
-            <p class="trust__body">
-              Matching, tolerance, sanctions, budget gates and 3-way logic are <strong>rules, not models</strong>. The model reads unstructured input and writes operator-facing prose — it doesn't get a vote on routing.
-            </p>
-          </article>
-          <article class="trust__card">
-            <h3 class="trust__title">Zero email to vendors</h3>
-            <p class="trust__body">
-              Solden never emails your vendors and never authors vendor-facing body text. Vendor outreach stays with the operator. <strong>Less surface area, less reputational risk</strong>.
-            </p>
-          </article>
-          <article class="trust__card">
-            <h3 class="trust__title">Sits beside the ERP</h3>
-            <p class="trust__body">
-              We don't replace NetSuite, SAP, QuickBooks or Xero. <strong>Solden runs the cross-checks they don't</strong> and writes the bill back when it's approved. Payment execution stays in the ERP.
-            </p>
-          </article>
+        <div class="stats">
+          <div class="stat">
+            <span class="stat__num stat__num--accent">0</span>
+            <span class="stat__label">emails Solden sends to your vendors. Zero. Vendor outreach stays with the operator.</span>
+          </div>
+          <div class="stat">
+            <span class="stat__num">SOC 2</span>
+            <span class="stat__label">Type 1 at launch. Type 2 observation in window. DPA signed before production data flows.</span>
+          </div>
+          <div class="stat">
+            <span class="stat__num">100%</span>
+            <span class="stat__label">routing decisions made by deterministic rules. The model never votes on outcomes.</span>
+          </div>
+          <div class="stat">
+            <span class="stat__num">∞</span>
+            <span class="stat__label">append-only audit trail enforced by DB triggers. Tamper-evident by design.</span>
+          </div>
         </div>
       </div>
     </section>
@@ -265,15 +438,15 @@
             <p class="footer__tagline">The coordination layer for finance teams. AP records that don't drop a thread.</p>
           </div>
           <div>
-            <span class="footer__col-title">Product</span>
+            <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="/#how">How it works</a></li>
-              <li><a href="/#surfaces">Surfaces</a></li>
+              <li><a href="#capture">How it works</a></li>
+              <li><a href="#surfaces">Surfaces</a></li>
               <li><a href="/contact.html">Talk to sales</a></li>
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Trust</span>
+            <span class="footer__col-title">trust</span>
             <ul class="footer__col-list">
               <li><a href="/security.html">Security</a></li>
               <li><a href="/security.html#dpa">DPA</a></li>
@@ -281,7 +454,7 @@
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Company</span>
+            <span class="footer__col-title">company</span>
             <ul class="footer__col-list">
               <li><a href="/about.html">About</a></li>
               <li><a href="/contact.html">Contact</a></li>
