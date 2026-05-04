@@ -1,5 +1,5 @@
 /* ============================================================
- * pages.css — sub-page primitives layered on top of styles.css
+ * pages.css, sub-page primitives layered on top of styles.css
  *
  * Used by: security.html, about.html, contact.html.
  * Keeps the homepage in styles.css uncluttered while sharing the
@@ -378,7 +378,7 @@
   cursor: progress;
 }
 
-/* honeypot — invisible to users, harvested by bots */
+/* honeypot, invisible to users, harvested by bots */
 .form__hp {
   position: absolute;
   left: -9999px;

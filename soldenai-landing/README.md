@@ -9,7 +9,7 @@ Express server that:
   them to a dedicated Postgres database.
 - Optionally fires a Slack notification when a lead lands.
 
-The product (workspace SPA + API) lives elsewhere — this directory is
+The product (workspace SPA + API) lives elsewhere, this directory is
 marketing only, with its own dedicated database. The product DB is
 intentionally isolated from this service.
 
@@ -26,7 +26,7 @@ soldenai-landing/
 ├── site.js           # year stamp + contact-form fetch
 ├── server.js         # Express static server + /api/contact + CSP / HSTS / health
 ├── scripts/
-│   └── list-leads.js # `npm run leads` — print recent submissions
+│   └── list-leads.js # `npm run leads`, print recent submissions
 ├── railway.toml      # Railway build/deploy config
 ├── package.json
 └── assets/           # brand PNGs (lockups + favicons)
@@ -44,7 +44,7 @@ export DATABASE_URL="postgresql://you@localhost:5432/soldenai_landing"
 npm start                                    # http://localhost:8080
 ```
 
-The static site serves cleanly even if `DATABASE_URL` is missing —
+The static site serves cleanly even if `DATABASE_URL` is missing ,
 form submissions return `503 no_storage` in that case, with a logged
 warning, so a misconfigured deploy is loud rather than silent.
 
@@ -116,14 +116,14 @@ CREATE TABLE leads (
 );
 ```
 
-`ip_hash` is a truncated SHA-256 of the requesting IP — enough to
+`ip_hash` is a truncated SHA-256 of the requesting IP, enough to
 spot a single source spamming, without retaining PII directly.
 
 Each request also runs through:
 
 - **Honeypot** (`company_website` field). If filled, the response is a
   silent `200 ok` and nothing is stored.
-- **Email + name validation**. Bad email or empty name → `400`.
+- **Email + name validation**. Bad email or empty name to `400`.
 - **Bounded body** (`32kb` JSON limit) and bounded per-field length.
 - **Parameterised SQL**, no string interpolation.
 
@@ -135,11 +135,11 @@ mirrored into `soldenai-landing/assets/`.
 
 Brand colours: navy `#0A1F44` + teal `#18BFB0`. Inter (rsms.me) at 700
 for headlines, 500/600 for body. Visual references: Linear, Vercel,
-Modal — explicitly **not** BILL/Ramp/Stacks.ai.
+Modal, explicitly **not** BILL/Ramp/Stacks.ai.
 
 ## Content rules
 
-- "Talk to sales" only — no public pricing on the marketing site.
+- "Talk to sales" only, no public pricing on the marketing site.
 - All four product claims (capture / validate / route / post) are
   verified against the codebase. Solden does not initiate payments.
 - Solden authors zero vendor-facing email body text. Don't add copy
@@ -151,6 +151,6 @@ Modal — explicitly **not** BILL/Ramp/Stacks.ai.
 
 The legacy Clearledgr-era `landing-page/` directory continues to run
 at `clearledgr.com`. Once `soldenai.com` is live on Railway, point a
-301 redirect from `clearledgr.com` → `soldenai.com` at the edge (or
+301 redirect from `clearledgr.com` to `soldenai.com` at the edge (or
 inside `landing-page/server.js`) and retire the old service when
 analytics confirm zero residual traffic.

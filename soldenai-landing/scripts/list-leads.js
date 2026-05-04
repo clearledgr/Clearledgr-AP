@@ -1,5 +1,5 @@
 /**
- * list-leads.js — `npm run leads` helper.
+ * list-leads.js, `npm run leads` helper.
  *
  * Prints the most recent submissions from the `leads` table without
  * needing a psql install. Reads DATABASE_URL from the environment, so

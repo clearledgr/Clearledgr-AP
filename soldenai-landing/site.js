@@ -1,12 +1,12 @@
 /**
- * site.js — tiny shared client behaviour for soldenai.com.
+ * site.js, tiny shared client behaviour for soldenai.com.
  *
  * Loaded from every page. Intentionally framework-free: the marketing
  * site is static HTML by design.
  *
  * Two responsibilities:
  *   1. Stamp the current year into any `[data-year]` element.
- *   2. Wire the contact form (if present) — POST to /api/contact and
+ *   2. Wire the contact form (if present), POST to /api/contact and
  *      flip into success or error state in place.
  */
 
@@ -51,7 +51,7 @@
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
 
-    // Honeypot — silently flip into success state, do NOT send.
+    // Honeypot, silently flip into success state, do NOT send.
     var hp = form.querySelector('input[name="company_website"]');
     if (hp && hp.value) {
       form.classList.add('is-sent');
