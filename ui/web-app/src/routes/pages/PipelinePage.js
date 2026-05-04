@@ -800,7 +800,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
                   <${StatePill} state=${focusedItem.state} />
                 </div>
                 <div class="muted" style="font-size:12px">
-                  ${focusedItem.vendor_name || focusedItem.vendor || 'Unknown vendor'} ·
+                  ${focusedItem.vendor_name || focusedItem.vendor || 'Vendor not extracted'} ·
                   ${getDocumentSummary(focusedItem)} · ${getAmountLabel(focusedItem)}
                 </div>
               </div>

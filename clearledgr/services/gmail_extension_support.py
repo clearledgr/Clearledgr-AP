@@ -514,7 +514,10 @@ def _explain_fallback(
     if state == "needs_info":
         if needs_info_question:
             parts.append(f"Waiting for information: {needs_info_question}")
-        suggested_action = "Use 'Draft vendor reply' to request the missing information."
+        # Solden does not send email to vendors and does not author
+        # vendor body text (memory: 2026-05-02). Operators reply
+        # directly from Gmail using the existing thread.
+        suggested_action = "Reply to the vendor in Gmail to request the missing information."
     elif state in ("failed_post", "posting"):
         suggested_action = "Retry ERP posting or use browser fallback."
     elif state in ("needs_approval", "pending_review"):

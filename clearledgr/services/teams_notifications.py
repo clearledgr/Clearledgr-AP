@@ -404,7 +404,7 @@ def build_finance_summary_reply_activity(
                 {"title": "Amount", "value": f"{currency} {amount_value:,.2f}"},
                 {"title": "Invoice #", "value": invoice_number},
                 {"title": "Next", "value": str(agent_next_action.get("label") or agent_next_action.get("type") or "Review current AP state")},
-                {"title": "Agent", "value": str(agent_profile.get("name") or "Clearledgr AP Agent")},
+                {"title": "Agent", "value": str(agent_profile.get("name") or "Solden AP Agent")},
             ],
         },
         {

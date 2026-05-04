@@ -40,11 +40,13 @@ const COMMON_EVENT_TYPES = [
   { value: 'illegal_transition_blocked,invoice_reverse_blocked,invoice_snooze_blocked', label: 'Blocked actions' },
 ];
 
-const COMMON_BOX_TYPES = [
-  { value: '', label: 'All Box types' },
+// Record-type filter for the audit log. Vendor onboarding was
+// subordinated to AP (memory: 2026-04-30) and isn't a customer-
+// visible record type today; bringing it back is a separate decision.
+const COMMON_RECORD_TYPES = [
+  { value: '', label: 'All record types' },
   { value: 'ap_item', label: 'AP item' },
   { value: 'organization', label: 'Organization' },
-  { value: 'vendor_onboarding_session', label: 'Vendor onboarding' },
 ];
 
 
@@ -93,12 +95,12 @@ function FilterBar({ filters, setFilters, onApply, onReset, onExport, exportStat
         </select>
       </label>
       <label class="cl-audit-filter-field">
-        <span>Box type</span>
+        <span>Record type</span>
         <select
           value=${filters.box_type}
           onChange=${(e) => setField('box_type', e.target.value)}
           disabled=${busy}>
-          ${COMMON_BOX_TYPES.map((opt) => html`
+          ${COMMON_RECORD_TYPES.map((opt) => html`
             <option value=${opt.value}>${opt.label}</option>
           `)}
         </select>
@@ -113,7 +115,7 @@ function FilterBar({ filters, setFilters, onApply, onReset, onExport, exportStat
           disabled=${busy} />
       </label>
       <label class="cl-audit-filter-field">
-        <span>Box ID</span>
+        <span>Record ID</span>
         <input
           type="text"
           placeholder="ap-12345"
@@ -240,7 +242,7 @@ function DetailPanel({ event, onClose, api, orgId }) {
         <dl class="cl-audit-detail-grid">
           <dt>Event ID</dt><dd><code>${full?.id}</code></dd>
           <dt>Timestamp</dt><dd>${fmtDateTime(full?.ts)}</dd>
-          <dt>Box</dt><dd><code>${full?.box_type}/${full?.box_id}</code></dd>
+          <dt>Record</dt><dd><code>${full?.box_type}/${full?.box_id}</code></dd>
           <dt>Actor</dt><dd>${full?.actor_id || full?.actor_type || '—'}</dd>
           ${full?.prev_state || full?.new_state ? html`
             <dt>State</dt>

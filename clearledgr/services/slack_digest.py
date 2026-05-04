@@ -196,7 +196,7 @@ async def send_digest(org_id: str) -> bool:
         headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
         payload = {
             "channel": runtime["channel"],
-            "text": "Clearledgr Daily Digest",
+            "text": "Solden Daily Digest",
             "blocks": digest["blocks"],
         }
         client = get_http_client()
@@ -264,7 +264,7 @@ def _build_digest_blocks(
 ) -> List[Dict[str, Any]]:
     """Build Slack Block Kit blocks for the digest."""
     blocks: List[Dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": "Clearledgr Daily Digest"}},
+        {"type": "header", "text": {"type": "plain_text", "text": "Solden Daily Digest"}},
     ]
 
     # Section 1: What the agent handled — thesis: adapts if zero or exceptions

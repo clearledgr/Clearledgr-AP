@@ -36,12 +36,20 @@ _ERP_DISPLAY_NAMES: Dict[str, str] = {
 
 
 def _format_amount(amount: Any, currency: Any) -> str:
+    """Render an amount on a Slack card.
+
+    Empty currency renders the number alone — Solden launches in EU/UK
+    so a fabricated USD prefix would be wrong for the entire target
+    market. The render-side fence in tests/test_no_currency_leaks.py
+    covers the workspace SPA + Gmail extension; this is the parallel
+    path on the Slack render target.
+    """
     try:
         amt = float(amount or 0)
     except (TypeError, ValueError):
         amt = 0.0
-    cur = str(currency or "USD").upper()
-    return f"{cur} {amt:,.2f}"
+    cur = str(currency or "").upper()
+    return f"{cur} {amt:,.2f}".strip()
 
 
 def _format_window_remaining(window: Dict[str, Any]) -> str:

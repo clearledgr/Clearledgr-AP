@@ -41,7 +41,11 @@ function rowHeadline(row) {
   // No enrichable signal — fall back to a short id rather than the
   // full UUID so the row stays scannable.
   const id = String(row.box_id || '');
-  return id.length > 14 ? `${row.box_type || 'Box'} · ${id.slice(0, 14)}…` : `${row.box_type || 'Box'} · ${id}`;
+  // ``box_type`` is internal vocabulary; surface "Record" to the
+  // operator instead. The id stays so the row is still uniquely
+  // identifiable when nothing else extracted.
+  const idLabel = id.length > 14 ? `${id.slice(0, 14)}…` : id;
+  return `Record · ${idLabel}`;
 }
 
 export default function ExceptionsPage({ api }) {
@@ -50,7 +54,6 @@ export default function ExceptionsPage({ api }) {
   const [error, setError] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
   const [severityFilter, setSeverityFilter] = useState('');
-  const [boxTypeFilter, setBoxTypeFilter] = useState('');
   const [resolveDialog, setResolveDialog] = useState(null); // { id, note } | null
 
   const load = useCallback(async () => {
@@ -58,7 +61,6 @@ export default function ExceptionsPage({ api }) {
     try {
       const params = new URLSearchParams();
       if (severityFilter) params.set('severity', severityFilter);
-      if (boxTypeFilter) params.set('box_type', boxTypeFilter);
       const query = params.toString();
       const [listRes, statsRes] = await Promise.all([
         api(`/api/admin/box/exceptions${query ? `?${query}` : ''}`),
@@ -70,7 +72,7 @@ export default function ExceptionsPage({ api }) {
     } catch (exc) {
       setError(String(exc?.message || exc));
     }
-  }, [api, severityFilter, boxTypeFilter]);
+  }, [api, severityFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -111,7 +113,7 @@ export default function ExceptionsPage({ api }) {
     <div class="secondary-banner ${(stats?.total_unresolved || 0) > 0 ? 'warning' : ''}">
       <div class="secondary-banner-copy">
         <h3>${stats?.total_unresolved ? `${stats.total_unresolved} unresolved exception${stats.total_unresolved === 1 ? '' : 's'}` : 'No unresolved exceptions'}</h3>
-        <p class="muted">${stats?.total_unresolved ? 'These Boxes need a human decision before the agent can move them forward.' : 'Every Box is moving through its lifecycle cleanly.'}</p>
+        <p class="muted">${stats?.total_unresolved ? 'These records need a human decision before the agent can move them forward.' : 'Every record is moving through its lifecycle cleanly.'}</p>
       </div>
     </div>
 
@@ -128,12 +130,6 @@ export default function ExceptionsPage({ api }) {
               <option value="high">high</option>
               <option value="medium">medium</option>
               <option value="low">low</option>
-            </select>
-            <label class="muted" style="font-size:12px">Box type</label>
-            <select value=${boxTypeFilter} onChange=${(e) => setBoxTypeFilter(e.target.value)} style="padding:4px 6px">
-              <option value="">all</option>
-              <option value="ap_item">ap_item</option>
-              <option value="vendor_onboarding_session">vendor_onboarding_session</option>
             </select>
           </div>
           ${items === null

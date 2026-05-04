@@ -651,7 +651,7 @@ function FocusCard({
 }) {
   const section = classifyReviewSection(item);
   const documentType = normalizeDocumentType(item?.document_type);
-  const vendorLabel = safeDisplayText(item?.vendor_name, 'Unknown vendor');
+  const vendorLabel = safeDisplayText(item?.vendor_name, 'Vendor not extracted');
   const invoiceNumber = safeDisplayText(item?.invoice_number, '—');
   const amountLabel = safeDisplayText(formatAmount(item?.amount, item?.currency), '—');
   const stateLabel = safeDisplayText(getStateLabel(item?.state), 'Received');
@@ -885,7 +885,7 @@ function QueuePeek({ queue, focusedIndex }) {
       <ul class="review-queue-peek-list">
         ${upcoming.map((item) => html`
           <li class="review-queue-peek-item" key=${item.id}>
-            <span class="review-queue-peek-vendor">${safeDisplayText(item.vendor_name, 'Unknown vendor')}</span>
+            <span class="review-queue-peek-vendor">${safeDisplayText(item.vendor_name, 'Vendor not extracted')}</span>
             <span class="muted">·</span>
             <span class="muted">${SECTION_LABELS[classifyReviewSection(item)] || 'Review'}</span>
             <span class="muted">·</span>

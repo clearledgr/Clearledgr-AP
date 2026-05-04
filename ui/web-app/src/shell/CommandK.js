@@ -106,7 +106,7 @@ export function CommandK() {
         );
         const items = (data?.items || []).map((item) => ({
           kind: 'item',
-          label: item.vendor_name || item.vendor || 'Unknown vendor',
+          label: item.vendor_name || item.vendor || 'Vendor not extracted',
           sub: [item.invoice_number ? `#${item.invoice_number}` : '', item.state ? item.state.replace(/_/g, ' ') : '']
             .filter(Boolean).join(' · '),
           path: `/items/${encodeURIComponent(item.id)}`,

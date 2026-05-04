@@ -122,7 +122,7 @@ class TeamsAPIClient:
         requires_decision = bool((budget or {}).get("requires_decision"))
         normalized_reason = str(decision_reason_summary or "").strip()
         next_step_lines = [str(line).strip() for line in (next_step_lines or []) if str(line).strip()]
-        requested_by = str(requested_by_text or "Raised by Clearledgr from this Gmail thread.").strip()
+        requested_by = str(requested_by_text or "Raised by Solden from this Gmail thread.").strip()
         source_of_truth = str(source_of_truth_text or "Open in Gmail if you want to review the original email and attachment.").strip()
         gmail_url = str(source_url or f"https://mail.google.com/mail/u/0/#search/{email_id}").strip()
 

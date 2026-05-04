@@ -255,7 +255,7 @@ function RecordHeader({ item }) {
         <div class="cl-record-header-vendor">
           <span class="cl-record-header-eyebrow">Vendor</span>
           <h1 class="cl-record-header-vendor-name">
-            ${item.vendor_name || item.vendor || 'Unknown vendor'}
+            ${item.vendor_name || item.vendor || 'Vendor not extracted'}
           </h1>
         </div>
         <div class="cl-record-header-amount">
