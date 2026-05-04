@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Solden</title>
-    <link rel="icon" type="image/png" sizes="128x128" href="/favicon.png?v=2" />
-    <link rel="apple-touch-icon" sizes="128x128" href="/apple-touch-icon.png" />
+    <!-- Favicons in multiple sizes. Browsers prefer the smallest size
+         >= the target render dimension; pre-rendered 16/32 keeps the
+         tab mark crisp instead of letting the browser downscale the
+         large source. v=3 cache-busts the post-crop assets. -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=3" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=3" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/favicon.png?v=3" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
     <link rel="preconnect" href="https://rsms.me" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" href="/src/styles/base.css" />

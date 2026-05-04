@@ -20,8 +20,8 @@ import { html } from '../utils/htm.js';
 // asset changes. Bump the suffix on any future re-export so the
 // browser doesn't serve a stale opaque-background copy.
 const LOCKUP_SRC = {
-  primary: '/solden-lockup-dark.png?v=2',
-  'on-dark': '/solden-lockup-white.png?v=2',
+  primary: '/solden-lockup-dark.png?v=3',
+  'on-dark': '/solden-lockup-white.png?v=3',
 };
 
 export function BrandMark({ height = 28, tone = 'primary', class: className = '' }) {
