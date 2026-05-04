@@ -343,7 +343,7 @@ def build_approval_surface_copy(
         "why_summary": why_summary,
         "what_happens_next": next_lines,
         "recommended_action_text": recommended_action_text,
-        "requested_by_text": "Raised by Clearledgr from this Gmail thread.",
+        "requested_by_text": "Raised by Solden from this Gmail thread.",
         "source_of_truth_text": "Open in Gmail if you want to review the original email and attachment.",
         "gmail_url": gmail_url,
     }
@@ -888,7 +888,7 @@ def build_approval_blocks(
         "type": "context",
         "elements": [
             {"type": "mrkdwn", "text": f"From: {invoice.sender}"},
-            {"type": "mrkdwn", "text": str(approval_copy.get("requested_by_text") or "Raised by Clearledgr from this Gmail thread.")},
+            {"type": "mrkdwn", "text": str(approval_copy.get("requested_by_text") or "Raised by Solden from this Gmail thread.")},
             {"type": "mrkdwn", "text": str(approval_copy.get("source_of_truth_text") or "Open in Gmail if you want to review the original email and attachment.")},
         ]
     })

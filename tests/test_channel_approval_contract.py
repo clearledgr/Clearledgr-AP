@@ -650,7 +650,7 @@ def test_slack_and_teams_card_builders_include_request_info_action():
     body_text = " ".join(str(block.get("text") or "") for block in (teams_content.get("body") or []) if isinstance(block, dict))
     assert "Why this needs your decision" in body_text
     assert "What happens next" in body_text
-    assert "Raised by Clearledgr" in body_text
+    assert "Raised by Solden" in body_text
     assert "Open in Gmail" in body_text
 
     teams_budget_card = TeamsAPIClient.build_invoice_budget_card(
@@ -704,7 +704,7 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
     assert "Why this needs your decision" in standard_text
     assert "Recommended decision" in standard_text
     assert "What happens next" in standard_text
-    assert "Raised by Clearledgr" in standard_context_text
+    assert "Raised by Solden" in standard_context_text
     assert "Open in Gmail" in standard_context_text
 
     mentioned_blocks = svc._build_approval_blocks(

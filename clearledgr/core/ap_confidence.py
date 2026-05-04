@@ -1,16 +1,140 @@
 """Shared AP extraction confidence gating helpers.
 
-Implements launch-critical server-side checks for low-confidence critical fields.
+Per-field calibration model
+---------------------------
+
+Solden's confidence gate decides whether the agent can auto-process an
+AP record or whether a human has to confirm specific fields first. The
+core question per field is *"how bad is it if this is wrong?"*, and the
+threshold + severity tier follow from that — not from a single global
+floor applied uniformly.
+
+Three severity tiers, with explicit semantics:
+
+  ``critical``  — getting the field wrong is a financial-integrity
+                  failure (paying the wrong vendor, paying the wrong
+                  amount). Below threshold blocks the gate;
+                  ``requires_field_review`` becomes True.
+  ``important`` — getting the field wrong is recoverable but degrades
+                  audit / dedup quality (invoice_number, currency).
+                  Below threshold attaches an advisory to the result;
+                  doesn't block alone.
+  ``advisory``  — getting the field wrong has no financial-integrity
+                  consequence (due_date is operator-set per org policy
+                  most of the time). Below threshold is logged for
+                  observability; never blocks, never surfaces as a
+                  blocker.
+
+Each field's calibration carries a ``rationale`` string in code so a
+future reader can challenge the number with the reasoning, not guess
+at it. Org-level policy can tighten any field via
+``fraud_controls.threshold_overrides``; profile-based overrides apply
+on top (e.g. attachments from a known billing platform get a
+slightly-lower bar than a generic email-body invoice).
+
+Why this matters
+----------------
+The previous flat-threshold model (one 0.95 floor across vendor,
+amount, invoice_number, due_date with AND-logic) sent 100% of
+production records into ``field_review_required`` even when the
+critical fields extracted correctly — a single weak ``due_date``
+score tanked the whole record. That's the "operator reviews every
+invoice" anti-pattern, the opposite of the value prop. The per-field
+calibration eliminates the false positives without weakening the bar
+where it matters (vendor + amount).
 """
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 
-DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD = 0.95
+logger = logging.getLogger(__name__)
+
+
+SEVERITY_CRITICAL = "critical"
+SEVERITY_IMPORTANT = "important"
+SEVERITY_ADVISORY = "advisory"
+
+
+@dataclass(frozen=True)
+class FieldCalibration:
+    """Per-field gate calibration: threshold + severity + the reasoning
+    behind the choice.
+
+    Frozen so callers cannot mutate the registry at runtime; orgs that
+    need different numbers go through ``fraud_controls.threshold_overrides``
+    or per-profile overrides, both of which are audited.
+    """
+
+    threshold: float
+    severity: str
+    rationale: str
+
+
+DEFAULT_FIELD_CALIBRATION: Dict[str, FieldCalibration] = {
+    "vendor": FieldCalibration(
+        threshold=0.92,
+        severity=SEVERITY_CRITICAL,
+        rationale=(
+            "Paying the wrong vendor is a material error — fraud risk + "
+            "direct financial loss + audit findings. The strictest "
+            "extraction bar in AP. 0.92 reflects industry calibration "
+            "(Bill.com, Tipalti, Stampli auto-route at 0.85–0.92); below "
+            "it, human verification beats any auto-correction heuristic."
+        ),
+    ),
+    "amount": FieldCalibration(
+        threshold=0.92,
+        severity=SEVERITY_CRITICAL,
+        rationale=(
+            "Wrong amount is a direct financial loss. Same severity as "
+            "vendor. Modern OCR/LLM extraction reaches 0.92 reliably on "
+            "structured invoices; below that we ask the operator."
+        ),
+    ),
+    "invoice_number": FieldCalibration(
+        threshold=0.80,
+        severity=SEVERITY_IMPORTANT,
+        rationale=(
+            "Identifies the document for duplicate detection + audit "
+            "trail. Important but not catastrophic — many real invoices "
+            "have ambiguous numbering ('Reference: …' vs 'Invoice #: …') "
+            "and a missing number is recoverable from the email/PDF "
+            "metadata. 0.80 + important-tier means it warns but doesn't "
+            "gate when vendor/amount are clean."
+        ),
+    ),
+    "due_date": FieldCalibration(
+        threshold=0.60,
+        severity=SEVERITY_ADVISORY,
+        rationale=(
+            "Schedules payment but doesn't gate financial integrity. "
+            "Operators routinely set or correct dates per org policy "
+            "(NET-30 from receipt, end-of-month, vendor-specific terms) "
+            "regardless of what the invoice text says — so a low-"
+            "confidence due_date is the *expected* case for real-world "
+            "AP, not an exception. Below threshold logs for "
+            "observability; never blocks, never surfaces as a blocker."
+        ),
+    ),
+}
+
+
+# Backward-compatible aliases. ``DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD``
+# is now the threshold for *critical-tier* fields; that's what callers
+# importing the constant will get when they ask "what's the bar?". The
+# prior flat 0.95 was wrong calibration, not a sane fallback. New
+# callers should consult :data:`DEFAULT_FIELD_CALIBRATION` directly.
+DEFAULT_CRITICAL_FIELD_CONFIDENCE_THRESHOLD = DEFAULT_FIELD_CALIBRATION["vendor"].threshold
 DEFAULT_CONFIDENCE_FLOOR = 0.7  # Below this, extraction is considered unreliable
-DEFAULT_CRITICAL_FIELDS = ("vendor", "amount", "invoice_number", "due_date")
+DEFAULT_CRITICAL_FIELDS = tuple(
+    field for field, calib in DEFAULT_FIELD_CALIBRATION.items()
+    if calib.severity == SEVERITY_CRITICAL
+)
+DEFAULT_EVALUATED_FIELDS = tuple(DEFAULT_FIELD_CALIBRATION.keys())
 
 _FIELD_ALIASES = {
     "vendor": ("vendor", "vendor_name"),
@@ -295,18 +419,32 @@ def evaluate_critical_field_confidence(
         # tightens thresholds when there is repeated evidence of extraction errors.
         merged_threshold_overrides[field] = min(1.0, max(0.0, max(static_value, learned_value)))
 
-    blockers: List[Dict[str, Any]] = []
-    evaluated_fields: List[str] = []
-    effective_confidences: Dict[str, float] = {}
-    effective_thresholds: Dict[str, float] = {}
-    profile_critical_fields = (
+    # Per-field calibration: registry is the source of truth. A profile
+    # may override the field set entirely (e.g. credit notes only check
+    # vendor + amount); per-field threshold overrides from the profile
+    # or from learned calibration apply on top of the registry's default
+    # threshold without changing severity.
+    profile_fields = (
         profile.get("critical_fields")
         if isinstance(profile, dict)
         else None
     )
-    effective_critical_fields = list(profile_critical_fields or critical_fields or DEFAULT_CRITICAL_FIELDS)
+    if profile_fields is not None:
+        evaluated_field_set = list(profile_fields)
+    elif critical_fields is not None:
+        evaluated_field_set = list(critical_fields)
+    else:
+        evaluated_field_set = list(DEFAULT_EVALUATED_FIELDS)
 
-    for field in effective_critical_fields:
+    blockers: List[Dict[str, Any]] = []
+    advisories: List[Dict[str, Any]] = []
+    decisions: List[Dict[str, Any]] = []
+    evaluated_fields: List[str] = []
+    effective_confidences: Dict[str, float] = {}
+    effective_thresholds: Dict[str, float] = {}
+    effective_severities: Dict[str, str] = {}
+
+    for field in evaluated_field_set:
         raw_value = _field_value(field, values)
         if not _has_value(raw_value):
             continue
@@ -316,23 +454,86 @@ def evaluate_critical_field_confidence(
         if confidence is None:
             confidence = overall_norm if overall_norm is not None else 0.0
 
+        # Resolve the calibration for this field. Registry holds the
+        # canonical severity + default threshold; overrides only move
+        # the threshold, never the severity (severity is a product
+        # decision, not an org-config knob).
+        calibration = DEFAULT_FIELD_CALIBRATION.get(field)
+        if calibration is None:
+            # Unknown field — treat as important so we don't accidentally
+            # auto-pass something the caller asked us to evaluate. The
+            # missing-from-registry case is itself a code-review signal.
+            severity = SEVERITY_IMPORTANT
+            default_threshold = threshold_norm
+        else:
+            severity = calibration.severity
+            default_threshold = calibration.threshold
+
+        override_threshold = normalize_confidence_value(
+            merged_threshold_overrides.get(field)
+        )
+        field_threshold = (
+            override_threshold if override_threshold is not None else default_threshold
+        )
+
         effective_confidences[field] = confidence
-        field_threshold = normalize_confidence_value(merged_threshold_overrides.get(field))
-        if field_threshold is None:
-            field_threshold = threshold_norm
         effective_thresholds[field] = field_threshold
-        if confidence < field_threshold:
-            blockers.append(
-                {
-                    "field": field,
-                    "confidence": round(confidence, 4),
-                    "confidence_pct": round(confidence * 100),
-                    "threshold": round(field_threshold, 4),
-                    "threshold_pct": round(field_threshold * 100),
-                    "severity": "high",
-                    "reason": "critical_field_low_confidence",
-                }
-            )
+        effective_severities[field] = severity
+
+        passed = confidence >= field_threshold
+        decision_record = {
+            "field": field,
+            "confidence": round(confidence, 4),
+            "confidence_pct": round(confidence * 100),
+            "threshold": round(field_threshold, 4),
+            "threshold_pct": round(field_threshold * 100),
+            "severity": severity,
+            "decision": "pass" if passed else (
+                "block" if severity == SEVERITY_CRITICAL else "advisory"
+            ),
+        }
+        decisions.append(decision_record)
+
+        if passed:
+            continue
+
+        failure = {
+            "field": field,
+            "confidence": round(confidence, 4),
+            "confidence_pct": round(confidence * 100),
+            "threshold": round(field_threshold, 4),
+            "threshold_pct": round(field_threshold * 100),
+            "severity": severity,
+            "reason": "critical_field_low_confidence" if severity == SEVERITY_CRITICAL
+                     else f"{severity}_field_low_confidence",
+        }
+        if severity == SEVERITY_CRITICAL:
+            blockers.append(failure)
+        else:
+            advisories.append(failure)
+
+    requires_review = bool(blockers)
+
+    # Structured observability. Production must be able to answer
+    # "which field, at what confidence, against what threshold, with
+    # what severity, decided what?" for every gate evaluation — that's
+    # the data point that lets us calibrate empirically over time.
+    if decisions:
+        logger.info(
+            "[confidence_gate] decisions evaluated=%d blocked=%d advisories=%d profile=%s",
+            len(decisions),
+            len(blockers),
+            len(advisories),
+            (profile.get("id") if isinstance(profile, dict) else None) or "default",
+            extra={
+                "confidence_gate": {
+                    "decisions": decisions,
+                    "requires_review": requires_review,
+                    "profile_id": profile.get("id") if isinstance(profile, dict) else None,
+                    "learned_profile_id": str(learned_profile_id or "").strip() or None,
+                },
+            },
+        )
 
     return {
         "threshold": round(threshold_norm, 4),
@@ -341,8 +542,11 @@ def evaluate_critical_field_confidence(
         "evaluated_fields": evaluated_fields,
         "field_confidences": effective_confidences,
         "field_thresholds": effective_thresholds,
+        "field_severities": effective_severities,
         "confidence_blockers": blockers,
-        "requires_field_review": bool(blockers),
+        "confidence_advisories": advisories,
+        "calibration_decisions": decisions,
+        "requires_field_review": requires_review,
         "profile_id": profile.get("id") if isinstance(profile, dict) else None,
         "learned_profile_id": str(learned_profile_id or "").strip() or None,
         "learned_signal_count": int(learned_signal_count or 0),

@@ -560,10 +560,30 @@ class TestSinglePassConfidenceGate:
         assert result["confidence_blockers"] == []
         assert "confidence_gate" in result
 
-    def test_low_field_confidence_triggers_field_review(self):
-        # due_date confidence below the 0.95 critical threshold should
-        # produce a confidence_blocker entry. Without the gate, this
-        # would have flowed through to posting silently.
+    def test_low_critical_field_confidence_triggers_field_review(self):
+        # Vendor below the critical threshold (0.92) MUST gate.
+        # Severity-aware refactor: only critical-tier failures block.
+        result = self._format({
+            "vendor": "Acme",
+            "amount": 100.0,
+            "currency": "USD",
+            "invoice_number": "INV-1",
+            "due_date": "2026-05-15",
+            "overall_confidence": 0.99,
+            "field_confidences": {
+                "vendor": 0.40, "amount": 0.99,
+                "invoice_number": 0.99, "due_date": 0.99,
+            },
+        })
+        assert result["requires_field_review"] is True
+        blockers = result["confidence_blockers"]
+        assert any(b.get("field") == "vendor" for b in blockers)
+
+    def test_low_due_date_confidence_does_not_block_when_criticals_clean(self):
+        # due_date is advisory-tier (operators set dates per org policy
+        # regardless of invoice text). A weak due_date alone, with
+        # vendor + amount clean, must NOT block. Regression test for
+        # the 13/13 production false-positive pattern.
         result = self._format({
             "vendor": "Acme",
             "amount": 100.0,
@@ -576,9 +596,12 @@ class TestSinglePassConfidenceGate:
                 "invoice_number": 0.99, "due_date": 0.40,
             },
         })
-        assert result["requires_field_review"] is True
-        blockers = result["confidence_blockers"]
-        assert any(b.get("field") == "due_date" for b in blockers)
+        assert result["requires_field_review"] is False
+        # The advisory still surfaces in the gate sub-dict for operator
+        # visibility, just doesn't gate.
+        gate = result.get("confidence_gate") or {}
+        advisories = gate.get("confidence_advisories") or []
+        assert any(a.get("field") == "due_date" for a in advisories)
 
     def test_low_overall_confidence_triggers_field_review(self):
         result = self._format({

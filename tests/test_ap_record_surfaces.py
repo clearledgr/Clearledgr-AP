@@ -425,25 +425,29 @@ def test_build_worklist_item_surfaces_specific_failed_post_connector_reason(db):
 
 
 def test_build_worklist_item_surfaces_confidence_threshold_in_pipeline_blockers(db):
+    # Under per-field calibration only critical-tier failures (vendor +
+    # amount below their thresholds) populate pipeline_blockers as
+    # confidence_review entries. due_date and invoice_number are
+    # advisory/important and surface elsewhere if they fail. Drive both
+    # vendor and amount under 0.92 to assert the surfacing.
     item = db.create_ap_item(
         _item_payload(
             "confidence-review-1",
             "default",
             state="received",
             extra={"due_date": "2026-04-01",
-                "confidence": 0.91,
+                "confidence": 0.85,
                 "field_confidences": {
-                    "vendor": 0.94,
-                    "amount": 0.95,
-                    "invoice_number": 0.94,
-                    "due_date": 0.89,
+                    "vendor": 0.85,    # below 0.92 critical → blocks
+                    "amount": 0.88,    # below 0.92 critical → blocks
+                    "invoice_number": 0.99,
+                    "due_date": 0.99,
                 },
                 "metadata": {
                     "requires_field_review": True,
                     "confidence_blockers": [
                         {"field": "vendor", "reason": "critical_field_low_confidence"},
-                        {"field": "invoice_number", "reason": "critical_field_low_confidence"},
-                        {"field": "due_date", "reason": "critical_field_low_confidence"},
+                        {"field": "amount", "reason": "critical_field_low_confidence"},
                     ],
                 },
             },
@@ -452,19 +456,11 @@ def test_build_worklist_item_surfaces_confidence_threshold_in_pipeline_blockers(
 
     normalized = build_worklist_item(db, item)
 
-    assert [row["type"] for row in normalized["pipeline_blockers"][:3]] == [
-        "confidence_review",
-        "confidence_review",
-        "confidence_review",
-    ]
-    assert normalized["pipeline_blockers"][0]["title"] == "Vendor needs review"
-    assert normalized["pipeline_blockers"][0]["detail"] == (
-        "Vendor confidence is 94%, below the 95% review threshold."
-    )
-    assert normalized["pipeline_blockers"][2]["title"] == "Due date needs review"
-    assert normalized["pipeline_blockers"][2]["detail"] == (
-        "Due date confidence is 89%, below the 95% review threshold."
-    )
+    blocker_types = [row["type"] for row in normalized["pipeline_blockers"][:2]]
+    assert blocker_types == ["confidence_review", "confidence_review"]
+    blocker_titles = [row["title"] for row in normalized["pipeline_blockers"][:2]]
+    assert "Vendor needs review" in blocker_titles
+    assert "Amount needs review" in blocker_titles
 
 
 def test_build_worklist_item_recalibrates_google_sender_confidence_gate(db):
@@ -508,6 +504,10 @@ def test_build_worklist_item_recalibrates_google_sender_confidence_gate(db):
 
 
 def test_build_worklist_item_hides_planner_failed_behind_field_review_blockers(db):
+    # vendor at 0.85 falls below the critical threshold (0.92) so the
+    # gate produces a real confidence_review blocker; the user-facing
+    # pipeline_blockers must surface that and hide the planner_failed
+    # processing-issue (which is less actionable for the operator).
     item = db.create_ap_item(
         _item_payload(
             "planner-failed-1",
@@ -515,7 +515,7 @@ def test_build_worklist_item_hides_planner_failed_behind_field_review_blockers(d
             state="received",
             extra={
                 "field_confidences": {
-                    "vendor": 0.94,
+                    "vendor": 0.85,
                     "amount": 0.99,
                     "invoice_number": 0.99,
                     "due_date": 0.99,
@@ -524,7 +524,7 @@ def test_build_worklist_item_hides_planner_failed_behind_field_review_blockers(d
                     "exception_code": "planner_failed",
                     "requires_field_review": True,
                     "confidence_blockers": [
-                        {"field": "vendor", "reason": "critical_field_low_confidence", "confidence_pct": 94, "threshold_pct": 95}
+                        {"field": "vendor", "reason": "critical_field_low_confidence", "confidence_pct": 85, "threshold_pct": 92}
                     ],
                 },
             },
