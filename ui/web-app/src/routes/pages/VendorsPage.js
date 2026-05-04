@@ -4,7 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { fmtDateTime, fmtDollar, useAction } from '../route-helpers.js';
+import { fmtDateTime, fmtMoney, useAction } from '../route-helpers.js';
 import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
 import { writeReviewPreferences } from '../review-preferences.js';
 import { navigateToVendorRecord } from '../../utils/vendor-route.js';
@@ -118,7 +118,27 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
       <span class="secondary-chip">Vendors tracked ${vendors.length}</span>
       <span class="secondary-chip">Open invoices ${vendors.reduce((sum, vendor) => sum + Number(vendor.open_count || 0), 0).toLocaleString()}</span>
       <span class="secondary-chip">Open issues ${vendors.reduce((sum, vendor) => sum + Number(vendor.issue_count || 0), 0).toLocaleString()}</span>
-      <span class="secondary-chip">Total spend ${fmtDollar(vendors.reduce((sum, vendor) => sum + Number(vendor.total_amount || 0), 0))}</span>
+      ${(() => {
+        // Cross-vendor "Total spend" only makes sense when every vendor
+        // shares a currency (or all vendors have no currency yet).
+        // Otherwise we'd be summing GBP + EUR + USD into a single
+        // unitless number — meaningless and misleading for an EU/UK
+        // workspace with mixed-currency suppliers.
+        const currencies = new Set(
+          vendors.map((v) => String(v.currency || '').toUpperCase()).filter(Boolean)
+        );
+        const total = vendors.reduce((sum, v) => sum + Number(v.total_amount || 0), 0);
+        const anyMixed = vendors.some((v) => v.currency_mixed);
+        if (currencies.size === 1 && !anyMixed) {
+          return html`<span class="secondary-chip">Total spend ${fmtMoney(total, [...currencies][0])}</span>`;
+        }
+        if (currencies.size === 0) {
+          // No vendor has a currency on file yet — render the count
+          // without a unit instead of fabricating one.
+          return html`<span class="secondary-chip">Total spend ${fmtMoney(total, '')}</span>`;
+        }
+        return html`<span class="secondary-chip" title="Spend spans multiple currencies — open a vendor to see its own currency">Spend across ${currencies.size} currencies</span>`;
+      })()}
     </div>
 
     <${DedupBanner} api=${api} orgId=${orgId} toast=${toast} />
@@ -195,7 +215,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                     </div>
                   </div>
                   <div class="secondary-card-stat">
-                    <strong>${fmtDollar(vendor.total_amount || 0)}</strong>
+                    <strong>${fmtMoney(vendor.total_amount || 0, vendor.currency)}${vendor.currency_mixed ? html` <span class="muted" style="font-weight:400" title="This vendor's invoices span multiple currencies; total uses the dominant one">·mixed</span>` : ''}</strong>
                     <span>${Number(vendor.invoice_count || 0).toLocaleString()} invoices</span>
                     <span>${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</span>
                   </div>

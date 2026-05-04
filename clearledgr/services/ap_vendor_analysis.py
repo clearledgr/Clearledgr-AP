@@ -98,7 +98,7 @@ def _summarize_related_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "vendor_name": item.get("vendor_name"),
         "invoice_number": item.get("invoice_number"),
         "amount": safe_float(item.get("amount")),
-        "currency": item.get("currency") or "USD",
+        "currency": item.get("currency") or "",
         "state": state,
         "due_date": item.get("due_date"),
         "updated_at": item.get("updated_at") or item.get("created_at"),
@@ -297,10 +297,18 @@ def _build_vendor_summary_rows(
                 "last_activity_at": "",
                 "sender_emails": set(),
                 "top_states": Counter(),
+                # Track which currencies the vendor's invoices are in
+                # so the rollup can render the right symbol — and flag
+                # mixed-currency vendors honestly instead of summing
+                # GBP + EUR + USD into one number with no unit.
+                "currencies": Counter(),
             },
         )
         row["invoice_count"] += 1
         row["total_amount"] += safe_float(item.get("amount"))
+        invoice_currency = str(item.get("currency") or "").strip().upper()
+        if invoice_currency:
+            row["currencies"][invoice_currency] += 1
         state = str(item.get("state") or "").strip().lower()
         row["top_states"][state] += 1
         if _is_open_ap_state(state):
@@ -360,6 +368,16 @@ def _build_vendor_summary_rows(
                     "policy_exception": int(Counter(row.get("issue_kinds") or {}).get("policy_exception") or 0),
                 },
                 "total_amount": round(safe_float(row.get("total_amount")), 2),
+                # Currency exposed to the UI: the dominant currency for
+                # this vendor's invoices, plus a flag when more than one
+                # currency was seen (so the UI can show the symbol or
+                # qualify the total as mixed). Empty when no invoice
+                # carried a currency at all.
+                "currency": (
+                    Counter(row.get("currencies") or {}).most_common(1)[0][0]
+                    if (row.get("currencies") or {}) else ""
+                ),
+                "currency_mixed": len(row.get("currencies") or {}) > 1,
                 "last_activity_at": row.get("last_activity_at") or None,
                 "primary_email": sorted(row.get("sender_emails") or [""])[0] if row.get("sender_emails") else None,
                 "sender_emails": sorted(row.get("sender_emails") or [])[:5],
