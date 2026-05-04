@@ -1,12 +1,12 @@
-# How Clearledgr AP v1 Works
+# How Solden AP v1 Works
 
 ## Overview
 
-Clearledgr AP v1 is an **inbox-native, agentic AP workflow** for finance teams.
+Solden AP v1 is an **inbox-native, agentic AP workflow** for finance teams.
 
 It starts in Gmail, runs queue control in `Pipeline`, routes approvals in Slack and Teams, and writes approved invoices into ERP systems with policy checks, deterministic workflow orchestration, and an auditable execution trail.
 
-Clearledgr is not a standalone AP dashboard for daily work. The day-to-day operator workflow lives across Gmail, `Pipeline`, chat approvals, and ERP writeback.
+Solden is not a standalone AP dashboard for daily work. The day-to-day operator workflow lives across Gmail, `Pipeline`, chat approvals, and ERP writeback.
 
 ## Product Shape (AP v1)
 
@@ -14,11 +14,11 @@ Clearledgr is not a standalone AP dashboard for daily work. The day-to-day opera
 - **Pipeline** = queue control, prioritization, saved views, cross-entity work management
 - **Slack / Teams** = approval and escalation decisions
 - **ERP** = system of record
-- **Clearledgr** = policy + orchestration + execution + audit
+- **Solden** = policy + orchestration + execution + audit
 
 ## Step-by-Step (AP v1)
 
-### 1. Set up Clearledgr (Workspace Shell)
+### 1. Set up Solden (Workspace Shell)
 
 An admin connects:
 
@@ -32,25 +32,25 @@ The Workspace Shell is for setup, configuration, and health checks, not daily AP
 
 ### 2. Invoice arrives in Gmail
 
-When an invoice or AP-related request lands in the inbox, Clearledgr detects it and creates (or links to) an invoice-centric AP item.
+When an invoice or AP-related request lands in the inbox, Solden detects it and creates (or links to) an invoice-centric AP item.
 
-Clearledgr can:
+Solden can:
 
 - classify AP-relevant messages
 - parse email content and attachments
 - extract key invoice fields (including PDFs/images where supported)
 - associate multiple related emails/threads to one invoice item when appropriate
 
-### 3. Clearledgr validates before routing
+### 3. Solden validates before routing
 
-Before approval routing or ERP posting, Clearledgr runs deterministic checks such as:
+Before approval routing or ERP posting, Solden runs deterministic checks such as:
 
 - duplicate detection / merge-link checks
 - policy checks
 - PO / receipt / budget checks (where configured data is available)
 - extraction confidence gate checks for critical fields
 
-If there is an issue, Clearledgr creates an explicit exception state (for example low confidence, mismatch, missing info) with a clear next action.
+If there is an issue, Solden creates an explicit exception state (for example low confidence, mismatch, missing info) with a clear next action.
 
 ### 4. Gmail thread becomes the active-record work surface
 
@@ -75,7 +75,7 @@ Once an item is valid enough to enter queue work, `Pipeline` becomes the place w
 
 ### 6. Approvals happen in Slack and Teams
 
-When an invoice needs approval, Clearledgr sends an approval request to the configured approver(s) in Slack or Teams.
+When an invoice needs approval, Solden sends an approval request to the configured approver(s) in Slack or Teams.
 
 The approval card includes the information needed to decide:
 
@@ -88,7 +88,7 @@ Approval actions are handled through a common contract and must be idempotent (d
 
 ### 7. Approved invoices are posted to ERP (system of record)
 
-Once an invoice is approved and all posting preconditions are satisfied, Clearledgr posts the invoice to the ERP.
+Once an invoice is approved and all posting preconditions are satisfied, Solden posts the invoice to the ERP.
 
 AP v1 doctrine defines ERP write-back as:
 
@@ -99,9 +99,9 @@ AP v1 doctrine defines ERP write-back as:
 
 If a fallback path is used (for example a gated browser-based path where allowed), it must be previewed, confirmed, and audited.
 
-### 8. Clearledgr records audit breadcrumbs and outcomes
+### 8. Solden records audit breadcrumbs and outcomes
 
-Clearledgr records:
+Solden records:
 
 - validation outcomes
 - approval requests and decisions
@@ -113,7 +113,7 @@ These breadcrumbs are surfaced in-context (Gmail and admin/ops tools) so finance
 
 ## Confidence and Human Review (AP v1 defaults)
 
-Clearledgr uses confidence-based extraction and review gating.
+Solden uses confidence-based extraction and review gating.
 
 Default AP v1 behavior:
 
@@ -122,7 +122,7 @@ Default AP v1 behavior:
 3. A human can review/correct fields.
 4. Overrides require justification and audit logging.
 
-This is how Clearledgr remains agentic without becoming unsafe or opaque.
+This is how Solden remains agentic without becoming unsafe or opaque.
 
 ## What AP v1 Does Not Do
 
@@ -137,7 +137,7 @@ Those are separate product decisions and are not part of the AP v1 doctrine.
 
 ## Why This Matters
 
-Clearledgr’s AP v1 value is not just "UI inside Gmail."
+Solden’s AP v1 value is not just "UI inside Gmail."
 
 The differentiator is the combination of:
 
@@ -153,4 +153,4 @@ That is what makes it an embedded finance execution layer rather than a lightwei
 
 For the authoritative AP v1 doctrine, contracts, and GA launch gates, see:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+- `/Users/mombalam/Desktop/Solden.v1/PLAN.md`

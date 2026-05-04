@@ -1,4 +1,4 @@
-// Clearledgr AP classifier (shared across Gmail UI + queue manager)
+// Solden AP classifier (shared across Gmail UI + queue manager)
 // Single source of truth for AP detection signals in the extension.
 
 const NOISE_PATTERNS = [

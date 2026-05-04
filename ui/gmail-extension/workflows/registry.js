@@ -22,5 +22,5 @@
     return Object.keys(workflows).map(key => workflows[key]);
   }
 
-  window.ClearledgrWorkflowRegistry = { get, list, workflows };
+  window.SoldenWorkflowRegistry = { get, list, workflows };
 })();

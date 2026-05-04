@@ -1,6 +1,6 @@
 # Data Processing Addendum (DPA) — Summary
 
-This is the customer-facing summary of Clearledgr's GDPR-aligned Data
+This is the customer-facing summary of Solden's GDPR-aligned Data
 Processing Addendum. The full executable DPA is provided to customers
 on request as a PDF and is signed alongside the service agreement.
 
@@ -10,12 +10,12 @@ Last reviewed: 2026-04-26.
 
 - **Customer** is the **Controller** of personal data processed in its
   workspace.
-- **Clearledgr** is the **Processor**, acting on Customer's documented
+- **Solden** is the **Processor**, acting on Customer's documented
   instructions.
 
 ## Categories of personal data
 
-Clearledgr processes the following on behalf of the Customer:
+Solden processes the following on behalf of the Customer:
 
 - **Workspace user identifiers** — email, name, role, organisation
   membership.
@@ -31,12 +31,12 @@ Clearledgr processes the following on behalf of the Customer:
 ## Sub-processors
 
 See [SUB_PROCESSORS.md](SUB_PROCESSORS.md). Customer authorizes
-Clearledgr to engage the listed sub-processors and is notified at
+Solden to engage the listed sub-processors and is notified at
 least 30 days before any new sub-processor begins processing.
 
 ## Cross-border transfers
 
-For transfers from EU/UK/Switzerland to the US, Clearledgr relies on:
+For transfers from EU/UK/Switzerland to the US, Solden relies on:
 
 1. **EU-US Data Privacy Framework** where the sub-processor is
    self-certified.
@@ -46,7 +46,7 @@ For transfers from EU/UK/Switzerland to the US, Clearledgr relies on:
 
 ## Security measures
 
-Clearledgr maintains technical and organizational measures sufficient
+Solden maintains technical and organizational measures sufficient
 to protect personal data, including:
 
 - Encryption in transit (TLS 1.2+) and at rest (Fernet for sensitive
@@ -63,15 +63,15 @@ Detailed control mapping is in [CONTROLS.md](CONTROLS.md).
 
 ## Data subject rights
 
-Clearledgr will assist Customer in responding to data subject requests
+Solden will assist Customer in responding to data subject requests
 (access, erasure, rectification, portability, objection, restriction)
 through the workspace admin console and an export API. Where assistance
-beyond standard tooling is needed, Clearledgr will respond within 30
+beyond standard tooling is needed, Solden will respond within 30
 days.
 
 ## Breach notification
 
-Clearledgr will notify Customer of any Personal Data Breach without
+Solden will notify Customer of any Personal Data Breach without
 undue delay and in any case within **72 hours** of becoming aware,
 providing:
 
@@ -83,14 +83,14 @@ providing:
 ## Audit rights
 
 Customer may, no more than once per 12 months and on 30 days' written
-notice, audit Clearledgr's compliance with this DPA, either by
-reviewing Clearledgr's then-current SOC2 / ISO 27001 reports or by
+notice, audit Solden's compliance with this DPA, either by
+reviewing Solden's then-current SOC2 / ISO 27001 reports or by
 Customer's security team conducting a remote assessment.
 
 ## Term + return of data
 
 This DPA remains in effect for the term of the service agreement.
-Within 30 days of termination, Clearledgr will, at Customer's option,
+Within 30 days of termination, Solden will, at Customer's option,
 delete or return all Personal Data, except as required by law to
 retain (e.g., audit_events for tax or compliance retention windows).
 

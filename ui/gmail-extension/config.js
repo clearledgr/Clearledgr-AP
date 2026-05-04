@@ -1,4 +1,4 @@
-// Clearledgr Configuration
+// Solden Configuration
 const CONFIG = {
   BACKEND_URL: 'https://api.clearledgr.com',
   // Hub-and-spoke: the Gmail extension is the contextual companion;
@@ -6,7 +6,7 @@ const CONFIG = {
   // (admin surfaces — Pipeline, Exceptions, Vendors, Reconciliation).
   // "Open in Console" deep-links from the sidebar/banners point here.
   WORKSPACE_URL: 'https://workspace.clearledgr.com',
-  APP_ID: 'sdk_Clearledgr2026_dc12c60472',
+  APP_ID: 'sdk_Solden2026_dc12c60472',
   VERSION: '1.2026.002 Phoenix'
 };
 

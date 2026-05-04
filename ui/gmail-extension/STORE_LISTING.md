@@ -2,7 +2,7 @@
 
 ## Basic Information
 
-**Extension Name**: Clearledgr
+**Extension Name**: Solden
 
 **Short Description** (132 chars max):
 ```
@@ -11,7 +11,7 @@ Finance execution agents for Gmail. Process invoices, route approvals, post to E
 
 **Detailed Description**:
 ```
-Clearledgr embeds AI agents into the tools finance teams already use to execute finance workflows end-to-end. AP is the first workflow.
+Solden embeds AI agents into the tools finance teams already use to execute finance workflows end-to-end. AP is the first workflow.
 
 It runs AP workflows where finance teams already work: Gmail for operators, Slack/Teams for approvals, and ERP for system-of-record posting.
 
@@ -28,7 +28,7 @@ HOW IT WORKS
 2. Open Gmail and view the AP operator sidebar in-thread
 3. Review extracted data and policy/exception status
 4. Route approvals; approvers decide in Slack/Teams
-5. Clearledgr posts to ERP and records auditable outcomes
+5. Solden posts to ERP and records auditable outcomes
 
 KEY FEATURES
 - Gmail-first AP workflow (no separate daily dashboard required)
@@ -49,7 +49,7 @@ SECURITY
 - Audit trail for transitions and external writes
 
 REQUIREMENTS
-- Clearledgr account
+- Solden account
 - Gmail account with extension access
 - Slack and/or Teams integration for approvals
 - ERP credentials for write-back
@@ -70,12 +70,12 @@ SUPPORT
 
 ## Pricing
 
-**Price**: Free install (Clearledgr subscription required for production usage)
+**Price**: Free install (Solden subscription required for production usage)
 
 ## Screenshots Required
 
 1. **AP Thread Workspace** (1280x800)
-   - Gmail thread with Clearledgr AP panel
+   - Gmail thread with Solden AP panel
    - Status, exceptions, and next action visible
 
 2. **Approval Routing** (1280x800)
@@ -94,7 +94,7 @@ SUPPORT
 ## Promotional Images
 
 1. **Small Promo Tile** (440x280)
-   - "Clearledgr — Finance Agents for Gmail"
+   - "Solden — Finance Agents for Gmail"
 
 2. **Large Promo Tile** (920x680)
    - Gmail + Slack/Teams + ERP execution path
@@ -111,7 +111,7 @@ SUPPORT
 
 ## Developer Information
 
-- **Developer Name**: Clearledgr Inc.
+- **Developer Name**: Solden Inc.
 - **Developer Email**: developers@clearledgr.com
 - **Developer Website**: https://clearledgr.com
 

@@ -2,18 +2,18 @@
 
 ## Overview
 
-Transaction Categorization **automatically** classifies transactions to GL accounts based on intelligent pattern matching. Clearledgr runs autonomously when you open your spreadsheet. You only see exceptions that need your review.
+Transaction Categorization **automatically** classifies transactions to GL accounts based on intelligent pattern matching. Solden runs autonomously when you open your spreadsheet. You only see exceptions that need your review.
 
 **Local-first processing:** Categorization runs in your Google Sheets or Excel with optional backend augmentation when needed.
 
 ## How It Works
 
-1. **Open your spreadsheet** - Clearledgr automatically detects new transactions
+1. **Open your spreadsheet** - Solden automatically detects new transactions
 2. **Auto-categorization runs** - High-confidence matches are categorized instantly
 3. **Exceptions surface** - Only low-confidence items appear for your review
 4. **You correct once** - Your corrections train the system for next time
 
-This is not a manual "click to run" process. Clearledgr is an autonomous agent that does the work for you.
+This is not a manual "click to run" process. Solden is an autonomous agent that does the work for you.
 
 ## Getting Started
 
@@ -56,14 +56,14 @@ This is not a manual "click to run" process. Clearledgr is an autonomous agent t
 
 ### Google Sheets
 
-1. **Just open your spreadsheet** - Clearledgr runs automatically
+1. **Just open your spreadsheet** - Solden runs automatically
 2. If there are new uncategorized transactions, they're processed
 3. Check `CL_NEEDS_REVIEW` for any items needing your attention
-4. To manually re-run: **Clearledgr → Categorization → Review Exceptions**
+4. To manually re-run: **Solden → Categorization → Review Exceptions**
 
 ### Excel
 
-1. **Just open your workbook** - Clearledgr runs automatically
+1. **Just open your workbook** - Solden runs automatically
 2. A notification appears if items need review
 3. Click the **Categorization** tab to see exceptions
 4. To manually re-run: Click **Re-run Categorization**

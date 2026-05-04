@@ -1,10 +1,10 @@
-# Clearledgr Privacy Policy
+# Solden Privacy Policy
 
 **Last updated: January 2026**
 
 ## Overview
 
-Clearledgr ("we", "our", or "us") is a Chrome extension that helps finance teams run AP workflows directly within Gmail. This privacy policy explains how we collect, use, and protect your data.
+Solden ("we", "our", or "us") is a Chrome extension that helps finance teams run AP workflows directly within Gmail. This privacy policy explains how we collect, use, and protect your data.
 
 ## Data We Collect
 
@@ -74,7 +74,7 @@ Each integration requires separate authorization and can be revoked at any time.
 
 For users in the European Economic Area:
 - Legal basis for processing: Legitimate interest and explicit consent
-- Data controller: Clearledgr Inc.
+- Data controller: Solden Inc.
 - Data transfers: EU-US Data Privacy Framework certified
 
 ## Contact

@@ -1,5 +1,5 @@
 /**
- * Clearledgr AP v1 InboxSDK Layer — Preact + HTM
+ * Solden AP v1 InboxSDK Layer — Preact + HTM
  *
  * Entry point for the Gmail extension sidebar. Handles InboxSDK integration
  * and mounts the Preact component tree into the sidebar container.
@@ -14,7 +14,7 @@
 import * as InboxSDK from '@inboxsdk/core';
 import { h, render } from 'preact';
 import htm from 'htm';
-import { ClearledgrQueueManager } from '../queue-manager.js';
+import { SoldenQueueManager } from '../queue-manager.js';
 import store from './utils/store.js';
 import SidebarApp, { showToast } from './components/SidebarApp.js';
 import { perfMarkStart } from './utils/perf-budget.js';
@@ -47,7 +47,7 @@ import {
 } from './utils/workspace-link.js';
 
 const html = htm.bind(h);
-const APP_ID = 'sdk_Clearledgr2026_dc12c60472';
+const APP_ID = 'sdk_Solden2026_dc12c60472';
 const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
 const STORAGE_ACTIVE_AP_ITEM_ID = 'clearledgr_active_ap_item_id';
@@ -129,7 +129,7 @@ async function ensureSidebarPanelView() {
 
   const logoUrl = getAssetUrl(LOGO_PATH);
   sidebarPanelViewPromise = sdk.Global.addSidebarContentPanel({
-    title: 'Clearledgr AP',
+    title: 'Solden AP',
     iconUrl: logoUrl || null,
     el: sidebarContainer,
     hideTitleBar: false,
@@ -258,7 +258,7 @@ function renderComposeRecordStatus(recordContext) {
     recordContext.invoiceNumber ? `Invoice ${recordContext.invoiceNumber}` : '',
     recordContext.amountLabel || '',
   ].filter(Boolean).join(' · ');
-  copy.textContent = `Clearledgr: linked finance record${summary ? ` — ${summary}` : ''}`;
+  copy.textContent = `Solden: linked finance record${summary ? ` — ${summary}` : ''}`;
   bar.appendChild(copy);
 
   if (recordContext.apItemId) {
@@ -302,7 +302,7 @@ function renderComposeRecordChooser({ composeView, queueManager, onLinked }) {
   const topRow = document.createElement('div');
   topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
   const copy = document.createElement('div');
-  copy.textContent = 'Clearledgr: no finance record linked to this draft yet.';
+  copy.textContent = 'Solden: no finance record linked to this draft yet.';
   topRow.appendChild(copy);
 
   const actions = document.createElement('div');
@@ -1234,7 +1234,7 @@ function registerInboxHeadsUp() {
     headsUpEl.style.display = 'flex';
     headsUpEl.innerHTML = `
       <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
-      <span><strong>Clearledgr</strong> \u00B7 ${parts.join(' \u00B7 ')}</span>
+      <span><strong>Solden</strong> \u00B7 ${parts.join(' \u00B7 ')}</span>
       <span style="margin-left:auto;opacity:0.6;font-size:11px">Open invoices \u203A</span>
     `;
   };
@@ -1261,7 +1261,7 @@ function registerBulkActions() {
   if (!sdk?.Toolbars) return;
   try {
     sdk.Toolbars.registerToolbarButtonForList({
-      title: 'Process with Clearledgr',
+      title: 'Process with Solden',
       iconUrl: getAssetUrl(LOGO_PATH) || undefined,
       section: 'METADATA_STATE',
       hasDropdown: false,
@@ -1285,7 +1285,7 @@ function registerBulkActions() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ organization_id: orgId, email_ids: ids }),
           }).then(() => {
-            showToast(`Processing ${ids.length} email${ids.length > 1 ? 's' : ''} with Clearledgr`, 'success');
+            showToast(`Processing ${ids.length} email${ids.length > 1 ? 's' : ''} with Solden`, 'success');
           }).catch(() => {
             showToast('Bulk processing failed', 'error');
           });
@@ -1293,17 +1293,17 @@ function registerBulkActions() {
       },
     });
   } catch (err) {
-    console.warn('[Clearledgr] Bulk action registration failed:', err);
+    console.warn('[Solden] Bulk action registration failed:', err);
   }
 }
 
 function registerToolbarIcon() {
-  // Clearledgr icon in Gmail's top toolbar (like Streak's orange icon)
+  // Solden icon in Gmail's top toolbar (like Streak's orange icon)
   if (!sdk?.Toolbars) return;
   try {
     const logoUrl = getAssetUrl(LOGO_PATH);
     sdk.Toolbars.registerToolbarButtonForList({
-      title: 'Clearledgr workspace',
+      title: 'Solden workspace',
       iconUrl: logoUrl || undefined,
       section: 'METADATA_STATE',
       onClick: () => {
@@ -1315,7 +1315,7 @@ function registerToolbarIcon() {
       },
     });
   } catch (err) {
-    console.warn('[Clearledgr] Toolbar icon registration failed:', err);
+    console.warn('[Solden] Toolbar icon registration failed:', err);
   }
 }
 
@@ -1356,7 +1356,7 @@ async function _hydrateErpRuntimeConfig(qm) {
 
 function registerThreadToolbarButtons() {
   if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== 'function') {
-    console.warn('[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar');
+    console.warn('[Solden] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar');
     return;
   }
 
@@ -1486,7 +1486,7 @@ function registerThreadToolbarButtons() {
 }
 
 function registerSearchSuggestions() {
-  // Search integration — type in Gmail search to find Clearledgr invoices
+  // Search integration — type in Gmail search to find Solden invoices
   if (!sdk?.Search || typeof sdk.Search.registerSearchSuggestionsProvider !== 'function') return;
   try {
     sdk.Search.registerSearchSuggestionsProvider((query) => {
@@ -1517,7 +1517,7 @@ function registerSearchSuggestions() {
       // post-B.2, not in Gmail's left rail.
       if ('clearledgr'.includes(q) || 'invoice'.includes(q) || 'ap'.includes(q)) {
         suggestions.push({
-          name: 'Clearledgr workspace',
+          name: 'Solden workspace',
           description: 'Open the AP control plane',
           externalURL: workspacePipelineUrl(),
           iconUrl: getAssetUrl(LOGO_PATH) || undefined,
@@ -1526,7 +1526,7 @@ function registerSearchSuggestions() {
       return suggestions.slice(0, 5);
     });
   } catch (err) {
-    console.warn('[Clearledgr] Search suggestions failed:', err);
+    console.warn('[Solden] Search suggestions failed:', err);
   }
 }
 
@@ -1546,26 +1546,26 @@ function registerKeyboardShortcuts() {
     // G then C → Pipeline (in workspace)
     const goPipeline = sdk.Keyboard.createShortcutHandle({
       chord: 'g c',
-      description: 'Open Clearledgr workspace pipeline',
+      description: 'Open Solden workspace pipeline',
     });
     goPipeline.on('activate', () => openWorkspace('/pipeline'));
 
     // G then A → Activity (in workspace)
     const goActivity = sdk.Keyboard.createShortcutHandle({
       chord: 'g a',
-      description: 'Open Clearledgr workspace activity',
+      description: 'Open Solden workspace activity',
     });
     goActivity.on('activate', () => openWorkspace('/activity'));
 
     // G then H → Home (in workspace)
     const goHomeView = sdk.Keyboard.createShortcutHandle({
       chord: 'g h',
-      description: 'Open Clearledgr workspace home',
+      description: 'Open Solden workspace home',
     });
     goHomeView.on('activate', () => openWorkspace('/'));
 
   } catch (err) {
-    console.warn('[Clearledgr] Keyboard shortcuts failed:', err);
+    console.warn('[Solden] Keyboard shortcuts failed:', err);
   }
 }
 
@@ -1584,7 +1584,7 @@ async function bootstrap() {
       globalErrorLogging: false,
     });
   } catch (error) {
-    console.error('[Clearledgr] InboxSDK failed to load', error);
+    console.error('[Solden] InboxSDK failed to load', error);
     return;
   }
 
@@ -1659,7 +1659,7 @@ async function bootstrap() {
                 el: (() => {
                   const bar = document.createElement('div');
                   bar.style.cssText = 'padding:6px 14px;font-size:12px;color:#92400e;background:#fef9ee;border-bottom:1px solid #f3e8d0;font-family:inherit;';
-                  bar.textContent = `Clearledgr: ${vendor} has ${count} record${count > 1 ? 's' : ''} in your AP queue.`;
+                  bar.textContent = `Solden: ${vendor} has ${count} record${count > 1 ? 's' : ''} in your AP queue.`;
                   return bar;
                 })(),
               });
@@ -1672,7 +1672,7 @@ async function bootstrap() {
   });
 
   // Initialize queue manager
-  queueManager = new ClearledgrQueueManager();
+  queueManager = new SoldenQueueManager();
   await queueManager.init();
 
   // §6.5 — fetch ERP connection info once so the thread-toolbar ERP
@@ -1774,7 +1774,7 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
     try { queueManager.refreshQueue(); } catch (_) {}
   };
 
-  // User dismissed the modal ("Don't use Clearledgr on this account"). Close
+  // User dismissed the modal ("Don't use Solden on this account"). Close
   // it and remember the choice for this Gmail account so we don't re-prompt
   // on every page load. User can reopen from the sidebar "Connect Gmail" CTA.
   const onDismiss = () => {
@@ -1918,7 +1918,7 @@ function registerAppMenuAndRoutes() {
 bootstrap();
 
 console.log(
-  '\n%cClearledgr\n%cThe Gmail AP Workspace\nfor Finance Teams\n\n%cYou found us in the console.\nThat means you care how things work.\nSo do we.\n\n%chttps://clearledgr.com\n',
+  '\n%cSolden\n%cThe Gmail AP Workspace\nfor Finance Teams\n\n%cYou found us in the console.\nThat means you care how things work.\nSo do we.\n\n%chttps://clearledgr.com\n',
   'font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;',
   'font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;',
   'font-size:14px;color:#6B7280;line-height:1.5;',

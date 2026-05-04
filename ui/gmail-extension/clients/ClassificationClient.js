@@ -1,5 +1,5 @@
 (function() {
-  const BaseClient = window.ClearledgrClients && window.ClearledgrClients.BaseClient;
+  const BaseClient = window.SoldenClients && window.SoldenClients.BaseClient;
 
   class ClassificationClient extends BaseClient {
     constructor() {
@@ -76,6 +76,6 @@
     return { type: 'unknown', confidence: 0.5, reason: 'Unclear email type' };
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.ClassificationClient = ClassificationClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.ClassificationClient = ClassificationClient;
 })();

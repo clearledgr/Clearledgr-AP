@@ -1,6 +1,6 @@
-# Clearledgr — Finance Execution Layer
+# Solden — Finance Execution Layer
 
-Clearledgr is the execution layer for finance operations, embedding AI agents into the tools finance teams already use.
+Solden is the execution layer for finance operations, embedding AI agents into the tools finance teams already use.
 
 AP v1 is the first production skill domain: Gmail-first intake, Slack/Teams approvals, ERP write-back, and full audit traceability.
 It is the current wedge, not the full product boundary.
@@ -9,14 +9,14 @@ It is the current wedge, not the full product boundary.
 
 Use these documents as source of truth:
 
-1. `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
-2. `/Users/mombalam/Desktop/Clearledgr.v1/docs/HOW_IT_WORKS.md`
-3. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
-4. `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
-5. `/Users/mombalam/Desktop/Clearledgr.v1/docs/API_REFERENCE.md`
-6. `/Users/mombalam/Desktop/Clearledgr.v1/docs/WEDGE_QUALITY_SCORECARD.md`
+1. `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
+2. `/Users/mombalam/Desktop/Solden.v1/docs/HOW_IT_WORKS.md`
+3. `/Users/mombalam/Desktop/Solden.v1/docs/V1_EMBEDDED_WORKER_EXPERIENCE.md`
+4. `/Users/mombalam/Desktop/Solden.v1/docs/V1_BACKEND_CONTRACTS.md`
+5. `/Users/mombalam/Desktop/Solden.v1/docs/API_REFERENCE.md`
+6. `/Users/mombalam/Desktop/Solden.v1/docs/WEDGE_QUALITY_SCORECARD.md`
 
-If any document conflicts with `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`, `PLAN.md` wins.
+If any document conflicts with `/Users/mombalam/Desktop/Solden.v1/PLAN.md`, `PLAN.md` wins.
 
 ## Current Status (2026-03-22)
 
@@ -30,14 +30,14 @@ AP v1 is already implemented as a real product surface in this codebase. The shi
 
 The main remaining gap to launch is not core product implementation. It is live-environment proof and operating discipline: staging/sandbox verification, deployment/config freeze, post-launch monitoring ownership, and continued product polish.
 
-Use this README plus `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` for current product and launch posture. Treat `/Users/mombalam/Desktop/Clearledgr.v1/TODOS.md` as deferred work only, not as an implementation-completeness ledger.
-For Railway deployment, use `/Users/mombalam/Desktop/Clearledgr.v1/docs/RAILWAY_DEPLOYMENT.md`.
+Use this README plus `/Users/mombalam/Desktop/Solden.v1/docs/GA_LAUNCH_READINESS_TRACKER.md` for current product and launch posture. Treat `/Users/mombalam/Desktop/Solden.v1/TODOS.md` as deferred work only, not as an implementation-completeness ledger.
+For Railway deployment, use `/Users/mombalam/Desktop/Solden.v1/docs/RAILWAY_DEPLOYMENT.md`.
 
-For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Clearledgr.v1/docs/WEDGE_QUALITY_SCORECARD.md` as the operating scorecard for reliability, context-switch reduction, and elimination of approval chasing / ERP re-entry.
+For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Solden.v1/docs/WEDGE_QUALITY_SCORECARD.md` as the operating scorecard for reliability, context-switch reduction, and elimination of approval chasing / ERP re-entry.
 
 ## Product Direction (Locked)
 
-1. One Clearledgr finance execution agent runtime.
+1. One Solden finance execution agent runtime.
 2. AP is the first production skill domain, not the terminal product scope.
 3. `Pipeline` is the AP control plane and default landing route for queue work.
 4. Gmail is the first inbox adapter and the primary current-record surface in the current wedge, not the entire product.
@@ -52,22 +52,22 @@ For pilot hardening and wedge-truth evaluation, use `/Users/mombalam/Desktop/Cle
 13. Initial rollout is Europe and Africa first (before any broader regional expansion).
 14. Operator-facing timestamps are standardized to `Europe/London`; backend storage/audit timestamps remain UTC.
 
-Clearledgr is not a generic automation builder and not a dashboard-first AP tool.
+Solden is not a generic automation builder and not a dashboard-first AP tool.
 
 ## AP v1 Workflow
 
 1. AP email arrives in Gmail.
-2. Clearledgr classifies and extracts invoice/AP fields.
+2. Solden classifies and extracts invoice/AP fields.
 3. Deterministic validation + policy/confidence checks run.
 4. If required, approval is routed to Slack/Teams.
-5. On approval and eligibility, Clearledgr posts to ERP.
+5. On approval and eligibility, Solden posts to ERP.
 6. End-to-end audit events are recorded and surfaced.
 
 ## Gmail Operator Surface
 
 For AP v1, Gmail is the primary current-record surface and `Pipeline` is the queue control plane. The Gmail/AP wedge is built as Streak for finance ops:
 
-1. `Clearledgr AP` thread panel is the daily execution workspace.
+1. `Solden AP` thread panel is the daily execution workspace.
    - Focused invoice identity strip (vendor, amount, due date, invoice number, PO status).
    - One status badge + concise blocker chips.
    - One state-driven primary CTA with small secondary actions.
@@ -89,13 +89,13 @@ Reason capture is inline and non-blocking (reason sheet); native browser `prompt
 UI hardening guardrails:
 
 1. Extension ships from `dist/inboxsdk-layer.js` only, with CI parity checks that fail on stale or off-doctrine bundle content.
-2. Legacy extension popup/options/demo surfaces are removed from shipped root and archived under `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/`.
+2. Legacy extension popup/options/demo surfaces are removed from shipped root and archived under `/Users/mombalam/Desktop/Solden.v1/docs/legacy/gmail-extension-ui/`.
 3. Work audit copy is backend-owned from `/api/ap/items/{ap_item_id}/audit` (`operator_*` fields); Gmail fallback copy stays generic-safe and does not display raw reason codes.
 4. Gmail extension build/watch now uses Bun locally; `npm run build` and `npm run start` delegate to Bun-backed bundling while preserving audited `dist` parity checks.
 
 ## Onboarding and Account Backbone
 
-Clearledgr onboarding and account management still follows an admin-first model, but it remains Gmail-native:
+Solden onboarding and account management still follows an admin-first model, but it remains Gmail-native:
 
 1. Gmail routed pages own onboarding for Gmail, Slack/Teams, and ERP setup.
 2. Team roles/invites are managed through the same authenticated backend APIs (`/api/workspace/team/*` + `/auth/invites/*`).
@@ -105,7 +105,7 @@ Clearledgr onboarding and account management still follows an admin-first model,
 
 ## Runtime Shape (Agent + Skills)
 
-Clearledgr runs one core agent runtime and domain skills:
+Solden runs one core agent runtime and domain skills:
 
 - Runtime intent APIs:
   - `POST /api/agent/intents/preview`
@@ -130,7 +130,7 @@ Clearledgr runs one core agent runtime and domain skills:
 
 Canonical runtime contracts are implemented in:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/core/finance_contracts.py`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/core/finance_contracts.py`
   - `SkillRequest`
   - `SkillResponse`
   - `ActionExecution`
@@ -139,7 +139,7 @@ Canonical runtime contracts are implemented in:
 
 ERP API-first adapter contract is provider-agnostic and shared across NetSuite/QuickBooks/Xero/SAP via:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/erp/contracts.py`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/services/erp/contracts.py`
   - `ERPBillAdapter.validate(payload)`
   - `ERPBillAdapter.post(organization_id, bill, ...)`
   - `ERPBillAdapter.get_status(organization_id, external_ref)`
@@ -149,24 +149,24 @@ ERP API-first adapter contract is provider-agnostic and shared across NetSuite/Q
 
 ### Backend
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/main.py`
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/invoice_workflow.py`
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_agent_runtime.py`
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/services/finance_skills/`
-- `/Users/mombalam/Desktop/Clearledgr.v1/clearledgr/api/`
+- `/Users/mombalam/Desktop/Solden.v1/main.py`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/services/invoice_workflow.py`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/services/finance_agent_runtime.py`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/services/finance_skills/`
+- `/Users/mombalam/Desktop/Solden.v1/clearledgr/api/`
 
 ### Embedded Surfaces
 
-- Gmail extension: `/Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension/`
-- Slack app: `/Users/mombalam/Desktop/Clearledgr.v1/ui/slack/`
+- Gmail extension: `/Users/mombalam/Desktop/Solden.v1/ui/gmail-extension/`
+- Slack app: `/Users/mombalam/Desktop/Solden.v1/ui/slack/`
 - Optional workspace shell surface: served from `/workspace` (when enabled), but it is not the canonical daily operator shell
 
 ### Launch and Readiness Docs
 
-- Getting started: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GETTING_STARTED.md`
-- Runbooks: `/Users/mombalam/Desktop/Clearledgr.v1/docs/RUNBOOKS.md`
-- Staging drill runbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/STAGING_DRILL_RUNBOOK.md`
-- GA evidence process: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
+- Getting started: `/Users/mombalam/Desktop/Solden.v1/docs/GETTING_STARTED.md`
+- Runbooks: `/Users/mombalam/Desktop/Solden.v1/docs/RUNBOOKS.md`
+- Staging drill runbook: `/Users/mombalam/Desktop/Solden.v1/docs/STAGING_DRILL_RUNBOOK.md`
+- GA evidence process: `/Users/mombalam/Desktop/Solden.v1/docs/GA_READINESS_EVIDENCE_PROCESS.md`
 - Admin Ops APIs:
   - `GET /api/workspace/ops/connector-readiness` (per-connector readiness + blockers for NetSuite/QuickBooks/Xero/SAP)
   - `GET /api/workspace/ops/learning-calibration` (latest tenant calibration snapshot)
@@ -200,14 +200,14 @@ uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 
 ## Railway Deployment
 
-Clearledgr is now deployment-ready for a split Railway topology:
+Solden is now deployment-ready for a split Railway topology:
 
 - `api` service: `sh scripts/start-api.sh`
 - `worker` service: `sh scripts/start-worker.sh`
 - managed Postgres
 - Redis strongly recommended
 
-Use `/Users/mombalam/Desktop/Clearledgr.v1/docs/RAILWAY_DEPLOYMENT.md` for the exact env, Slack/Gmail callback URLs, and Gmail extension build command.
+Use `/Users/mombalam/Desktop/Solden.v1/docs/RAILWAY_DEPLOYMENT.md` for the exact env, Slack/Gmail callback URLs, and Gmail extension build command.
 
 ### 5. Run tests
 
@@ -247,7 +247,7 @@ node --test ui/gmail-extension/tests/inboxsdk-layer-ui.test.cjs ui/gmail-extensi
 Optional real-browser Gmail harness:
 
 ```bash
-cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+cd /Users/mombalam/Desktop/Solden.v1/ui/gmail-extension
 npm run test:browser-harness
 ```
 
@@ -256,14 +256,14 @@ If Playwright/Chromium is unavailable locally, the harness test reports a skip w
 CI-enforced deterministic harness (fails if browser prerequisites are missing):
 
 ```bash
-cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+cd /Users/mombalam/Desktop/Solden.v1/ui/gmail-extension
 npm run test:browser-harness:ci
 ```
 
 Authenticated Gmail runtime evidence capture (for staging/pilot readiness):
 
 ```bash
-cd /Users/mombalam/Desktop/Clearledgr.v1/ui/gmail-extension
+cd /Users/mombalam/Desktop/Solden.v1/ui/gmail-extension
 npm run test:e2e-auth:evidence -- --release-id ap-v1-2026-03-01-pilot-rc1
 ```
 
@@ -274,13 +274,13 @@ This writes:
 Launch evidence gate check (pilot mode):
 
 ```bash
-python3 /Users/mombalam/Desktop/Clearledgr.v1/scripts/validate_launch_evidence.py --mode pilot --json
+python3 /Users/mombalam/Desktop/Solden.v1/scripts/validate_launch_evidence.py --mode pilot --json
 ```
 
 GitHub workflows:
 - `/.github/workflows/gmail-extension-browser-harness.yml` runs deterministic browser harness on PR/push for extension changes.
 - `/.github/workflows/gmail-runtime-smoke-nightly.yml` runs nightly authenticated Gmail runtime smoke in a controlled self-hosted environment and uploads evidence artifacts.
-- Runner setup/playbook: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
+- Runner setup/playbook: `/Users/mombalam/Desktop/Solden.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
 
 ## Phase 7 Release Gate
 
@@ -321,7 +321,7 @@ AP v1 must enforce:
 
 This repo still contains legacy and experimental modules/docs from earlier directions.
 
-They are non-canonical for AP v1 unless explicitly referenced by `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`.
+They are non-canonical for AP v1 unless explicitly referenced by `/Users/mombalam/Desktop/Solden.v1/PLAN.md`.
 
 ## License
 

@@ -76,7 +76,7 @@ function wrapSidebarHtml(innerHtml) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Clearledgr UI Evidence</title>
+    <title>Solden UI Evidence</title>
     <style>
       body {
         margin: 0;
@@ -288,11 +288,11 @@ function json(route, payload, status = 200) {
 
 async function installConsoleMocks(page) {
   const bootstrapPayload = {
-    organization: { id: 'default', name: 'Clearledgr' },
+    organization: { id: 'default', name: 'Solden' },
     current_user: { id: 'usr-admin-1', email: 'admin@clearledgr.com', role: 'admin' },
     integrations: [
       { name: 'gmail', connected: true, email: 'mo@clearledgr.com', watch_status: 'active', last_sync_at: '2026-03-01T03:16:00Z', invoices_processed: 4 },
-      { name: 'slack', connected: true, team_name: 'Clearledgr', approval_channel: '#finance-approvals' },
+      { name: 'slack', connected: true, team_name: 'Solden', approval_channel: '#finance-approvals' },
       { name: 'erp', connected: true, erp_type: 'netsuite', account_id: '1234567_SB1' },
     ],
     dashboard: { total_invoices: 4, failed_posts: 1, pending_approvals: 1 },

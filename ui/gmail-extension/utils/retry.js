@@ -1,5 +1,5 @@
 /**
- * Clearledgr Retry Utility
+ * Solden Retry Utility
  * 
  * Provides exponential backoff retry mechanism for API calls
  * with configurable options.
@@ -190,5 +190,5 @@ function createRetryClient(baseUrl, defaultHeaders = {}) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { fetchWithRetry, withRetry, createRetryClient, RetryConfig };
 } else if (typeof window !== 'undefined') {
-  window.ClearledgrRetry = { fetchWithRetry, withRetry, createRetryClient, RetryConfig };
+  window.SoldenRetry = { fetchWithRetry, withRetry, createRetryClient, RetryConfig };
 }

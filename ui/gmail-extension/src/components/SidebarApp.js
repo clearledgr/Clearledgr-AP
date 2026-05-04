@@ -65,7 +65,7 @@ class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('[Clearledgr]', error, info?.componentStack || '');
+    console.error('[Solden]', error, info?.componentStack || '');
   }
 
   render() {
@@ -135,7 +135,7 @@ function humanizeActionFailure(reason) {
   const map = {
     missing_gmail_reference: 'The source email for this invoice was not found.',
     missing_item_reference: 'This invoice record could not be found in the system.',
-    ap_item_not_found: 'Clearledgr could not find this invoice record.',
+    ap_item_not_found: 'Solden could not find this invoice record.',
     state_not_ready_for_approval: 'Resolve blockers before sending for approval.',
     entity_route_review_required: 'Choose the legal entity before sending this invoice for approval.',
     entity_selection_required: 'Select the correct legal entity first.',
@@ -182,7 +182,7 @@ function ScanStatus() {
   let text = '';
   let tone = '';
 
-  if (state === 'initializing') text = 'Setting up Clearledgr\u2026';
+  if (state === 'initializing') text = 'Setting up Solden\u2026';
   else if (state === 'scanning') text = 'Checking inbox for new invoices\u2026';
   else if (state === 'auth_required') {
     text = 'Gmail access is needed to monitor for new invoices.';
@@ -192,8 +192,8 @@ function ScanStatus() {
     tone = 'warning';
   } else if (state === 'error') {
     const err = String(status?.error || '');
-    if (err.includes('backend')) text = "Unable to reach Clearledgr.";
-    else if (err.includes('temporal')) text = 'Clearledgr service is temporarily unavailable. Try again shortly.';
+    if (err.includes('backend')) text = "Unable to reach Solden.";
+    else if (err.includes('temporal')) text = 'Solden service is temporarily unavailable. Try again shortly.';
     else if (err.includes('processing')) {
       const failedCount = Number(status?.failedCount || 0);
       text = failedCount > 0 ? `${failedCount} email(s) need another try.` : 'Something needs another try.';
@@ -303,12 +303,12 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       'needs_info',
       disputeLabel,
       getWorkStateNotice(state, documentType, item)
-        || `Clearledgr still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
+        || `Solden still needs more information before this ${isInvoiceDocument ? 'invoice' : 'record'} can continue.`,
     );
   }
 
   if ((state === 'approved' || state === 'ready_to_post') && !exceptionReason && !hasErpPostingConnection(item)) {
-    add('erp_setup', 'ERP is not connected', 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.');
+    add('erp_setup', 'ERP is not connected', 'Connect QuickBooks, Xero, NetSuite, or SAP before Solden can post this invoice.');
   }
 
   if (state === 'failed_post' && !exceptionReason) {
@@ -317,7 +317,7 @@ function getBlockers(item, state, budgetContext, documentType = 'invoice') {
       hasErpPostingConnection(item) ? 'ERP posting failed' : 'ERP is not connected',
       hasErpPostingConnection(item)
         ? 'Retry the ERP post or review the connector response.'
-        : 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+        : 'Connect QuickBooks, Xero, NetSuite, or SAP before Solden can post this invoice.',
     );
   }
 
@@ -403,7 +403,7 @@ function FieldReviewPanel({ blockers, pauseReason, onResolve = null, resolvingFi
           </div>
           ${blocker.kind === 'confidence' && html`
             <div class="cl-review-row">
-              <span class="cl-review-label">Clearledgr read</span>
+              <span class="cl-review-label">Solden read</span>
               <span class="cl-review-value">${blocker.current_value_display || 'Not found'}</span>
             </div>
           `}
@@ -566,7 +566,7 @@ function AuthPrompt({ queueManager }) {
       <div class="cl-auth-copy">
         ${gmail?.requires_reconnect
           ? 'Reconnect Gmail to keep this inbox connected.'
-          : 'Connect Gmail once so Clearledgr can keep working in this inbox.'}
+          : 'Connect Gmail once so Solden can keep working in this inbox.'}
       </div>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
@@ -586,11 +586,11 @@ function AgentViewSection({ view, item, fallbackNextMove = 'Review this record' 
   const uncertaintyLabel = view.highlights.slice(0, 2).join(' · ');
   const nextMove = view.nextActionLabel || fallbackNextMove || view.currentStateLabel || view.statusLabel || 'Review this record';
   const whyNow = view.beliefReason || (needsReview
-    ? 'Clearledgr paused because this invoice still needs a quick check before it can continue.'
-    : 'Clearledgr is holding the current workflow context on this record.');
+    ? 'Solden paused because this invoice still needs a quick check before it can continue.'
+    : 'Solden is holding the current workflow context on this record.');
   const ownerLine = view.nextActionResponsibility || '';
   const tone = uncertaintyLabel ? 'warning' : 'good';
-  const sectionTitle = needsReview ? 'Before Clearledgr continues' : 'What happens next';
+  const sectionTitle = needsReview ? 'Before Solden continues' : 'What happens next';
   const reasonLabel = needsReview ? 'Why it paused' : 'Why it is waiting';
 
   return html`
@@ -1207,7 +1207,7 @@ function WorkPanel({ item, queueManager }) {
       dialogMode: 'confirm',
       actionType: 'resume_workflow',
       title: 'Resume workflow',
-      message: 'Field checks passed. Clearledgr will prepare to post to your ERP.',
+      message: 'Field checks passed. Solden will prepare to post to your ERP.',
       previewLines: [
         vendor,
         amountLabel,
@@ -1337,7 +1337,7 @@ function WorkPanel({ item, queueManager }) {
         actionType: 'generic',
         title: 'Resolve entity route',
         label: 'Entity code or name',
-        message: 'Choose the legal entity Clearledgr should use for this invoice.',
+        message: 'Choose the legal entity Solden should use for this invoice.',
         previewLines: entityCandidates.slice(0, 6).map((candidate) => (
           candidate?.label || candidate?.entity_name || candidate?.entity_code || ''
         )).filter(Boolean),
@@ -1729,7 +1729,7 @@ function EmptyState({ queueCount, queueManager }) {
         showToast('Finance record created from this email.', 'success');
         return;
       }
-      showToast('Clearledgr could not create a finance record from this email yet.', 'warning');
+      showToast('Solden could not create a finance record from this email yet.', 'warning');
     } finally {
       setRecovering(false);
     }
@@ -1756,7 +1756,7 @@ function EmptyState({ queueCount, queueManager }) {
     if (!canMutate) {
       return html`<div class="cl-section"><div class="cl-empty">
         <p>No finance record is linked to this email yet.</p>
-        <p class="cl-muted">Open the queue to review records Clearledgr already found. Only operators can create or link records from Gmail.</p>
+        <p class="cl-muted">Open the queue to review records Solden already found. Only operators can create or link records from Gmail.</p>
         <div class="cl-thread-actions cl-empty-actions">
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         </div>
@@ -2142,8 +2142,8 @@ export default function SidebarApp({ queueManager }) {
 
       <div class="cl-header">
         <div class="cl-title">
-          ${logoUrl && html`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${(e) => e.target.remove()} />`}
-          Clearledgr AP
+          ${logoUrl && html`<img class="cl-logo" src=${logoUrl} alt="Solden" onError=${(e) => e.target.remove()} />`}
+          Solden AP
         </div>
         <div class="cl-header-right">
           ${hasQueueNavigation

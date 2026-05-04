@@ -292,8 +292,8 @@ export function getFieldReviewBlockers(item = {}) {
       confidence_pct: confidencePct,
       threshold_pct: thresholdPct,
       winner_reason: confidencePct !== null && confidencePct !== undefined && thresholdPct !== null && thresholdPct !== undefined
-        ? `Clearledgr read ${formatFieldReviewValue(field, currentValue, currency)}${currentSource ? ` from the ${getSourceLabel(currentSource).toLowerCase()}` : ''}. Because ${fieldLabel.toLowerCase()} is a critical field, a person needs to confirm it before approval continues.`
-        : `Clearledgr needs the ${fieldLabel.toLowerCase()} confirmed before this invoice can continue.`,
+        ? `Solden read ${formatFieldReviewValue(field, currentValue, currency)}${currentSource ? ` from the ${getSourceLabel(currentSource).toLowerCase()}` : ''}. Because ${fieldLabel.toLowerCase()} is a critical field, a person needs to confirm it before approval continues.`
+        : `Solden needs the ${fieldLabel.toLowerCase()} confirmed before this invoice can continue.`,
       auto_check_note: confidencePct !== null && confidencePct !== undefined && thresholdPct !== null && thresholdPct !== undefined
         ? `Auto-pass rule: ${thresholdPct}% minimum. This read scored ${confidencePct}%.`
         : '',
@@ -512,16 +512,16 @@ function formatAgentNextActionLabel(value, item = {}, nextActionType = '', curre
     return 'Approval request sent, waiting for decision';
   }
   if (typeToken === 'await_vendor_info' || stateToken === 'needs_info') {
-    return 'Clearledgr is waiting for vendor to respond';
+    return 'Solden is waiting for vendor to respond';
   }
   if (typeToken === 'operator_recovery') {
     return 'Review the blocking issue and take action';
   }
   if (typeToken === 'monitor_completion') {
-    return 'Clearledgr is completing the final steps';
+    return 'Solden is completing the final steps';
   }
   if (typeToken === 'reprocess_after_correction') {
-    return 'Clearledgr is rerunning this invoice with the corrected details';
+    return 'Solden is rerunning this invoice with the corrected details';
   }
   if (typeToken === 'manual_review') {
     return 'Review this record';
@@ -534,28 +534,28 @@ function formatAgentBeliefReason(value, item = {}) {
   const explicit = String(value || '').trim();
   const token = normalizeAgentMemoryToken(explicit || item?.state || '');
   if (item?.requires_field_review || isInternalAgentMemoryReason(explicit)) {
-    return getWorkflowPauseReason(item) || 'Check the invoice details before Clearledgr continues.';
+    return getWorkflowPauseReason(item) || 'Check the invoice details before Solden continues.';
   }
   if (!explicit) {
     if (token === 'pending_approval' || token === 'needs_approval') {
-      return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
+      return 'Approval has already been requested. Solden is waiting for the approver response.';
     }
     if (token === 'needs_info') {
       return 'Missing details needed before this invoice can continue.';
     }
     if (token === 'failed_post') {
-      return 'Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.';
+      return 'Posting failed. Solden needs a retry or ERP connection check before it can continue.';
     }
     return '';
   }
   if (token === 'pending_approval' || token === 'needs_approval' || token === 'awaiting_approval_response') {
-    return 'Approval has already been requested. Clearledgr is waiting for the approver response.';
+    return 'Approval has already been requested. Solden is waiting for the approver response.';
   }
   if (token === 'needs_info' || token === 'await_vendor_info') {
     return 'Missing details needed before this invoice can continue.';
   }
   if (token === 'failed_post' || token === 'erp_post_failed') {
-    return 'Posting failed. Clearledgr needs a retry or ERP connection check before it can continue.';
+    return 'Posting failed. Solden needs a retry or ERP connection check before it can continue.';
   }
   return explicit;
 }
@@ -566,7 +566,7 @@ function formatAgentActionActor(owner = '', item = {}, nextActionType = '', curr
   const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || '');
 
   if (item?.requires_field_review || typeToken === 'human_field_review') return 'You';
-  if (ownerToken === 'agent' || typeToken === 'monitor_completion' || typeToken === 'reprocess_after_correction') return 'Clearledgr';
+  if (ownerToken === 'agent' || typeToken === 'monitor_completion' || typeToken === 'reprocess_after_correction') return 'Solden';
   if (ownerToken === 'approver' || typeToken === 'await_approval' || stateToken === 'needs_approval' || stateToken === 'pending_approval') return 'Approver';
   if (ownerToken === 'vendor' || typeToken === 'await_vendor_info' || stateToken === 'needs_info') return 'Vendor';
   if (ownerToken === 'operator' || typeToken === 'operator_recovery' || typeToken === 'manual_review') return 'You';
@@ -579,7 +579,7 @@ function formatAgentResponsibility(owner = '', item = {}, nextActionType = '', c
   const stateToken = normalizeAgentMemoryToken(currentState || status || item?.state || '');
 
   if (item?.requires_field_review || typeToken === 'human_field_review') return 'Needs your review';
-  if (ownerToken === 'agent' || typeToken === 'monitor_completion') return 'Clearledgr is handling this';
+  if (ownerToken === 'agent' || typeToken === 'monitor_completion') return 'Solden is handling this';
   if (ownerToken === 'approver' || typeToken === 'await_approval' || stateToken === 'needs_approval') return 'Waiting on approver';
   if (ownerToken === 'vendor' || typeToken === 'await_vendor_info' || stateToken === 'needs_info') return 'Waiting on vendor';
   if (ownerToken === 'operator' || typeToken === 'operator_recovery' || typeToken === 'manual_review') return 'Needs your review';
@@ -691,7 +691,7 @@ export function getAgentMemoryView(item = {}) {
     episode,
     uncertainties,
     evidence,
-    name: String(profile.name || '').trim() || 'Clearledgr AP Agent',
+    name: String(profile.name || '').trim() || 'Solden AP Agent',
     mission,
     doctrineVersion,
     riskPosture,
@@ -792,7 +792,7 @@ export function getExceptionReason(exceptionCode) {
   if (c === 'policy_validation_failed') return 'AP policy check failed — review required';
   if (c === 'duplicate_invoice') return 'Duplicate invoice detected for this vendor';
   if (c === 'confidence_low') return 'Field accuracy is too low for automatic posting — review needed';
-  if (c === 'planner_failed') return 'Clearledgr could not continue processing this invoice automatically';
+  if (c === 'planner_failed') return 'Solden could not continue processing this invoice automatically';
   if (c === 'erp_post_failed') return 'Posting to the ERP failed and needs retry';
   if (c === 'erp_not_connected') return 'Connect an ERP before posting this invoice';
   if (c === 'erp_not_configured') return 'Finish ERP configuration before posting this invoice';
@@ -853,7 +853,7 @@ export function getDecisionSummary(item, budgetContext) {
   if ((state === 'approved' || state === 'ready_to_post' || state === 'failed_post') && erpUnavailable && !erpConnected) {
     return {
       title: 'ERP not connected',
-      detail: 'Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+      detail: 'Connect QuickBooks, Xero, NetSuite, or SAP before Solden can post this invoice.',
       tone: 'warning',
     };
   }
@@ -904,7 +904,7 @@ export function buildAuditRow(event) {
   let safeDetail = 'Action recorded for this invoice.';
   if (eventType === 'state_transition') safeDetail = 'Invoice status changed.';
   else if (eventType === 'erp_post_completed') safeDetail = 'Invoice posting completed successfully.';
-  else if (eventType === 'erp_post_failed') safeDetail = 'Clearledgr could not complete ERP posting.';
+  else if (eventType === 'erp_post_failed') safeDetail = 'Solden could not complete ERP posting.';
   const importance = normalizeAuditImportance(event?.operator_importance || event?.operator?.importance);
   const severity = String(event?.operator_severity || event?.operator?.severity || 'info').trim().toLowerCase() || 'info';
   const evidenceLabel = trimText(String(

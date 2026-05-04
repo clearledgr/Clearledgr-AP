@@ -1,4 +1,4 @@
-# Clearledgr Operator Runbooks
+# Solden Operator Runbooks
 
 Operational procedures for common failure scenarios and maintenance tasks.
 
@@ -319,7 +319,7 @@ Maintain continuous confidence in real Gmail extension runtime behavior and coll
 
 ### Setup and remediation guide
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
+- `/Users/mombalam/Desktop/Solden.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`
 
 _Last updated: 2026-02-28_
 _Owner: Engineering / AP Platform team_
@@ -328,7 +328,7 @@ _Owner: Engineering / AP Platform team_
 
 ## Known gaps — unwritten runbooks
 
-Surfaced by the 2026-04-22 Tier-2 verification sweep (see [TIER2_VERIFICATION_2026_04_22.md](./TIER2_VERIFICATION_2026_04_22.md)). Each scenario below has real operational surface in Clearledgr today but no response runbook. Listed here so on-call knows what to expect when one fires — and so the gap is on the record rather than hidden.
+Surfaced by the 2026-04-22 Tier-2 verification sweep (see [TIER2_VERIFICATION_2026_04_22.md](./TIER2_VERIFICATION_2026_04_22.md)). Each scenario below has real operational surface in Solden today but no response runbook. Listed here so on-call knows what to expect when one fires — and so the gap is on the record rather than hidden.
 
 Each needs CS/on-call input to author properly (response steps depend on production infra decisions: hosted Postgres provider, monitoring stack, alert routing).
 
@@ -337,7 +337,7 @@ Each needs CS/on-call input to author properly (response steps depend on product
 - **IBAN verification timeout**: vendor started the three-factor flow but did not complete within the 5-business-day deadline; automatic freeze fires via `vendor_iban_verification_deadline` timer.
 
 ### Vendor onboarding surface
-- **Vendor portal outage**: the customer-facing portal where vendors submit KYC + IBAN is unreachable. Different from Clearledgr outage — it's a sub-surface the agent depends on.
+- **Vendor portal outage**: the customer-facing portal where vendors submit KYC + IBAN is unreachable. Different from Solden outage — it's a sub-surface the agent depends on.
 
 ### Agent runtime under load
 - **Mass invoice spike**: >100 invoices arrive in <1 minute. Workspace concurrency semaphore saturates, queue depth climbs, back-pressure kicks in. Runbook needed for when to scale workers vs when to intervene at the customer level.

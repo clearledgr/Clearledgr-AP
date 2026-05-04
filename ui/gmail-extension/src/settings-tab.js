@@ -1,5 +1,5 @@
 /**
- * Clearledgr Settings Tab — injected into Gmail's native Settings page.
+ * Solden Settings Tab — injected into Gmail's native Settings page.
  * Follows Streak's pattern: "Streak Settings" tab appears alongside
  * General, Labels, Inbox, etc.
  *
@@ -51,7 +51,7 @@ function injectSettingsTab(queueManager) {
   tab.id = SETTINGS_TAB_ID;
   tab.className = 'f0';
   tab.href = '#settings/clearledgr';
-  tab.textContent = 'Clearledgr';
+  tab.textContent = 'Solden';
   tab.style.cssText = 'cursor:pointer;';
   tab.addEventListener('click', (e) => {
     e.preventDefault();
@@ -75,7 +75,7 @@ function showSettingsContent(queueManager) {
   const contentArea = document.querySelector('.Bk, .nH[role="main"] .nH');
   if (!contentArea) return;
 
-  // Remove existing Clearledgr content if any
+  // Remove existing Solden content if any
   const existing = document.getElementById(SETTINGS_CONTENT_ID);
   if (existing) existing.remove();
 
@@ -93,7 +93,7 @@ function showSettingsContent(queueManager) {
   const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || 'http://127.0.0.1:8010').replace(/\/+$/, '');
 
   container.innerHTML = `
-    <h2 style="font-size:18px;font-weight:500;margin:0 0 24px;color:#202124">Clearledgr Settings</h2>
+    <h2 style="font-size:18px;font-weight:500;margin:0 0 24px;color:#202124">Solden Settings</h2>
 
     <div style="margin-bottom:24px">
       <h3 style="font-size:14px;font-weight:500;margin:0 0 12px;color:#202124">Invoice Processing</h3>

@@ -1,5 +1,5 @@
 /**
- * Clearledgr AP v1 Queue Manager
+ * Solden AP v1 Queue Manager
  * AP intake, queue sync, and action dispatch.
  */
 function normalizeBackendUrl(raw) {
@@ -77,7 +77,7 @@ async function clearStoredBackendOverride(data, nested, configuredBackendUrl) {
   }
 }
 
-class ClearledgrQueueManager {
+class SoldenQueueManager {
   constructor() {
     this.queue = [];
     this.listeners = [];
@@ -224,7 +224,7 @@ class ClearledgrQueueManager {
   }
 
   getUiActionDisabledReason(action, state) {
-    const allowed = ClearledgrQueueManager.ACTION_STATES[action] || [];
+    const allowed = SoldenQueueManager.ACTION_STATES[action] || [];
     if (!state) return 'Action unavailable';
     if (!allowed.includes(state)) return 'Action unavailable';
     return '';
@@ -912,7 +912,7 @@ class ClearledgrQueueManager {
     if (code === 'backend_auth_cooldown') {
       const retryAfter = Number(result?.retry_after_seconds || this.getBackendAuthRetryAfterSeconds());
       return {
-        toast: `Clearledgr sign-in is cooling down after repeated failures. Try again in ${Math.max(1, retryAfter)}s.`,
+        toast: `Solden sign-in is cooling down after repeated failures. Try again in ${Math.max(1, retryAfter)}s.`,
         severity: 'warning',
       };
     }
@@ -2039,4 +2039,4 @@ class ClearledgrQueueManager {
 
 }
 
-export { ClearledgrQueueManager };
+export { SoldenQueueManager };

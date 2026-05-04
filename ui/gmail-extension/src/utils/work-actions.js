@@ -181,24 +181,24 @@ export function getOperatorOverrideCopy(state, item = null, documentType = 'invo
   if (mode === 'agent_monitoring') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr will send reminders and escalate automatically. Use these only to intervene now.',
+      detail: 'Solden will send reminders and escalate automatically. Use these only to intervene now.',
     };
   }
   if (mode === 'agent_waiting') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr sent a follow-up and is waiting for the vendor. Use these to intervene before the next reminder.',
+      detail: 'Solden sent a follow-up and is waiting for the vendor. Use these to intervene before the next reminder.',
     };
   }
   if (mode === 'agent_progressing') {
     return {
       title: 'Operator overrides',
-      detail: 'Clearledgr is processing this record. Use these to override.',
+      detail: 'Solden is processing this record. Use these to override.',
     };
   }
   return {
     title: 'Operator overrides',
-    detail: 'Use these to change what Clearledgr does next.',
+    detail: 'Use these to change what Solden does next.',
   };
 }
 
@@ -286,7 +286,7 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
   if (normalized === 'needs_info') {
     const followupNextAction = String(item?.followup_next_action || '').trim().toLowerCase();
     if (followupNextAction === 'await_vendor_response') {
-      return 'Waiting on vendor reply. Clearledgr will send reminders automatically.';
+      return 'Waiting on vendor reply. Solden will send reminders automatically.';
     }
     if (followupNextAction === 'manual_vendor_escalation') {
       return 'Vendor did not reply. Manual escalation needed.';
@@ -307,18 +307,18 @@ export function getWorkStateNotice(state, documentType = 'invoice', item = null)
       return 'Approval is overdue. Send a reminder now.';
     }
     if (pendingAssignees.length > 0) {
-      return `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}. Clearledgr is monitoring this approval and will remind or escalate if it slips.`;
+      return `Waiting on ${pendingAssignees.slice(0, 3).join(', ')}. Solden is monitoring this approval and will remind or escalate if it slips.`;
     }
-    return 'Waiting on approval. Clearledgr is monitoring this request and will remind or escalate if it slips.';
+    return 'Waiting on approval. Solden is monitoring this request and will remind or escalate if it slips.';
   }
   if ((normalized === 'approved' || normalized === 'ready_to_post' || normalized === 'failed_post') && !hasErpPostingConnection(item)) {
-    return 'ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.';
+    return 'ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Solden can post this invoice.';
   }
   if (normalized === 'approved') {
-    return 'Approval received. Clearledgr is preparing the posting step.';
+    return 'Approval received. Solden is preparing the posting step.';
   }
   if (normalized === 'ready_to_post') {
-    return 'Invoice is ready and Clearledgr can post it to the ERP.';
+    return 'Invoice is ready and Solden can post it to the ERP.';
   }
   if (normalized === 'posted_to_erp' || normalized === 'closed') {
     return 'Invoice has already been posted to the ERP.';

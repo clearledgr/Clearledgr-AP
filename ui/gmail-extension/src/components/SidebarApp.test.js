@@ -13,7 +13,7 @@
 // here so anyone re-introducing the richer in-sidebar layout knows
 // what shape the previous spec expected:
 //
-//   - "What happens next" / "Before Clearledgr continues" agent-memory
+//   - "What happens next" / "Before Solden continues" agent-memory
 //     section (AgentViewSection) — currently lives in dead WorkPanel
 //   - Related-records / Tasks / Notes / Files sub-sections
 //   - Read-only viewer copy ("Read-only view" + suppressed actions)
@@ -157,7 +157,7 @@ describe('SidebarApp', () => {
 
     // Shell: branded header + ThreadSidebar surface with the item's
     // vendor name visible.
-    assert.match(getTextContent(view.container), /Clearledgr AP/);
+    assert.match(getTextContent(view.container), /Solden AP/);
     assert.ok(view.container.querySelector('.cl-thread-sidebar'),
       'ThreadSidebar should mount when an item is selected');
     assert.match(getTextContent(view.container), /Acme Supplies/);

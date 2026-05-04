@@ -19,8 +19,8 @@ function createResponse(status, payload) {
 function loadQueueManager(fetchImpl) {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
   const transformed = source.replace(
-    /export\s*\{\s*ClearledgrQueueManager\s*\};?\s*$/m,
-    'module.exports = { ClearledgrQueueManager };'
+    /export\s*\{\s*SoldenQueueManager\s*\};?\s*$/m,
+    'module.exports = { SoldenQueueManager };'
   );
 
   const context = {
@@ -51,12 +51,12 @@ function loadQueueManager(fetchImpl) {
   };
   context.exports = context.module.exports;
   vm.runInNewContext(transformed, context, { filename: 'queue-manager.vm.js' });
-  return context.module.exports.ClearledgrQueueManager;
+  return context.module.exports.SoldenQueueManager;
 }
 
 function createManager(fetchImpl) {
-  const ClearledgrQueueManager = loadQueueManager(fetchImpl);
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = loadQueueManager(fetchImpl);
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = {
     backendUrl: 'https://api.clearledgr.test',
     organizationId: 'default',

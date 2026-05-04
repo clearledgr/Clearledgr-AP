@@ -851,7 +851,7 @@
           lastError = result.reason;
         }
       } catch (error) {
-        console.warn('[Clearledgr] Attachment parse error:', error);
+        console.warn('[Solden] Attachment parse error:', error);
         lastError = error?.message || 'Attachment parse error';
       }
     }
@@ -896,7 +896,7 @@
         const payload = await buildAttachmentPayload(candidate.attachment, candidate.type, options);
         if (payload) payloads.push(payload);
       } catch (error) {
-        console.warn('[Clearledgr] Attachment payload error:', error);
+        console.warn('[Solden] Attachment payload error:', error);
       }
     }
 
@@ -1277,7 +1277,7 @@
     return raw;
   }
 
-  window.ClearledgrEmailParsing = {
+  window.SoldenEmailParsing = {
     parseFinancialData,
     extractVendor,
     extractAmount,

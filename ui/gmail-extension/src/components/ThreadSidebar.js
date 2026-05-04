@@ -13,7 +13,7 @@
  *   5. Agent Actions  — condensed timeline
  *
  * Design rules from the thesis:
- *   - "Clearledgr sidebar has four fixed sections in strict order"
+ *   - "Solden sidebar has four fixed sections in strict order"
  *   - "The sidebar loads in less than two seconds"
  *   - "The sidebar never shows more than one invoice"
  *
@@ -1409,7 +1409,7 @@ export function ThreadSidebar({
             href=${workspaceItemUrl(item.id)}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open this invoice in the Clearledgr workspace"
+            title="Open this invoice in the Solden workspace"
           >Open in workspace ↗</a>
         ` : ''}
         <button type="button" class="cl-ts-footer-link" onClick=${openFeedback}>

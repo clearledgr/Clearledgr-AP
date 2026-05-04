@@ -353,7 +353,7 @@ describe('getAgentMemoryView', () => {
     });
 
     assert.equal(view.stateSummaryLabel, 'Needs approval');
-    assert.equal(view.beliefReason, 'Approval has already been requested. Clearledgr is waiting for the approver response.');
+    assert.equal(view.beliefReason, 'Approval has already been requested. Solden is waiting for the approver response.');
     assert.equal(view.nextActionActorLabel, 'Approver');
     assert.deepEqual(view.reasonCodes, []);
   });

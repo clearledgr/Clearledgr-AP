@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Clearledgr: The Gmail AP Workspace for Finance Teams",
+  "name": "Solden: The Gmail AP Workspace for Finance Teams",
   "version": "0.4.1",
   "version_name": "0.4.1",
   "description": "Process invoices, approve payments, and post to your ERP — directly inside Gmail.",
@@ -74,7 +74,7 @@
     }
   ],
   "action": {
-    "default_title": "Clearledgr"
+    "default_title": "Solden"
   },
   "icons": {
     "16": "icons/icon16.png",

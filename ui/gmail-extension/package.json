@@ -29,7 +29,7 @@
     "finance",
     "automation"
   ],
-  "author": "Clearledgr",
+  "author": "Solden",
   "license": "ISC",
   "dependencies": {
     "@inboxsdk/core": "^2.2.11",

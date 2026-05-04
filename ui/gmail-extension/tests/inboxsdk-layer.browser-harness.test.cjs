@@ -58,13 +58,13 @@ async function launchHarnessBrowser(chromium) {
 function buildBrowserHarnessSource() {
   let source = fs.readFileSync(SOURCE_PATH, 'utf8');
   const inboxImport = "import * as InboxSDK from '@inboxsdk/core';";
-  const qmImport = "import { ClearledgrQueueManager } from '../queue-manager.js';";
+  const qmImport = "import { SoldenQueueManager } from '../queue-manager.js';";
   if (!source.includes(inboxImport) || !source.includes(qmImport)) {
     throw new Error('Unexpected inboxsdk-layer import format; browser harness transform needs update.');
   }
 
   source = source.replace(inboxImport, 'const InboxSDK = globalThis.__TEST_INBOXSDK__;');
-  source = source.replace(qmImport, 'const { ClearledgrQueueManager } = globalThis.__TEST_QUEUE_MANAGER_MODULE__;');
+  source = source.replace(qmImport, 'const { SoldenQueueManager } = globalThis.__TEST_QUEUE_MANAGER_MODULE__;');
 
   const bootstrapCall = '\nbootstrap();\n';
   const hookBlock = `
@@ -278,7 +278,7 @@ function browserInitScript() {
       return sdk;
     },
   };
-  window.__TEST_QUEUE_MANAGER_MODULE__ = { ClearledgrQueueManager: MockQueueManager };
+  window.__TEST_QUEUE_MANAGER_MODULE__ = { SoldenQueueManager: MockQueueManager };
   if (!window.chrome) window.chrome = {};
   if (!window.chrome.runtime) window.chrome.runtime = {};
   if (typeof window.chrome.runtime.getURL !== 'function') {

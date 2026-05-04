@@ -19,7 +19,7 @@ const ACTION_SUCCESS_SELECTOR = String(process.env.GMAIL_E2E_ACTION_SUCCESS_SELE
 const ACTION_SUCCESS_TEXT = String(process.env.GMAIL_E2E_ACTION_SUCCESS_TEXT || '').trim();
 const ACTION_SETTLE_MS = Number(process.env.GMAIL_E2E_ACTION_SETTLE_MS || 12000);
 const UI_MARKERS = String(
-  process.env.GMAIL_E2E_UI_MARKERS || 'Clearledgr Invoices,Process with Clearledgr',
+  process.env.GMAIL_E2E_UI_MARKERS || 'Solden Invoices,Process with Solden',
 )
   .split(',')
   .map((value) => String(value || '').trim())
@@ -224,7 +224,7 @@ test('real Gmail/Chrome smoke scaffold is configured (manual-gated)', { skip: !R
       } else {
         assert.ok(
           evidence.mounted_sections >= 2 || evidence.entry_points_detected >= 1,
-          'Expected Clearledgr inbox entry points or sidebar sections not found in authenticated Gmail runtime.',
+          'Expected Solden inbox entry points or sidebar sections not found in authenticated Gmail runtime.',
         );
       }
     }

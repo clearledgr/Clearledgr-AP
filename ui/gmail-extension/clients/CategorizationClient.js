@@ -1,5 +1,5 @@
 (function() {
-  const BaseClient = window.ClearledgrClients && window.ClearledgrClients.BaseClient;
+  const BaseClient = window.SoldenClients && window.SoldenClients.BaseClient;
 
   class CategorizationClient extends BaseClient {
     constructor() {
@@ -73,6 +73,6 @@
     ];
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.CategorizationClient = CategorizationClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.CategorizationClient = CategorizationClient;
 })();

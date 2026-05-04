@@ -5,12 +5,12 @@ const { pathToFileURL } = require('node:url');
 
 async function loadQueueManager() {
   const module = await import(pathToFileURL(path.resolve(__dirname, '../queue-manager.js')).href);
-  return module.ClearledgrQueueManager;
+  return module.SoldenQueueManager;
 }
 
 test('interactive auth attempts are debounced by cooldown', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = { valid: true, organizationId: 'default' };
   manager.ensureGmailAuth = async () => ({ success: false, error: 'auth_required' });
 
@@ -23,8 +23,8 @@ test('interactive auth attempts are debounced by cooldown', async () => {
 });
 
 test('silent backend auth retries are debounced after a failure', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = { valid: true, organizationId: 'default' };
   manager.lastBackendAuthFailureAt = Date.now();
 
@@ -36,8 +36,8 @@ test('silent backend auth retries are debounced after a failure', async () => {
 });
 
 test('interactive Gmail auth waits longer than the default runtime message timeout', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
 
   const calls = [];
   manager.safeSendMessage = async (message, options = {}) => {
@@ -57,8 +57,8 @@ test('interactive Gmail auth waits longer than the default runtime message timeo
 });
 
 test('ensureGmailAuth retries runtime message failures', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
   let attempts = 0;
   manager.safeSendMessage = async () => {
     attempts += 1;
@@ -73,8 +73,8 @@ test('ensureGmailAuth retries runtime message failures', async () => {
 });
 
 test('ensureBackendAuth stores backend credentials returned from Gmail auth bridge', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = { valid: true, organizationId: 'default' };
   manager.ensureGmailAuth = async () => ({
     success: true,
@@ -95,8 +95,8 @@ test('ensureBackendAuth stores backend credentials returned from Gmail auth brid
 });
 
 test('auth result mapper returns operator-safe copy', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
 
   const cooldown = manager.describeAuthResult({ error: 'interactive_auth_cooldown', retry_after_seconds: 27 });
   assert.match(cooldown.toast, /try again in 27s/i);
@@ -112,8 +112,8 @@ test('auth result mapper returns operator-safe copy', async () => {
 });
 
 test('refreshQueue does not poll ops endpoints in Gmail Work runtime', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = {
     valid: true,
     backendUrl: 'https://api.clearledgr.test',
@@ -157,8 +157,8 @@ test('refreshQueue does not poll ops endpoints in Gmail Work runtime', async () 
 });
 
 test('normalizeWorklistItem keeps attachment evidence flags stable', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = new ClearledgrQueueManager();
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = new SoldenQueueManager();
 
   const normalized = manager.normalizeWorklistItem({
     id: 'ap-1',

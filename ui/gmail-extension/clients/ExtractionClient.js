@@ -1,5 +1,5 @@
 (function() {
-  const BaseClient = window.ClearledgrClients && window.ClearledgrClients.BaseClient;
+  const BaseClient = window.SoldenClients && window.SoldenClients.BaseClient;
 
   class ExtractionClient extends BaseClient {
     constructor() {
@@ -15,7 +15,7 @@
       );
 
       const extractInvoiceViaAPI = ctx.services?.extractInvoiceViaAPI;
-      const parser = window.ClearledgrEmailParsing;
+      const parser = window.SoldenEmailParsing;
       let parsedData = parser ? parser.parseFinancialData(ctx.emailData) : {};
       // Parse bank statement attachments into transactions for ingestion (CSV/PDF text)
       if (parser && ctx.emailData?.attachments?.length) {
@@ -150,7 +150,7 @@
         this.log(
           ctx,
           'reasoning',
-          'Consulting Clearledgr backend',
+          'Consulting Solden backend',
           'Using full email context for extraction.'
         );
 
@@ -378,6 +378,6 @@
     return `${currency} ${formatted}`;
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.ExtractionClient = ExtractionClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.ExtractionClient = ExtractionClient;
 })();

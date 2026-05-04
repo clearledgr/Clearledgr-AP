@@ -1,22 +1,22 @@
 /**
- * Clearledgr Gmail Extension - Data Bridge (NO UI)
+ * Solden Gmail Extension - Data Bridge (NO UI)
  *
  * This file intentionally mounts ZERO UI into Gmail.
  * All Gmail UI is mounted via InboxSDK in `src/inboxsdk-layer.js` (built to `dist/`).
  *
  * Responsibilities:
- * - Initialize and run `ClearledgrQueueManager` (scanning + queue state)
- * - Handle background/runtime messages (open Clearledgr, etc.)
+ * - Initialize and run `SoldenQueueManager` (scanning + queue state)
+ * - Handle background/runtime messages (open Solden, etc.)
  * - Respond to InboxSDK layer events with DATA ONLY via CustomEvents
  */
-import { ClearledgrQueueManager } from './queue-manager.js';
+import { SoldenQueueManager } from './queue-manager.js';
 
 (function () {
   'use strict';
 
   const GUARD_KEY = '__clearledgr_content_bridge_initialized';
   if (window[GUARD_KEY]) {
-    console.log('[Clearledgr] Content bridge already initialized (guard active)');
+    console.log('[Solden] Content bridge already initialized (guard active)');
     return;
   }
   window[GUARD_KEY] = true;
@@ -396,7 +396,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
       const status = await response.json();
       emit('clearledgr:erp-status', status);
     } catch (err) {
-      console.warn('[Clearledgr] ERP status fetch failed:', err?.message || err);
+      console.warn('[Solden] ERP status fetch failed:', err?.message || err);
       emit('clearledgr:erp-status', { error: 'unavailable' });
     }
   }
@@ -458,10 +458,10 @@ import { ClearledgrQueueManager } from './queue-manager.js';
         detectedAt: new Date().toISOString(),
         source: source || 'manual'
       });
-      toast('Added to Clearledgr queue', 'success');
+      toast('Added to Solden queue', 'success');
       dispatchPipelineData({ source: 'queue_email' });
     } catch (err) {
-      console.warn('[Clearledgr] Queue email failed:', err?.message || err);
+      console.warn('[Solden] Queue email failed:', err?.message || err);
       toast('Failed to add to queue', 'error');
     }
   }
@@ -706,7 +706,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
         }
       }, 1000);
     } catch (err) {
-      console.error('[Clearledgr] ERP connection error:', err);
+      console.error('[Solden] ERP connection error:', err);
       emit('clearledgr:erp-connected', { erp, success: false, error: err?.message || String(err) });
     }
   }
@@ -720,7 +720,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
       glConfig = { accounts: [], rules: [] };
       await queueManager?.loadQueue?.();
       dispatchPipelineData({ source: 'clear_data' });
-      toast('Local Clearledgr data cleared', 'info');
+      toast('Local Solden data cleared', 'info');
     } catch (err) {
       toast('Failed to clear data', 'error');
     }
@@ -839,7 +839,7 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     }
 
     // Queue manager (scanning + backend triage)
-    queueManager = new ClearledgrQueueManager();
+    queueManager = new SoldenQueueManager();
     await queueManager.init();
 
     // Auto-scan on inbox navigation/refresh (debounced).
@@ -1036,11 +1036,11 @@ import { ClearledgrQueueManager } from './queue-manager.js';
     // Initial push so UI has data without waiting.
     dispatchPipelineData({ source: 'init' });
 
-    console.log('[Clearledgr] Content bridge ready (UI-free)');
+    console.log('[Solden] Content bridge ready (UI-free)');
   }
 
   init().catch((err) => {
-    console.error('[Clearledgr] Content bridge init failed:', err);
-    toast('Clearledgr failed to initialize', 'error');
+    console.error('[Solden] Content bridge init failed:', err);
+    toast('Solden failed to initialize', 'error');
   });
 })();

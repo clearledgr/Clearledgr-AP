@@ -106,13 +106,13 @@ test('work-surface primary action map matches the current Gmail execution doctri
     getWorkStateNotice('needs_approval', 'invoice', {
       approval_followup: { pending_assignees: ['ap@clearledgr.com'] },
     }),
-    'Waiting on ap@clearledgr.com. Clearledgr is monitoring this approval and will remind or escalate if it slips.',
+    'Waiting on ap@clearledgr.com. Solden is monitoring this approval and will remind or escalate if it slips.',
   );
   assert.equal(
     getWorkStateNotice('needs_info', 'invoice', {
       followup_next_action: 'await_vendor_response',
     }),
-    'Waiting on vendor reply. Clearledgr will send reminders automatically.',
+    'Waiting on vendor reply. Solden will send reminders automatically.',
   );
   assert.equal(
     getWorkStateNotice('needs_info', 'invoice', {
@@ -125,7 +125,7 @@ test('work-surface primary action map matches the current Gmail execution doctri
       erp_connector_available: false,
       erp_status: 'not_connected',
     }),
-    'ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Clearledgr can post this invoice.',
+    'ERP is not connected. Connect QuickBooks, Xero, NetSuite, or SAP before Solden can post this invoice.',
   );
   assert.equal(canRejectWorkItem('needs_approval', 'viewer'), false);
   assert.equal(needsEntityRouting({ entity_routing_status: 'needs_review' }, 'validated'), true);
@@ -141,7 +141,7 @@ test('agent memory formatter normalizes the canonical cross-surface memory paylo
     state: 'needs_approval',
     agent_memory: {
       profile: {
-        name: 'Clearledgr AP Agent',
+        name: 'Solden AP Agent',
         mission: 'Own the AP lane from intake through approval routing and ERP completion.',
         doctrine_version: 'ap_v1',
         risk_posture: 'bounded_autonomy',
@@ -164,7 +164,7 @@ test('agent memory formatter normalizes the canonical cross-surface memory paylo
     },
   });
 
-  assert.equal(view.name, 'Clearledgr AP Agent');
+  assert.equal(view.name, 'Solden AP Agent');
   assert.equal(view.autonomyLabel, 'Assisted');
   assert.equal(view.currentStateLabel, 'Validated');
   assert.equal(view.statusLabel, 'Needs approval');
@@ -226,7 +226,7 @@ test('confidence field-review blockers expose current value, source, and confide
   );
   assert.equal(
     blockers[0].winner_reason,
-    'Clearledgr read USD 0.00 from the invoice attachment. Because amount is a critical field, a person needs to confirm it before approval continues.',
+    'Solden read USD 0.00 from the invoice attachment. Because amount is a critical field, a person needs to confirm it before approval continues.',
   );
 });
 
@@ -248,7 +248,7 @@ test('admin bootstrap adapter preserves backend current user role instead of har
             return {
               dashboard: { recent_activity: [{ title: 'Approval sent' }] },
               integrations: [{ name: 'gmail', connected: true }],
-              organization: { id: 'org-eu-1', name: 'Clearledgr Europe' },
+              organization: { id: 'org-eu-1', name: 'Solden Europe' },
               health: { status: 'ok' },
               subscription: { plan: 'beta' },
               required_actions: ['connect_erp'],

@@ -37,7 +37,7 @@ function main() {
   ].forEach((hookName) => {
     const hook = compiler.hooks[hookName];
     if (!hook || typeof hook.tap !== 'function') return;
-    hook.tap('ClearledgrDebugWebpackBuild', () => {
+    hook.tap('SoldenDebugWebpackBuild', () => {
       stamp(`hook:${hookName}`);
     });
   });

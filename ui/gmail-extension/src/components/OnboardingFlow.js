@@ -40,9 +40,9 @@ function AuthModal({ onSignIn, pending, onDismiss, errorMessage }) {
       <div class="cl-onboard-modal">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:48px;height:48px;margin-bottom:12px;" />` : ''}
-          <h2 style="font:700 20px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 8px;">Clearledgr AP</h2>
+          <h2 style="font:700 20px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 8px;">Solden AP</h2>
           <p style="font:400 14px/1.5 'DM Sans',sans-serif;color:#475569;margin:0;max-width:320px;">
-            Clearledgr helps your finance team process invoices inside Gmail.
+            Solden helps your finance team process invoices inside Gmail.
             Use your Google account to start.
           </p>
         </div>
@@ -71,7 +71,7 @@ function AuthModal({ onSignIn, pending, onDismiss, errorMessage }) {
           onClick=${onDismiss}
           style="display:block;margin:16px auto 0;padding:0;border:0;background:transparent;cursor:pointer;font:400 12px/1.4 'DM Sans',sans-serif;color:#94A3B8;text-align:center;text-decoration:underline;"
         >
-          Don't use Clearledgr on this account
+          Don't use Solden on this account
         </button>
       </div>
     </div>
@@ -151,7 +151,7 @@ function ErpPicker({ onSelect, pending, errorMessage }) {
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ''}
           <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Which accounting system do you use?</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
-            Clearledgr connects to your ERP to read POs, GRNs, and vendor master data.
+            Solden connects to your ERP to read POs, GRNs, and vendor master data.
           </p>
         </div>
         ${errorMessage ? html`
@@ -457,7 +457,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       return 'Google didn\'t return a token. Check that pop-ups are allowed for mail.google.com and retry.';
     }
     if (c.includes('network')) {
-      return 'Network error reaching Google or Clearledgr. Check connectivity and try again.';
+      return 'Network error reaching Google or Solden. Check connectivity and try again.';
     }
     // Last resort: show the code itself so we can debug what came back.
     return `Sign-in failed (${c}). Please try again.`;
@@ -492,7 +492,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       // (cooldown, popup-blocked, redirect URI mismatch, etc.).
       setAuthError(_authErrorMessage(err?.message));
       // eslint-disable-next-line no-console
-      console.warn('[Clearledgr] sign-in failed:', err);
+      console.warn('[Solden] sign-in failed:', err);
     } finally {
       setPending(false);
     }

@@ -21,6 +21,6 @@
     }
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.BaseClient = BaseClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.BaseClient = BaseClient;
 })();

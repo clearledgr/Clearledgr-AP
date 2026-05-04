@@ -1,6 +1,6 @@
-# Clearledgr API Reference (AP v1-Aligned)
+# Solden API Reference (AP v1-Aligned)
 
-This document is the AP v1-aligned API reference for Clearledgr’s canonical product surfaces and operational endpoints.
+This document is the AP v1-aligned API reference for Solden’s canonical product surfaces and operational endpoints.
 
 It does **not** attempt to exhaustively document every route currently registered in the codebase. The repository contains legacy and experimental endpoints that may still appear in OpenAPI.
 
@@ -8,8 +8,8 @@ Use this document for AP v1 product-facing and operator/admin-facing APIs, and u
 
 ## Canonical References
 
-- Doctrine + launch gates + interface expectations: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
-- AP v1 backend contract semantics: `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+- Doctrine + launch gates + interface expectations: `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
+- AP v1 backend contract semantics: `/Users/mombalam/Desktop/Solden.v1/docs/V1_BACKEND_CONTRACTS.md`
 - Runtime OpenAPI (exhaustive route listing): `/docs`
 
 ## Base URLs
@@ -21,7 +21,7 @@ Development: http://localhost:8010
 
 ## Authentication and Security
 
-Clearledgr uses multiple auth/security patterns depending on surface:
+Solden uses multiple auth/security patterns depending on surface:
 
 1. **JWT bearer auth** for user/admin APIs
 2. **API key** for some operational/dev endpoints (where enabled)
@@ -301,8 +301,8 @@ Slack and Teams must map to the same approval action semantics for AP v1:
 - `request_info`
 
 See:
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+- `/Users/mombalam/Desktop/Solden.v1/docs/V1_BACKEND_CONTRACTS.md`
+- `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
 
 ---
 
@@ -319,7 +319,7 @@ Important distinction:
 - **Connector endpoint exists** != **connector is operationally parity-enabled for AP v1 GA**
 
 Operational parity requirements are defined in:
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md` (Section 6 ERP parity contract)
+- `/Users/mombalam/Desktop/Solden.v1/PLAN.md` (Section 6 ERP parity contract)
 
 ---
 
@@ -366,7 +366,7 @@ For exact request/response schemas in your running build:
    - `http://localhost:8010/docs`
    - `http://localhost:8010/redoc`
 3. Verify routes against:
-   - `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
-   - `/Users/mombalam/Desktop/Clearledgr.v1/docs/V1_BACKEND_CONTRACTS.md`
+   - `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
+   - `/Users/mombalam/Desktop/Solden.v1/docs/V1_BACKEND_CONTRACTS.md`
 
 This is the safest workflow because route registration can vary with enabled modules and environment flags.

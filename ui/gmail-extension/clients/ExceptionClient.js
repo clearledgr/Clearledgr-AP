@@ -1,5 +1,5 @@
 (function() {
-  const BaseClient = window.ClearledgrClients && window.ClearledgrClients.BaseClient;
+  const BaseClient = window.SoldenClients && window.SoldenClients.BaseClient;
 
   class ExceptionClient extends BaseClient {
     constructor() {
@@ -53,7 +53,7 @@
           );
         }
       } catch (error) {
-        console.error('[Clearledgr] Auto-route failed:', error);
+        console.error('[Solden] Auto-route failed:', error);
         this.log(
           ctx,
           'error',
@@ -64,6 +64,6 @@
     }
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.ExceptionClient = ExceptionClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.ExceptionClient = ExceptionClient;
 })();

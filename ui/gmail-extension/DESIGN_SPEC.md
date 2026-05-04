@@ -1,9 +1,9 @@
-# Clearledgr Gmail Extension - Design Specification v1.2
+# Solden Gmail Extension - Design Specification v1.2
 
-> **Update (Mar 23, 2026):** Clearledgr is an embedded finance-ops execution layer. The **Gmail/AP wedge** is designed as **Streak for finance ops**. [`DESIGN.md`](/Users/mombalam/Desktop/Clearledgr.v1/DESIGN.md) is the primary source of truth for overall product design doctrine, while this file remains the Gmail-extension-specific spec.
+> **Update (Mar 23, 2026):** Solden is an embedded finance-ops execution layer. The **Gmail/AP wedge** is designed as **Streak for finance ops**. [`DESIGN.md`](/Users/mombalam/Desktop/Solden.v1/DESIGN.md) is the primary source of truth for overall product design doctrine, while this file remains the Gmail-extension-specific spec.
 
 > **Current Gmail doctrine:**  
-> - the `Clearledgr AP` thread panel is the daily execution surface  
+> - the `Solden AP` thread panel is the daily execution surface  
 > - `Home` is the start page and hub  
 > - `Pipeline` is the hero queue/work surface  
 > - `Review` and `Upcoming` are focused follow-up surfaces  
@@ -71,7 +71,7 @@ CLEARLEDGR Flow:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Emails arrive
         ↓
-Clearledgr auto-identifies financial ones (BACKGROUND)
+Solden auto-identifies financial ones (BACKGROUND)
         ↓
 FAB badge shows: "12 invoices pending"
         ↓
@@ -107,7 +107,7 @@ Runs automatically when:
 
 ```
 For each unread email in Inbox:
-  1. Check if already processed (has Clearledgr label)
+  1. Check if already processed (has Solden label)
   2. If not, run financial detection:
      - Subject line patterns (invoice, receipt, payment, statement)
      - Sender patterns (known vendors, @billing., @invoices.)
@@ -116,7 +116,7 @@ For each unread email in Inbox:
   3. Calculate confidence score (0-100%)
   4. If confidence > 50%:
      - Add to pending queue
-     - Apply label: Clearledgr/Pending
+     - Apply label: Solden/Pending
      - Update FAB badge count
 ```
 
@@ -145,12 +145,12 @@ For each unread email in Inbox:
 
 | Stage | Label |
 |-------|-------|
-| Detected | `Clearledgr/Pending` |
-| Triaged | `Clearledgr/Invoices/Unmatched` |
-| Matched | `Clearledgr/Invoices/Matched` |
-| Posted | `Clearledgr/Invoices/Posted` |
-| Exception | `Clearledgr/Exceptions` |
-| Skipped | `Clearledgr/Skipped` |
+| Detected | `Solden/Pending` |
+| Triaged | `Solden/Invoices/Unmatched` |
+| Matched | `Solden/Invoices/Matched` |
+| Posted | `Solden/Invoices/Posted` |
+| Exception | `Solden/Exceptions` |
+| Skipped | `Solden/Skipped` |
 
 ---
 
@@ -162,7 +162,7 @@ For each unread email in Inbox:
 
 ```
 ┌─────────┐
-│   [C]   │  ← Clearledgr logo only
+│   [C]   │  ← Solden logo only
 │         │  ← Subtle, doesn't distract
 └─────────┘
 ```
@@ -220,7 +220,7 @@ When FAB is clicked with pending items, show batch view instead of single-email 
 
 ```
 ┌────────────────────────────────────────────┐
-│ [C] Clearledgr              [−] [⚙] [X]   │ ← Header
+│ [C] Solden              [−] [⚙] [X]   │ ← Header
 ├────────────────────────────────────────────┤
 │                                            │
 │ 12 invoices pending                        │ ← Queue title
@@ -301,7 +301,7 @@ Show completion summary
 
 After each email is processed:
 1. Current email archived (moves out of inbox)
-2. Label applied: `Clearledgr/Invoices/Posted`
+2. Label applied: `Solden/Invoices/Posted`
 3. Sidebar auto-loads next email from queue
 4. Gmail view navigates to next email
 5. No user clicks needed between items
@@ -346,7 +346,7 @@ When queue is empty:
 
 The following sections describe the single-email processing sidebar, which opens when:
 - User clicks an item from batch queue
-- User manually clicks an email that Clearledgr detected
+- User manually clicks an email that Solden detected
 - Processing flow auto-advances to next email
 
 ---
@@ -428,13 +428,13 @@ The following sections describe the single-email processing sidebar, which opens
 **Layout:**
 ```
 ┌──────────────────────────────────────────┐
-│ [Logo] Clearledgr          [−] [⚙] [X]  │
+│ [Logo] Solden          [−] [⚙] [X]  │
 └──────────────────────────────────────────┘
 ```
 
 **Left side:**
-- Clearledgr logo: 24×24px, square, teal gradient
-- "Clearledgr" text: 15px, weight 600, black
+- Solden logo: 24×24px, square, teal gradient
+- "Solden" text: 15px, weight 600, black
 
 **Right side (3 buttons):**
 - Minimize: Collapse sidebar (toggle with Alt+K)
@@ -470,7 +470,7 @@ The following sections describe the single-email processing sidebar, which opens
 
 - Single line display
 - Green checkmark icon
-- Auto-applies label: `Clearledgr/Invoices/Unmatched`
+- Auto-applies label: `Solden/Invoices/Unmatched`
 - User doesn't interact; auto-collapses
 - Shows label badge
 
@@ -538,7 +538,7 @@ The following sections describe the single-email processing sidebar, which opens
 │                                        │
 │ ████████████░░░░░░ (confidence bar)    │
 │                                        │
-│ [Doc Clearledgr/Invoices/Unmatched]     │
+│ [Doc Solden/Invoices/Unmatched]     │
 │ Classified & Ready for Analysis        │
 └────────────────────────────────────────┘
 ```
@@ -599,8 +599,8 @@ The following sections describe the single-email processing sidebar, which opens
 - Right-aligned percentage
 
 **Label Updates:**
-- Match found → `Clearledgr/Invoices/Matched`
-- No match → `Clearledgr/Exceptions`
+- Match found → `Solden/Invoices/Matched`
+- No match → `Solden/Exceptions`
 
 ---
 
@@ -692,7 +692,7 @@ The following sections describe the single-email processing sidebar, which opens
 │ Status:     [Ready to Post]            │
 │ Extracted:  Jan 26, 2026 at 3:14 PM    │
 │                                        │
-│ [Doc Clearledgr/Invoices/Matched]       │
+│ [Doc Solden/Invoices/Matched]       │
 └────────────────────────────────────────┘
 ```
 
@@ -968,7 +968,7 @@ Applied when OS is set to dark mode.
 - [ ] Detect financial emails (subject, sender, attachments)
 - [ ] Calculate confidence scores
 - [ ] Add to pending queue (chrome.storage)
-- [ ] Apply `Clearledgr/Pending` label
+- [ ] Apply `Solden/Pending` label
 - [ ] Periodic rescan (every 5 minutes)
 
 #### FAB & Badge
@@ -1083,7 +1083,7 @@ Applied when OS is set to dark mode.
 
 ## Summary
 
-Clearledgr is a **two-layer automation system**:
+Solden is a **two-layer automation system**:
 
 ### Intake Layer (Background)
 - Check Auto-scans inbox for financial emails

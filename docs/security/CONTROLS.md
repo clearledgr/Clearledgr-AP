@@ -1,4 +1,4 @@
-# Clearledgr Controls Map
+# Solden Controls Map
 
 Mapping of Trust Service Criteria (TSC) to implemented controls, with
 citations into the source tree. Every claim below points at a concrete

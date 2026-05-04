@@ -61,7 +61,7 @@ function verifyManifestContract() {
   const earlyJsList = Array.isArray(earlyScript?.js) ? earlyScript.js : [];
   const bundleJsList = Array.isArray(bundleScript?.js) ? bundleScript.js : [];
   if (!earlyJsList.includes('route-capture.js') || earlyScript?.run_at !== 'document_start') {
-    fail('Manifest must capture Clearledgr direct-route intent at document_start before Gmail rewrites the hash.');
+    fail('Manifest must capture Solden direct-route intent at document_start before Gmail rewrites the hash.');
   }
   if (!bundleJsList.includes('dist/inboxsdk-layer.js') || bundleScript?.run_at !== 'document_idle') {
     fail('Manifest content script must include dist/inboxsdk-layer.js at document_idle.');

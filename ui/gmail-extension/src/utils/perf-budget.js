@@ -1,7 +1,7 @@
 /**
  * Frontend performance budgets — DESIGN_THESIS.md §4.07.
  *
- * The thesis defines four pass/fail performance criteria for Clearledgr's
+ * The thesis defines four pass/fail performance criteria for Solden's
  * Gmail surfaces:
  *
  *   Sidebar      — loads within 2 seconds of thread open

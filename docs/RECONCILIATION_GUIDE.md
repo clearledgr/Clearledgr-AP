@@ -4,7 +4,7 @@ This guide covers the reconciliation process in detail.
 
 ## How Reconciliation Works
 
-Clearledgr performs **3-way matching** across your payment gateway, bank, and internal records:
+Solden performs **3-way matching** across your payment gateway, bank, and internal records:
 
 ```
 Gateway Transaction  ←→  Bank Statement  ←→  Internal Record
@@ -153,5 +153,5 @@ Dates are too far apart.
 
 3. **Adjust tolerances** - If you have known fee patterns, adjust amount tolerance
 
-4. **Feedback** - Use the feedback feature to help Clearledgr learn your patterns
+4. **Feedback** - Use the feedback feature to help Solden learn your patterns
 

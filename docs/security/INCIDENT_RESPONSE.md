@@ -1,6 +1,6 @@
 # Incident Response Plan
 
-How Clearledgr detects, contains, communicates, and learns from
+How Solden detects, contains, communicates, and learns from
 security incidents. This document is the operational runbook; for the
 high-level commitment shown to prospects, see CC7.3 in
 [CONTROLS.md](CONTROLS.md).

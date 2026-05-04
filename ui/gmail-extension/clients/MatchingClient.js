@@ -1,5 +1,5 @@
 (function() {
-  const BaseClient = window.ClearledgrClients && window.ClearledgrClients.BaseClient;
+  const BaseClient = window.SoldenClients && window.SoldenClients.BaseClient;
 
   class MatchingClient extends BaseClient {
     constructor() {
@@ -70,7 +70,7 @@
             vendorInsights = await getVendorInsightsViaAPI(parsedData.vendor);
           }
         } catch (matchError) {
-          console.error('[Clearledgr] Match API error:', matchError);
+          console.error('[Solden] Match API error:', matchError);
           this.log(
             ctx,
             'attention',
@@ -116,6 +116,6 @@
     };
   }
 
-  window.ClearledgrClients = window.ClearledgrClients || {};
-  window.ClearledgrClients.MatchingClient = MatchingClient;
+  window.SoldenClients = window.SoldenClients || {};
+  window.SoldenClients.MatchingClient = MatchingClient;
 })();

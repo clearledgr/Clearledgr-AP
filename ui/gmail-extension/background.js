@@ -1,4 +1,4 @@
-// Clearledgr AP v1 Background Service Worker
+// Solden AP v1 Background Service Worker
 // config.js is injected by build.sh
 try {
   importScripts('config.js');
@@ -17,7 +17,7 @@ const RetryConfig = {
 const TAB_PENDING_DIRECT_ROUTE_PREFIX = '__clearledgr_tab_pending_direct_route_v1__';
 const TAB_PENDING_DIRECT_ROUTE_TTL_MS = 30000;
 
-function normalizeClearledgrHashFromUrl(rawUrl = '') {
+function normalizeSoldenHashFromUrl(rawUrl = '') {
   try {
     const parsed = new URL(String(rawUrl || ''));
     const hash = String(parsed.hash || '').trim().replace(/^#/, '').split('?')[0];
@@ -32,7 +32,7 @@ function getPendingDirectRouteStorageKey(tabId) {
 }
 
 async function storePendingDirectRouteForTab(tabId, rawUrl) {
-  const normalizedHash = normalizeClearledgrHashFromUrl(rawUrl);
+  const normalizedHash = normalizeSoldenHashFromUrl(rawUrl);
   if (!Number.isFinite(Number(tabId)) || !normalizedHash || !chrome.storage?.session?.set) return;
   try {
     await chrome.storage.session.set({
@@ -81,7 +81,7 @@ async function clearPendingDirectRouteForTab(tabId) {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const candidateUrl = String(changeInfo?.url || tab?.url || '').trim();
   if (!candidateUrl) return;
-  const normalizedHash = normalizeClearledgrHashFromUrl(candidateUrl);
+  const normalizedHash = normalizeSoldenHashFromUrl(candidateUrl);
   if (!normalizedHash) return;
   void storePendingDirectRouteForTab(tabId, candidateUrl);
 });
@@ -1172,7 +1172,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     chrome.notifications.create(notificationId || `cl-${Date.now()}`, {
       type: 'basic',
       iconUrl: iconUrl || 'icons/icon128.png',
-      title: title || 'Clearledgr',
+      title: title || 'Solden',
       message: message || '',
       priority: 1,
     });
@@ -1225,8 +1225,8 @@ async function _getCachedBackendAuth() {
 }
 
 function _titleForImportance(importance) {
-  if (importance === 'high') return 'Clearledgr — attention needed';
-  return 'Clearledgr';
+  if (importance === 'high') return 'Solden — attention needed';
+  return 'Solden';
 }
 
 async function _pollPipelineNotifications() {

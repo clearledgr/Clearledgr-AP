@@ -1,19 +1,19 @@
-# Getting Started with Clearledgr AP v1
+# Getting Started with Solden AP v1
 
 This guide covers the current AP v1 product shape:
 
 - **Gmail** for inbox-native AP intake and triage
 - **Slack / Teams** for approvals and escalation decisions
 - **ERP** as system of record
-- **Clearledgr** for policy, orchestration, execution, and audit
+- **Solden** for policy, orchestration, execution, and audit
 
 For canonical doctrine, contracts, and launch gates, use:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
+- `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
 
 ## Before You Start
 
-Clearledgr AP v1 is not a standalone AP dashboard for daily work.
+Solden AP v1 is not a standalone AP dashboard for daily work.
 
 Daily AP operations happen in:
 1. Gmail (primary operator surface)
@@ -48,7 +48,7 @@ Use the Workspace Shell for:
 
 Connect the Gmail account/workspace that will be monitored for AP intake.
 
-Clearledgr AP v1 expects Gmail to be the primary intake surface for:
+Solden AP v1 expects Gmail to be the primary intake surface for:
 - invoices
 - payment requests
 - remittance and supporting AP context
@@ -73,7 +73,7 @@ Connect the ERP(s) you plan to validate or use:
 
 Note:
 - Connector presence in the repo is not the same as operational readiness.
-- Readiness and parity are governed by `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`.
+- Readiness and parity are governed by `/Users/mombalam/Desktop/Solden.v1/PLAN.md`.
 
 ### Step 6: Configure AP policies
 
@@ -98,7 +98,7 @@ The Gmail surface should show:
 Use this as the first sanity test:
 
 1. Send a test invoice email to the connected Gmail inbox
-2. Confirm Clearledgr detects and creates/links an AP item
+2. Confirm Solden detects and creates/links an AP item
 3. Open Gmail and verify the AP workspace appears on the thread
 4. Confirm extraction fields and confidence state are visible
 5. Trigger approval routing
@@ -148,15 +148,15 @@ Common causes:
 
 ### Canonical references for AP v1 work
 
-- Doctrine / launch gates: `/Users/mombalam/Desktop/Clearledgr.v1/PLAN.md`
-- Backlog / sequencing: `/Users/mombalam/Desktop/Clearledgr.v1/TODO_BACKLOG.md`
-- Strategy / expansion direction: `/Users/mombalam/Desktop/Clearledgr.v1/VISION.md`
-- Point-in-time readiness audit: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GA_LAUNCH_READINESS_TRACKER.md`
+- Doctrine / launch gates: `/Users/mombalam/Desktop/Solden.v1/PLAN.md`
+- Backlog / sequencing: `/Users/mombalam/Desktop/Solden.v1/TODO_BACKLOG.md`
+- Strategy / expansion direction: `/Users/mombalam/Desktop/Solden.v1/VISION.md`
+- Point-in-time readiness audit: `/Users/mombalam/Desktop/Solden.v1/docs/GA_LAUNCH_READINESS_TRACKER.md`
 
 ### Historical MVP framing
 
 The earlier MVP scope doc has been archived:
 
-- `/Users/mombalam/Desktop/Clearledgr.v1/docs/archive/MVP_SCOPE.md`
+- `/Users/mombalam/Desktop/Solden.v1/docs/archive/MVP_SCOPE.md`
 
 It is not the canonical source for AP v1.

@@ -48,11 +48,11 @@ if (typeof globalThis.chrome === 'undefined') {
 
 async function loadQueueManager() {
   const module = await import(pathToFileURL(path.resolve(__dirname, '../queue-manager.js')).href);
-  return module.ClearledgrQueueManager;
+  return module.SoldenQueueManager;
 }
 
-function makeManagerWithToken(ClearledgrQueueManager) {
-  const manager = new ClearledgrQueueManager();
+function makeManagerWithToken(SoldenQueueManager) {
+  const manager = new SoldenQueueManager();
   manager.runtimeConfig = { valid: true, organizationId: 'default', backendUrl: 'https://api.example.test' };
   // Bypass the persisted-token round trip so backendFetch goes
   // straight to fetch() and we can assert call ordering precisely.
@@ -80,8 +80,8 @@ function patchFetchSequence(responses) {
 }
 
 test('backendFetch retries 502 up to twice and returns the eventual non-5xx response', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = makeManagerWithToken(ClearledgrQueueManager);
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = makeManagerWithToken(SoldenQueueManager);
   const sequence = patchFetchSequence([
     { status: 502 },
     { status: 503 },
@@ -97,8 +97,8 @@ test('backendFetch retries 502 up to twice and returns the eventual non-5xx resp
 });
 
 test('backendFetch stops retrying as soon as a non-5xx lands', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = makeManagerWithToken(ClearledgrQueueManager);
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = makeManagerWithToken(SoldenQueueManager);
   // 502 → 200 — should NOT proceed to a third call.
   const sequence = patchFetchSequence([
     { status: 502 },
@@ -115,8 +115,8 @@ test('backendFetch stops retrying as soon as a non-5xx lands', async () => {
 });
 
 test('backendFetch does not retry on a 200', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = makeManagerWithToken(ClearledgrQueueManager);
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = makeManagerWithToken(SoldenQueueManager);
   const sequence = patchFetchSequence([
     { status: 200, body: '{}' },
     { status: 500, body: 'should not be reached' },
@@ -131,8 +131,8 @@ test('backendFetch does not retry on a 200', async () => {
 });
 
 test('backendFetch still triggers the auth-401 retry path after the gateway retries (regression)', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = makeManagerWithToken(ClearledgrQueueManager);
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = makeManagerWithToken(SoldenQueueManager);
 
   let authRefreshCalls = 0;
   manager.ensureBackendAuth = async () => {
@@ -158,8 +158,8 @@ test('backendFetch still triggers the auth-401 retry path after the gateway retr
 });
 
 test('backendFetch returns the final 5xx if all retries also fail', async () => {
-  const ClearledgrQueueManager = await loadQueueManager();
-  const manager = makeManagerWithToken(ClearledgrQueueManager);
+  const SoldenQueueManager = await loadQueueManager();
+  const manager = makeManagerWithToken(SoldenQueueManager);
   const sequence = patchFetchSequence([
     { status: 502 },
     { status: 503 },

@@ -20,8 +20,8 @@ test('gmail entrypoint stays branded and never auto-triggers OAuth', () => {
   // panel title + the no-auto-auth invariant are the surviving contract.
   const source = read(INBOXSDK_SOURCE);
 
-  assert.match(source, /title:\s*'Clearledgr AP'/);
-  assert.doesNotMatch(source, /Clearledgr Ops/);
+  assert.match(source, /title:\s*'Solden AP'/);
+  assert.doesNotMatch(source, /Solden Ops/);
   assert.doesNotMatch(source, /triggerAutoAuth\(/);
 });
 
@@ -50,7 +50,7 @@ test('manifest ships the audited Gmail bundle as the only inbox content script',
   assert.deepEqual(contentScriptJs, ['config.js', 'dist/inboxsdk-layer.js']);
 });
 
-test('background worker preserves fresh-tab Clearledgr route intent before Gmail rewrites the hash', () => {
+test('background worker preserves fresh-tab Solden route intent before Gmail rewrites the hash', () => {
   const source = read(BACKGROUND_SOURCE);
 
   assert.match(source, /TAB_PENDING_DIRECT_ROUTE_PREFIX/);

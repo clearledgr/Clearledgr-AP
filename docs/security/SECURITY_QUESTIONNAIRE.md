@@ -173,12 +173,12 @@ Not certified.
 DPA available; GDPR-aligned controls in place. See [DPA.md](DPA.md).
 
 **Q: HIPAA?**
-Not applicable. Clearledgr is not a covered entity or business
+Not applicable. Solden is not a covered entity or business
 associate; we do not process PHI.
 
 **Q: PCI-DSS?**
 Not in scope. Customer payments via Stripe (Stripe is PCI Level 1).
-Clearledgr does not store payment-card numbers.
+Solden does not store payment-card numbers.
 
 ---
 

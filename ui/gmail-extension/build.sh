@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Clearledgr Gmail Extension Build Script
+# Solden Gmail Extension Build Script
 #
 # Usage:
 #   ./build.sh dev      # Development build (127.0.0.1 API)
@@ -19,7 +19,7 @@ ENV="${1:-dev}"
 cd "$SCRIPT_DIR"
 
 echo "========================================"
-echo "Clearledgr Gmail Extension Build"
+echo "Solden Gmail Extension Build"
 echo "Environment: $ENV"
 echo "========================================"
 

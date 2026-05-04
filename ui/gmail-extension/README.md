@@ -1,4 +1,4 @@
-# Clearledgr Gmail Chrome Extension (Work Surface)
+# Solden Gmail Chrome Extension (Work Surface)
 
 Decision-first Gmail execution surface for AP Skill v1. Setup, account management, Ops, batch controls, and debug tooling live in the Workspace Shell.
 
@@ -15,7 +15,7 @@ Decision-first Gmail execution surface for AP Skill v1. Setup, account managemen
 ### Development Mode
 
 1. **Add Icon Files**
-   Place your Clearledgr logo icons in the `icons/` folder:
+   Place your Solden logo icons in the `icons/` folder:
    - `icon16.png` (16x16 pixels)
    - `icon48.png` (48x48 pixels)
    - `icon128.png` (128x128 pixels)
@@ -32,8 +32,8 @@ Decision-first Gmail execution surface for AP Skill v1. Setup, account managemen
 
 4. **Use the Extension**
    - Go to Gmail (mail.google.com)
-   - Open the Clearledgr item in Gmail's left AppMenu (Streak-style)
-   - Open an invoice email to see the Clearledgr email sidebar
+   - Open the Solden item in Gmail's left AppMenu (Streak-style)
+   - Open an invoice email to see the Solden email sidebar
 
 ### Publishing to Chrome Web Store
 
@@ -63,11 +63,11 @@ gmail-extension/
 
 - Runtime endpoint and org config are resolved from extension storage + backend bootstrap.
 - Integrations and account management are controlled from `/console` (Workspace Shell).
-- Legacy popup/options/demo assets were moved to `/Users/mombalam/Desktop/Clearledgr.v1/docs/legacy/gmail-extension-ui/` and are not part of the shipped extension UX.
+- Legacy popup/options/demo assets were moved to `/Users/mombalam/Desktop/Solden.v1/docs/legacy/gmail-extension-ui/` and are not part of the shipped extension UX.
 
 ## Data Handling
 
-This extension can use Clearledgr backend services:
+This extension can use Solden backend services:
 - Full email context may be sent for extraction and matching
 - Attachment text can be processed for better accuracy
 - Settings and API credentials are stored in your Chrome profile
@@ -81,7 +81,7 @@ To modify the extension:
    - `npm run build:prod`
    - Bun must be installed locally and available on `PATH`, or pointed to via `CLEARLEDGR_BUN_BIN`.
 3. Go to `chrome://extensions/`
-4. Click the refresh icon on the Clearledgr extension
+4. Click the refresh icon on the Solden extension
 5. Reload Gmail to see changes
 
 Build toolchain note:
@@ -141,8 +141,8 @@ CI and nightly runtime verification:
 - `/.github/workflows/gmail-extension-browser-harness.yml`: deterministic browser harness on PR/push for extension changes.
 - `/.github/workflows/gmail-runtime-smoke-nightly.yml`: nightly authenticated Gmail runtime smoke + evidence artifact upload.
 - Nightly job requires a controlled self-hosted runner with a pre-authenticated Gmail profile path provided via secret `GMAIL_E2E_PROFILE_DIR`.
-- Runner setup guide: `/Users/mombalam/Desktop/Clearledgr.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`.
+- Runner setup guide: `/Users/mombalam/Desktop/Solden.v1/docs/GMAIL_RUNTIME_RUNNER_SETUP.md`.
 
 ## Support
 
-For issues or feature requests, contact the Clearledgr team.
+For issues or feature requests, contact the Solden team.
