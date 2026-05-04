@@ -950,7 +950,7 @@ function BankMatchPanel({ api, recordId, item }) {
               <li class="cl-record-bank-row" key=${c.id}>
                 <div class="cl-record-bank-row-main">
                   <div class="cl-record-bank-row-amount">
-                    ${c.amount != null ? formatBankAmount(c.amount, c.currency) : '—'}
+                    ${c.amount != null ? formatAmount(c.amount, c.currency) : '—'}
                   </div>
                   <div class="cl-record-bank-row-meta">
                     ${c.source || 'erp'}
@@ -980,7 +980,7 @@ function BankMatchPanel({ api, recordId, item }) {
               <li class="cl-record-bank-row" key=${line.id}>
                 <div class="cl-record-bank-row-main">
                   <div class="cl-record-bank-row-amount">
-                    ${line.amount != null ? formatBankAmount(line.amount, line.currency) : '—'}
+                    ${line.amount != null ? formatAmount(line.amount, line.currency) : '—'}
                   </div>
                   <div class="cl-record-bank-row-meta">
                     ${line.counterparty || line.description || 'bank line'}
@@ -1004,27 +1004,10 @@ function BankMatchPanel({ api, recordId, item }) {
   `;
 }
 
-function formatBankAmount(amount, currency) {
-  // No currency on the record → render the number alone rather than
-  // misrepresenting it as USD. Intl.NumberFormat in 'currency' mode
-  // requires a code, so use 'decimal' when one isn't available.
-  try {
-    if (!currency) {
-      return new Intl.NumberFormat(undefined, {
-        style: 'decimal',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(Number(amount));
-    }
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 2,
-    }).format(Number(amount));
-  } catch {
-    return `${amount} ${currency || ''}`.trim();
-  }
-}
+// Bank-side amounts use the canonical formatAmount (imported above) —
+// previously this had a separate Intl.NumberFormat path that defaulted
+// to USD when currency was missing. Consolidated in the EU/UK launch
+// money-formatter sweep so every render goes through one helper.
 
 
 // ─── Workflow timeline ──────────────────────────────────────────────

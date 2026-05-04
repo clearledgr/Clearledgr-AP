@@ -1,3 +1,5 @@
+import { formatAmount } from '../utils/formatters.js';
+
 const STORAGE_PREFIX = 'clearledgr_reply_templates_v1';
 const MAX_CUSTOM_TEMPLATES = 12;
 
@@ -270,10 +272,7 @@ export function interpolateReplyTemplate(text = '', values = {}) {
 }
 
 export function buildReplyTemplateContext(item = {}, extra = {}) {
-  const amount = Number(item?.amount);
-  const amountText = Number.isFinite(amount)
-    ? `${String(item?.currency || 'USD')} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : 'Amount unavailable';
+  const amountText = formatAmount(item?.amount, item?.currency);
   return {
     vendor_name: item?.vendor_name || item?.vendor || 'there',
     invoice_number: item?.invoice_number || 'N/A',

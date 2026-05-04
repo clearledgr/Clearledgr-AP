@@ -51,16 +51,9 @@ export function fmtTime(v) {
 
 export function fmtRate(v) { const n = Number(v); return isFinite(n) ? `${n.toFixed(1)}%` : '0.0%'; }
 
-// Format a money amount with its currency code as the prefix (no symbol).
-// Solden launches in EU/UK so a hardcoded $ would be wrong almost everywhere;
-// we render the ISO code to be unambiguous across GBP / EUR / USD / etc.
-// When ``currency`` is empty (record didn't carry one), the number is
-// rendered alone — honest about the missing unit instead of fabricating $.
-export function fmtMoney(v, currency) {
-  const n = Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  const code = String(currency || '').trim().toUpperCase();
-  return code ? `${code} ${n}` : n;
-}
+// Money formatting lives in utils/formatters.js — `formatAmount`. Pass
+// `{ decimals: 0 }` for aggregate / round-figure displays. Don't add
+// a money helper here.
 
 export function hasOpsAccess(bootstrap) { return hasOpsCapability(bootstrap); }
 export function hasAdminAccess(bootstrap) { return hasAdminCapability(bootstrap); }

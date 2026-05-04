@@ -505,7 +505,7 @@ function RuleEditorDialog({ api, toast, mode, rule, onClose, onSaved }) {
 function TestModeDialog({ api, onClose }) {
   const [invoiceText, setInvoiceText] = useState(JSON.stringify({
     amount: 500,
-    currency: 'USD',
+    currency: 'GBP',
     vendor_name: 'Test Vendor Inc',
     department: 'engineering',
     workflow: 'ap',

@@ -2988,7 +2988,8 @@ function TeamMembersPanel({ api, toast, orgId, actorEmail, canManage }) {
 
 function FxRatesPanel({ api, toast, panelRef }) {
   const [rates, setRates] = useState([]);
-  const [functionalCcy, setFunctionalCcy] = useState('USD');
+  // Empty until the API responds — don't flash 'USD' at EU/UK orgs.
+  const [functionalCcy, setFunctionalCcy] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [from, setFrom] = useState('');
@@ -3133,7 +3134,7 @@ function FxRatesPanel({ api, toast, panelRef }) {
           <span class="muted" style="display:block;font-size:11px;text-transform:uppercase">To</span>
           <input
             type="text"
-            placeholder="USD"
+            placeholder=${functionalCcy || 'GBP'}
             value=${to}
             onInput=${(e) => setTo(e.target.value)}
             disabled=${saving}

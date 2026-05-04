@@ -27,7 +27,7 @@ const SAMPLE_ITEM = {
   vendor_name: 'Northwind Office Supply',
   invoice_number: 'INV-1042',
   amount: 1280.45,
-  currency: 'USD',
+  currency: 'GBP',
   due_date: '2026-03-24',
   po_number: 'PO-2841',
   state: 'needs_info',

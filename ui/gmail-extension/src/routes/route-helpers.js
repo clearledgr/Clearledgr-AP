@@ -43,7 +43,9 @@ export function fmtTime(v) {
 }
 
 export function fmtRate(v) { const n = Number(v); return isFinite(n) ? `${n.toFixed(1)}%` : '0.0%'; }
-export function fmtDollar(v) { return '$' + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+// Money formatting belongs in `utils/formatters.js#formatAmount` —
+// don't add a money helper here. Solden launches in EU/UK and a
+// hardcoded $ would be wrong for the entire target market.
 
 export function hasOpsAccess(bootstrap) {
   return hasOpsCapability(bootstrap);

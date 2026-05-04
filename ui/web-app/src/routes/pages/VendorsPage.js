@@ -4,7 +4,8 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { fmtDateTime, fmtMoney, useAction } from '../route-helpers.js';
+import { fmtDateTime, useAction } from '../route-helpers.js';
+import { formatAmount } from '../../utils/formatters.js';
 import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
 import { writeReviewPreferences } from '../review-preferences.js';
 import { navigateToVendorRecord } from '../../utils/vendor-route.js';
@@ -130,12 +131,12 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
         const total = vendors.reduce((sum, v) => sum + Number(v.total_amount || 0), 0);
         const anyMixed = vendors.some((v) => v.currency_mixed);
         if (currencies.size === 1 && !anyMixed) {
-          return html`<span class="secondary-chip">Total spend ${fmtMoney(total, [...currencies][0])}</span>`;
+          return html`<span class="secondary-chip">Total spend ${formatAmount(total, [...currencies][0], { decimals: 0 })}</span>`;
         }
         if (currencies.size === 0) {
           // No vendor has a currency on file yet — render the count
           // without a unit instead of fabricating one.
-          return html`<span class="secondary-chip">Total spend ${fmtMoney(total, '')}</span>`;
+          return html`<span class="secondary-chip">Total spend ${formatAmount(total, '', { decimals: 0 })}</span>`;
         }
         return html`<span class="secondary-chip" title="Spend spans multiple currencies — open a vendor to see its own currency">Spend across ${currencies.size} currencies</span>`;
       })()}
@@ -215,7 +216,7 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                     </div>
                   </div>
                   <div class="secondary-card-stat">
-                    <strong>${fmtMoney(vendor.total_amount || 0, vendor.currency)}${vendor.currency_mixed ? html` <span class="muted" style="font-weight:400" title="This vendor's invoices span multiple currencies; total uses the dominant one">·mixed</span>` : ''}</strong>
+                    <strong>${formatAmount(vendor.total_amount || 0, vendor.currency, { decimals: 0 })}${vendor.currency_mixed ? html` <span class="muted" style="font-weight:400" title="This vendor's invoices span multiple currencies; total uses the dominant one">·mixed</span>` : ''}</strong>
                     <span>${Number(vendor.invoice_count || 0).toLocaleString()} invoices</span>
                     <span>${Number(vendor.open_count || 0).toLocaleString()} open · ${Number(vendor.issue_count || 0).toLocaleString()} issues · ${Number(vendor.approval_count || 0).toLocaleString()} awaiting approval</span>
                   </div>

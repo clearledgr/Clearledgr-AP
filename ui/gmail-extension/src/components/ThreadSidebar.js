@@ -27,7 +27,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import InviteVendorModal from './InviteVendorModal.js';
 import BudgetPausedBanner from './BudgetPausedBanner.js';
 import { workspaceItemUrl } from '../utils/workspace-link.js';
-import { formatTimeAgo } from '../utils/formatters.js';
+import { formatTimeAgo, formatAmount as fmtAmount } from '../utils/formatters.js';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -358,14 +358,13 @@ const THREAD_SIDEBAR_CSS = `
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Wrap the canonical `formatAmount` so the original em-dash fallback
+// for null/empty amounts is preserved here. Currency is no longer
+// defaulted to USD — empty currency renders the number alone.
 function formatAmount(amount, currency) {
   if (amount == null || amount === '') return '—';
-  try {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return '—';
-    const cur = String(currency || 'USD').toUpperCase();
-    return `${cur} ${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  } catch { return '—'; }
+  const out = fmtAmount(amount, currency);
+  return out === 'Amount unavailable' ? '—' : out;
 }
 
 function formatDate(iso) {

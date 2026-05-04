@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import htm from 'htm';
+import { formatAmount } from '../../utils/formatters.js';
 
 const html = htm.bind(h);
 
@@ -28,15 +29,6 @@ function formatTimeAgo(iso) {
     const days = Math.floor(hours / 24);
     return `${days}d ago`;
   } catch { return ''; }
-}
-
-function formatAmount(amount, currency) {
-  if (amount == null || amount === '') return '';
-  const num = Number(amount);
-  if (!Number.isFinite(num)) return '';
-  const ccy = String(currency || '').trim().toUpperCase();
-  const fixed = num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return ccy ? `${ccy} ${fixed}` : fixed;
 }
 
 function rowHeadline(row) {
@@ -159,7 +151,9 @@ export default function ExceptionsPage({ api }) {
                     // is noise, so collapse the duplicate.
                     const reason = String(row.reason || '').trim();
                     const showReason = reason && reason.toLowerCase() !== String(row.exception_type || '').toLowerCase();
-                    const amountLabel = formatAmount(summary.amount, summary.currency);
+                    const amountLabel = (summary.amount != null && summary.amount !== '')
+                      ? formatAmount(summary.amount, summary.currency)
+                      : '';
                     const ageLabel = formatTimeAgo(row.raised_at);
                     const openRecord = () => {
                       if (row.synthetic) {

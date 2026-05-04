@@ -40,14 +40,34 @@ export function normalizeCurrencyCode(currency) {
   return String(currency ?? '').trim().toUpperCase();
 }
 
-export function formatAmount(amount, currency = '') {
+/**
+ * Canonical money formatter for the entire workspace SPA.
+ *
+ * Renders the ISO currency code as a prefix ("GBP 1,234.56") rather than a
+ * locale-specific symbol — Solden launches in EU/UK and any hardcoded
+ * symbol would be wrong somewhere. When ``currency`` is empty, returns the
+ * number alone (honest about the missing unit; never fabricates "$" or
+ * "USD").
+ *
+ * Options
+ *   decimals  : number of fraction digits, default 2. Pass 0 for
+ *               aggregates / round-figure displays.
+ *
+ * Every money render in the workspace must go through this. ``fmtDollar``
+ * (hardcoded $), ``fmtMoney`` (round-only), and ``formatBankAmount``
+ * (Intl.NumberFormat with USD fallback) were all consolidated here. Any
+ * new helper that prefixes a currency symbol is a regression — the CI
+ * test in ``tests/test_no_currency_leaks.py`` greps for forbidden
+ * patterns to keep this from drifting.
+ */
+export function formatAmount(amount, currency = '', { decimals = 2 } = {}) {
   if (amount === null || amount === undefined || amount === '') return 'Amount unavailable';
   const numeric = Number(amount);
   if (!Number.isFinite(numeric)) return 'Amount unavailable';
   const normalizedCurrency = normalizeCurrencyCode(currency);
   const amountLabel = numeric.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
   return normalizedCurrency ? `${normalizedCurrency} ${amountLabel}` : amountLabel;
 }
