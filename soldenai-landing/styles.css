@@ -1728,45 +1728,6 @@ body:not(.theme-dark) .footer-cta {
   font-weight: 600;
 }
 
-/* ── Gap section ─────────────────────────────────────────── */
-
-.gap {
-  padding: 112px 0;
-  text-align: center;
-}
-.gap__head { max-width: 720px; margin: 0 auto 56px; }
-
-.gap__lines {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  font-size: clamp(22px, 3vw, 32px);
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-  font-weight: 500;
-}
-.gap__line { color: var(--text-on-dark-dim); }
-.gap__line--accent { color: var(--text-on-dark); }
-
-.gap__q {
-  display: inline-block;
-  margin-left: 10px;
-  padding: 4px 12px;
-  font-family: var(--font-mono);
-  font-size: 0.78em;
-  font-weight: 400;
-  letter-spacing: 0;
-  color: var(--text-on-dark-muted);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--border-on-dark-mid);
-  border-radius: 6px;
-}
-.gap__line--accent .gap__q {
-  color: var(--teal-soft);
-  border-color: rgba(24, 191, 176, 0.30);
-  background: rgba(24, 191, 176, 0.06);
-}
-
 /* ── Solution section ────────────────────────────────────── */
 
 .solution {
