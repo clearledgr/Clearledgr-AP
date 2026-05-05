@@ -152,14 +152,14 @@
     <!-- Trust strip ────────────────────────────────────────── -->
     <section class="strip" aria-label="Audience">
       <div class="shell">
-        <p class="strip__text">Built for modern and AI-forward finance teams</p>
+        <p class="strip__text" data-reveal>Built for modern and AI-forward finance teams</p>
       </div>
     </section>
 
     <!-- Problem ────────────────────────────────────────────── -->
     <section class="problem" id="problem">
       <div class="shell problem__inner">
-        <div class="problem__copy">
+        <div class="problem__copy" data-reveal>
           <h2 class="section-title">Work is everywhere. Ownership is nowhere.</h2>
           <p class="section-sub">
             Finance systems show you status. None of them move work forward, and none of them agree on who owns what.
@@ -170,7 +170,7 @@
           </p>
         </div>
 
-        <div class="problem__data">
+        <div class="problem__data" data-reveal data-reveal-delay="1">
           <table class="problem-table">
             <thead>
               <tr>
@@ -204,14 +204,14 @@
     <!-- Solution ───────────────────────────────────────────── -->
     <section class="solution">
       <div class="shell">
-        <div class="solution__head">
+        <div class="solution__head" data-reveal>
           <h2 class="section-title">Every AP record becomes a live workflow.</h2>
           <p class="section-sub">
             One record carries state, owner, timeline, and exceptions, wherever it shows up. Four primitives, kept in sync across every surface.
           </p>
         </div>
 
-        <div class="solution__primitives">
+        <div class="solution__primitives" data-reveal data-reveal-delay="1">
           <div class="primitive">
             <div class="primitive__name">state</div>
             <div class="primitive__def">where it is right now</div>
@@ -236,7 +236,7 @@
 
     <!-- Product intro ──────────────────────────────────────── -->
     <section class="product-intro" id="product">
-      <div class="shell product-intro__head">
+      <div class="shell product-intro__head" data-reveal>
         <h2 class="section-title">One record. Five stages.</h2>
         <p class="section-sub">
           Same vendor, same PO, same amount. Different surface every step. Scroll to watch the record move.
@@ -247,7 +247,7 @@
     <!-- Flow signature: pinned card morphs through 5 states ── -->
     <section class="flow" id="flow">
       <div class="shell flow__inner">
-        <div class="flow__sticky">
+        <div class="flow__sticky" data-reveal>
           <div class="flow__card" data-flow-state="capture">
             <div class="flow__chrome">
               <span class="flow__chrome-dots"><i></i><i></i><i></i></span>
@@ -478,13 +478,13 @@
 
     <!-- Guardrails (decision rules) ────────────────────────── -->
     <section class="rules">
-      <div class="shell shell--tight rules__head">
+      <div class="shell shell--tight rules__head" data-reveal>
         <h2 class="section-title">Routing decisions are rules. The model never gets a vote.</h2>
         <p class="section-sub" style="margin-left:auto;margin-right:auto;text-align:center;">
           Match tolerance, sanctions, duplicates, budget, 3-way logic. All deterministic. The model reads. The model writes operator prose. The model never votes.
         </p>
       </div>
-      <div class="shell">
+      <div class="shell" data-reveal data-reveal-delay="1">
 <pre class="rules__pre"><span class="rules__op">match</span>   PO, GRN, invoice                 <span class="rules__cmt"># tolerance 0.5% on amount</span>
 <span class="rules__op">gate</span>    sanctions(vendor)                <span class="rules__cmt"># BLOCK on hit</span>
 <span class="rules__op">gate</span>    duplicate(invoice_no, vendor)    <span class="rules__cmt"># BLOCK</span>
@@ -504,7 +504,7 @@
     <!-- Audit signature: hash-chain visualisation ───────────── -->
     <section class="audit-chain">
       <div class="shell audit-chain__inner">
-        <div class="audit-chain__copy">
+        <div class="audit-chain__copy" data-reveal>
           <h2 class="audit-chain__title">Tamper-evident at the schema layer.</h2>
           <p class="audit-chain__sub">
             Append-only audit log enforced by database triggers, not application code. Every event hashes the prior event. Strip a row and the chain breaks. Your auditor sees the gap.
@@ -529,7 +529,7 @@
           </ul>
         </div>
 
-        <div class="audit-chain__panel">
+        <div class="audit-chain__panel" data-reveal data-reveal-delay="1">
           <header class="audit-chain__panel-head">
             <span>audit_chain · ap_items · org_8f3</span>
             <span class="audit-chain__panel-head-status">chain intact</span>
@@ -621,7 +621,7 @@
     <!-- How it fits ────────────────────────────────────────── -->
     <section class="fits" id="fits">
       <div class="shell">
-        <div class="fits__head">
+        <div class="fits__head" data-reveal>
           <h2 class="section-title">Sits beside your stack. Doesn't replace it.</h2>
           <p class="section-sub">
             Solden doesn't compete with the systems you already pay for. It sits across them. Tracks state. Assigns ownership. Moves work forward.
@@ -685,7 +685,7 @@
     <!-- Outcomes ───────────────────────────────────────────── -->
     <section class="outcomes">
       <div class="shell">
-        <div class="outcomes__head">
+        <div class="outcomes__head" data-reveal>
           <h2 class="section-title">What changes immediately.</h2>
           <p class="section-sub">
             A week in, the symptoms of the coordination gap stop showing up.
@@ -706,10 +706,10 @@
     <!-- Defaults / trust stats ─────────────────────────────── -->
     <section class="trust-row">
       <div class="shell">
-        <div class="trust-row__head">
+        <div class="trust-row__head" data-reveal>
           <h2 class="section-title">An audit committee can sign off on this.</h2>
         </div>
-        <div class="stats">
+        <div class="stats" data-reveal data-reveal-delay="1">
           <div class="stat">
             <span class="stat__num stat__num--accent">0</span>
             <span class="stat__label">emails Solden sends to your vendors. Vendor outreach stays with the operator.</span>
@@ -733,7 +733,7 @@
     <!-- Why now ────────────────────────────────────────────── -->
     <section class="why">
       <div class="shell">
-        <div class="why__head">
+        <div class="why__head" data-reveal>
           <h2 class="section-title">Finance complexity has outgrown its tools.</h2>
           <p class="section-sub">
             More vendors, more transactions, more systems. Coordination is still manual. Three things shifted.
@@ -759,7 +759,7 @@
 
     <!-- Category + Footer CTA ──────────────────────────────── -->
     <section class="footer-cta">
-      <div class="shell shell--tight">
+      <div class="shell shell--tight" data-reveal>
         <div class="category-pair">
           <div class="category-pair__line">Your ERP shows what happened.</div>
           <div class="category-pair__line category-pair__line--accent">Solden coordinates what's happening.</div>

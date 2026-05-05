@@ -28,6 +28,13 @@
   // page paints immediately even if SSE is slow or blocked. ──
   initLiveRibbon();
 
+  // ── 1d. Topbar gets a hairline border + tighter blur once the
+  // user scrolls past the hero. Linear pattern. ──
+  initTopbarScroll();
+
+  // ── 1e. Sections fade up when they enter the viewport. ──
+  initScrollReveal();
+
   function initFlow() {
     var card = document.querySelector('[data-flow-state]');
     if (!card || typeof IntersectionObserver === 'undefined') return;
@@ -195,6 +202,39 @@
       // close on terminal failures.
       if (source.readyState === 2) source.close();
     };
+  }
+
+  function initTopbarScroll() {
+    var topbar = document.querySelector('.topbar');
+    if (!topbar) return;
+    var THRESHOLD = 60;
+    var ticking = false;
+    function update() {
+      ticking = false;
+      topbar.classList.toggle('is-scrolled', (window.scrollY || window.pageYOffset || 0) > THRESHOLD);
+    }
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(update);
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    update();
+  }
+
+  function initScrollReveal() {
+    if (typeof IntersectionObserver === 'undefined') return;
+    var nodes = document.querySelectorAll('[data-reveal]');
+    if (!nodes.length) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          e.target.classList.add('is-revealed');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    nodes.forEach(function (n) { io.observe(n); });
   }
 
   // ── 2. Contact form ──
