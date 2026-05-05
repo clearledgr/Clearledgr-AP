@@ -66,40 +66,84 @@
 
       <div class="shell hero__below">
         <aside class="ribbon" aria-label="Sample agent activity">
-          <div class="ribbon__head">
-            <span class="ribbon__title"><span class="ribbon__pulse" aria-hidden="true"></span> agent.activity</span>
-            <span class="ribbon__meta">live · production</span>
-          </div>
+          <header class="ribbon__head">
+            <h2 class="ribbon__title">Agent activity</h2>
+            <span class="ribbon__head-meta">
+              <span class="ribbon__pulse" aria-hidden="true"></span>
+              Live, last 5
+            </span>
+          </header>
           <ol class="ribbon__list">
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--blue" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">captured</span> <span class="ribbon__subject">invoice from Northwind Logistics · €18,420.00</span></span>
-              <span class="ribbon__surface">gmail</span>
-              <time class="ribbon__time">just now</time>
+              <div class="ribbon__body">
+                <div class="ribbon__line">
+                  <span class="ribbon__verb">captured</span><span class="ribbon__subject">invoice from Northwind Logistics, €18,420.00</span>
+                </div>
+                <div class="ribbon__meta">
+                  <span class="ribbon__time">1m ago</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__actor">Agent</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__surface">via gmail</span>
+                </div>
+              </div>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--teal" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">validated</span> <span class="ribbon__subject">3-way match · PO #4821 · vendor verified</span></span>
-              <span class="ribbon__surface">match</span>
-              <time class="ribbon__time">12s</time>
+              <div class="ribbon__body">
+                <div class="ribbon__line">
+                  <span class="ribbon__verb">validated</span><span class="ribbon__subject">3-way match, PO #4821, vendor verified</span>
+                </div>
+                <div class="ribbon__meta">
+                  <span class="ribbon__time">44s ago</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__actor">Agent</span>
+                </div>
+              </div>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--amber" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">routed</span> <span class="ribbon__subject">to Priya for approval · over €15k threshold</span></span>
-              <span class="ribbon__surface">slack</span>
-              <time class="ribbon__time">22s</time>
+              <div class="ribbon__body">
+                <div class="ribbon__line">
+                  <span class="ribbon__verb">routed</span><span class="ribbon__subject">to Priya for approval, over €15k threshold</span>
+                </div>
+                <div class="ribbon__meta">
+                  <span class="ribbon__time">22s ago</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__actor">Agent</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__surface">via slack</span>
+                </div>
+              </div>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--green" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">posted</span> <span class="ribbon__subject">bill to NetSuite · GL 5210 · vendor balance updated</span></span>
-              <span class="ribbon__surface">netsuite</span>
-              <time class="ribbon__time">1m 04s</time>
+              <div class="ribbon__body">
+                <div class="ribbon__line">
+                  <span class="ribbon__verb">posted</span><span class="ribbon__subject">bill to NetSuite, GL 5210, vendor balance updated</span>
+                </div>
+                <div class="ribbon__meta">
+                  <span class="ribbon__time">2s ago</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__actor">Agent</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__surface">via netsuite</span>
+                </div>
+              </div>
             </li>
             <li class="ribbon__row">
               <span class="ribbon__dot ribbon__dot--gray" aria-hidden="true"></span>
-              <span><span class="ribbon__verb">logged</span> <span class="ribbon__subject">audit event AP-9182 · append-only</span></span>
-              <span class="ribbon__surface">audit</span>
-              <time class="ribbon__time">1m 06s</time>
+              <div class="ribbon__body">
+                <div class="ribbon__line">
+                  <span class="ribbon__verb">logged</span><span class="ribbon__subject">audit event AP-9182, append-only</span>
+                </div>
+                <div class="ribbon__meta">
+                  <span class="ribbon__time">just now</span>
+                  <span class="ribbon__sep">·</span>
+                  <span class="ribbon__actor">Agent</span>
+                </div>
+              </div>
             </li>
           </ol>
         </aside>
