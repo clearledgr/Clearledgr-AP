@@ -22,10 +22,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from clearledgr.core.plan import Action, CoordinationResult, Plan
 
@@ -257,6 +258,145 @@ class CoordinationEngine:
             "resume_onboarding_from_override": self._handle_onboarding_adapter_pending,
         }
 
+    # ------------------------------------------------------------------
+    # Per-box advisory lock (group 2 deferred-a, 2026-05-06)
+    # ------------------------------------------------------------------
+
+    def _box_lock_keys(self, box_id: str) -> Tuple[int, int]:
+        """Two-int4 key for ``pg_try_advisory_lock(int, int)``. The
+        first int hashes ``organization_id`` and the second hashes
+        ``box_id``, so different orgs never collide and same-org-
+        same-box collides as desired.
+
+        Postgres advisory-lock keys are signed int4. blake2b gives
+        us a stable hash; we then reduce to int4 range with sign
+        conversion so the keys fit the two-arg overload.
+        """
+        org_bytes = (self.organization_id or "").encode("utf-8")
+        box_bytes = (box_id or "").encode("utf-8")
+        org_hash = int.from_bytes(
+            hashlib.blake2b(org_bytes, digest_size=4).digest(), "big",
+        )
+        box_hash = int.from_bytes(
+            hashlib.blake2b(box_bytes, digest_size=4).digest(), "big",
+        )
+        # Convert from unsigned 32-bit to signed 32-bit so the keys
+        # fit the int4 advisory-lock signature.
+        if org_hash >= 2**31:
+            org_hash -= 2**32
+        if box_hash >= 2**31:
+            box_hash -= 2**32
+        return (org_hash, box_hash)
+
+    def _acquire_box_lock(
+        self, box_id: str,
+    ) -> Tuple[Optional[Any], str]:
+        """Try to acquire the per-box advisory lock.
+
+        Returns ``(connection, status)``:
+
+        * ``(conn, "acquired")`` — lock held by this engine on ``conn``;
+          caller MUST call ``_release_box_lock`` to free it. The
+          connection is checked out of the pool for the lock's
+          lifetime; other engine DB calls use independent pool
+          connections, so the lock-conn doesn't bottleneck normal
+          work.
+        * ``(None, "held")`` — another engine has the lock; abort.
+        * ``(None, "no_infra")`` — pool unavailable (test mock, sqlite
+          shim); fail-open and run unguarded. The financial-write
+          backstop in ``_handle_post_bill`` (erp_reference dedupe)
+          catches the highest-stakes duplicate-write hazard even
+          without the lock.
+        """
+        if not box_id:
+            return (None, "no_infra")
+        pool = getattr(self.db, "_pg_pool", None)
+        if pool is None:
+            return (None, "no_infra")
+
+        conn = None
+        try:
+            for _attempt in range(3):
+                candidate = pool.getconn()
+                if not candidate.closed:
+                    conn = candidate
+                    break
+                try:
+                    pool.putconn(candidate)
+                except Exception:
+                    try:
+                        candidate.close()
+                    except Exception:
+                        pass
+            if conn is None:
+                logger.warning(
+                    "[CoordinationEngine] could not obtain lock connection for box=%s",
+                    box_id,
+                )
+                return (None, "no_infra")
+
+            keys = self._box_lock_keys(box_id)
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_lock(%s, %s)", keys)
+                row = cur.fetchone()
+                acquired = bool(row and (
+                    row[0] if isinstance(row, (list, tuple)) else next(iter(row.values()))
+                ))
+            conn.commit()
+            if acquired:
+                return (conn, "acquired")
+            # Lock held; return the conn to the pool.
+            try:
+                pool.putconn(conn)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            return (None, "held")
+        except Exception as exc:
+            logger.warning(
+                "[CoordinationEngine] advisory lock acquisition failed for box=%s: %s",
+                box_id, exc,
+            )
+            if conn is not None:
+                try:
+                    pool.putconn(conn)
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            return (None, "no_infra")
+
+    def _release_box_lock(self, conn: Any, box_id: str) -> None:
+        """Release a per-box advisory lock previously acquired via
+        ``_acquire_box_lock``. Always returns the connection to the
+        pool, even if the unlock RPC fails."""
+        if conn is None:
+            return
+        pool = getattr(self.db, "_pg_pool", None)
+        keys = self._box_lock_keys(box_id) if box_id else None
+        try:
+            if keys is not None:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_unlock(%s, %s)", keys)
+                conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "[CoordinationEngine] advisory unlock failed for box=%s: %s",
+                box_id, exc,
+            )
+        finally:
+            if pool is not None:
+                try:
+                    pool.putconn(conn)
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
     async def execute(self, plan: Plan) -> CoordinationResult:
         """§5.1: The execution loop.
 
@@ -268,10 +408,48 @@ class CoordinationEngine:
         5. Handle the result
         6. Check for async wait
         7. Complete or continue
+
+        Per-box advisory lock (group 2): when the plan targets a Box,
+        an org-scoped + box-scoped Postgres advisory lock serializes
+        plan execution. A second engine on the same Box (Celery
+        redelivery, webhook + timer overlap) returns
+        ``status="lock_held"`` immediately without doing any work,
+        so the financial-write hazard from concurrent execution is
+        closed at the engine level.
+
+        Lock infra missing (test mocks, sqlite-only shim) → fail-
+        open: run unguarded. The ``_handle_post_bill``
+        ``erp_reference`` dedupe (also Group 2) is the financial-
+        write backstop, so a missing lock degrades safety but
+        doesn't open the duplicate-bill door.
         """
         if plan.is_empty:
             return CoordinationResult(status="completed", steps_total=0)
 
+        box_id = plan.box_id
+        if box_id:
+            lock_conn, lock_status = self._acquire_box_lock(box_id)
+            if lock_status == "held":
+                return CoordinationResult(
+                    status="lock_held",
+                    steps_completed=0,
+                    steps_total=plan.step_count,
+                    box_id=box_id,
+                    error="another engine instance is processing this box",
+                    last_action=None,
+                )
+            try:
+                return await self._execute_body(plan)
+            finally:
+                if lock_conn is not None:
+                    self._release_box_lock(lock_conn, box_id)
+        # No box → no lock; run the body directly.
+        return await self._execute_body(plan)
+
+    async def _execute_body(self, plan: Plan) -> CoordinationResult:
+        """Internal: the original ``execute()`` body, callable
+        with the per-box lock already held (or with no lock when
+        the plan has no box)."""
         box_id = plan.box_id
         steps_completed = 0
 
@@ -1650,19 +1828,134 @@ class CoordinationEngine:
             wf.clear_waiting_condition(plan.box_id)
         return {"ok": True}
 
+    def _cas_clear_pending_plan(self, box_id: str) -> Optional[Any]:
+        """Atomic compare-and-swap: read ``pending_plan`` AND clear
+        it in a single ``UPDATE`` statement. Returns the prior value
+        on win, ``None`` on loss or empty.
+
+        Why CAS: two redelivered resumption events that both reach
+        ``_handle_resume_plan`` must not both run the saved plan —
+        that would double-execute every action it contains. The
+        ``UPDATE ... WHERE pending_plan IS NOT NULL RETURNING ...``
+        pattern combined with Postgres row-level locking on UPDATE
+        serializes the two access patterns at the storage layer:
+        the first UPDATE returns the JSON and clears the column;
+        the second sees IS NULL, updates 0 rows, returns nothing.
+        Only the winner runs the resumed plan.
+
+        Returns the raw ``pending_plan`` field value (string or
+        dict, depending on the row factory). Caller deserializes.
+        """
+        if not hasattr(self.db, "connect"):
+            return None
+        # Postgres ``RETURNING`` returns the POST-update value, not
+        # the prior one. To capture the value being cleared, use a
+        # CTE that selects + locks the row first, then UPDATEs and
+        # returns the CTE's stored value. ``FOR UPDATE`` holds a
+        # row-level lock for the duration of the statement so two
+        # concurrent CAS callers serialize: the first sees the
+        # value, clears it; the second sees pending_plan IS NULL,
+        # the CTE returns no rows, the UPDATE updates 0 rows.
+        sql = (
+            "WITH cas AS ("
+            "    SELECT id, pending_plan "
+            "    FROM ap_items "
+            "    WHERE id = %s AND pending_plan IS NOT NULL "
+            "    FOR UPDATE"
+            ") "
+            "UPDATE ap_items SET pending_plan = NULL "
+            "FROM cas "
+            "WHERE ap_items.id = cas.id "
+            "RETURNING cas.pending_plan"
+        )
+        try:
+            with self.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (box_id,))
+                    row = cur.fetchone()
+                conn.commit()
+            if not row:
+                return None
+            if isinstance(row, dict):
+                return row.get("pending_plan")
+            return row[0] if row else None
+        except Exception as exc:
+            logger.warning(
+                "[CoordinationEngine] CAS clear pending_plan failed for box=%s: %s",
+                box_id, exc,
+            )
+            return None
+
     async def _handle_resume_plan(self, action: Action, plan: Plan) -> dict:
-        """Resume execution from pending_plan column."""
+        """Resume execution from the box's ``pending_plan`` column.
+
+        Two redelivered events that both reach this handler: only
+        the CAS winner deserializes and runs the saved plan; the
+        loser returns a ``no_pending_plan`` no-op.
+
+        Runs the resumed plan via ``_execute_body`` (not
+        ``execute``) because the outer ``execute()`` already holds
+        the per-box advisory lock. Calling ``execute()`` again
+        would attempt to re-acquire and bail out with ``lock_held``
+        against itself.
+
+        Resumed-plan failures are recorded by the resumed plan's
+        own audit machinery (Rule 1 pre/post-writes, exception
+        flow). This handler just bubbles up the resumed status as
+        a result-dict field; the outer plan is "we triggered the
+        resume" and shouldn't double-record what the resumed plan
+        already audited.
+        """
         if not plan.box_id:
-            return {"ok": True}
-        item = self.db.get_ap_item(plan.box_id)
-        pending = item.get("pending_plan") if item else None
-        if pending:
-            import json
-            if isinstance(pending, str):
-                pending = json.loads(pending)
-            # The caller (celery_tasks dispatch) will pick up the resumed plan
-            return {"ok": True, "resumed_plan": pending}
-        return {"ok": True}
+            return {"ok": True, "resumed": False, "reason": "no_box_id"}
+
+        pending_json = self._cas_clear_pending_plan(plan.box_id)
+        if pending_json is None:
+            # Either no plan to resume (e.g. wait fired but the
+            # planner didn't save a remainder), or another resumer
+            # already won the CAS. Either way, no-op.
+            return {
+                "ok": True, "resumed": False,
+                "reason": "no_pending_plan",
+            }
+
+        try:
+            import json as _json
+            if isinstance(pending_json, str):
+                resumed_plan = Plan.from_json(pending_json)
+            elif isinstance(pending_json, dict):
+                resumed_plan = Plan.from_json(_json.dumps(pending_json))
+            else:
+                return {
+                    "ok": True, "resumed": False,
+                    "reason": "invalid_pending_plan_shape",
+                }
+        except Exception as exc:
+            logger.warning(
+                "[CoordinationEngine] failed to deserialize pending_plan for box=%s: %s",
+                plan.box_id, exc,
+            )
+            return {
+                "ok": True, "resumed": False,
+                "reason": "deserialization_failed",
+            }
+
+        if resumed_plan.is_empty:
+            return {
+                "ok": True, "resumed": False,
+                "reason": "empty_plan",
+            }
+
+        # We already hold the box lock (outer execute acquired it).
+        # Call _execute_body directly to avoid the lock acquisition
+        # path against ourselves.
+        resumed_result = await self._execute_body(resumed_plan)
+        return {
+            "ok": True,
+            "resumed": True,
+            "resumed_status": resumed_result.status,
+            "resumed_steps": resumed_result.steps_completed,
+        }
 
     async def _handle_timeline(self, action: Action, plan: Plan) -> dict:
         if plan.box_id and hasattr(self.db, "append_audit_event"):
