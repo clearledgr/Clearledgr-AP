@@ -185,6 +185,83 @@ class TestRuntimeInvoiceProcessingPayloadTrust:
 # ─── 5b-6: slack delivery refuses on missing org ───────────────────
 
 
+class TestPurchaseOrdersRowOrgGuard:
+    """Schema is NOT NULL on organization_id for both purchase_orders
+    and goods_receipts. The dataclass deserializers used to silently
+    fall back to "default" if the column came back empty, which would
+    rewrite the row under the platform tenant on the next save. Now
+    refuse loudly so corruption is visible."""
+
+    def test_po_from_dict_rejects_missing_org(self):
+        from clearledgr.services.purchase_orders import _po_from_dict
+        with pytest.raises(ValueError, match="purchase_orders.*organization_id"):
+            _po_from_dict({
+                "po_id": "po-1",
+                "po_number": "PO-1",
+                "vendor_id": "v",
+                "vendor_name": "v",
+                "line_items": [],
+            })
+
+    def test_po_from_dict_rejects_empty_org(self):
+        from clearledgr.services.purchase_orders import _po_from_dict
+        with pytest.raises(ValueError, match="purchase_orders.*organization_id"):
+            _po_from_dict({
+                "po_id": "po-1",
+                "po_number": "PO-1",
+                "vendor_id": "v",
+                "vendor_name": "v",
+                "organization_id": "  ",
+                "line_items": [],
+            })
+
+    def test_po_from_dict_none_returns_none(self):
+        from clearledgr.services.purchase_orders import _po_from_dict
+        assert _po_from_dict(None) is None
+        assert _po_from_dict({}) is None
+
+    def test_po_from_dict_real_org_constructs(self):
+        from clearledgr.services.purchase_orders import _po_from_dict
+        po = _po_from_dict({
+            "po_id": "po-1",
+            "po_number": "PO-1",
+            "vendor_id": "v",
+            "vendor_name": "v",
+            "organization_id": "orgA",
+            "line_items": [],
+        })
+        assert po is not None
+        assert po.organization_id == "orgA"
+
+    def test_gr_from_dict_rejects_missing_org(self):
+        from clearledgr.services.purchase_orders import _gr_from_dict
+        with pytest.raises(ValueError, match="goods_receipts.*organization_id"):
+            _gr_from_dict({
+                "gr_id": "gr-1",
+                "gr_number": "GR-1",
+                "po_id": "po-1",
+                "po_number": "PO-1",
+                "vendor_id": "v",
+                "vendor_name": "v",
+                "line_items": [],
+            })
+
+    def test_gr_from_dict_real_org_constructs(self):
+        from clearledgr.services.purchase_orders import _gr_from_dict
+        gr = _gr_from_dict({
+            "gr_id": "gr-1",
+            "gr_number": "GR-1",
+            "po_id": "po-1",
+            "po_number": "PO-1",
+            "vendor_id": "v",
+            "vendor_name": "v",
+            "organization_id": "orgA",
+            "line_items": [],
+        })
+        assert gr is not None
+        assert gr.organization_id == "orgA"
+
+
 class TestSlackDeliveryRequiresOrg:
     """The Slack workspace is per-tenant. Routing a tenant DM through
     the platform 'default' workspace silently leaks data. Refuse

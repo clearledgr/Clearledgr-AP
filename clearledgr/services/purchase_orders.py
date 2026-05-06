@@ -366,6 +366,26 @@ def _po_line_from_dict(d: Dict[str, Any]) -> POLineItem:
     )
 
 
+def _require_org_from_row(d: Dict[str, Any], *, table: str) -> str:
+    """Pull ``organization_id`` from a DB row dict and refuse to
+    deserialize if it's missing.
+
+    The schema enforces ``organization_id TEXT NOT NULL`` on both
+    ``purchase_orders`` and ``goods_receipts``, so this should never
+    fire on real rows. It exists to make data corruption (or a
+    caller passing a hand-crafted dict without the org) loudly
+    visible instead of silently rewriting the row under the platform
+    "default" tenant on the next save.
+    """
+    raw = str((d or {}).get("organization_id") or "").strip()
+    if not raw:
+        raise ValueError(
+            f"{table} row has empty organization_id; "
+            f"refusing to deserialize (schema is NOT NULL)"
+        )
+    return raw
+
+
 def _po_from_dict(d: Optional[Dict[str, Any]]) -> Optional[PurchaseOrder]:
     if not d:
         return None
@@ -397,7 +417,7 @@ def _po_from_dict(d: Optional[Dict[str, Any]]) -> Optional[PurchaseOrder]:
         ship_to_address=str(d.get("ship_to_address") or ""),
         created_at=_parse_datetime(d.get("created_at")) or datetime.now(timezone.utc),
         updated_at=_parse_datetime(d.get("updated_at")) or datetime.now(timezone.utc),
-        organization_id=str(d.get("organization_id") or "default"),
+        organization_id=_require_org_from_row(d, table="purchase_orders"),
         erp_po_id=str(d.get("erp_po_id") or ""),
     )
     return po
@@ -451,7 +471,7 @@ def _gr_from_dict(d: Optional[Dict[str, Any]]) -> Optional[GoodsReceipt]:
         status=status,
         notes=str(d.get("notes") or ""),
         created_at=_parse_datetime(d.get("created_at")) or datetime.now(timezone.utc),
-        organization_id=str(d.get("organization_id") or "default"),
+        organization_id=_require_org_from_row(d, table="goods_receipts"),
     )
 
 
