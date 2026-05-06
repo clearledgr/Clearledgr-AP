@@ -300,16 +300,20 @@ def evaluate_doctrine(
         or belief_data.get("next_action_type")
         or ""
     ).strip().lower()
-    belief_misaligned = bool(
+    # belief_alignment is a STATE gate, not a risk gate (corrected
+    # 2026-05-06 after audit pushback). The belief surfaces system
+    # state — fields that haven't been verified, vendor info we're
+    # waiting on, recovery work that's open. An operator's approval
+    # click doesn't change that state, so authority can't bypass it.
+    # Compare with promotion_gate / autonomy_policy: those gate
+    # whether the agent has earned the right to act on its own,
+    # which IS overridable by human authority. forbidden_actions is
+    # the same shape as belief_alignment: unconditional.
+    belief_block = bool(
         risky_action
         and belief_next_action in {"human_field_review", "await_vendor_info", "operator_recovery"}
     )
-    belief_block = bool(autonomous_requested and belief_misaligned)
-    belief_status = (
-        "fail" if belief_block
-        else "observe" if belief_misaligned
-        else "pass"
-    )
+    belief_status = "fail" if belief_block else "pass"
     checks.append({"check": "belief_alignment", "status": belief_status})
     if belief_block:
         reason_codes.append(f"belief_requires:{belief_next_action}")

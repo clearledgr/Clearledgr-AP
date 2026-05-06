@@ -130,7 +130,12 @@ class TestEvaluateDoctrineAuditRecording:
         assert verdict["blocked"] is True
         assert "autonomy_not_earned" in verdict["reason_codes"]
 
-    def test_belief_alignment_records_observe_when_non_autonomous_misaligned(self):
+    def test_belief_alignment_blocks_unconditionally_on_risky_misaligned(self):
+        """belief_alignment is a STATE gate, not a risk gate. The
+        belief surfaces unverified fields / open vendor questions /
+        open recovery work; an operator's approval click doesn't
+        clear that state, so authority can't bypass. Same shape as
+        forbidden_actions: unconditional on risky actions."""
         verdict = evaluate_doctrine(
             profile={},
             requested_action="post_to_erp",
@@ -144,7 +149,43 @@ class TestEvaluateDoctrineAuditRecording:
         belief_check = next(
             c for c in verdict["checks"] if c["check"] == "belief_alignment"
         )
-        assert belief_check["status"] == "observe"
+        assert belief_check["status"] == "fail"
+        assert verdict["blocked"] is True
+        assert "belief_requires:human_field_review" in verdict["reason_codes"]
+
+    def test_belief_alignment_blocks_on_autonomous_misaligned(self):
+        """Autonomous + risky + misaligned belief: same block as
+        non-autonomous (state gate)."""
+        verdict = evaluate_doctrine(
+            profile={},
+            requested_action="post_to_erp",
+            quality_snapshot=self._quality_snapshot(
+                autonomous_allowed=True,
+                gates={},
+            ),
+            belief={"next_action": {"type": "await_vendor_info"}},
+            autonomous_requested=True,
+        )
+        assert verdict["blocked"] is True
+        assert "belief_requires:await_vendor_info" in verdict["reason_codes"]
+
+    def test_belief_alignment_does_not_block_non_risky_actions(self):
+        """The state gate only fires for risky actions. A non-risky
+        action with a misaligned belief still passes."""
+        verdict = evaluate_doctrine(
+            profile={},
+            requested_action="route_low_risk_for_approval",
+            quality_snapshot=self._quality_snapshot(
+                autonomous_allowed=True,
+                gates={},
+            ),
+            belief={"next_action": {"type": "human_field_review"}},
+            autonomous_requested=False,
+        )
+        belief_check = next(
+            c for c in verdict["checks"] if c["check"] == "belief_alignment"
+        )
+        assert belief_check["status"] == "pass"
         assert verdict["blocked"] is False
 
     def test_forbidden_actions_blocks_unconditionally(self):
