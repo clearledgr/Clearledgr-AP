@@ -179,6 +179,17 @@
 .subprocs td { color: var(--text-soft); }
 .subprocs td:first-child { color: var(--navy); font-weight: 500; }
 
+/* Grouped section header inside the sub-processor table */
+.subprocs__group {
+  font-size: 11px !important;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted) !important;
+  background: var(--bg-alt);
+  padding: 10px 16px !important;
+}
+
 /* ── Founders block ──────────────────────────────────────── */
 
 .founders {

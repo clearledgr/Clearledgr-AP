@@ -56,7 +56,7 @@
         <div class="prose">
           <h2 id="posture">Compliance posture</h2>
           <p>
-            <strong>SOC 2 Type 1</strong> achieved at launch. <strong>Type 2</strong> observation window is in progress; the report will be available under NDA when the window closes. <strong>GDPR</strong> compliant by design: EU launch market, EU data residency available, and a DPA executed with every customer before production data flows.
+            <strong>SOC 2 controls</strong> are implemented across access control, change management, audit logging, encryption, and incident response. The formal SOC 2 Type 1 audit is scheduled; the Type 1 report will be available under NDA on completion, with the Type 2 observation window starting immediately after. <strong>GDPR</strong> compliant by design: EU launch market, EU data residency available, and a DPA executed with every customer before production data flows.
           </p>
           <p>
             We do not store cardholder data and we are not a payment processor. Solden never debits, credits, or initiates a vendor payment. <strong>Treasury runs the payment batch out of your ERP</strong> on its own schedule.
@@ -122,7 +122,8 @@
           </p>
 
           <h2 id="subprocessors">Sub-processors</h2>
-          <p>The infrastructure footprint is intentionally small. Each sub-processor processes data for a defined purpose and is bound by a signed DPA with us.</p>
+          <p>The infrastructure footprint is intentionally small. Each sub-processor processes data for a defined purpose and is bound by a signed DPA with us, or accessed via an OAuth scope the customer grants and can revoke at any time.</p>
+          <p class="muted" style="font-size:13px">"Customer-controlled" means the data lives in the customer's existing tenant on that vendor's platform; Solden authenticates via OAuth scopes the customer grants and can revoke. We do not store the underlying data outside our own AWS environment.</p>
         </div>
 
         <div style="overflow-x:auto">
@@ -131,43 +132,104 @@
               <tr>
                 <th>Sub-processor</th>
                 <th>Purpose</th>
+                <th>Data shared</th>
                 <th>Region</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>Anthropic</td>
-                <td>LLM extraction &amp; operator-facing prose generation</td>
-                <td>US (zero-retention)</td>
-              </tr>
+
+              <tr><td colspan="4" class="subprocs__group">Solden infrastructure</td></tr>
               <tr>
                 <td>AWS</td>
                 <td>Application hosting, Postgres, object storage</td>
+                <td>All tenant data</td>
                 <td>EU (eu-west-1)</td>
               </tr>
               <tr>
                 <td>Cloudflare</td>
                 <td>Edge TLS termination &amp; DDoS protection</td>
+                <td>HTTP request metadata</td>
                 <td>Global</td>
               </tr>
               <tr>
+                <td>Sentry</td>
+                <td>Error monitoring</td>
+                <td>Stack traces (PII scrubbed in transit)</td>
+                <td>EU</td>
+              </tr>
+              <tr>
+                <td>Paddle</td>
+                <td>Subscription billing &amp; invoicing for Solden</td>
+                <td>Customer billing contact, plan tier, payment method tokens (Paddle holds the card-on-file; we do not)</td>
+                <td>EU / US</td>
+              </tr>
+
+              <tr><td colspan="4" class="subprocs__group">AI / extraction</td></tr>
+              <tr>
+                <td>Anthropic</td>
+                <td>LLM extraction (invoice fields, classification) &amp; operator-facing prose generation. The model is not used for routing decisions — gates and decisions are deterministic.</td>
+                <td>Invoice content (subject, body, attachment text). Zero-retention Anthropic API tier.</td>
+                <td>US (zero-retention)</td>
+              </tr>
+
+              <tr><td colspan="4" class="subprocs__group">Customer-side surfaces (OAuth-scoped)</td></tr>
+              <tr>
                 <td>Google Workspace</td>
-                <td>OAuth-scoped Gmail read for invoice capture (per customer)</td>
+                <td>OAuth-scoped Gmail read for invoice capture; label-write for thread state mirroring</td>
+                <td>Customer's own mailbox (read), Solden-managed labels (write)</td>
                 <td>Customer-controlled</td>
               </tr>
               <tr>
                 <td>Microsoft 365</td>
-                <td>OAuth-scoped Outlook read for invoice capture (per customer)</td>
+                <td>OAuth-scoped Outlook read for invoice capture (when enabled)</td>
+                <td>Customer's own mailbox (read)</td>
                 <td>Customer-controlled</td>
               </tr>
               <tr>
-                <td>Sentry</td>
-                <td>Error monitoring (PII scrubbed in transit)</td>
-                <td>EU</td>
+                <td>Slack</td>
+                <td>OAuth-scoped Slack workspace integration for approval cards &amp; exception notifications</td>
+                <td>Approval card payloads, button-click audit context (does not include invoice attachments)</td>
+                <td>Customer-controlled</td>
               </tr>
+              <tr>
+                <td>Microsoft Teams</td>
+                <td>OAuth-scoped Teams integration for approval cards (when enabled)</td>
+                <td>Approval card payloads</td>
+                <td>Customer-controlled</td>
+              </tr>
+
+              <tr><td colspan="4" class="subprocs__group">ERP connectors (customer-side, OAuth or API key)</td></tr>
+              <tr>
+                <td>Intuit QuickBooks Online</td>
+                <td>OAuth-scoped read of vendor / chart-of-accounts; bill posting &amp; reversal</td>
+                <td>Vendor list, GL accounts; vendor bill records (Solden-posted)</td>
+                <td>Customer-controlled</td>
+              </tr>
+              <tr>
+                <td>Xero</td>
+                <td>OAuth-scoped read of vendor / chart-of-accounts; bill posting &amp; reversal</td>
+                <td>Vendor list, GL accounts; vendor bill records (Solden-posted)</td>
+                <td>Customer-controlled</td>
+              </tr>
+              <tr>
+                <td>Oracle NetSuite</td>
+                <td>API-key-scoped vendor / GL read; bill posting &amp; reversal</td>
+                <td>Vendor list, GL accounts; vendor bill records (Solden-posted)</td>
+                <td>Customer-controlled</td>
+              </tr>
+              <tr>
+                <td>SAP S/4HANA &amp; B1</td>
+                <td>API-key-scoped vendor / GL read; bill posting &amp; reversal</td>
+                <td>Vendor list, GL accounts; vendor bill records (Solden-posted)</td>
+                <td>Customer-controlled</td>
+              </tr>
+
             </tbody>
           </table>
         </div>
+        <p class="muted" style="font-size:12px;margin-top:12px">
+          Solden never holds payment card data, never debits or credits a vendor, and never initiates a payment. Treasury runs the payment batch out of the customer's ERP on its own schedule.
+        </p>
 
         <div class="prose">
           <h2 id="incidents">Incident response</h2>

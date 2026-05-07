@@ -78,6 +78,7 @@ from clearledgr.api.africa_einvoice import (
     router as africa_einvoice_router,
 )
 from clearledgr.api.ap_audit import router as ap_audit_router
+from clearledgr.api.audit_chain import router as audit_chain_router
 from clearledgr.api.ap_items import router as ap_items_router
 from clearledgr.api.ap_policies import router as ap_policies_router
 from clearledgr.api.auth import router as auth_router
@@ -588,8 +589,12 @@ STRICT_PROFILE_ALLOWED_EXTENSION_PATHS = {
 }
 
 STRICT_PROFILE_ALLOWED_WORKSPACE_PATHS = {
+    "/api/workspace/audit/chain-status",
     "/api/workspace/audit/export",
     "/api/workspace/audit/search",
+    # Configurable matching modes (3-way / 2-way / policy-only)
+    # — admin-controlled, gated by financial_controller role.
+    "/api/workspace/settings/match-config",
     "/api/workspace/bootstrap",
     "/api/workspace/connections/health",
     "/api/workspace/dashboard",
@@ -1614,6 +1619,7 @@ app.include_router(ap_items_router)
 
 # AP audit feeds for admin/activity surfaces
 app.include_router(ap_audit_router)
+app.include_router(audit_chain_router)
 
 # Frontend performance telemetry (DESIGN_THESIS.md §4.07)
 app.include_router(ui_perf_router)

@@ -738,6 +738,118 @@ function SiemSection({ api, orgId, refreshTrigger }) {
 }
 
 
+/**
+ * ChainStatusBadge — surfaces the audit chain's tamper-evident
+ * status from GET /api/workspace/audit/chain-status. Renders one
+ * of three states:
+ *
+ *   - "Chain intact" with chain length + last-verified time
+ *     (green dot)
+ *   - "Chain broken" with the break_kind + chain_seq of the
+ *     first divergence (red dot)
+ *   - "Verifying…" while the request is in flight
+ *
+ * Click → toggles a small popover with details (head event id,
+ * head hash prefix, sample size, genesis sentinel prefix). The
+ * popover gives an auditor enough handles to reproduce the
+ * verification offline.
+ */
+function ChainStatusBadge({ status, loading, onRefresh }) {
+  const [open, setOpen] = useState(false);
+  if (loading && !status) {
+    return html`<span class="cl-chain-badge cl-chain-badge--loading">
+      <span class="cl-chain-dot cl-chain-dot--loading"></span>
+      Verifying chain…
+    </span>`;
+  }
+  if (!status) return null;
+  const isIntact = status.chain_intact === true;
+  const isError = status.error || status.chain_intact === null;
+  const dotClass = isError
+    ? 'cl-chain-dot--error'
+    : (isIntact ? 'cl-chain-dot--intact' : 'cl-chain-dot--broken');
+  const label = isError
+    ? 'Chain status unavailable'
+    : (isIntact
+        ? `Chain intact${status.chain_length ? ` · ${status.chain_length} events` : ''}`
+        : 'Chain broken');
+  const verifiedAt = status.verified_at
+    ? new Date(status.verified_at).toLocaleTimeString()
+    : null;
+  return html`
+    <span class="cl-chain-badge">
+      <button
+        class="cl-chain-badge-button"
+        onClick=${() => setOpen((v) => !v)}
+        title="Click for details"
+      >
+        <span class="cl-chain-dot ${dotClass}"></span>
+        ${label}
+      </button>
+      ${open ? html`
+        <div class="cl-chain-popover">
+          <div class="cl-chain-popover-row">
+            <span class="muted">Status</span>
+            <strong>${isIntact ? 'intact' : (isError ? 'unavailable' : 'broken')}</strong>
+          </div>
+          ${status.chain_length != null ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Chain length</span>
+              <strong>${status.chain_length}</strong>
+            </div>
+          ` : null}
+          ${status.verified_rows != null ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Verified rows</span>
+              <strong>${status.verified_rows}</strong>
+            </div>
+          ` : null}
+          ${verifiedAt ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Verified at</span>
+              <strong>${verifiedAt}</strong>
+            </div>
+          ` : null}
+          ${status.head_chain_seq ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Head seq</span>
+              <strong>${status.head_chain_seq}</strong>
+            </div>
+          ` : null}
+          ${status.head_hash_prefix ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Head hash</span>
+              <code>${status.head_hash_prefix}…</code>
+            </div>
+          ` : null}
+          ${status.genesis_hash_prefix ? html`
+            <div class="cl-chain-popover-row">
+              <span class="muted">Genesis</span>
+              <code>${status.genesis_hash_prefix}…</code>
+            </div>
+          ` : null}
+          ${!isIntact && !isError ? html`
+            <div class="cl-chain-popover-row cl-chain-popover-row--break">
+              <span class="muted">Broken at</span>
+              <strong>seq ${status.broken_at_chain_seq}</strong>
+            </div>
+            <div class="cl-chain-popover-row cl-chain-popover-row--break">
+              <span class="muted">Break kind</span>
+              <strong>${status.break_kind}</strong>
+            </div>
+          ` : null}
+          <div class="cl-chain-popover-actions">
+            <button class="btn-secondary btn-sm" onClick=${onRefresh}>
+              Re-verify
+            </button>
+          </div>
+        </div>
+      ` : null}
+    </span>
+  `;
+}
+
+
 export default function AuditLogPage({ api, orgId, bootstrap }) {
   // Filter state. ``event_type_preset`` is the dropdown value (which
   // is a comma-separated string per COMMON_EVENT_TYPES); the API
@@ -769,6 +881,23 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [api, orgId]);
+
+  // Audit chain integrity status. Backs the soldenai.com claim
+  // that the chain is "tamper-evident at the schema layer" — when
+  // an auditor or operator wants to verify that claim against a
+  // live tenant, they get a green badge with chain length +
+  // last-verified timestamp, or a structured break report if the
+  // hash chain has been tampered with.
+  const [chainStatus, setChainStatus] = useState(null);
+  const [chainLoading, setChainLoading] = useState(true);
+  const refreshChainStatus = useCallback(() => {
+    setChainLoading(true);
+    api(`/api/workspace/audit/chain-status`)
+      .then((r) => setChainStatus(r))
+      .catch(() => setChainStatus({ chain_intact: null, error: true }))
+      .finally(() => setChainLoading(false));
+  }, [api]);
+  useEffect(() => { refreshChainStatus(); }, [refreshChainStatus]);
   const onChangeRetention = useCallback(async () => {
     if (!retention) return;
     const current = retention.configured_days || retention.tier_ceiling_days;
@@ -972,15 +1101,19 @@ export default function AuditLogPage({ api, orgId, bootstrap }) {
             Append-only record of every workflow action. Search, filter, and inspect.
           </p>
         </div>
-        ${retention ? html`
-          <div class="secondary-banner-actions">
+        <div class="secondary-banner-actions">
+          <${ChainStatusBadge}
+            status=${chainStatus}
+            loading=${chainLoading}
+            onRefresh=${refreshChainStatus} />
+          ${retention ? html`
             <span class="cl-audit-retention">
               Retention: <strong>${retention.effective_days} days</strong>
               <span class="muted"> (plan ceiling ${retention.tier_ceiling_days})</span>
             </span>
             <button class="btn-secondary btn-sm" onClick=${onChangeRetention}>Configure</button>
-          </div>
-        ` : null}
+          ` : null}
+        </div>
       </div>
 
       <${SiemSection} api=${api} orgId=${orgId} />

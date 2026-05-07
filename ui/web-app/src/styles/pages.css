@@ -4573,6 +4573,98 @@
   line-height: 1.5;
 }
 
+/* Audit chain integrity badge */
+.cl-chain-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.cl-chain-badge--loading {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--cl-ink-secondary);
+}
+.cl-chain-badge-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius-sm);
+  font-size: 12px;
+  color: var(--cl-ink-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.cl-chain-badge-button:hover {
+  background: var(--cl-bg-elevated, var(--cl-bg));
+}
+.cl-chain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.cl-chain-dot--intact {
+  background: var(--cl-accent, #18BFB0);
+  box-shadow: 0 0 0 2px rgba(24, 191, 176, 0.15);
+}
+.cl-chain-dot--broken {
+  background: var(--cl-danger, #d44);
+  box-shadow: 0 0 0 2px rgba(221, 68, 68, 0.15);
+}
+.cl-chain-dot--error {
+  background: var(--cl-warning, #c80);
+  box-shadow: 0 0 0 2px rgba(204, 136, 0, 0.15);
+}
+.cl-chain-dot--loading {
+  background: var(--cl-ink-tertiary, #999);
+  animation: cl-chain-pulse 1.4s ease-in-out infinite;
+}
+@keyframes cl-chain-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.cl-chain-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 280px;
+  background: var(--cl-bg);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-chain-popover-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.cl-chain-popover-row code {
+  font-family: var(--cl-mono, monospace);
+  font-size: 11px;
+  color: var(--cl-ink-secondary);
+}
+.cl-chain-popover-row--break {
+  color: var(--cl-danger, #d44);
+}
+.cl-chain-popover-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ReportsPage chips */
 .cl-reports-chip {
   display: inline-flex;
