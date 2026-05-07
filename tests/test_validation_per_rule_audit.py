@@ -211,3 +211,72 @@ async def test_validation_gate_blocks_sanctions_blocked_vendor(postgres_test_db)
     )
     assert sanctions_rule is not None
     assert sanctions_rule["verdict"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_validation_gate_records_skip_when_check_raises(postgres_test_db):
+    """Phase 1, Gap 2 — silent except-pass fix.
+
+    Before this fix, a rule whose underlying check raised (and the
+    exception was swallowed by the rule block's try/except) would be
+    recorded as a ``pass`` because no reason rows were added — silently
+    lying to the audit trail about whether the rule actually
+    evaluated. The fix plumbs the caught exception through to
+    ``_record_rule_verdict``, which now promotes the verdict to
+    ``skip`` with the exception text as ``skip_reason``.
+
+    Targets ``currency_consistency`` because its block has a single
+    outer ``try/except`` around ``self.db.get_vendor_profile``: a DB
+    outage propagates to the outer except, so the new skip-promotion
+    machinery fires. (Some other rule blocks defensively wrap the
+    DB call in an INNER try/except that returns empty data — those
+    rules then run on empty data, which is a different failure mode
+    that records a non-skip verdict by design.)
+    """
+    db = get_db()
+    db.initialize()
+    _seed_ap_item_for_validation(
+        db, vendor_name="Boom Vendor", invoice_number="INV-EXC-1",
+    )
+
+    invoice = InvoiceData(
+        gmail_id="thread-INV-EXC-1",
+        subject="Bill from Boom Vendor",
+        sender="boom@example.com",
+        vendor_name="Boom Vendor",
+        amount=1000.0,
+        currency="USD",
+        invoice_number="INV-EXC-1",
+        confidence=0.99,
+        organization_id="default",
+        user_id="test-user",
+    )
+
+    workflow = _make_workflow()
+    original = workflow.db.get_vendor_profile
+
+    def _exploding_get_vendor_profile(*args, **kwargs):
+        raise RuntimeError("simulated DB outage for gate audit fidelity test")
+
+    workflow.db.get_vendor_profile = _exploding_get_vendor_profile  # type: ignore[assignment]
+    try:
+        gate = await workflow._evaluate_deterministic_validation(invoice)
+    finally:
+        workflow.db.get_vendor_profile = original  # type: ignore[assignment]
+
+    rule_results = gate.get("rule_results") or []
+    by_id = {r["rule_id"]: r for r in rule_results}
+
+    # currency_consistency has a single outer try/except → skip-promotion fires.
+    rule = by_id.get("currency_consistency")
+    assert rule is not None, "missing currency_consistency rule_results entry"
+    assert rule["verdict"] == "skip", (
+        f"currency_consistency: expected 'skip' on caught exception, "
+        f"got {rule['verdict']!r} (silent-pass regression)"
+    )
+    assert rule.get("message"), (
+        "currency_consistency: skip verdict must carry skip_reason text"
+    )
+    # Evidence must capture exception_type so the audit row records
+    # *what* failed, not just that something did.
+    assert rule.get("evidence", {}).get("exception_type") == "RuntimeError"
