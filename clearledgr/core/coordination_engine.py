@@ -627,7 +627,9 @@ class CoordinationEngine:
                     }
                     if not remaining.is_empty:
                         update_kwargs["pending_plan"] = remaining.to_json()
-                    self.db.update_ap_item(box_id, **update_kwargs)
+                    await asyncio.to_thread(
+                        self.db.update_ap_item, box_id, **update_kwargs,
+                    )
                 # §11: Record total_to_approval SLA when hitting approval wait
                 if _is_invoice_plan and result["waiting_condition"].get("type") == "approval_response":
                     try:
@@ -650,7 +652,9 @@ class CoordinationEngine:
         # --- Step 7: Plan complete ---
         if box_id:
             try:
-                self.db.update_ap_item(box_id, pending_plan=None)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, box_id, pending_plan=None,
+                )
             except Exception:
                 pass
         return CoordinationResult(
@@ -1332,7 +1336,7 @@ class CoordinationEngine:
         # Remove None values
         payload = {k: v for k, v in payload.items() if v is not None}
         try:
-            item = self.db.create_ap_item(payload)
+            item = await asyncio.to_thread(self.db.create_ap_item, payload)
             box_id = item.get("id") if isinstance(item, dict) else str(item)
             ctx["box_id"] = box_id
             return {"ok": True, "box_id": box_id}
@@ -1434,7 +1438,8 @@ class CoordinationEngine:
         try:
             # Velocity check uses vendor invoice history count
             if hasattr(self.db, "get_vendor_invoice_history"):
-                history = self.db.get_vendor_invoice_history(
+                history = await asyncio.to_thread(
+                    self.db.get_vendor_invoice_history,
                     self.organization_id, vendor,
                     limit=100,
                 )
@@ -1571,7 +1576,8 @@ class CoordinationEngine:
         if mode == "policy_only":
             ctx["match_result"] = {"status": "skipped_by_policy", "mode": mode}
             if plan.box_id:
-                self.db.update_ap_item(
+                await asyncio.to_thread(
+                    self.db.update_ap_item,
                     plan.box_id, match_status="skipped_by_policy",
                 )
             return {
@@ -1587,7 +1593,10 @@ class CoordinationEngine:
             ctx["match_result"] = {"status": "no_po", "mode": mode}
             if mode == "three_way_required":
                 if plan.box_id:
-                    self.db.update_ap_item(plan.box_id, match_status="exception")
+                    await asyncio.to_thread(
+                        self.db.update_ap_item,
+                        plan.box_id, match_status="exception",
+                    )
                 await self._run_exception_flow(plan, ctx, ctx["match_result"])
                 return {
                     "ok": True,
@@ -1636,7 +1645,8 @@ class CoordinationEngine:
 
             ctx["match_result"] = result
             if plan.box_id:
-                self.db.update_ap_item(
+                await asyncio.to_thread(
+                    self.db.update_ap_item,
                     plan.box_id,
                     match_status="passed" if match_passed else "exception",
                     grn_reference=extracted.get("po_reference", ""),
@@ -1686,7 +1696,9 @@ class CoordinationEngine:
             update_kwargs["field_confidences"] = extracted["field_confidences"]
         if update_kwargs:
             try:
-                self.db.update_ap_item(plan.box_id, **update_kwargs)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, plan.box_id, **update_kwargs,
+                )
             except Exception as exc:
                 logger.warning("[CoordinationEngine] update_box_fields failed: %s", exc)
         return {"ok": True, "fields_updated": list(update_kwargs.keys())}
@@ -1720,7 +1732,9 @@ class CoordinationEngine:
         target = action.params.get("target", "")
         if plan.box_id and target:
             try:
-                self.db.update_ap_item(plan.box_id, state=target)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, plan.box_id, state=target,
+                )
             except Exception as exc:
                 return {"_abort": True, "error": f"Stage transition to {target} failed: {exc}"}
         return {"ok": True}
@@ -1760,7 +1774,7 @@ class CoordinationEngine:
         if not plan.box_id:
             return {"_abort": True, "error": "No box_id for post_bill"}
         wf = self._get_workflow()
-        item = self.db.get_ap_item(plan.box_id)
+        item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
         if not item:
             return {"_abort": True, "error": "AP item not found"}
 
@@ -1834,7 +1848,7 @@ class CoordinationEngine:
         """
         if not plan.box_id:
             return {"ok": True}
-        item = self.db.get_ap_item(plan.box_id)
+        item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
         if not item or not item.get("erp_reference"):
             return {"ok": True, "scheduled": False, "reason": "no_erp_bill"}
         try:
@@ -1850,7 +1864,8 @@ class CoordinationEngine:
                 # is ready to pay, but the actual pay run is external.
                 "payment_settled": existing_meta.get("payment_settled", False),
             })
-            self.db.update_ap_item(
+            await asyncio.to_thread(
+                self.db.update_ap_item,
                 plan.box_id,
                 metadata=existing_meta,
             )
@@ -2006,7 +2021,7 @@ class CoordinationEngine:
 
     async def _handle_timeline(self, action: Action, plan: Plan) -> dict:
         if plan.box_id and hasattr(self.db, "append_audit_event"):
-            self.db.append_audit_event({
+            await asyncio.to_thread(self.db.append_audit_event, {
                 "ap_item_id": plan.box_id,
                 "event_type": "agent_action:post_timeline_entry",
                 "actor_type": "agent",
@@ -2026,7 +2041,9 @@ class CoordinationEngine:
         if plan.box_id and thread_id:
             try:
                 # Store thread→box mapping so future replies route directly
-                self.db.update_ap_item(plan.box_id, thread_id=thread_id)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, plan.box_id, thread_id=thread_id,
+                )
             except Exception as exc:
                 logger.debug("[CoordinationEngine] watch_thread non-fatal: %s", exc)
         return {"ok": True, "thread_id": thread_id}
@@ -2038,7 +2055,10 @@ class CoordinationEngine:
         try:
             from clearledgr.services.override_window import get_override_window_service
             service = get_override_window_service(self.organization_id, db=self.db)
-            item = self.db.get_ap_item(plan.box_id) if plan.box_id else None
+            item = (
+                await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
+                if plan.box_id else None
+            )
             erp_ref = (item or {}).get("erp_reference", "")
             if not erp_ref:
                 return {"ok": True}  # No ERP reference yet — nothing to override
@@ -2102,7 +2122,9 @@ class CoordinationEngine:
         outstanding: list = []
         days_since_invite = None
         try:
-            sessions = self.db.list_pending_onboarding_sessions() or []
+            sessions = await asyncio.to_thread(
+                self.db.list_pending_onboarding_sessions,
+            ) or []
             for s in sessions:
                 if str(s.get("vendor_name") or "").lower() == str(vendor_id or "").lower():
                     session_state = str(s.get("state") or "unknown")
@@ -2257,7 +2279,9 @@ class CoordinationEngine:
             )
             reason = str(resp.content).strip()[:500] if resp.content else ""
             if plan.box_id and reason:
-                self.db.update_ap_item(plan.box_id, exception_reason=reason)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, plan.box_id, exception_reason=reason,
+                )
             return {"ok": True, "reason": reason}
         except Exception as exc:
             logger.debug("[CoordinationEngine] generate_exception non-fatal: %s", exc)
@@ -2293,7 +2317,10 @@ class CoordinationEngine:
             return {"ok": True}
         try:
             if hasattr(self.db, "get_active_onboarding_session"):
-                session = self.db.get_active_onboarding_session(self.organization_id, vendor_id)
+                session = await asyncio.to_thread(
+                    self.db.get_active_onboarding_session,
+                    self.organization_id, vendor_id,
+                )
                 if session:
                     return {
                         "ok": True,
@@ -2346,7 +2373,10 @@ class CoordinationEngine:
         try:
             # Check onboarding session and advance if all documents received
             if hasattr(self.db, "get_active_onboarding_session"):
-                session = self.db.get_active_onboarding_session(self.organization_id, vendor_id)
+                session = await asyncio.to_thread(
+                    self.db.get_active_onboarding_session,
+                    self.organization_id, vendor_id,
+                )
                 if session:
                     state = session.get("state", "")
                     return {"ok": True, "current_state": state, "session_id": session.get("id")}
@@ -2377,7 +2407,8 @@ class CoordinationEngine:
             }
         try:
             if hasattr(self.db, "update_vendor_profile"):
-                self.db.update_vendor_profile(
+                await asyncio.to_thread(
+                    self.db.update_vendor_profile,
                     self.organization_id, vendor_id,
                     status="frozen", frozen_reason=reason,
                 )
@@ -2417,7 +2448,9 @@ class CoordinationEngine:
             if not hasattr(self.db, "get_vendor_profile"):
                 ctx["iban_change_status"] = "no_profile_store"
                 return {"ok": True}
-            profile = self.db.get_vendor_profile(self.organization_id, vendor_id) or {}
+            profile = await asyncio.to_thread(
+                self.db.get_vendor_profile, self.organization_id, vendor_id,
+            ) or {}
             existing_iban = str(profile.get("iban") or "").strip().upper().replace(" ", "")
             was_verified = bool(profile.get("iban_verified"))
             if not existing_iban:
@@ -2475,7 +2508,10 @@ class CoordinationEngine:
             return {"ok": True, "grn_confirmed": True}
 
         # GRN not confirmed — check retry count and due date
-        item = self.db.get_ap_item(plan.box_id) if plan.box_id else None
+        item = (
+            await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
+            if plan.box_id else None
+        )
         if item:
             import json as _json
             waiting = item.get("waiting_condition")
@@ -2570,7 +2606,7 @@ class CoordinationEngine:
         # ERP still down — check how long it's been, alert CS if > 30 min
         first_failure_iso = None
         if plan.box_id:
-            item = self.db.get_ap_item(plan.box_id)
+            item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
             if item:
                 import json as _json
                 waiting = item.get("waiting_condition")
@@ -2697,7 +2733,10 @@ class CoordinationEngine:
                 for candidate in (vendor_name, sender, domain):
                     if not candidate:
                         continue
-                    profile = self.db.get_vendor_profile(self.organization_id, candidate)
+                    profile = await asyncio.to_thread(
+                        self.db.get_vendor_profile,
+                        self.organization_id, candidate,
+                    )
                     if profile:
                         break
                 if profile:
@@ -2712,14 +2751,17 @@ class CoordinationEngine:
         """§3: Reverse a previously posted bill in the ERP (disaster recovery, CFO-only)."""
         if not plan.box_id:
             return {"_abort": True, "error": "No box_id for reversal"}
-        item = self.db.get_ap_item(plan.box_id)
+        item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
         erp_ref = (item or {}).get("erp_reference", "")
         if not erp_ref:
             return {"_abort": True, "error": "No ERP reference to reverse"}
         reason = action.params.get("reason", "disaster_recovery")
         logger.warning("[CoordinationEngine] reverse_erp_post requested for %s (ref=%s, reason=%s)", plan.box_id, erp_ref, reason)
         # ERP reversal would call the connector — for now, mark as reversed in DB
-        self.db.update_ap_item(plan.box_id, state="reversed", last_error=f"reversed: {reason}")
+        await asyncio.to_thread(
+            self.db.update_ap_item,
+            plan.box_id, state="reversed", last_error=f"reversed: {reason}",
+        )
         return {"ok": True, "reversed": True, "erp_reference": erp_ref}
 
     async def _handle_link_vendor(self, action: Action, plan: Plan) -> dict:
@@ -2729,7 +2771,8 @@ class CoordinationEngine:
         if plan.box_id and vendor_name:
             try:
                 if hasattr(self.db, "link_boxes"):
-                    self.db.link_boxes(
+                    await asyncio.to_thread(
+                        self.db.link_boxes,
                         source_box_id=plan.box_id,
                         source_box_type="invoice",
                         target_box_id=vendor_name,
@@ -2745,7 +2788,9 @@ class CoordinationEngine:
         """§3: Persist the current plan to the Box state for resumption."""
         if plan.box_id:
             remaining = plan.remaining_from(0)  # Caller should pass step index
-            self.db.update_ap_item(plan.box_id, pending_plan=remaining.to_json())
+            await asyncio.to_thread(
+                self.db.update_ap_item, plan.box_id, pending_plan=remaining.to_json(),
+            )
         return {"ok": True}
 
     async def _handle_send_slack_exception(self, action: Action, plan: Plan) -> dict:
@@ -2754,7 +2799,7 @@ class CoordinationEngine:
             return {"ok": True}
         try:
             from clearledgr.services.slack_notifications import send_invoice_exception_notification
-            item = self.db.get_ap_item(plan.box_id) or {}
+            item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id) or {}
             await send_invoice_exception_notification(
                 organization_id=self.organization_id,
                 ap_item=item,
@@ -2806,7 +2851,7 @@ class CoordinationEngine:
         event_type = action.params.get("event_type", "agent_action")
         try:
             if hasattr(self.db, "append_audit_event"):
-                self.db.append_audit_event({
+                await asyncio.to_thread(self.db.append_audit_event, {
                     "ap_item_id": plan.box_id,
                     "event_type": f"notification:{event_type}",
                     "actor_type": "agent",
@@ -2830,7 +2875,8 @@ class CoordinationEngine:
             return {"ok": True}
         try:
             if hasattr(self.db, "create_vendor_profile"):
-                self.db.create_vendor_profile(
+                await asyncio.to_thread(
+                    self.db.create_vendor_profile,
                     self.organization_id, vendor_name,
                     status="pending_onboarding",
                 )
@@ -2868,7 +2914,10 @@ class CoordinationEngine:
             # Get vendor profile for director names
             profile = None
             if hasattr(self.db, "get_vendor_profile"):
-                profile = self.db.get_vendor_profile(self.organization_id, vendor_id)
+                profile = await asyncio.to_thread(
+                    self.db.get_vendor_profile,
+                    self.organization_id, vendor_id,
+                )
 
             director_names = []
             if profile:
@@ -2950,7 +2999,10 @@ class CoordinationEngine:
         sender = ctx.get("sender", "")
         body = ctx.get("body", "")
         # Check if sender domain matches customer's own domain
-        org = self.db.get_organization(self.organization_id) if hasattr(self.db, "get_organization") else None
+        org = (
+            await asyncio.to_thread(self.db.get_organization, self.organization_id)
+            if hasattr(self.db, "get_organization") else None
+        )
         if org:
             org_domain = (org.get("domain") or "").lower()
             sender_domain = sender.split("@")[1].lower() if "@" in sender else ""
