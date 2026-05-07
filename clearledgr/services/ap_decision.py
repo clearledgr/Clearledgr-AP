@@ -359,12 +359,15 @@ def _evaluate_rules_for_invoice(
     matches; None if no rule matches OR the engine is unavailable
     (so the caller falls through to the legacy 10-step cascade).
 
-    Action → recommendation mapping:
+    Action → recommendation mapping (all recommendations drawn from
+    ``_VALID_RECOMMENDATIONS`` = approve / needs_info / escalate / reject):
       auto_approve              → approve
-      route_to_role / _user     → needs_approval (with target captured
+      route_to_role / _user     → needs_info (single-target waiting on
+                                  one named person; target captured
                                   in info_needed)
-      require_n_approvals       → needs_approval (n captured in flags)
-      require_dual_approval     → needs_approval (dual_approval flag)
+      require_n_approvals       → escalate (multi-step approval needed;
+                                  n captured in flags)
+      require_dual_approval     → escalate (multi-step approval needed)
       escalate_after            → escalate (delayed-firing escalation
                                   is a future-work hook; the rule
                                   match itself routes to escalate)
@@ -486,8 +489,13 @@ def _rule_match_to_decision(
                 )
                 break
 
+    # Multi-approver rule actions (dual_approval, require_n_approvals)
+    # require a multi-step approval workflow → escalate. Single-target
+    # routing (route_to_role / route_to_user) waits for one named
+    # person → needs_info. Pure auto_approve / pure escalate paths
+    # were already handled above.
     return APDecision(
-        recommendation="needs_info" if info_needed and not (has_dual or has_n) else "needs_info",
+        recommendation="escalate" if (has_dual or has_n) else "needs_info",
         reasoning=(
             f"Rule '{rule_name}' matched. Routing for human review "
             "per the configured action set."
@@ -623,7 +631,17 @@ class APDecisionService:
             auto_threshold = get_adaptive_threshold_service(
                 org_config.get("organization_id", "default")
             ).get_threshold_for_vendor(invoice.vendor_name)
-        except Exception:
+        except Exception as adaptive_exc:
+            # Failure here silently downgrades us to the static threshold.
+            # Log so an outage of the adaptive service is visible in
+            # observability instead of just looking like every org
+            # converged on the static default.
+            logger.debug(
+                "[ap_decision] adaptive threshold lookup failed for vendor=%r org=%r: %s",
+                invoice.vendor_name,
+                org_config.get("organization_id"),
+                adaptive_exc,
+            )
             auto_threshold = float(org_config.get("auto_approve_confidence_threshold", 0.95))
         strictness_bias = str(decision_feedback.get("strictness_bias") or "neutral").strip().lower()
         has_strict_feedback = strictness_bias == "strict" and int(decision_feedback.get("total_feedback") or 0) >= 3

@@ -2063,6 +2063,82 @@ class InvoiceValidationMixin:
             )
 
         _record_rule_verdict("iban_change_freeze", _baseline_iban_change_freeze, severity="error")
+        _baseline_sanctions_status = len(reasons)
+        # 4d.1) Sanctions / PEP / adverse-media gate.
+        # Reads the vendor's rolled-up ``sanctions_status`` set by
+        # ``services/sanctions_screening.screen_vendor`` after a KYC
+        # provider call. The actual provider call happens out of band
+        # (onboarding + scheduled re-screen via ``vendors_due_for_rescreen``);
+        # this gate is the intake-time read of that disposition so a
+        # blocked vendor can never be routed for posting/payment.
+        # Defence-in-depth alongside the pre-payment gate
+        # (``gate_payment_against_sanctions``) — payment is the last
+        # line of defence; the validation gate is the first.
+        try:
+            if invoice.vendor_name and hasattr(self.db, "get_vendor_profile"):
+                _vp = None
+                try:
+                    _vp = self.db.get_vendor_profile(
+                        self.organization_id, invoice.vendor_name,
+                    )
+                except Exception:
+                    _vp = None
+                _sanctions_status = str(((_vp or {}).get("sanctions_status") or "")).strip().lower()
+                _last_check = (_vp or {}).get("last_sanctions_check_at")
+                if _sanctions_status == "blocked":
+                    add_reason(
+                        "vendor_sanctions_blocked",
+                        (
+                            f"Vendor '{invoice.vendor_name}' is on the sanctions "
+                            f"blocklist. Routing is blocked until an operator "
+                            f"reviews the latest screening result."
+                        ),
+                        severity="error",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                            "sanctions_status": _sanctions_status,
+                            "last_sanctions_check_at": _last_check,
+                        },
+                    )
+                elif _sanctions_status == "review":
+                    add_reason(
+                        "vendor_sanctions_review",
+                        (
+                            f"Vendor '{invoice.vendor_name}' has an open "
+                            f"sanctions / PEP / adverse-media match awaiting "
+                            f"operator review. Cannot be auto-approved until "
+                            f"the match is dispositioned."
+                        ),
+                        severity="warning",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                            "sanctions_status": _sanctions_status,
+                            "last_sanctions_check_at": _last_check,
+                        },
+                    )
+                elif _sanctions_status in ("", "unscreened"):
+                    # Vendor has never been screened. Don't block intake
+                    # (the rescreen scheduler will pick them up), but
+                    # surface as info so the audit trail records that
+                    # the gate ran and observed an unscreened vendor.
+                    add_reason(
+                        "vendor_sanctions_unscreened",
+                        (
+                            f"Vendor '{invoice.vendor_name}' has no sanctions "
+                            f"screening on file. Will be screened by the "
+                            f"rescreen scheduler before payment."
+                        ),
+                        severity="info",
+                        details={
+                            "vendor_name": invoice.vendor_name,
+                        },
+                    )
+        except Exception as sanctions_exc:
+            logger.warning(
+                "Sanctions status check failed (non-fatal): %s", sanctions_exc,
+            )
+
+        _record_rule_verdict("sanctions_status", _baseline_sanctions_status, severity="error")
         _baseline_vendor_domain_lock = len(reasons)
         # 4e) Vendor domain lock (Phase 2.2, DESIGN_THESIS.md §8 Group B).
         # Detects vendor impersonation: an inbound invoice arriving

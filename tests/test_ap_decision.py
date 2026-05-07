@@ -411,3 +411,88 @@ class TestVendorStore:
         assert summary["reject_after_approve_count"] == 1
         assert summary["request_info_after_approve_count"] == 1
         assert summary["strictness_bias"] == "strict"
+
+
+class TestRuleMatchToDecision:
+    """Regression coverage for the C1 fix in
+    ``ap_decision._rule_match_to_decision`` — the multi-approver path
+    (``require_dual_approval`` / ``require_n_approvals``) must produce
+    ``escalate`` rather than ``needs_info``. The original ternary's
+    arms were identical, swallowing the distinction."""
+
+    def test_dual_approval_action_returns_escalate(self):
+        from clearledgr.services.ap_decision import _rule_match_to_decision
+        invoice = _make_invoice()
+        rule = {"id": "rule_1", "name": "Two-eyes for >$10k"}
+        actions = [{"type": "require_dual_approval"}]
+        decision = _rule_match_to_decision(
+            invoice, rule, actions, vendor_context_used={},
+        )
+        assert decision.recommendation == "escalate", (
+            f"dual_approval should map to escalate, got {decision.recommendation}"
+        )
+        assert "rule_action:dual_approval" in decision.risk_flags
+
+    def test_require_n_approvals_returns_escalate(self):
+        from clearledgr.services.ap_decision import _rule_match_to_decision
+        invoice = _make_invoice()
+        rule = {"id": "rule_2", "name": "Three approvers"}
+        actions = [{"type": "require_n_approvals", "n": 3}]
+        decision = _rule_match_to_decision(
+            invoice, rule, actions, vendor_context_used={},
+        )
+        assert decision.recommendation == "escalate"
+        assert "rule_action:require_3_approvals" in decision.risk_flags
+
+    def test_route_to_role_returns_needs_info(self):
+        from clearledgr.services.ap_decision import _rule_match_to_decision
+        invoice = _make_invoice()
+        rule = {"id": "rule_3", "name": "AP routes to legal"}
+        actions = [{"type": "route_to_role", "role": "legal"}]
+        decision = _rule_match_to_decision(
+            invoice, rule, actions, vendor_context_used={},
+        )
+        assert decision.recommendation == "needs_info"
+        assert "rule_action:role:legal" in decision.risk_flags
+        assert decision.info_needed and "legal" in decision.info_needed
+
+
+class TestVendorRiskScoringIntegration:
+    """Regression coverage for the silent-NameError fix in
+    ``InvoiceWorkflowService._get_ap_decision``.
+
+    Before the C2 fix, the call to ``compute_vendor_risk_score`` passed
+    an undefined ``ap_item`` variable; the ``except Exception`` swallowed
+    the ``NameError`` and vendor risk scoring returned no flags. These
+    tests pin the behaviour that risk flags now propagate through to
+    ``invoice.reasoning_risks`` so the regression cannot recur silently.
+    """
+
+    def test_new_vendor_high_amount_flag_propagates_to_risk_flags(self, tmp_path):
+        """A new vendor (zero history) with an above-threshold first
+        invoice must surface ``new_vendor`` and ``new_vendor_high_amount``
+        risk flags via the AP decision pipeline."""
+        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        db = _make_db(tmp_path)
+        org_id = "org_risk_new_vendor"
+
+        invoice = _make_invoice(
+            organization_id=org_id,
+            vendor_name="Brand New Vendor",
+            amount=25000.0,  # well above default new_vendor_first_invoice_max=10000
+            confidence=0.99,
+        )
+
+        workflow = InvoiceWorkflowService(organization_id=org_id)
+        validation_gate = {"passed": True, "reason_codes": [], "reasons": []}
+        decision = asyncio.run(
+            workflow._get_ap_decision(invoice, validation_gate)
+        )
+        assert decision is not None
+        risks = invoice.reasoning_risks or []
+        assert "new_vendor" in risks, (
+            f"expected 'new_vendor' in reasoning_risks, got {risks}"
+        )
+        assert "new_vendor_high_amount" in risks, (
+            f"expected 'new_vendor_high_amount' in reasoning_risks, got {risks}"
+        )

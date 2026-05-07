@@ -157,3 +157,57 @@ async def test_validation_gate_records_failed_rule_with_evidence(postgres_test_d
     assert field_presence.get("evidence", {}).get("reasons"), (
         "failed rule must attach the failing reason rows as evidence"
     )
+
+
+@pytest.mark.asyncio
+async def test_validation_gate_blocks_sanctions_blocked_vendor(postgres_test_db):
+    """A vendor whose rolled-up ``sanctions_status`` is 'blocked' must
+    fail the new sanctions_status gate with severity=error and
+    reason_code 'vendor_sanctions_blocked'. Defence-in-depth: the
+    pre-payment gate is the last line; the validation gate is the
+    first."""
+    db = get_db()
+    db.initialize()
+    vendor_name = "Sanctioned Co"
+    ap_item_id = _seed_ap_item_for_validation(
+        db, vendor_name=vendor_name, invoice_number="INV-S1",
+    )
+
+    # Seed the vendor profile with a 'blocked' disposition. The same
+    # path the screening service uses to roll up the rolled-up
+    # disposition column.
+    db.upsert_vendor_profile(
+        organization_id="default",
+        vendor_name=vendor_name,
+        sanctions_status="blocked",
+        last_sanctions_check_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    invoice = InvoiceData(
+        gmail_id="thread-INV-S1",
+        subject=f"Bill from {vendor_name}",
+        sender="sanctioned@example.com",
+        vendor_name=vendor_name,
+        amount=1000.0,
+        currency="USD",
+        invoice_number="INV-S1",
+        confidence=0.95,
+        organization_id="default",
+        user_id="test-user",
+    )
+
+    workflow = _make_workflow()
+    gate = await workflow._evaluate_deterministic_validation(invoice)
+
+    reason_codes = gate.get("reason_codes") or []
+    assert "vendor_sanctions_blocked" in reason_codes, (
+        f"expected vendor_sanctions_blocked in reason_codes, got {reason_codes}"
+    )
+
+    sanctions_rule = next(
+        (r for r in gate.get("rule_results") or []
+         if r["rule_id"] == "sanctions_status"),
+        None,
+    )
+    assert sanctions_rule is not None
+    assert sanctions_rule["verdict"] == "fail"

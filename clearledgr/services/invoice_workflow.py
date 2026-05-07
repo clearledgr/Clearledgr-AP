@@ -6,6 +6,7 @@ surfaces should enter through ``FinanceAgentRuntime``; this workflow service is
 an internal execution detail behind that contract boundary.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -475,30 +476,37 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         decision_feedback: Dict[str, Any] = {}
         try:
-            # §3 Multi-entity: use entity-scoped vendor profile when available
+            # §3 Multi-entity: use entity-scoped vendor profile when available.
+            # All DB lookups go through asyncio.to_thread to avoid blocking
+            # the event loop on psycopg's sync connection pool — same
+            # pattern as the runtime layer (System A Group 4).
             _entity_id = getattr(invoice, "_entity_id", None)
             if _entity_id and hasattr(self.db, "get_vendor_for_entity"):
-                vendor_profile = self.db.get_vendor_for_entity(
-                    self.organization_id, invoice.vendor_name, _entity_id
+                vendor_profile = await asyncio.to_thread(
+                    self.db.get_vendor_for_entity,
+                    self.organization_id, invoice.vendor_name, _entity_id,
+                )
+            elif hasattr(self.db, "get_vendor_profile"):
+                vendor_profile = await asyncio.to_thread(
+                    self.db.get_vendor_profile,
+                    self.organization_id, invoice.vendor_name,
                 )
             else:
-                vendor_profile = (
-                    self.db.get_vendor_profile(self.organization_id, invoice.vendor_name)
-                    if hasattr(self.db, "get_vendor_profile") else None
+                vendor_profile = None
+            if hasattr(self.db, "get_vendor_invoice_history"):
+                vendor_history = await asyncio.to_thread(
+                    self.db.get_vendor_invoice_history,
+                    self.organization_id, invoice.vendor_name, limit=6,
                 )
-            vendor_history = (
-                self.db.get_vendor_invoice_history(self.organization_id, invoice.vendor_name, limit=6)
-                if hasattr(self.db, "get_vendor_invoice_history") else []
-            )
-            decision_feedback = (
-                self.db.get_vendor_decision_feedback_summary(
-                    self.organization_id,
-                    invoice.vendor_name,
-                    window_days=180,
+            else:
+                vendor_history = []
+            if hasattr(self.db, "get_vendor_decision_feedback_summary"):
+                decision_feedback = await asyncio.to_thread(
+                    self.db.get_vendor_decision_feedback_summary,
+                    self.organization_id, invoice.vendor_name, window_days=180,
                 )
-                if hasattr(self.db, "get_vendor_decision_feedback_summary")
-                else {}
-            )
+            else:
+                decision_feedback = {}
 
             # Best-effort correction suggestions
             suggestions: Dict[str, Any] = {}
@@ -514,7 +522,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
             org_config: Dict[str, Any] = {}
             try:
-                _org_row = self.db.get_organization(self.organization_id) or {}
+                _org_row = await asyncio.to_thread(
+                    self.db.get_organization, self.organization_id,
+                ) or {}
                 _raw_settings = _org_row.get("settings_json") or _org_row.get("settings") or {}
                 if isinstance(_raw_settings, str):
                     _raw_settings = json.loads(_raw_settings)
@@ -595,7 +605,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 # function when org hasn't customised.
                 org_thresholds = {}
                 try:
-                    org_row = self.db.get_organization(self.organization_id) or {}
+                    org_row = await asyncio.to_thread(
+                        self.db.get_organization, self.organization_id,
+                    ) or {}
                     settings = org_row.get("settings_json") or org_row.get("settings") or {}
                     if isinstance(settings, str):
                         import json as _json
@@ -606,12 +618,17 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     org_thresholds = (settings or {}).get("fraud_thresholds") or {}
                 except Exception:
                     org_thresholds = {}
+                # compute_vendor_risk_score reads only ``amount`` off
+                # ap_item (Module 4 fraud rules #2/#3 — low-frequency
+                # high amount, new-vendor first-invoice ceiling). The
+                # canonical amount lives on the invoice we're routing,
+                # so pass a synthetic dict instead of a DB roundtrip.
                 vendor_risk = compute_vendor_risk_score(
                     vendor_profile=vendor_profile,
                     cross_invoice_analysis=cross_analysis_dict,
                     anomaly_signals=anomaly_signals,
                     decision_feedback=decision_feedback,
-                    ap_item=ap_item,
+                    ap_item={"amount": invoice.amount},
                     org_thresholds=org_thresholds,
                 )
             except Exception as exc:
@@ -751,7 +768,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 or (now_ts - self._cached_org_settings_at).total_seconds() > 300
             )
             if cache_stale:
-                org = self.db.get_organization(self.organization_id)
+                org = await asyncio.to_thread(
+                    self.db.get_organization, self.organization_id,
+                )
                 org_settings = org.get("settings_json") if org else None
                 if isinstance(org_settings, str):
                     import json as _json
@@ -763,7 +782,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         except Exception:
             pass
 
-        existing = self.db.get_invoice_status(invoice.gmail_id)
+        existing = await asyncio.to_thread(
+            self.db.get_invoice_status, invoice.gmail_id,
+        )
         if existing:
             if existing.get("status") == "posted":
                 return {
@@ -772,7 +793,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     "erp_bill_id": existing.get("erp_bill_id"),
                 }
             if existing.get("status") == "pending_approval" and existing.get("slack_thread_id"):
-                thread = self.db.get_slack_thread(invoice.gmail_id)
+                thread = await asyncio.to_thread(
+                    self.db.get_slack_thread, invoice.gmail_id,
+                )
                 return {
                     "status": "pending_approval",
                     "invoice_id": invoice.gmail_id,
@@ -801,7 +824,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 )
                 if resume_status == "found":
                     existing_id = existing.get("id") or invoice.gmail_id
-                    self.db.update_ap_item(
+                    await asyncio.to_thread(
+                        self.db.update_ap_item,
                         existing_id,
                         state="received",
                         exception_code=None,
@@ -837,7 +861,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # method) through to ap_items.metadata. The email path covers
         # this in finance_agent_runtime._persist; this is the parallel
         # path for ERP-native and PEPPOL UBL intake.
-        invoice_id = self.db.save_invoice_status(
+        invoice_id = await asyncio.to_thread(
+            self.db.save_invoice_status,
             gmail_id=invoice.gmail_id,
             status="received",
             email_subject=invoice.subject,
@@ -887,7 +912,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 sender_email=getattr(invoice, "sender", None),
             )
             if master_status == "not_found":
-                self.db.update_ap_item(
+                await asyncio.to_thread(
+                    self.db.update_ap_item,
                     invoice_id,
                     state="needs_info",
                     exception_code=VENDOR_NOT_IN_ERP_MASTER,
@@ -1011,7 +1037,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             agent_column_updates["grn_reference"] = po_match["grn_number"]
         if agent_column_updates and invoice_id:
             try:
-                self.db.update_ap_item(invoice_id, **agent_column_updates)
+                await asyncio.to_thread(
+                    self.db.update_ap_item, invoice_id, **agent_column_updates,
+                )
             except Exception:
                 pass
 
@@ -1101,7 +1129,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             )
             # Emit structured audit event so SOC/compliance can count these.
             try:
-                self.db.append_audit_event(
+                await asyncio.to_thread(
+                    self.db.append_audit_event,
                     {
                         "ap_item_id": invoice_id or invoice.gmail_id or "",
                         "event_type": "llm_gate_override_applied",
@@ -1125,7 +1154,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                         },
                         "organization_id": self.organization_id,
                         "source": "invoice_workflow",
-                    }
+                    },
                 )
             except Exception as audit_exc:
                 logger.debug("[InvoiceWorkflow] audit log for gate override failed: %s", audit_exc)
@@ -1345,12 +1374,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         )
     
     async def _auto_approve_and_post(
-        self, 
-        invoice: InvoiceData, 
+        self,
+        invoice: InvoiceData,
         reason: str = "high_confidence",
     ) -> Dict[str, Any]:
         """Auto-approve invoice and post to ERP."""
-        existing = self.db.get_invoice_status(invoice.gmail_id)
+        existing = await asyncio.to_thread(
+            self.db.get_invoice_status, invoice.gmail_id,
+        )
         existing_state = self._canonical_invoice_state(existing)
         if existing_state in {"posted_to_erp", "closed"}:
             return {
@@ -1397,14 +1428,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         # validated -> needs_approval -> approved -> ready_to_post
         approved_by = f"clearledgr-auto:{reason}"
         approved_at = datetime.now(timezone.utc).isoformat()
-        current_state = existing_state or self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+        current_state = existing_state or self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
 
         if current_state == "received":
             self._transition_invoice_state(invoice.gmail_id, "validated", correlation_id=correlation_id)
-            current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
         if current_state == "validated":
             self._transition_invoice_state(invoice.gmail_id, "needs_approval", correlation_id=correlation_id)
-            current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
         if current_state in {"needs_approval", "approved"}:
             self._transition_invoice_state(
                 gmail_id=invoice.gmail_id,
@@ -1413,10 +1444,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 approved_by=approved_by,
                 approved_at=approved_at,
             )
-            current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
         if current_state in {"approved", "ready_to_post"}:
             self._transition_invoice_state(invoice.gmail_id, "ready_to_post", correlation_id=correlation_id)
-            current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
         if current_state not in {"ready_to_post"}:
             return {
                 "status": "error",
@@ -1484,7 +1515,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                         invoice_number=invoice.invoice_number,
                     )
                     if ap_id:
-                        self.db.update_ap_item(
+                        await asyncio.to_thread(
+                            self.db.update_ap_item,
                             ap_id,
                             exception_code="erp_posted_db_update_failed",
                             exception_severity="critical",
@@ -1552,7 +1584,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
                 agent_rec = (invoice.vendor_intelligence or {}).get("ap_decision")
                 if hasattr(self.db, "update_vendor_profile_from_outcome") and ap_item_id:
-                    self.db.update_vendor_profile_from_outcome(
+                    await asyncio.to_thread(
+                        self.db.update_vendor_profile_from_outcome,
                         self.organization_id,
                         invoice.vendor_name,
                         ap_item_id=ap_item_id,
@@ -1661,7 +1694,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             context_payload["approval_assignee_labels"] = approval_labels
         approval_requested_at = datetime.now(timezone.utc).isoformat()
 
-        current_state = self._canonical_invoice_state(self.db.get_invoice_status(invoice.gmail_id))
+        current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
         if current_state == "received":
             self._transition_invoice_state(
                 gmail_id=invoice.gmail_id,
@@ -1669,7 +1702,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 correlation_id=correlation_id,
             )
 
-        existing_thread = self.db.get_slack_thread(invoice.gmail_id)
+        existing_thread = await asyncio.to_thread(
+            self.db.get_slack_thread, invoice.gmail_id,
+        )
         if existing_thread:
             # Ensure status is pending, but avoid duplicate Slack messages
             self._transition_invoice_state(
@@ -1769,14 +1804,18 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 f"Match detail in sidebar. One click to override or reject."
             )
             try:
-                self.db.append_ap_item_timeline_entry(ap_item_id, {
-                    "event_type": "agent_mention",
-                    "summary": mention_body,
-                    "actor": "agent",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                await asyncio.to_thread(
+                    self.db.append_ap_item_timeline_entry,
+                    ap_item_id,
+                    {
+                        "event_type": "agent_mention",
+                        "summary": mention_body,
+                        "actor": "agent",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 # Dispatch DM notifications for the mentioned users
-                item = self.db.get_ap_item(ap_item_id) or {}
+                item = await asyncio.to_thread(self.db.get_ap_item, ap_item_id) or {}
                 from clearledgr.api.ap_items_action_routes import _dispatch_mention_notifications
                 _dispatch_mention_notifications(
                     body=mention_body,
@@ -1818,7 +1857,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     comments="",
                 )],
             )
-            self.db.db_create_approval_chain(chain)
+            await asyncio.to_thread(self.db.db_create_approval_chain, chain)
             self._update_ap_item_metadata(
                 ap_item_id,
                 {
@@ -1874,7 +1913,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             )
             
             # Save Slack thread reference
-            thread_id = self.db.save_slack_thread(
+            thread_id = await asyncio.to_thread(
+                self.db.save_slack_thread,
                 invoice_id=invoice.gmail_id,
                 channel_id=message.channel,
                 thread_ts=message.ts,
@@ -1953,7 +1993,8 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if isinstance(teams_status, dict) and teams_status.get("status") == "sent":
                     channels_notified.append("teams")
                 try:
-                    self.db.append_audit_event(
+                    await asyncio.to_thread(
+                        self.db.append_audit_event,
                         {
                             "ap_item_id": ap_item_id,
                             "event_type": "approval_requested",
@@ -1969,7 +2010,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                             },
                             "organization_id": self.organization_id,
                             "source": "invoice_workflow",
-                        }
+                        },
                     )
                 except Exception:
                     pass  # Non-fatal
