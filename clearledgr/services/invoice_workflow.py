@@ -139,7 +139,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             if org:
                 settings = org.get("settings", {})
                 if isinstance(settings, str):
-                    import json
                     settings = json.loads(settings) if settings else {}
                 self._settings = settings
         except Exception as e:
@@ -177,7 +176,12 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         """Clear the pending plan when execution completes."""
         self.db.update_ap_item(ap_item_id, pending_plan=None)
 
+    # Tunables. Hoisted from inline literals so two callers of the
+    # same constant can't drift apart on the next edit.
     _FRAUD_FLAG_CAS_ATTEMPTS = 5
+    _ORG_SETTINGS_CACHE_TTL_SECONDS = 300   # process-local org-settings cache
+    _APPROVAL_WAIT_HOURS = 4                # how long the agent waits on an approval before it surfaces as "stale"
+    _APPROVAL_CONTEXT_SCAN_LIMIT = 5000     # max ap_items scanned to build the approval context
 
     # ── Approval-dispatch outbox ────────────────────────────────────
     #
@@ -625,7 +629,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             except Exception as exc:
                 logger.debug("Correction learning suggest failed: %s", exc)
 
+            # ---- Org settings (single fetch, two consumers) ----
+            # ``org_config`` (rule engine) and ``org_thresholds`` (fraud
+            # rules) used to load via two separate ``get_organization``
+            # calls back-to-back. Same row, same parse, twice. Now read
+            # once, parse once, hand the parsed dict to both downstream
+            # consumers.
             org_config: Dict[str, Any] = {}
+            org_thresholds: Dict[str, Any] = {}
             try:
                 _org_row = await asyncio.to_thread(
                     self.db.get_organization, self.organization_id,
@@ -637,8 +648,11 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     _cfg = _raw_settings.get("org_config") or {}
                     if isinstance(_cfg, dict):
                         org_config = _cfg
+                    _thr = _raw_settings.get("fraud_thresholds") or {}
+                    if isinstance(_thr, dict):
+                        org_thresholds = _thr
             except Exception as exc:
-                logger.debug("Org config load failed: %s", exc)
+                logger.debug("Org settings load failed: %s", exc)
             # Module 3: ensure organization_id reaches the rule
             # engine inside APDecisionService.decide. The rules table
             # is org-scoped; without this the engine has nothing to
@@ -702,32 +716,16 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 logger.debug("[APDecision] Volume anomaly detection skipped (non-fatal): %s", exc)
 
             # ---- Vendor risk score ----
+            # ``org_thresholds`` was loaded above in the single org-
+            # settings fetch — Module 4 fraud rules read it directly.
+            # ``compute_vendor_risk_score`` reads only ``amount`` off
+            # ap_item (Module 4 fraud rules #2/#3 — low-frequency high
+            # amount, new-vendor first-invoice ceiling). The canonical
+            # amount lives on the invoice we're routing, so pass a
+            # synthetic dict instead of a DB roundtrip.
             vendor_risk: Optional[Dict[str, Any]] = None
             try:
                 from clearledgr.services.ap_decision import compute_vendor_risk_score
-                # Module 4 spec line 158 — load org's customer-configurable
-                # fraud thresholds. Defaults applied inside the score
-                # function when org hasn't customised.
-                org_thresholds = {}
-                try:
-                    org_row = await asyncio.to_thread(
-                        self.db.get_organization, self.organization_id,
-                    ) or {}
-                    settings = org_row.get("settings_json") or org_row.get("settings") or {}
-                    if isinstance(settings, str):
-                        import json as _json
-                        try:
-                            settings = _json.loads(settings)
-                        except Exception:
-                            settings = {}
-                    org_thresholds = (settings or {}).get("fraud_thresholds") or {}
-                except Exception:
-                    org_thresholds = {}
-                # compute_vendor_risk_score reads only ``amount`` off
-                # ap_item (Module 4 fraud rules #2/#3 — low-frequency
-                # high amount, new-vendor first-invoice ceiling). The
-                # canonical amount lives on the invoice we're routing,
-                # so pass a synthetic dict instead of a DB roundtrip.
                 vendor_risk = compute_vendor_risk_score(
                     vendor_profile=vendor_profile,
                     cross_invoice_analysis=cross_analysis_dict,
@@ -792,9 +790,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 single_pass_hints=single_pass_hints,
             )
             logger.info(
-                "[APDecision] %s → %s (confidence=%.2f fallback=%s risk=%s): %s",
+                "[APDecision] %s → %s (confidence=%.2f model=%s risk=%s): %s",
                 invoice.vendor_name, decision.recommendation,
-                decision.confidence, decision.fallback,
+                decision.confidence, decision.model,
                 (vendor_risk or {}).get("level", "n/a"),
                 decision.reasoning[:120],
             )
@@ -870,7 +868,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
             cache_stale = (
                 self._cached_org_settings is None
                 or self._cached_org_settings_at is None
-                or (now_ts - self._cached_org_settings_at).total_seconds() > 300
+                or (now_ts - self._cached_org_settings_at).total_seconds() > self._ORG_SETTINGS_CACHE_TTL_SECONDS
             )
             if cache_stale:
                 org = await asyncio.to_thread(
@@ -878,8 +876,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 )
                 org_settings = org.get("settings_json") if org else None
                 if isinstance(org_settings, str):
-                    import json as _json
-                    org_settings = _json.loads(org_settings)
+                    org_settings = json.loads(org_settings)
                 self._cached_org_settings = org_settings or {}
                 self._cached_org_settings_at = now_ts
                 self._cached_migration_status = (org or {}).get("migration_status")
@@ -995,7 +992,10 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         except Exception:
             pass
 
-        logger.info(f"New invoice detected: {invoice.vendor_name} ${invoice.amount} (confidence: {invoice.confidence})")
+        logger.info(
+            "New invoice detected: %s $%s (confidence: %s)",
+            invoice.vendor_name, invoice.amount, invoice.confidence,
+        )
 
         # AP-side ERP master-check gate (replaces the deprecated
         # vendor-onboarding-session lookup). If the vendor isn't in
@@ -1185,7 +1185,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         # §7.7 Shadow mode: run candidate model alongside production (non-blocking)
         try:
-            import os
             if os.environ.get("SHADOW_MODEL"):
                 from clearledgr.services.shadow_mode import run_shadow_decision
                 await run_shadow_decision(
@@ -1252,7 +1251,6 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                             "enforced_recommendation": ap_decision.recommendation,
                             "gate_reason_codes": (validation_gate or {}).get("reason_codes") or [],
                             "decision_model": ap_decision.model,
-                            "decision_fallback": bool(ap_decision.fallback),
                             "decision_confidence": ap_decision.confidence,
                             "original_reasoning": (ap_decision.reasoning or "")[:256],
                             "correlation_id": correlation_id,
@@ -1430,7 +1428,11 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 amount=invoice.amount,
             )
             if suggestion and suggestion.get("confidence", 0) > 0.5:
-                logger.info(f"Learning suggested GL {suggestion.get('gl_code')} for {invoice.vendor_name} (confidence: {suggestion.get('confidence'):.2f})")
+                logger.info(
+                    "Learning suggested GL %s for %s (confidence: %.2f)",
+                    suggestion.get("gl_code"), invoice.vendor_name,
+                    float(suggestion.get("confidence") or 0),
+                )
                 # Persist the suggestion onto the invoice when extraction
                 # didn't already pick a code, so downstream posting paths
                 # see the learned default.
@@ -1440,13 +1442,13 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if suggestion.get("confidence", 0) > 0.8:
                     invoice.confidence = min(0.99, invoice.confidence + 0.1)
         except Exception as e:
-            logger.warning(f"Failed to get GL suggestion from learning: {e}")
+            logger.warning("Failed to get GL suggestion from learning: %s", e)
         
         # Route based on the AP decision's recommendation (gate already passed above).
         if ap_decision.recommendation == "approve":
             logger.info(
-                "AP decision approve for %s (confidence=%.2f fallback=%s)",
-                invoice.gmail_id, ap_decision.confidence, ap_decision.fallback,
+                "AP decision approve for %s (confidence=%.2f model=%s)",
+                invoice.gmail_id, ap_decision.confidence, ap_decision.model,
             )
             return await self._auto_approve_and_post(
                 invoice, reason="ap_decision_approve"
@@ -1612,17 +1614,15 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     correlation_id,
                     db_exc,
                 )
-                # Best-effort: mark AP item with exception code for later reconciliation
+                # Best-effort: mark AP item with exception code for later
+                # reconciliation. ``ap_item_id`` is already in scope from
+                # the top of the method — reuse it instead of a redundant
+                # DB roundtrip on a hot critical-path branch.
                 try:
-                    ap_id = self._lookup_ap_item_id(
-                        gmail_id=invoice.gmail_id,
-                        vendor_name=invoice.vendor_name,
-                        invoice_number=invoice.invoice_number,
-                    )
-                    if ap_id:
+                    if ap_item_id:
                         await asyncio.to_thread(
                             self.db.update_ap_item,
-                            ap_id,
+                            ap_item_id,
                             exception_code="erp_posted_db_update_failed",
                             exception_severity="critical",
                             last_error=f"ERP reference {erp_reference} posted but DB update failed: {db_exc}",
@@ -1634,37 +1634,26 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     )
                 raise
 
-            # Store verification result in metadata
-            if not post_verified:
-                ap_id = self._lookup_ap_item_id(
-                    gmail_id=invoice.gmail_id,
-                    vendor_name=invoice.vendor_name,
-                    invoice_number=invoice.invoice_number,
-                )
-                if ap_id:
-                    self._update_ap_item_metadata(ap_id, {"post_verified": False})
+            # Store verification result in metadata. Reuse ap_item_id.
+            if not post_verified and ap_item_id:
+                self._update_ap_item_metadata(ap_item_id, {"post_verified": False})
 
             # Phase 1.4: persist ERP sync token + erp_type so the override
             # window reversal path (reverse_bill_from_quickbooks) can use
             # the cached SyncToken without an extra REST-GET. Also open
             # the override window row — the OverrideWindowObserver will
             # do this via the state transition, but we compute the data
-            # here so the observer has what it needs.
+            # here so the observer has what it needs. Reuse ap_item_id.
             erp_sync_token = (result or {}).get("sync_token")
             erp_type_hint = (result or {}).get("erp")
-            ap_id_for_meta = self._lookup_ap_item_id(
-                gmail_id=invoice.gmail_id,
-                vendor_name=invoice.vendor_name,
-                invoice_number=invoice.invoice_number,
-            )
-            if ap_id_for_meta:
+            if ap_item_id:
                 meta_updates: Dict[str, Any] = {}
                 if erp_sync_token is not None:
                     meta_updates["erp_sync_token"] = str(erp_sync_token)
                 if erp_type_hint:
                     meta_updates["erp_type"] = str(erp_type_hint)
                 if meta_updates:
-                    self._update_ap_item_metadata(ap_id_for_meta, meta_updates)
+                    self._update_ap_item_metadata(ap_item_id, meta_updates)
             
             # LEARNING: Record auto-approval to learn vendor→GL mappings
             try:
@@ -1680,9 +1669,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     ap_item_id=ap_item_id,
                     metadata={"source": "invoice_workflow._auto_approve_and_post"},
                 )
-                logger.info(f"Recorded auto-approval for learning: {invoice.vendor_name}")
+                logger.info("Recorded auto-approval for learning: %s", invoice.vendor_name)
             except Exception as e:
-                logger.warning(f"Failed to record auto-approval for learning: {e}")
+                logger.warning("Failed to record auto-approval for learning: %s", e)
 
             # ``agent_rec`` is read once, before either of the two
             # try blocks below, so a failure in the first one (vendor
@@ -1950,7 +1939,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 if ap_item_id:
                     self.set_waiting_condition(
                         ap_item_id, "approval_response",
-                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=self._APPROVAL_WAIT_HOURS)).isoformat(),
                         context={"channel": existing_thread.get("channel_id"), "approvers": approval_labels},
                     )
 
@@ -2294,7 +2283,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                 try:
                     self.set_waiting_condition(
                         ap_item_id, "approval_response",
-                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=self._APPROVAL_WAIT_HOURS)).isoformat(),
                         context={"channel": message.channel, "message_ts": message.ts, "approvers": approval_labels},
                     )
                 except Exception as wait_exc:
@@ -2383,7 +2372,9 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
         }
         try:
             if hasattr(self.db, "list_ap_items"):
-                items = self.db.list_ap_items(self.organization_id, limit=5000)
+                items = self.db.list_ap_items(
+                    self.organization_id, limit=self._APPROVAL_CONTEXT_SCAN_LIMIT,
+                )
                 vendor_key = str(invoice.vendor_name or "").strip().lower()
                 if vendor_key:
                     vendor_items = [
@@ -2411,7 +2402,14 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
                     )
         except Exception as e:
             # Approval flow must not fail due to optional context derivation.
-            logger.warning("Optional context derivation failed: %s", e)
+            # Carry org/vendor breadcrumbs so the warning is correlatable in logs.
+            logger.warning(
+                "Optional context derivation failed (org=%s vendor=%s gmail_id=%s): %s",
+                self.organization_id,
+                getattr(invoice, "vendor_name", None),
+                getattr(invoice, "gmail_id", None),
+                e,
+            )
 
         multi_system = context_payload.get("multi_system")
         if isinstance(multi_system, dict):

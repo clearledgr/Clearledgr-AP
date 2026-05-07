@@ -890,7 +890,6 @@ class TestEndToEndCeilingWithPhase11Enforcement:
             risk_flags=[],
             vendor_context_used={},
             model="agent_planning_loop",
-            fallback=False,
         )
 
         result = asyncio.run(

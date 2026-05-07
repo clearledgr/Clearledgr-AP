@@ -39,19 +39,13 @@ class APDecision:
     risk_flags: List[str]          # anomaly signals detected
     vendor_context_used: Dict[str, Any]  # summary of vendor data consulted
     model: str                     # routing source; always "rules" post-Phase 4
-    fallback: bool = False         # retained for schema compat; always False
     gate_override: bool = False    # True if enforce_gate_constraint overrode
     original_recommendation: Optional[str] = None  # original rec, if overridden
 
     def __post_init__(self) -> None:
-        # Defence-in-depth boundary check: any rule path that produces a
-        # recommendation outside ``_VALID_RECOMMENDATIONS`` is a bug
-        # (the C1 ternary tautology in _rule_match_to_decision was one
-        # such path — both arms returned 'needs_info', masking what was
-        # supposed to be 'escalate'). Catching it here surfaces the
-        # mistake on the first call instead of silently emitting an
-        # invalid recommendation downstream where it gets coerced or
-        # ignored.
+        # Boundary check: any rule path that produces a recommendation
+        # outside ``_VALID_RECOMMENDATIONS`` is a bug. Catch it on
+        # construction instead of letting it leak downstream.
         if self.recommendation not in _VALID_RECOMMENDATIONS:
             raise ValueError(
                 f"APDecision.recommendation must be one of "
@@ -260,7 +254,6 @@ def enforce_gate_constraint(
         risk_flags=list(decision.risk_flags) + ["gate_override_applied"],
         vendor_context_used=decision.vendor_context_used,
         model=decision.model,
-        fallback=decision.fallback,
         gate_override=True,
         original_recommendation=decision.recommendation,
     )
@@ -358,7 +351,6 @@ def _apply_single_pass_hints(
         risk_flags=new_flags,
         vendor_context_used=decision.vendor_context_used,
         model=decision.model,
-        fallback=decision.fallback,
         gate_override=decision.gate_override,
         original_recommendation=original_recommendation,
     )
@@ -390,16 +382,24 @@ def _evaluate_rules_for_invoice(
     """
     if not organization_id:
         return None
+    # Imports are at module load via the function body — they're cheap
+    # and the rule_engine module is part of this codebase. ImportError
+    # here means a broken deploy, not "rules disabled"; let it bubble.
+    from clearledgr.core.database import get_db
+    from clearledgr.services.rule_engine import (
+        build_invoice_context, evaluate_rules,
+    )
     try:
-        from clearledgr.core.database import get_db
-        from clearledgr.services.rule_engine import (
-            build_invoice_context, evaluate_rules,
-        )
         db = get_db()
         rules = db.list_rules(organization_id, workflow="ap")
     except Exception as exc:
-        logger.debug(
-            "[ap_decision] rule engine unavailable, falling back: %s", exc,
+        # DB unavailability is the legitimate "fall back to legacy
+        # cascade" path. We log at warning (not debug) so a persistent
+        # rule_engine outage shows up in observability instead of
+        # being mistaken for "rules disabled".
+        logger.warning(
+            "[ap_decision] rule lookup failed for org=%s, falling back to legacy cascade: %s",
+            organization_id, exc,
         )
         return None
     if not rules:
@@ -715,7 +715,9 @@ class APDecisionService:
                 )
 
         # Step 4: Strict human feedback bias → escalate
-        if gate_passed and has_strict_feedback and confidence >= auto_threshold:
+        # Step 2 above already returned when ``gate_passed`` is False,
+        # so by this point it's guaranteed True — no need to re-check.
+        if has_strict_feedback and confidence >= auto_threshold:
             return APDecision(
                 recommendation="escalate",
                 reasoning=(

@@ -62,7 +62,6 @@ def _make_decision(recommendation: str, **overrides) -> Any:
         risk_flags=["vendor_new"],
         vendor_context_used={"k": "v"},
         model="rules",
-        fallback=False,
     )
     base.update(overrides)
     return APDecision(**base)
@@ -117,7 +116,6 @@ class TestEnforceGateConstraintMatrix:
         assert "low_history" in result.risk_flags
         assert result.confidence == decision.confidence
         assert result.vendor_context_used == decision.vendor_context_used
-        assert result.fallback is decision.fallback
         assert result.info_needed is None
 
     @pytest.mark.parametrize("rec", ["escalate", "needs_info", "reject"])
@@ -310,7 +308,6 @@ class TestProcessNewInvoiceNarrowWaistEnforcement:
             risk_flags=[],
             vendor_context_used={},
             model="external_caller",
-            fallback=False,
         )
 
         result = asyncio.run(

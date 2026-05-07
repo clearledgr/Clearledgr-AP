@@ -1901,9 +1901,8 @@ class InvoiceValidationMixin:
                 ) or {}
                 _settings = _org_row.get("settings_json") or _org_row.get("settings") or {}
                 if isinstance(_settings, str):
-                    import json as _json
                     try:
-                        _settings = _json.loads(_settings)
+                        _settings = json.loads(_settings)
                     except Exception:
                         _settings = {}
                 _dedup_cfg = (_settings or {}).get("dedup") or {}
@@ -2366,18 +2365,16 @@ class InvoiceValidationMixin:
         # 5a-pre2) GL code validation against cached chart of accounts.
         try:
             if invoice.line_items:
-                import asyncio as _aio
-                try:
-                    _aio.get_running_loop()
-                    coa = []  # Can't await in sync context; skip if no loop
-                except RuntimeError:
-                    coa = []
-                if not coa:
-                    # Try cached CoA from org settings
-                    from clearledgr.integrations.erp_router import _get_cached_chart_of_accounts
-                    cached = _get_cached_chart_of_accounts(self.organization_id)
-                    if cached:
-                        coa = cached.get("accounts", [])
+                # Read the cached CoA written by the ERP integration's
+                # background sync. We deliberately do NOT live-fetch
+                # against the ERP from inside the validation gate —
+                # gate evaluation runs inline on every invoice and a
+                # blown-up live call would block intake. The async
+                # scaffold that used to live here was dead-logic
+                # (both branches set ``coa = []``); removed.
+                from clearledgr.integrations.erp_router import _get_cached_chart_of_accounts
+                cached = _get_cached_chart_of_accounts(self.organization_id)
+                coa = (cached or {}).get("accounts", []) if cached else []
                 if coa:
                     valid_codes = {str(a.get("code") or a.get("id") or "").strip() for a in coa if a.get("active", True)}
                     for item in invoice.line_items:
@@ -2432,9 +2429,8 @@ class InvoiceValidationMixin:
                 vendor_profile = {}
             meta = vendor_profile.get("metadata") or {}
             if isinstance(meta, str):
-                import json as _json
                 try:
-                    meta = _json.loads(meta)
+                    meta = json.loads(meta)
                 except Exception:
                     meta = {}
             erp_tax_id = meta.get("erp_tax_id") or ""
@@ -2948,7 +2944,8 @@ class InvoiceValidationMixin:
                     })
         except Exception:
             logger.warning(
-                "validation_gate_evaluated audit emit failed for ap_item",
+                "validation_gate_evaluated audit emit failed (ap_item=%s gmail_id=%s org=%s)",
+                _ap_item_id, invoice.gmail_id, self.organization_id,
                 exc_info=True,
             )
 
