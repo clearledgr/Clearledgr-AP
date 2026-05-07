@@ -39,7 +39,8 @@ def _make_service(item_metadata: Dict[str, Any]) -> InvoiceValidationMixin:
 class TestOverrideReasoning:
 
     def test_rejection_reason_lands_in_event_metadata(self):
-        # Claude said approve. Human rejected. That's an override.
+        # Agent (deterministic cascade) said approve. Human rejected.
+        # That's an override.
         svc = _make_service({"ap_decision_recommendation": "approve"})
 
         svc._maybe_record_ap_decision_override(
@@ -53,11 +54,11 @@ class TestOverrideReasoning:
         assert len(events) == 1
         meta = events[0]["metadata"]
         assert meta["human_action"] == "rejected"
-        assert meta["claude_recommendation"] == "approve"
+        assert meta["agent_recommendation"] == "approve"
         assert meta["human_reason"].startswith("Vendor not onboarded")
 
     def test_approval_override_context_scalars_captured(self):
-        # Claude said escalate. Human approved with a PO-override
+        # Agent said escalate. Human approved with a PO-override
         # justification + structured override context.
         svc = _make_service({"ap_decision_recommendation": "escalate"})
 
@@ -79,7 +80,7 @@ class TestOverrideReasoning:
         assert len(events) == 1
         meta = events[0]["metadata"]
         assert meta["human_action"] == "approved"
-        assert meta["claude_recommendation"] == "escalate"
+        assert meta["agent_recommendation"] == "escalate"
         assert meta["gate_type"] == "po_exception"
         assert meta["reason_code"] == "po_missing_tolerance_exception"
         assert meta["confidence_pct"] == 88
@@ -102,7 +103,7 @@ class TestOverrideReasoning:
 
     def test_no_reason_still_records_override(self):
         """Missing reason shouldn't block the event — structured
-        fields (human_action, claude_recommendation) are still useful
+        fields (human_action, agent_recommendation) are still useful
         on their own."""
         svc = _make_service({"ap_decision_recommendation": "approve"})
         svc._maybe_record_ap_decision_override(
@@ -115,11 +116,11 @@ class TestOverrideReasoning:
         assert "human_reason" not in events[0]["metadata"]
 
     def test_agreement_is_not_recorded_as_override(self):
-        """Human agreeing with Claude is not an override — no event."""
+        """Human agreeing with the agent is not an override — no event."""
         svc = _make_service({"ap_decision_recommendation": "approve"})
         svc._maybe_record_ap_decision_override(
             ap_item_id="ap-1",
-            human_action="approved",  # agrees with Claude
+            human_action="approved",  # agrees with the agent
             actor_id="ops@co",
             human_reason="LGTM",
         )

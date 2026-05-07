@@ -1106,8 +1106,8 @@ class InvoiceValidationMixin:
         return token
 
     @classmethod
-    def _is_human_override(cls, claude_recommendation: Optional[str], human_action: str) -> bool:
-        rec = str(claude_recommendation or "").strip().lower()
+    def _is_human_override(cls, agent_recommendation: Optional[str], human_action: str) -> bool:
+        rec = str(agent_recommendation or "").strip().lower()
         action = cls._normalize_human_action(human_action)
         if not rec or not action:
             return False
@@ -1215,10 +1215,17 @@ class InvoiceValidationMixin:
         human_reason: Optional[str] = None,
         override_context: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Emit ap_decision_override audit event when a human disagrees with Claude.
+        """Emit ap_decision_override audit event when a human disagrees
+        with the deterministic AP routing decision.
 
-        Disagreement: human approved something Claude said escalate/reject,
-        or human rejected something Claude said approve.
+        Disagreement: human approved something the agent said
+        escalate/reject, or human rejected something the agent said
+        approve. The audit metadata names ``agent_recommendation`` and
+        ``decision_model`` to match where the decision actually
+        comes from — APDecisionService, a deterministic 10-step
+        policy cascade — not the LLM. (Pre-rebrand keys were
+        ``claude_recommendation`` / ``claude_model``, which mis-told
+        the audit story; rules decide, the LLM only writes prose.)
 
         ``human_reason`` captures the free-text justification the user
         provided (rejection reason, PO-override reason, etc.). CS
@@ -1239,17 +1246,17 @@ class InvoiceValidationMixin:
                 return
             meta_raw = row.get("metadata") or {}
             meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw) if isinstance(meta_raw, str) and meta_raw.strip() else {}
-            claude_rec = str(meta.get("ap_decision_recommendation") or "").strip().lower()
-            if not claude_rec:
+            agent_rec = str(meta.get("ap_decision_recommendation") or "").strip().lower()
+            if not agent_rec:
                 return
-            is_override = self._is_human_override(claude_rec, human_action)
+            is_override = self._is_human_override(agent_rec, human_action)
             if not is_override:
                 return
 
             event_metadata: Dict[str, Any] = {
                 "human_action": human_action,
-                "claude_recommendation": claude_rec,
-                "claude_model": meta.get("ap_decision_model", "unknown"),
+                "agent_recommendation": agent_rec,
+                "decision_model": meta.get("ap_decision_model", "unknown"),
             }
             reason_trimmed = (human_reason or "").strip()
             if reason_trimmed:
@@ -1270,15 +1277,15 @@ class InvoiceValidationMixin:
                 "event_type": "ap_decision_override",
                 "actor_type": "user",
                 "actor_id": actor_id,
-                "reason": f"human_{human_action}_override_claude_{claude_rec}",
+                "reason": f"human_{human_action}_override_agent_{agent_rec}",
                 "metadata": event_metadata,
                 "organization_id": self.organization_id,
                 "correlation_id": correlation_id,
                 "source": "human_decision",
             })
             logger.info(
-                "[APDecision] Override recorded: human=%s claude=%s ap_item=%s actor=%s reason=%r",
-                human_action, claude_rec, ap_item_id, actor_id,
+                "[APDecision] Override recorded: human=%s agent=%s ap_item=%s actor=%s reason=%r",
+                human_action, agent_rec, ap_item_id, actor_id,
                 reason_trimmed[:80] if reason_trimmed else "",
             )
         except Exception as exc:
@@ -1880,12 +1887,42 @@ class InvoiceValidationMixin:
         elif invoice.vendor_name and not invoice.invoice_number:
             # H3: No invoice number — fall back to vendor + amount + date range matching
             # to catch potential duplicates that would otherwise be missed entirely.
+            #
+            # Window + amount tolerance are per-tenant configurable via
+            # ``settings_json["dedup"]``: tighter windows for high-volume
+            # AR-style vendors (e.g. utility re-bills); wider windows for
+            # quarterly retainers. Default: 7 days, 2% amount tolerance.
+            fuzzy_dedup_window_days = 7
+            fuzzy_dedup_amount_tolerance = 0.02
+            try:
+                _org_row = (
+                    self.db.get_organization(self.organization_id)
+                    if hasattr(self.db, "get_organization") else None
+                ) or {}
+                _settings = _org_row.get("settings_json") or _org_row.get("settings") or {}
+                if isinstance(_settings, str):
+                    import json as _json
+                    try:
+                        _settings = _json.loads(_settings)
+                    except Exception:
+                        _settings = {}
+                _dedup_cfg = (_settings or {}).get("dedup") or {}
+                if isinstance(_dedup_cfg, dict):
+                    _w = _dedup_cfg.get("fuzzy_window_days")
+                    if isinstance(_w, (int, float)) and 1 <= _w <= 90:
+                        fuzzy_dedup_window_days = int(_w)
+                    _t = _dedup_cfg.get("fuzzy_amount_tolerance")
+                    if isinstance(_t, (int, float)) and 0 < _t <= 0.25:
+                        fuzzy_dedup_amount_tolerance = float(_t)
+            except Exception:
+                pass
+
             try:
                 if hasattr(self.db, "get_ap_items_by_vendor") and invoice.amount:
                     recent_items = self.db.get_ap_items_by_vendor(
                         self.organization_id,
                         invoice.vendor_name,
-                        days=7,
+                        days=fuzzy_dedup_window_days,
                         limit=20,
                     )
                     for existing in (recent_items or []):
@@ -1900,20 +1937,21 @@ class InvoiceValidationMixin:
                             continue
                         if existing_amount <= 0:
                             continue
-                        # 2% tolerance
                         amount_diff = abs(invoice.amount - existing_amount) / max(existing_amount, 0.01)
-                        if amount_diff <= 0.02:
+                        if amount_diff <= fuzzy_dedup_amount_tolerance:
                             add_reason(
                                 "possible_duplicate_no_invoice_number",
                                 f"Possible duplicate: same vendor ({invoice.vendor_name}), "
                                 f"similar amount (${invoice.amount:,.2f} vs ${existing_amount:,.2f}) "
-                                f"within 7 days, but no invoice number to confirm",
+                                f"within {fuzzy_dedup_window_days} days, but no invoice number to confirm",
                                 severity="warning",
                                 details={
                                     "existing_ap_item_id": str(existing.get("id") or ""),
                                     "existing_state": str(existing.get("state") or ""),
                                     "existing_amount": existing_amount,
                                     "amount_diff_pct": round(amount_diff * 100, 2),
+                                    "window_days": fuzzy_dedup_window_days,
+                                    "amount_tolerance": fuzzy_dedup_amount_tolerance,
                                 },
                             )
                             break  # One warning is enough

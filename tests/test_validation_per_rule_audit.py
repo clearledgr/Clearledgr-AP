@@ -280,3 +280,80 @@ async def test_validation_gate_records_skip_when_check_raises(postgres_test_db):
     # Evidence must capture exception_type so the audit row records
     # *what* failed, not just that something did.
     assert rule.get("evidence", {}).get("exception_type") == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_dedup_window_honours_per_tenant_setting(postgres_test_db):
+    """The fuzzy duplicate gate (vendor + amount + window when invoice
+    number is missing) reads ``settings_json["dedup"]`` for the
+    window length and amount tolerance. Hardcoded 7-day / 2% defaults
+    apply when the org hasn't customised. Tightened settings (e.g.
+    1 day / 0.5%) must propagate into the gate.
+    """
+    db = get_db()
+    db.initialize()
+    org_id = "default"
+
+    # Ensure the org row exists (the postgres_test_db fixture truncates
+    # most tables between tests; organization rows aren't auto-seeded).
+    if not db.get_organization(org_id):
+        db.create_organization(
+            organization_id=org_id, name="Default Org",
+        )
+
+    # Snapshot existing settings so we can restore at end of test.
+    _existing_org = db.get_organization(org_id) or {}
+    _existing_settings = _existing_org.get("settings_json")
+    if isinstance(_existing_settings, str):
+        _existing_settings = json.loads(_existing_settings)
+    _existing_settings = _existing_settings or {}
+
+    # Customise the dedup window to 1 day (tighter than the 7-day default).
+    new_settings = dict(_existing_settings)
+    new_settings["dedup"] = {"fuzzy_window_days": 1, "fuzzy_amount_tolerance": 0.005}
+    db.update_organization(org_id, settings_json=new_settings)
+
+    invoice = InvoiceData(
+        gmail_id="thread-fuzzy-1",
+        subject="Bill from Pulse Vendor",
+        sender="pulse@example.com",
+        vendor_name="Pulse Vendor",
+        amount=750.0,
+        currency="USD",
+        invoice_number="",  # missing on purpose to trigger fuzzy path
+        confidence=0.95,
+        organization_id=org_id,
+        user_id="test-user",
+    )
+
+    workflow = _make_workflow()
+    captured_kwargs: list[dict] = []
+    original = workflow.db.get_ap_items_by_vendor
+
+    def _capturing_get_ap_items_by_vendor(*args, **kwargs):
+        captured_kwargs.append(dict(kwargs))
+        # Return empty so we don't trigger the actual reason; we only
+        # care that the gate plumbed our 1-day window.
+        return []
+
+    workflow.db.get_ap_items_by_vendor = _capturing_get_ap_items_by_vendor  # type: ignore[assignment]
+    try:
+        await workflow._evaluate_deterministic_validation(invoice)
+    finally:
+        workflow.db.get_ap_items_by_vendor = original  # type: ignore[assignment]
+        # Restore the org settings so this test doesn't leak into others.
+        db.update_organization(org_id, settings_json=_existing_settings)
+
+    assert captured_kwargs, "fuzzy dedup branch never invoked get_ap_items_by_vendor"
+    # The validation gate also has a velocity check that calls the
+    # same DB method with its own (unrelated) days=7 default. Match by
+    # the fuzzy-branch's distinctive limit=20 to find the one we care
+    # about.
+    fuzzy_calls = [c for c in captured_kwargs if c.get("limit") == 20]
+    assert fuzzy_calls, (
+        f"fuzzy dedup call (limit=20) not in captured kwargs: {captured_kwargs}"
+    )
+    assert fuzzy_calls[0].get("days") == 1, (
+        f"expected days=1 from settings_json[dedup].fuzzy_window_days, "
+        f"got days={fuzzy_calls[0].get('days')}"
+    )
