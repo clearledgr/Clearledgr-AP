@@ -27,6 +27,40 @@ from clearledgr.core.plan import Action, Plan
 logger = logging.getLogger(__name__)
 
 
+# Group 7 (2026-05-07): vendor-onboarding subsystem is dormant per
+# the 2026-04-30 product call (memory:
+# project_vendor_onboarding_subordinate.md). The
+# ``vendor_onboarding_session`` Box type is unregistered from
+# ``BoxRegistry``; only ``ap_item`` is live.
+#
+# These event types' planners emit actions that target either the
+# unregistered Box type or vendor profiles directly (e.g.
+# ``freeze_vendor_payments``). Without a registered Box, the
+# CoordinationEngine's Rule 1 audit pre-write becomes a no-op: the
+# action runs against vendor master data with no timeline coverage.
+#
+# Gate them at the planner so any accidental reactivation (someone
+# remounts the vendor_portal router, a test enqueues these events,
+# a future producer fires before its consumer is rewired) raises
+# ``unhandled_event_type`` instead of running real fraud-control
+# side effects against a Box-less surface.
+#
+# To re-enable a single event type after VO reactivation: remove it
+# from this set + (re-)register the matching Box type in
+# ``box_registry.py``.
+_DEPRECATED_VO_EVENTS: frozenset = frozenset({
+    AgentEventType.KYC_DOCUMENT_RECEIVED,
+    AgentEventType.IBAN_CHANGE_SUBMITTED,
+    AgentEventType.ONBOARDING_INITIATED,
+    AgentEventType.VENDOR_PORTAL_ACCESSED,
+    AgentEventType.VENDOR_SUBMISSION_RECEIVED,
+    AgentEventType.KYC_CHECK_COMPLETED,
+    AgentEventType.OPEN_BANKING_VERIFICATION_COMPLETED,
+    AgentEventType.AP_MANAGER_DECISION_RECEIVED,
+    AgentEventType.VENDOR_ACTIVATED,
+})
+
+
 class DeterministicPlanningEngine:
     """§4: Deterministic event→plan dispatch.
 
@@ -47,6 +81,55 @@ class DeterministicPlanningEngine:
     def plan(self, event: AgentEvent, box_state: Optional[Dict[str, Any]] = None) -> Plan:
         """Produce a Plan from event + Box state. No LLM calls."""
         box_state = box_state or {}
+
+        # Group 7: vendor-onboarding event types are dormant. Refuse
+        # to plan for them so deprecated paths can't run real
+        # fraud-control / vendor-master writes against an
+        # unregistered Box type. The same exception path the
+        # missing-handler branch uses below records a box_exception
+        # (when a Box is named) so the operator queue surfaces the
+        # reactivation attempt.
+        if event.type in _DEPRECATED_VO_EVENTS:
+            box_id = event.payload.get("box_id") or event.payload.get("ap_item_id")
+            box_type = event.payload.get("box_type") or (
+                "ap_item" if event.payload.get("ap_item_id") else None
+            )
+            if box_id and box_type and hasattr(self._get_db(), "raise_box_exception"):
+                try:
+                    self._get_db().raise_box_exception(
+                        box_id=box_id,
+                        box_type=box_type,
+                        organization_id=event.organization_id,
+                        exception_type="deprecated_vo_event",
+                        severity="high",
+                        reason=(
+                            f"Event type '{event.type.value}' is part of the "
+                            f"dormant vendor-onboarding subsystem (deprecated "
+                            f"2026-04-30, memory: project_vendor_onboarding_subordinate). "
+                            f"Producer should be removed; running this plan would "
+                            f"fire fraud-control / vendor-master actions with no "
+                            f"Box anchor."
+                        ),
+                        metadata={
+                            "event_type": event.type.value,
+                            "event_payload": event.payload,
+                            "deprecation_phase": "vendor_onboarding_dormant",
+                        },
+                        raised_by="planning_engine",
+                        raised_actor_type="system",
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[PlanningEngine] Failed to record VO deprecation exception: %s",
+                        exc,
+                    )
+            raise RuntimeError(
+                f"[PlanningEngine] event type '{event.type.value}' is dormant "
+                f"(vendor-onboarding subsystem deprecated 2026-04-30). "
+                f"Refusing to plan: producer must be removed or the Box type "
+                f"re-registered before reactivation."
+            )
+
         dispatcher = {
             AgentEventType.EMAIL_RECEIVED: self._plan_email_received,
             AgentEventType.APPROVAL_RECEIVED: self._plan_approval_received,
