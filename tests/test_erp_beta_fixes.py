@@ -1283,6 +1283,50 @@ def test_post_bill_to_sap_b1_validates_currency_length():
     assert "currency" in result["missing_fields"]
 
 
+def test_decision_action_lock_fails_closed_on_persist_exception():
+    """Pre-fix, when ``append_audit_event`` raised AND the re-check
+    also raised, ``_acquire_decision_action_lock`` returned ``True``
+    (fail-open) — letting both an original click and a duplicate
+    Slack double-firing reach ``_post_to_erp``. Combined with the
+    state-guard TOCTOU race, that's how a Slack double-click became
+    a duplicate ERP post. Now fails CLOSED on persist exception:
+    the cost of one false-positive 'duplicate locked' is far less
+    than the cost of a duplicate bill in the customer's ERP.
+    """
+    from clearledgr.services.invoice_validation import InvoiceValidationMixin
+
+    svc = InvoiceValidationMixin.__new__(InvoiceValidationMixin)
+    svc.organization_id = "org_lock_test"
+    fail_count = {"persist": 0, "recheck": 0}
+
+    class _ExplodingDB:
+        def get_ap_audit_event_by_key(self_inner, key):
+            fail_count["recheck"] += 1
+            raise RuntimeError("DB unavailable for re-check too")
+
+        def append_audit_event(self_inner, payload):
+            fail_count["persist"] += 1
+            raise RuntimeError("DB unavailable for lock persist")
+
+    svc.db = _ExplodingDB()  # type: ignore[attr-defined]
+
+    # When both the persist and the re-check fail, must return False
+    # (fail-closed). Pre-fix returned True (fail-open).
+    result = svc._acquire_decision_action_lock(
+        ap_item_id="ap-lock-1",
+        decision_idempotency_key="key-double-click",
+        actor_id="alice@co",
+        source_channel="slack",
+    )
+    assert result is False, (
+        "lock must fail-closed when persist AND re-check both fail; "
+        f"persist_calls={fail_count['persist']} recheck_calls={fail_count['recheck']}"
+    )
+    # Both code paths (persist attempt + re-check attempt) must have run.
+    assert fail_count["persist"] == 1
+    assert fail_count["recheck"] >= 1
+
+
 def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
     """The router-level ``post_bill`` accepts ``idempotency_key`` and
     must forward it to the per-ERP adapter. Pre-fix, the router accepted

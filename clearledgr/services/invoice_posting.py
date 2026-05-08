@@ -1611,42 +1611,105 @@ class InvoicePostingMixin:
             vendor_name=invoice.vendor_name,
             invoice_number=invoice.invoice_number,
         )
-        existing: Optional[Dict[str, Any]] = None
-        if ap_item_id:
-            existing = self.db.get_ap_item(ap_item_id)
-        elif hasattr(self.db, "get_invoice_status"):
-            existing = self.db.get_invoice_status(invoice.gmail_id)
-
-        field_review_gate = self.evaluate_financial_action_field_review_gate(existing or {})
-        if field_review_gate.get("blocked"):
-            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+        # Acquire the per-box advisory lock BEFORE re-reading state.
+        # Pre-fix the state-guard was a TOCTOU race: read state →
+        # check ``ready_to_post`` → ``await post_bill_api_first`` with
+        # no serialisation. Two workers (Slack double-click that
+        # bypassed dedup, agent retry colliding with operator click,
+        # ``resume_workflow`` racing ``_enqueue_erp_post_retry``)
+        # could both pass the check and both POST to the ERP. The
+        # ``idempotency_key`` is a backstop, not a fix — not every
+        # ERP path it forwards to honors it on the wire (NetSuite
+        # custom paths in particular). The advisory lock is the
+        # canonical primitive — same one ``_send_for_approval`` and
+        # ``CoordinationEngine`` use for serialisation.
+        from clearledgr.core.box_lock import acquire_box_lock, release_box_lock
+        _lock_box_id = ap_item_id or invoice.gmail_id or ""
+        _lock_conn, _lock_status = acquire_box_lock(
+            self.db, self.organization_id, _lock_box_id,
+        )
+        if _lock_status == "held":
+            # Another worker is already mid-post on this AP item;
+            # let it finish.
             return {
-                "status": "blocked",
-                "reason": "field_review_required",
+                "status": "duplicate_in_progress",
+                "reason": "another worker holds the per-box post lock",
                 "invoice_id": invoice.gmail_id,
                 "ap_item_id": ap_item_id,
-                "detail": field_review_gate.get("detail"),
-                "requires_field_review": True,
-                "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
-                "source_conflicts": field_review_gate.get("source_conflicts") or [],
-                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
-                "blocked_fields": field_review_gate.get("blocked_fields") or [],
-                "exception_code": field_review_gate.get("exception_code"),
             }
+        # ``no_infra`` (test mock, transient pool blip): proceed
+        # unguarded. The audit-event idempotency check (router H10)
+        # + ERP-native idempotency (Intuit ``requestid``, Xero
+        # ``Idempotency-Key`` header, NetSuite/SAP ``find_bill_*``
+        # pre-check) still cap the duplicate-write window.
 
-        if existing:
-            current_state = self._canonical_invoice_state(existing) or ""
-            if current_state not in ("ready_to_post",):
-                logger.error(
-                    "State guard: refusing ERP post for AP item %s in state '%s' (expected ready_to_post)",
-                    ap_item_id, current_state,
-                )
+        try:
+            existing: Optional[Dict[str, Any]] = None
+            if ap_item_id:
+                existing = self.db.get_ap_item(ap_item_id)
+            elif hasattr(self.db, "get_invoice_status"):
+                existing = self.db.get_invoice_status(invoice.gmail_id)
+
+            field_review_gate = self.evaluate_financial_action_field_review_gate(existing or {})
+            if field_review_gate.get("blocked"):
+                self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
                 return {
-                    "status": "error",
-                    "reason": "illegal_state_for_posting",
-                    "current_state": current_state,
-                    "expected_state": "ready_to_post",
+                    "status": "blocked",
+                    "reason": "field_review_required",
+                    "invoice_id": invoice.gmail_id,
+                    "ap_item_id": ap_item_id,
+                    "detail": field_review_gate.get("detail"),
+                    "requires_field_review": True,
+                    "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+                    "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                    "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                    "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                    "exception_code": field_review_gate.get("exception_code"),
                 }
+
+            if existing:
+                current_state = self._canonical_invoice_state(existing) or ""
+                if current_state not in ("ready_to_post",):
+                    logger.error(
+                        "State guard: refusing ERP post for AP item %s in state '%s' (expected ready_to_post)",
+                        ap_item_id, current_state,
+                    )
+                    return {
+                        "status": "error",
+                        "reason": "illegal_state_for_posting",
+                        "current_state": current_state,
+                        "expected_state": "ready_to_post",
+                    }
+            return await self._post_to_erp_locked(
+                invoice=invoice,
+                ap_item_id=ap_item_id,
+                existing=existing,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            )
+        finally:
+            if _lock_conn is not None:
+                release_box_lock(
+                    self.db, _lock_conn, self.organization_id, _lock_box_id,
+                )
+
+    async def _post_to_erp_locked(
+        self,
+        *,
+        invoice: InvoiceData,
+        ap_item_id: Optional[str],
+        existing: Optional[Dict[str, Any]],
+        idempotency_key: Optional[str],
+        correlation_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """Inner posting flow that runs inside the per-box advisory lock.
+
+        Caller (``_post_to_erp``) holds the lock for the duration of
+        this method via try/finally. Splitting this into a helper
+        keeps the lock acquisition + state-guard at the outer layer
+        and the actual posting (vendor lookup + bill build + ERP
+        call + audit + state transition) cleanly contained here.
+        """
 
         # B3: Mandatory idempotency key — generate if not provided (PLAN.md S7.3)
         # B4: Use a stable key derived from the AP item so retries reuse the same

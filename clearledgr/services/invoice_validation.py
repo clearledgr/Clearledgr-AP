@@ -1067,8 +1067,20 @@ class InvoiceValidationMixin:
                     return False
             except Exception:
                 pass
-            logger.error("Could not persist decision-action lock %s: %s", lock_key, exc)
-            return True
+            # Fail-CLOSED on persist exception. Pre-fix this returned
+            # ``True`` (lock acquired), letting both the original click
+            # and a duplicate Slack double-firing pass the dedup gate
+            # and reach ``_post_to_erp`` — combined with the state-guard
+            # TOCTOU race, that's the path through which a Slack
+            # double-click became a duplicate ERP post. The cost of
+            # one false-positive "duplicate locked" is negligible
+            # compared to a duplicate bill in the customer's NetSuite.
+            logger.error(
+                "Could not persist decision-action lock for ap_item=%s key=%s "
+                "(failing CLOSED, treating as duplicate lock held): %s",
+                ap_item_id, lock_key, exc,
+            )
+            return False
 
     def _update_ap_item_metadata(self, ap_item_id: Optional[str], updates: Dict[str, Any]) -> None:
         """Best-effort metadata merge for AP item side-channel context."""
