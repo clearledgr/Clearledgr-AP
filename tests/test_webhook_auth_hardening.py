@@ -551,6 +551,76 @@ def test_slack_runtime_per_org_fallback_off_by_default():
     )
 
 
+def test_finance_runtime_platform_privilege_gated_by_explicit_flag():
+    """Tier 2: ``FinanceAgentRuntime`` previously gated cross-tenant
+    write privilege on ``self.organization_id == "default"`` — a
+    string-comparison sentinel that any code path constructing a
+    runtime under the legacy ``"default"`` org silently inherited.
+    The M4/M6/M7/M8 ``"default"`` fallback landmines all fed into
+    this; closing those didn't fully remove the privilege bypass —
+    any one new caller forgetting to thread the org through could
+    revive it.
+
+    The privilege gate is now an explicit ``is_platform: bool``
+    keyword argument. ``"default"`` carries no special meaning on
+    its own. Only ``get_platform_finance_runtime`` (the sanctioned
+    constructor) passes ``is_platform=True``.
+
+    This test exercises the runtime directly to confirm:
+      1. A regular runtime constructed with
+         ``organization_id="default"`` does NOT get cross-tenant
+         dispatch privilege.
+      2. Only a runtime with ``is_platform=True`` permits a
+         cross-tenant payload to flow through ``_resolve_payload_org``.
+    """
+    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+
+    # 1. ``organization_id="default"`` alone does NOT grant privilege.
+    tenant_runtime = FinanceAgentRuntime(
+        organization_id="default",
+        actor_id="alice@acme",
+        actor_email="alice@acme",
+    )
+    assert tenant_runtime.is_platform is False, (
+        "FinanceAgentRuntime constructed with organization_id='default' "
+        "must NOT auto-escalate to platform privilege — that's the "
+        "string-sentinel bypass the audit flagged."
+    )
+    # A cross-tenant payload must be rejected even on a "default" runtime.
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="cross_tenant_write_blocked"):
+        tenant_runtime._resolve_payload_org(
+            {"organization_id": "victim-org"}, "test_context"
+        )
+
+    # 2. Explicit ``is_platform=True`` permits cross-tenant dispatch.
+    platform_runtime = FinanceAgentRuntime(
+        organization_id="default",
+        actor_id="system",
+        actor_email="system@clearledgr.local",
+        is_platform=True,
+    )
+    assert platform_runtime.is_platform is True
+    resolved = platform_runtime._resolve_payload_org(
+        {"organization_id": "real-tenant"}, "test_context"
+    )
+    assert resolved == "real-tenant", (
+        "Platform runtime must permit cross-tenant payload dispatch — "
+        "that's the legitimate use case (startup/background flows "
+        "fanning into real tenants)."
+    )
+
+    # 3. ``get_platform_finance_runtime`` is the sanctioned constructor
+    # for the privileged form.
+    from clearledgr.services.finance_agent_runtime import (
+        get_platform_finance_runtime,
+        _reset_platform_finance_runtime_cache,
+    )
+    _reset_platform_finance_runtime_cache()
+    sanctioned = get_platform_finance_runtime("default")
+    assert sanctioned.is_platform is True
+
+
 def test_celery_load_box_state_blocks_cross_tenant_box_id():
     """Tier 2: ``celery_tasks._load_box_state`` fetched
     ``db.get_ap_item(box_id)`` purely by primary key when the event

@@ -102,20 +102,45 @@ class FinanceAgentRuntime:
         actor_id: str,
         actor_email: Optional[str] = None,
         db: Any = None,
+        is_platform: bool = False,
     ) -> None:
         # Per-tenant isolation is the core invariant of the finance
         # product. A silent fallback to "default" leaks one customer's
         # invoices into another's audit chain. Reject loudly instead.
+        #
+        # ``is_platform`` is the explicit gate for cross-tenant
+        # dispatch privilege (used by the platform runtime singleton
+        # in ``get_platform_finance_runtime``). Pre-fix, the runtime
+        # used ``self.organization_id == "default"`` as the sentinel,
+        # which meant any code path that constructed a runtime under
+        # the legacy ``"default"`` org silently inherited cross-tenant
+        # write privileges. The M4 / M6 / M7 / M8 landmines (silent
+        # ``"default"`` fallbacks across stores, ops routes, action
+        # routes, and Slack runtime) all fed into this — kill those
+        # and the privilege bypass would still survive any one new
+        # caller forgetting to thread the org through. Now the
+        # privilege gate is an explicit boolean flag, and the
+        # ``"default"`` string carries no special meaning on its own.
         normalized_org = str(organization_id or "").strip()
         if not normalized_org:
             raise ValueError(
-                "organization_id is required for FinanceAgentRuntime; "
-                "pass 'default' explicitly for the platform runtime"
+                "organization_id is required for FinanceAgentRuntime"
             )
         self.organization_id = normalized_org
         self.actor_id = str(actor_id or "system")
         self.actor_email = str(actor_email or actor_id or "system")
         self.db = db or get_db()
+        self.is_platform = bool(is_platform)
+        if self.is_platform:
+            # Audit who's escalating to platform privilege. Process-
+            # local cache hits don't re-log; only fresh constructions
+            # do. ``get_platform_finance_runtime`` is the only sanctioned
+            # caller that should pass ``is_platform=True``.
+            logger.info(
+                "[FinanceAgentRuntime] platform runtime constructed "
+                "for org=%s actor=%s",
+                self.organization_id, self.actor_id,
+            )
         self._skills: Dict[str, FinanceSkill] = {}
         self._intent_skill_map: Dict[str, FinanceSkill] = {}
         self._agent_loop: Optional[FinanceAgentLoopService] = None
@@ -156,21 +181,24 @@ class FinanceAgentRuntime:
 
         Returns the org_id to write under. Raises ``ValueError`` when
         the payload's ``organization_id`` differs from the runtime's
-        own org and the runtime is not the platform ("default") one.
+        own org and the runtime does not carry platform privilege.
 
         Cross-tenant write hazard: a corrupted upstream payload (or
         a malicious one) could carry a different ``organization_id``
         than the runtime is bound to. Without this guard, that value
         would flow through to ``db.create_ap_item`` and write into
-        another tenant's table. The platform runtime ("default") is
-        the only legitimate cross-tenant dispatcher and is exempt.
+        another tenant's table. Platform runtimes (constructed via
+        ``get_platform_finance_runtime`` with ``is_platform=True``)
+        are the only legitimate cross-tenant dispatchers and are
+        exempt — the privilege gate is the explicit boolean, NOT a
+        string comparison against ``"default"``.
         """
         payload_org = str((payload or {}).get("organization_id") or "").strip()
         if not payload_org:
             return self.organization_id
         if payload_org == self.organization_id:
             return payload_org
-        if self.organization_id == "default":
+        if self.is_platform:
             # Platform runtime dispatching into a real tenant. Trust
             # the payload but normalize.
             return payload_org
@@ -2043,10 +2071,21 @@ def get_platform_finance_runtime(organization_id: str = "default") -> FinanceAge
 
     Reject empty / None ``organization_id`` rather than silently
     routing to the platform runtime — the platform runtime is for
-    intentional system-level callers; "default" must be passed
+    intentional system-level callers; ``"default"`` must be passed
     explicitly. This closes the cross-tenant fallback hazard where a
     caller with an empty org would silently land on the platform
     runtime and get cross-tenant dispatch privileges.
+
+    Returns a runtime constructed with ``is_platform=True`` — the
+    explicit privilege flag that ``_resolve_payload_org`` checks
+    when deciding whether to permit a cross-tenant write. Pre-fix
+    the privilege escalation lived in a string comparison
+    (``self.organization_id == "default"``), which meant any of the
+    M4/M6/M7/M8 ``"default"`` fallback landmines could accidentally
+    construct a runtime with platform privileges. Now the gate is
+    the boolean alone — even passing ``organization_id="default"``
+    to the regular ``FinanceAgentRuntime(...)`` constructor produces
+    a tenant-confined runtime, NOT a platform one.
     """
     org_id = str(organization_id or "").strip()
     if not org_id:
@@ -2071,6 +2110,7 @@ def get_platform_finance_runtime(organization_id: str = "default") -> FinanceAge
             actor_id="system",
             actor_email="system@clearledgr.local",
             db=get_db(),
+            is_platform=True,
         )
         _PLATFORM_RUNTIME_CACHE[org_id] = runtime
         # Bounded LRU: evict the oldest entry when we exceed the cap.
