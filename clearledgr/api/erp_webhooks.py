@@ -64,21 +64,39 @@ _NOT_CONFIGURED_BODY = {"error": "webhook_not_configured"}
 _BAD_REQUEST_BODY = {"error": "malformed_request"}
 
 
+class _WebhookSecretLookupFailed(Exception):
+    """Raised by ``_resolve_webhook_secret`` when the connection
+    lookup itself fails (DB outage, decryption error). Callers
+    should map this to HTTP 500, distinct from HTTP 503
+    "not configured" which is a clean ``None`` return."""
+
+
 def _resolve_webhook_secret(organization_id: str, erp_type: str) -> Optional[str]:
     """Load the per-tenant inbound webhook secret.
 
-    Returns None if the org has no active connection of this type or
-    no webhook_secret is configured on that connection. Callers must
-    treat None as 503 "not configured", never as 200.
+    Returns ``None`` if the org has no active connection of this
+    type or no webhook_secret is configured on that connection —
+    callers map that to 503 "not configured", a clean signal back
+    to the ERP that this tenant hasn't onboarded.
+
+    Raises :class:`_WebhookSecretLookupFailed` if the lookup itself
+    raised (DB outage, decryption error, pool exhaustion). Pre-fix
+    these were swallowed and indistinguishable from "not configured"
+    — ERPs retried, customers looked in Intuit/Xero portals, ops
+    didn't see the real failure. Now the route maps the explicit
+    raise to a 500 with a logged breadcrumb so dashboards can split
+    "not configured" from "lookup failed".
     """
     try:
         conn = get_erp_connection(organization_id, erp_type)
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "ERP connection lookup failed for org=%s erp=%s",
             organization_id, erp_type,
         )
-        return None
+        raise _WebhookSecretLookupFailed(
+            f"connection lookup failed for org={organization_id} erp={erp_type}: {type(exc).__name__}"
+        ) from exc
     if conn is None:
         return None
     return conn.webhook_secret
@@ -169,10 +187,39 @@ async def _dispatch_quickbooks_bill_intake(
     # webhook fires for this process.
     import clearledgr.integrations.erp_quickbooks_intake_adapter  # noqa: F401
 
+    # Cross-tenant guard: load the connection's expected ``realm_id``
+    # and refuse any event whose envelope claims a different realm.
+    # Pre-fix the URL-scoped ``organization_id`` was the only tenant
+    # check; a webhook batched across multiple realms (or a forged
+    # ``realmId`` on an event the attacker injected) could route an
+    # event into the wrong tenant. If we can't load the expected
+    # realm, fail closed for every event — better to drop than to
+    # mis-route.
+    expected_realm_id = ""
+    try:
+        _conn = get_erp_connection(organization_id, "quickbooks")
+        expected_realm_id = str(getattr(_conn, "realm_id", "") or "").strip()
+    except Exception:
+        expected_realm_id = ""
+
     for note in envelope.get("eventNotifications") or []:
         if not isinstance(note, dict):
             continue
         realm_id = str(note.get("realmId") or "").strip()
+        if expected_realm_id and realm_id and realm_id != expected_realm_id:
+            logger.warning(
+                "[qb webhook] realm_id mismatch — refusing event "
+                "org=%s expected=%s envelope=%s",
+                organization_id, expected_realm_id, realm_id,
+            )
+            continue
+        if not expected_realm_id:
+            logger.warning(
+                "[qb webhook] cannot resolve expected realm_id for org=%s — "
+                "refusing all events on this delivery",
+                organization_id,
+            )
+            return
         change = note.get("dataChangeEvent") or {}
         for ent in change.get("entities") or []:
             if not isinstance(ent, dict):
@@ -233,7 +280,32 @@ async def _dispatch_xero_invoice_intake(
     from clearledgr.services.intake_adapter import handle_intake_event
     import clearledgr.integrations.erp_xero_intake_adapter  # noqa: F401
 
+    # Cross-tenant guard — same shape as the QBO realm-id check
+    # above. Pre-fix Xero webhooks could be routed to the wrong
+    # tenant if an attacker forged a ``tenantId`` on the envelope.
+    expected_tenant_id = ""
+    try:
+        _conn = get_erp_connection(organization_id, "xero")
+        expected_tenant_id = str(getattr(_conn, "tenant_id", "") or "").strip()
+    except Exception:
+        expected_tenant_id = ""
+
     tenant_id_top = str(envelope.get("tenantId") or "").strip()
+    if expected_tenant_id and tenant_id_top and tenant_id_top != expected_tenant_id:
+        logger.warning(
+            "[xero webhook] tenant_id mismatch — refusing entire envelope "
+            "org=%s expected=%s envelope=%s",
+            organization_id, expected_tenant_id, tenant_id_top,
+        )
+        return
+    if not expected_tenant_id:
+        logger.warning(
+            "[xero webhook] cannot resolve expected tenant_id for org=%s — "
+            "refusing all events on this delivery",
+            organization_id,
+        )
+        return
+
     for evt in envelope.get("events") or []:
         if not isinstance(evt, dict):
             continue
@@ -244,8 +316,18 @@ async def _dispatch_xero_invoice_intake(
         event_type = str(evt.get("eventType") or "").strip().upper()
         if not resource_id or not event_type:
             continue
+        # Per-event tenantId cross-check (Xero events sometimes carry
+        # a per-event tenantId that should still match the org).
+        evt_tenant_id = str(evt.get("tenantId") or tenant_id_top).strip()
+        if evt_tenant_id and evt_tenant_id != expected_tenant_id:
+            logger.warning(
+                "[xero webhook] per-event tenant_id mismatch — skipping "
+                "org=%s event=%s expected=%s got=%s",
+                organization_id, resource_id, expected_tenant_id, evt_tenant_id,
+            )
+            continue
         synthetic = {
-            "tenant_id": str(evt.get("tenantId") or tenant_id_top),
+            "tenant_id": evt_tenant_id,
             "resource_id": resource_id,
             "event_type": event_type,
             "event_category": category,
@@ -290,7 +372,13 @@ async def quickbooks_webhook(
     Signature header: ``intuit-signature``
     Body: JSON with ``eventNotifications`` envelope.
     """
-    verifier_token = _resolve_webhook_secret(organization_id, "quickbooks")
+    try:
+        verifier_token = _resolve_webhook_secret(organization_id, "quickbooks")
+    except _WebhookSecretLookupFailed:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "webhook_secret_lookup_failed"},
+        )
     if not verifier_token:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -376,7 +464,13 @@ async def xero_webhook(
     activates the subscription; otherwise respond 401 so Xero
     surfaces the failure in the developer portal.
     """
-    webhook_key = _resolve_webhook_secret(organization_id, "xero")
+    try:
+        webhook_key = _resolve_webhook_secret(organization_id, "xero")
+    except _WebhookSecretLookupFailed:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "webhook_secret_lookup_failed"},
+        )
     if not webhook_key:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -468,7 +562,13 @@ async def netsuite_webhook(
     Timestamp header: ``X-NetSuite-Timestamp: <unix seconds>``
     Covered body: ``"<timestamp>." + raw_body``
     """
-    secret = _resolve_webhook_secret(organization_id, "netsuite")
+    try:
+        secret = _resolve_webhook_secret(organization_id, "netsuite")
+    except _WebhookSecretLookupFailed:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "webhook_secret_lookup_failed"},
+        )
     if not secret:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -566,7 +666,13 @@ async def sap_webhook(
     Timestamp header: ``X-SAP-Timestamp: <unix seconds>``
     Covered body: ``"<timestamp>." + raw_body``
     """
-    secret = _resolve_webhook_secret(organization_id, "sap")
+    try:
+        secret = _resolve_webhook_secret(organization_id, "sap")
+    except _WebhookSecretLookupFailed:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "webhook_secret_lookup_failed"},
+        )
     if not secret:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

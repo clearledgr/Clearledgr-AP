@@ -118,3 +118,66 @@ def test_teams_handler_does_not_trust_organization_id_from_body():
         "Teams handler must return 404 ap_item_not_found when the email "
         "candidate doesn't resolve to a row."
     )
+
+
+def test_qbo_webhook_dispatch_refuses_realm_id_mismatch():
+    """Pre-fix the QBO webhook trusted any ``realmId`` in the
+    envelope as long as the URL-scoped org's signature checked out.
+    A batched envelope or forged ``realmId`` could route an event
+    into the wrong tenant. Now ``_dispatch_quickbooks_bill_intake``
+    cross-checks every event's ``realmId`` against the connection's
+    expected realm_id and refuses on mismatch.
+    """
+    from clearledgr.api import erp_webhooks
+
+    src_path = erp_webhooks.__file__
+    with open(src_path, "r") as f:
+        src = f.read()
+
+    assert "realm_id mismatch" in src, (
+        "QBO webhook is no longer cross-checking realmId against the "
+        "connection's expected realm_id. That re-opens the cross-tenant "
+        "vulnerability where a batched/forged event routes to the wrong "
+        "Solden tenant."
+    )
+
+
+def test_xero_webhook_dispatch_refuses_tenant_id_mismatch():
+    """Pre-fix the Xero webhook accepted any ``tenantId`` in the
+    envelope. Now refuses with a logged warning on mismatch."""
+    from clearledgr.api import erp_webhooks
+
+    src_path = erp_webhooks.__file__
+    with open(src_path, "r") as f:
+        src = f.read()
+
+    assert "tenant_id mismatch" in src, (
+        "Xero webhook is no longer cross-checking tenant_id against the "
+        "connection's expected tenant_id."
+    )
+
+
+def test_erp_webhook_secret_lookup_distinguishes_db_error_from_not_configured():
+    """Pre-fix ``_resolve_webhook_secret`` swallowed exceptions and
+    returned ``None``, indistinguishable from "tenant not configured"
+    — ERPs retried indefinitely and ops looked in the wrong place.
+    Now raises ``_WebhookSecretLookupFailed`` on DB outage; the
+    routes map it to HTTP 500. ``None`` stays as 503 ``not configured``.
+    """
+    from clearledgr.api import erp_webhooks
+
+    src_path = erp_webhooks.__file__
+    with open(src_path, "r") as f:
+        src = f.read()
+
+    assert "_WebhookSecretLookupFailed" in src, (
+        "ERP webhook routes must distinguish 'not configured' from "
+        "'lookup failed' so DB outages don't masquerade as missing "
+        "tenant configuration."
+    )
+    # All four ERP routes must catch the new exception.
+    qbo_count = src.count("_WebhookSecretLookupFailed")
+    assert qbo_count >= 5, (
+        f"expected ≥5 _WebhookSecretLookupFailed mentions (def + 4 routes), "
+        f"got {qbo_count}"
+    )
