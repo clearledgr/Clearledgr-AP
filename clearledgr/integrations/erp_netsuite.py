@@ -314,6 +314,75 @@ async def post_bill_to_netsuite(
     if not connection.account_id:
         return {"status": "error", "erp": "netsuite", "reason": "NetSuite account ID not configured"}
 
+    # Pre-flight validation — symmetric to ``post_bill_to_sap``'s
+    # ``sap_validation_failed`` shape. Pre-fix, NetSuite let
+    # missing-vendor / zero-amount / missing-subsidiary bills reach
+    # the API and returned a generic NetSuite error code. Operator
+    # dashboards that parse SAP's ``missing_fields`` list saw nothing
+    # for NetSuite. Now both adapters return the same shape:
+    #   {"status": "error", "reason": "<erp>_validation_failed",
+    #    "missing_fields": [...]}
+    missing_fields: List[str] = []
+    if not getattr(bill, "vendor_id", None):
+        missing_fields.append("vendor_id")
+    try:
+        _amt = float(getattr(bill, "amount", 0) or 0)
+    except (TypeError, ValueError):
+        _amt = 0.0
+    if _amt <= 0:
+        missing_fields.append("amount")
+    bill_currency_validate = str(getattr(bill, "currency", "") or "").strip().upper()
+    if not bill_currency_validate or len(bill_currency_validate) != 3:
+        missing_fields.append("currency")
+    # OneWorld tenants require a subsidiary on every Vendor Bill.
+    # ``ERPConnection.subsidiary_id`` is set at onboarding for
+    # OneWorld accounts; if it's missing on a OneWorld tenant the
+    # post will be silently mis-attributed without this guard.
+    if (
+        bool(getattr(connection, "is_oneworld", False))
+        and not getattr(connection, "subsidiary_id", None)
+    ):
+        missing_fields.append("subsidiary_id")
+    if missing_fields:
+        return {
+            "status": "error",
+            "erp": "netsuite",
+            "reason": "netsuite_validation_failed",
+            "missing_fields": missing_fields,
+        }
+
+    # Client-side idempotency pre-check. NetSuite Vendor Bill's
+    # ``tranId`` uniqueness is configurable per-account, not enforced
+    # by default — concurrent posters with the same idempotency_key
+    # could otherwise create duplicate bills. When a key is supplied
+    # and the bill has an invoice_number, we look up the existing
+    # bill first and short-circuit with ``status=already_posted`` if
+    # it's there. Failure of this lookup is non-fatal; we proceed
+    # with the post and rely on the audit-event idempotency check
+    # (router H10) as a backstop.
+    if idempotency_key and getattr(bill, "invoice_number", None):
+        try:
+            existing_bill = await find_bill_netsuite(
+                connection, str(bill.invoice_number),
+            )
+        except Exception as find_exc:
+            logger.debug(
+                "[NetSuite] find_bill pre-check failed (proceeding) "
+                "vendor=%s invoice=%s: %s",
+                getattr(bill, "vendor_name", None),
+                bill.invoice_number, find_exc,
+            )
+            existing_bill = None
+        if existing_bill and existing_bill.get("bill_id"):
+            return {
+                "status": "already_posted",
+                "erp": "netsuite",
+                "bill_id": existing_bill.get("bill_id"),
+                "doc_number": existing_bill.get("doc_number"),
+                "amount": existing_bill.get("amount"),
+                "idempotency_key": idempotency_key,
+            }
+
     expense_account = get_account_code("netsuite", "expenses", gl_map)
 
     # Build NetSuite Vendor Bill format

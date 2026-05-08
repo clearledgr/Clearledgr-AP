@@ -1210,6 +1210,79 @@ def test_post_bill_to_xero_sends_idempotency_key_header():
     )
 
 
+def test_post_bill_to_netsuite_returns_validation_failed_on_missing_vendor():
+    """Pre-fix, NetSuite let missing-vendor / zero-amount bills reach
+    the API and returned a generic NetSuite error code; SAP returned
+    the structured ``sap_validation_failed`` shape with
+    ``missing_fields``. The two adapters now share the shape: NetSuite
+    returns ``netsuite_validation_failed`` with the same
+    ``missing_fields`` list.
+    """
+    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+
+    # vendor_id missing on the bill
+    bill = _make_bill(vendor_id="", amount=500.0, currency="USD")
+    conn = ERPConnection(
+        type="netsuite", access_token="tok", account_id="acct-1",
+        consumer_key="ck", consumer_secret="cs",
+        token_id="tid", token_secret="tsec",
+    )
+
+    result = asyncio.run(post_bill_to_netsuite(conn, bill))
+
+    assert result["status"] == "error"
+    assert result["erp"] == "netsuite"
+    assert result["reason"] == "netsuite_validation_failed"
+    assert "vendor_id" in result["missing_fields"]
+
+
+def test_post_bill_to_netsuite_returns_validation_failed_on_missing_subsidiary_oneworld():
+    """OneWorld tenants require a subsidiary on every Vendor Bill.
+    Pre-fix, a missing subsidiary on a OneWorld connection silently
+    posted to the wrong entity. Pre-flight now refuses."""
+    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+
+    bill = _make_bill(vendor_id="V001", amount=500.0, currency="USD")
+    conn = ERPConnection(
+        type="netsuite", access_token="tok", account_id="acct-1",
+        consumer_key="ck", consumer_secret="cs",
+        token_id="tid", token_secret="tsec",
+        # subsidiary_id is None (default) — should fail when is_oneworld=True
+    )
+    # Stamp is_oneworld=True via attribute (ERPConnection doesn't expose
+    # it as a dataclass field; the helper reads via getattr).
+    conn.is_oneworld = True  # type: ignore[attr-defined]
+
+    result = asyncio.run(post_bill_to_netsuite(conn, bill))
+
+    assert result["status"] == "error"
+    assert result["reason"] == "netsuite_validation_failed"
+    assert "subsidiary_id" in result["missing_fields"]
+
+
+def test_post_bill_to_sap_b1_validates_currency_length():
+    """Pre-fix, SAP B1 stripped currency without checking length —
+    a missing/blank currency posted ``DocCurrency: ""`` and burned an
+    API roundtrip on a generic 400. Now blocked at pre-flight with a
+    structured ``missing_fields`` list."""
+    from clearledgr.integrations.erp_sap import post_bill_to_sap
+
+    # currency is empty — should fail pre-flight
+    bill = _make_bill(vendor_id="V001", amount=500.0)
+    bill.currency = ""  # type: ignore[attr-defined]
+    conn = ERPConnection(
+        type="sap", access_token="tok",
+        base_url="https://sap-b1.example.com:50000/b1s/v1",
+        company_code="1000",
+    )
+
+    result = asyncio.run(post_bill_to_sap(conn, bill))
+
+    assert result["status"] == "error"
+    assert result["reason"] == "sap_validation_failed"
+    assert "currency" in result["missing_fields"]
+
+
 def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
     """The router-level ``post_bill`` accepts ``idempotency_key`` and
     must forward it to the per-ERP adapter. Pre-fix, the router accepted

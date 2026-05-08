@@ -307,12 +307,14 @@ async def post_bill_to_sap(
             gl_map=gl_map,
             field_mappings=field_mappings,
             custom_fields=custom_fields,
+            idempotency_key=idempotency_key,
         )
     return await _post_bill_to_sap_b1(
         connection, bill,
         gl_map=gl_map,
         field_mappings=field_mappings,
         custom_fields=custom_fields,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -322,6 +324,7 @@ async def _post_bill_to_sap_b1(
     gl_map: Optional[Dict[str, str]] = None,
     field_mappings: Optional[Dict[str, str]] = None,
     custom_fields: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Post vendor bill to SAP B1 (A/P Invoice via Service Layer).
@@ -349,6 +352,9 @@ async def _post_bill_to_sap_b1(
         missing_fields.append("amount")
     if not connection.company_code:
         missing_fields.append("company_code")
+    bill_currency_validate = str(getattr(bill, "currency", "") or "").strip().upper()
+    if not bill_currency_validate or len(bill_currency_validate) != 3:
+        missing_fields.append("currency")
     if missing_fields:
         logger.error("SAP pre-flight validation failed: missing %s", missing_fields)
         return {
@@ -357,6 +363,36 @@ async def _post_bill_to_sap_b1(
             "reason": "sap_validation_failed",
             "missing_fields": missing_fields,
         }
+
+    # Client-side idempotency pre-check. SAP B1's PurchaseInvoices
+    # endpoint isn't natively idempotent on ``NumAtCard`` — concurrent
+    # posters with the same idempotency_key could otherwise create
+    # duplicate vendor bills. ``find_bill_sap`` looks up by NumAtCard;
+    # if a record exists we short-circuit instead of re-posting.
+    # Failure of this lookup is non-fatal; the audit-event idempotency
+    # check (router H10) is the backstop.
+    if idempotency_key and getattr(bill, "invoice_number", None):
+        try:
+            existing_bill = await find_bill_sap(
+                connection, str(bill.invoice_number),
+            )
+        except Exception as find_exc:
+            logger.debug(
+                "[SAP B1] find_bill pre-check failed (proceeding) "
+                "vendor=%s invoice=%s: %s",
+                getattr(bill, "vendor_name", None),
+                bill.invoice_number, find_exc,
+            )
+            existing_bill = None
+        if existing_bill and existing_bill.get("bill_id"):
+            return {
+                "status": "already_posted",
+                "erp": "sap",
+                "bill_id": existing_bill.get("bill_id"),
+                "doc_number": existing_bill.get("doc_number"),
+                "amount": existing_bill.get("amount"),
+                "idempotency_key": idempotency_key,
+            }
 
     expense_account = get_account_code("sap", "expenses", gl_map)
 
@@ -1633,6 +1669,7 @@ async def _post_bill_to_sap_s4hana(
     gl_map: Optional[Dict[str, str]] = None,
     field_mappings: Optional[Dict[str, str]] = None,
     custom_fields: Optional[Dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Post a vendor bill to SAP S/4HANA via API_SUPPLIERINVOICE_PROCESS_SRV.
 
@@ -1641,6 +1678,11 @@ async def _post_bill_to_sap_s4hana(
     propagated onto each line via TaxCode (MWSKZ).
     """
     from clearledgr.integrations.erp_router import get_account_code
+    _ = idempotency_key  # S/4HANA OData has no native idempotency
+                         # header for SupplierInvoice; client-side
+                         # find_bill pre-check is not yet implemented
+                         # for S/4HANA. Audit backstop (router H10)
+                         # remains the dedupe path here.
 
     if not connection.access_token or not connection.base_url:
         return {"status": "error", "erp": "sap", "reason": "SAP not properly configured"}
@@ -1652,6 +1694,9 @@ async def _post_bill_to_sap_s4hana(
         missing.append("amount")
     if not connection.company_code:
         missing.append("company_code")
+    bill_currency_validate = str(getattr(bill, "currency", "") or "").strip().upper()
+    if not bill_currency_validate or len(bill_currency_validate) != 3:
+        missing.append("currency")
     if missing:
         return {
             "status": "error", "erp": "sap",
