@@ -80,10 +80,19 @@ def _xero_conn() -> SimpleNamespace:
 
 
 class FakeResponse:
-    def __init__(self, status_code: int = 200, body: dict = None):
+    def __init__(
+        self,
+        status_code: int = 200,
+        body: dict = None,
+        *,
+        cookies: dict = None,
+        headers: dict = None,
+    ):
         self.status_code = status_code
         self._body = body or {}
         self.text = ""
+        self.cookies = cookies or {}
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -100,18 +109,41 @@ class FakeResponse:
 
 def _patch_post(captured: list, response_body: dict):
     """Patch the http client used by erp_sap so its post records the
-    request and returns the canned response."""
+    request and returns the canned response.
+
+    Recognises three request shapes so the ``_open_sap_service_layer_session``
+    (B1 ``/Login`` POST) and ``_fetch_s4hana_csrf`` (entity GET with
+    ``X-CSRF-Token: Fetch``) helpers each get a plausible response —
+    cookies for B1 sessions, ``x-csrf-token`` header for S/4HANA.
+    Business-URL POSTs still return the canned body unchanged.
+    """
     async def fake_post(url, json=None, headers=None, timeout=None,
-                        params=None, data=None, **kwargs):
+                        params=None, data=None, cookies=None, **kwargs):
+        # B1 service-layer Login — return a session cookie so the
+        # session helper proceeds to the business call.
+        if url.endswith("/Login"):
+            return FakeResponse(200, {"SessionId": "fake-b1-session"},
+                                cookies={"B1SESSION": "fake-b1-session"})
         captured.append({
             "url": url, "json": json,
             "headers": headers, "data": data,
         })
         return FakeResponse(200, response_body)
 
+    async def fake_get(url, headers=None, timeout=None, params=None, **kwargs):
+        # CSRF fetch on S/4HANA: surface the token in the response headers.
+        if headers and headers.get("X-CSRF-Token") == "Fetch":
+            return FakeResponse(
+                200, {},
+                headers={"x-csrf-token": "fake-csrf-token"},
+                cookies={"sap-XSRF": "abc"},
+            )
+        # B1 GET (used by find_vendor / find_bill helpers).
+        return FakeResponse(200, response_body)
+
     return patch.object(
         erp_sap, "get_http_client",
-        return_value=SimpleNamespace(post=fake_post, get=fake_post),
+        return_value=SimpleNamespace(post=fake_post, get=fake_get),
     )
 
 

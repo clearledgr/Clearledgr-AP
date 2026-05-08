@@ -85,6 +85,46 @@ def _sap_session_headers(
     return headers
 
 
+async def _fetch_s4hana_csrf(
+    connection,
+    client: httpx.AsyncClient,
+    entity_url: str,
+) -> tuple:
+    """Fetch the CSRF token + session cookies from a SAP S/4HANA OData
+    entity. Returns ``(token, cookies_dict)``; both may be empty when
+    the tenant has CSRF disabled (e.g. local dev systems).
+
+    SAP S/4HANA OData services REQUIRE a CSRF token on unsafe methods
+    (POST/PUT/DELETE) by default. The handshake is: GET the entity
+    URL with header ``X-CSRF-Token: Fetch`` to receive the token in
+    the response header + a session cookie; then send those back on
+    the POST. Without this, real S/4HANA tenants reject with HTTP
+    403 and ``CSRF token validation failed``.
+    """
+    try:
+        head_resp = await client.get(
+            entity_url,
+            headers={
+                "Authorization": f"Bearer {connection.access_token}",
+                "Accept": "application/json",
+                "X-CSRF-Token": "Fetch",
+            },
+            params={"$top": "0"},  # bound the response — we only need the headers
+            timeout=30,
+        )
+        token = str(head_resp.headers.get("x-csrf-token") or "").strip()
+        cookies: Dict[str, str] = {}
+        try:
+            for ck_name, ck_value in head_resp.cookies.items():
+                cookies[str(ck_name)] = str(ck_value)
+        except Exception:
+            cookies = {}
+        return token, cookies
+    except Exception as exc:
+        logger.debug("[SAP S/4HANA] CSRF fetch failed for %s: %s", entity_url, exc)
+        return "", {}
+
+
 async def _open_sap_service_layer_session(
     connection,
     client: httpx.AsyncClient,
@@ -154,7 +194,9 @@ async def _open_sap_service_layer_session(
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
-        logger.error("SAP session setup error: %s", type(e).__name__)
+        logger.error(
+            "SAP session setup error: %s: %s", type(e).__name__, e,
+        )
         return {"status": "error", "erp": "sap", "reason": "sap_session_setup_failed"}
 
 
@@ -206,13 +248,21 @@ async def _post_to_sap_b1(
 
     try:
         client = get_http_client()
+        # SAP B1 Service Layer requires session cookie + CSRF token,
+        # NOT a Bearer token (the access_token field on this connection
+        # holds the base64-encoded ``user:pass`` login pair, which the
+        # session-open helper unpacks). Pre-fix this path sent
+        # ``Authorization: Bearer <base64(user:pass)>`` which B1 rejects
+        # outright — the entire JournalEntries POST was silently broken.
+        session = await _open_sap_service_layer_session(
+            connection, client, fetch_csrf_for=url,
+        )
+        if session.get("status") != "success":
+            return session
         response = await client.post(
             url,
             json=sap_entry,
-            headers={
-                "Authorization": f"Bearer {connection.access_token}",
-                "Content-Type": "application/json",
-            },
+            headers=session["headers"],
             timeout=60,  # SAP can be slow
         )
 
@@ -220,7 +270,7 @@ async def _post_to_sap_b1(
         result = response.json()
 
         entry_num = result.get("JdtNum") or result.get("DocEntry")
-        logger.info(f"Posted to SAP: {entry_num}")
+        logger.info("Posted to SAP: %s", entry_num)
         return {
             "status": "success",
             "erp": "sap",
@@ -1187,13 +1237,16 @@ async def create_vendor_sap(
 
     try:
         client = get_http_client()
+        # B1 Service Layer requires session cookie + CSRF (writes).
+        session = await _open_sap_service_layer_session(
+            connection, client, fetch_csrf_for=url,
+        )
+        if session.get("status") != "success":
+            return session
         response = await client.post(
             url,
             json=sap_bp,
-            headers={
-                "Authorization": f"Bearer {connection.access_token}",
-                "Content-Type": "application/json",
-            },
+            headers=session["headers"],
             timeout=60,
         )
         response.raise_for_status()
@@ -1201,6 +1254,7 @@ async def create_vendor_sap(
 
         return {
             "status": "success",
+            "erp": "sap",
             "vendor_id": result.get("CardCode"),
             "name": result.get("CardName"),
         }
@@ -1231,10 +1285,14 @@ async def find_vendor_sap(
 
     try:
         client = get_http_client()
+        # B1 GET still needs the session cookie (no CSRF required for reads).
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            return None
         response = await client.get(
             url,
             params=params,
-            headers={"Authorization": f"Bearer {connection.access_token}"},
+            headers=session["headers"],
             timeout=60,
         )
         response.raise_for_status()
@@ -1274,10 +1332,14 @@ async def find_bill_sap(
     }
     try:
         client = get_http_client()
+        # B1 GET requires session cookie (no CSRF for reads).
+        session = await _open_sap_service_layer_session(connection, client)
+        if session.get("status") != "success":
+            return None
         response = await client.get(
             url,
             params=params,
-            headers={"Authorization": f"Bearer {connection.access_token}"},
+            headers=session["headers"],
             timeout=60,
         )
         response.raise_for_status()
@@ -1308,11 +1370,16 @@ async def _attach_to_sap(
     won't for our cloud-uploaded PDFs. Honest stub here until the
     multipart upload (boundary, Content-Disposition, two-step create
     + link to bill) is implemented.
+
+    Pre-fix this function read ``connection.credentials`` which does
+    not exist on the flat ``ERPConnection`` dataclass — every call
+    silently returned ``None`` instead of the documented
+    ``multipart_upload_not_implemented`` reason. The fields live
+    directly on the connection (matching how every other SAP helper
+    in this module uses them).
     """
-    creds = connection.credentials or {}
-    base_url = str(creds.get("base_url") or "").rstrip("/")
-    session_id = creds.get("session_id", "")
-    if not base_url or not session_id:
+    base_url = str(getattr(connection, "base_url", "") or "").rstrip("/")
+    if not base_url or not getattr(connection, "access_token", None):
         return None
     logger.warning(
         "[SAP] attachment upload not yet implemented — bill_id=%s filename=%s bytes=%d",
@@ -1489,14 +1556,20 @@ async def _post_to_sap_s4hana(
 
     try:
         client = get_http_client()
+        # S/4HANA OData services require CSRF on unsafe methods.
+        csrf_token, csrf_cookies = await _fetch_s4hana_csrf(connection, client, url)
+        post_headers = {
+            "Authorization": f"Bearer {connection.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if csrf_token:
+            post_headers["X-CSRF-Token"] = csrf_token
         response = await client.post(
             url,
             json=payload,
-            headers={
-                "Authorization": f"Bearer {connection.access_token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+            headers=post_headers,
+            cookies=csrf_cookies or None,
             timeout=60,
         )
         if response.status_code == 401:
@@ -1677,14 +1750,19 @@ async def _post_bill_to_sap_s4hana(
 
     try:
         client = get_http_client()
+        csrf_token, csrf_cookies = await _fetch_s4hana_csrf(connection, client, url)
+        post_headers = {
+            "Authorization": f"Bearer {connection.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if csrf_token:
+            post_headers["X-CSRF-Token"] = csrf_token
         response = await client.post(
             url,
             json=payload,
-            headers={
-                "Authorization": f"Bearer {connection.access_token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+            headers=post_headers,
+            cookies=csrf_cookies or None,
             timeout=60,
         )
         if response.status_code == 401:
@@ -1779,6 +1857,23 @@ async def _reverse_bill_from_sap_s4hana(
             "reason": "invalid_invoice_key_expected_CC_DOC_FY",
         }
     cc, doc, fy = parts
+    # OData composite-key injection guard: every segment must be
+    # alphanumeric. Pre-fix, segments containing ``'`` (or any
+    # URL-significant char) interpolated directly into the OData URL
+    # could produce a malformed key OR be parsed as additional key
+    # segments by S/4HANA. The values come from our own POST response
+    # but tenant number-range customisation can return alphanumerics
+    # that include unexpected characters; refuse anything that doesn't
+    # match.
+    import re as _re
+    _segment_re = _re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+    for label, seg in (("CompanyCode", cc), ("SupplierInvoice", doc), ("FiscalYear", fy)):
+        if not _segment_re.match(seg or ""):
+            return {
+                "status": "error", "erp": "sap",
+                "reason": "invalid_invoice_key_segment",
+                "erp_error_detail": f"{label} segment failed validation",
+            }
     base = str(connection.base_url).rstrip("/")
     url = (
         f"{base}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/"
@@ -1788,13 +1883,19 @@ async def _reverse_bill_from_sap_s4hana(
     )
     try:
         client = get_http_client()
+        # Cancellation is an unsafe method — needs CSRF token + cookies.
+        csrf_token, csrf_cookies = await _fetch_s4hana_csrf(connection, client, url)
+        post_headers = {
+            "Authorization": f"Bearer {connection.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if csrf_token:
+            post_headers["X-CSRF-Token"] = csrf_token
         response = await client.post(
             url,
-            headers={
-                "Authorization": f"Bearer {connection.access_token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+            headers=post_headers,
+            cookies=csrf_cookies or None,
             json={
                 "ReversalReason": "01",   # Reversal in current period
                 "PostingDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -1905,6 +2006,16 @@ async def get_payment_status_sap_s4hana(
     if len(parts) != 3:
         return {"paid": False, "error": "invalid_invoice_key_expected_CC_DOC_FY"}
     company_code, supplier_invoice, fiscal_year = parts
+    # Composite-key segment validation — same guard as the cancellation path.
+    import re as _re
+    _segment_re = _re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+    for label, seg in (
+        ("CompanyCode", company_code),
+        ("SupplierInvoice", supplier_invoice),
+        ("FiscalYear", fiscal_year),
+    ):
+        if not _segment_re.match(seg or ""):
+            return {"paid": False, "error": f"invalid_{label}_segment"}
     base = str(connection.base_url or "").rstrip("/")
     url = (
         f"{base}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/"
