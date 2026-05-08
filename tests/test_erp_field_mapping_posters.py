@@ -273,6 +273,7 @@ async def test_sap_stamps_custom_fields_on_document():
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
+        currency="USD",
         invoice_number="INV-1", invoice_date="2026-04-29",
     )
     connection = SimpleNamespace(
@@ -316,6 +317,7 @@ async def test_sap_renames_cost_center_per_line():
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
+        currency="USD",
         invoice_number="INV-1", invoice_date="2026-04-29",
         line_items=[{
             "amount": 500.0, "description": "Service",

@@ -580,7 +580,18 @@ async def _post_bill_to_sap_b1(
             if not erp_error_detail:
                 erp_error_detail = _extract_sap_validation_message(payload) or ""
         except Exception:
-            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+            # Memory rule: no raw response bodies in returned values.
+            # Log truncated text for debug, return opaque placeholder.
+            try:
+                _full_text = e.response.text if hasattr(e.response, "text") else ""
+            except Exception:
+                _full_text = ""
+            if _full_text:
+                logger.debug(
+                    "[SAP] non-json error response (truncated): %s",
+                    _full_text[:200],
+                )
+            erp_error_detail = f"http_{status_code}_non_json_response"
 
         detail_lower = erp_error_detail.lower()
         reason = f"http_{status_code}"
@@ -614,7 +625,11 @@ async def _post_bill_to_sap_b1(
         }
     except Exception as e:
         logger.error("SAP A/P Invoice error: %s: %s", type(e).__name__, e)
-        return {"status": "error", "erp": "sap", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
+        return {
+            "status": "error", "erp": "sap",
+            "reason": "bill_posting_failed",
+            "erp_error_detail": type(e).__name__,
+        }
 
 
 # ==================== Bill Reversal ====================
@@ -825,7 +840,7 @@ async def _reverse_bill_from_sap_b1(
             "reference_id": erp_reference,
             "reversal_method": "cancel_document",
             "reason": "bill_reversal_failed",
-            "erp_error_detail": str(exc),
+            "erp_error_detail": type(exc).__name__,
         }
 
     # Defensive — should never reach here because all branches return above.
@@ -1655,11 +1670,11 @@ async def _post_to_sap_s4hana(
             "needs_reauth": sc == 401,
         }
     except Exception as exc:
-        logger.error("SAP S/4HANA JE post error: %s", type(exc).__name__)
+        logger.error("SAP S/4HANA JE post error: %s: %s", type(exc).__name__, exc)
         return {
             "status": "error", "erp": "sap",
             "reason": "je_post_failed",
-            "erp_error_detail": str(exc)[:300],
+            "erp_error_detail": type(exc).__name__,
         }
 
 
@@ -1877,7 +1892,7 @@ async def _post_bill_to_sap_s4hana(
         return {
             "status": "error", "erp": "sap",
             "reason": "bill_posting_failed",
-            "erp_error_detail": str(exc)[:300],
+            "erp_error_detail": type(exc).__name__,
         }
 
 
@@ -1981,10 +1996,14 @@ async def _reverse_bill_from_sap_s4hana(
             "needs_reauth": sc == 401,
         }
     except Exception as exc:
+        logger.error(
+            "SAP S/4HANA reversal error: %s: %s",
+            type(exc).__name__, exc,
+        )
         return {
             "status": "error", "erp": "sap",
             "reason": "reversal_failed",
-            "erp_error_detail": str(exc)[:300],
+            "erp_error_detail": type(exc).__name__,
         }
 
 

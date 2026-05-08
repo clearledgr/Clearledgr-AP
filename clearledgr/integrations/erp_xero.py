@@ -438,7 +438,18 @@ async def post_bill_to_xero(
             else:
                 erp_error_detail = error_body.get("Message") or ""
         except Exception:
-            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+            # Memory rule: no raw response bodies in returned values.
+            # Log the truncated text for debug, return an opaque placeholder.
+            try:
+                _full_text = e.response.text if hasattr(e.response, "text") else ""
+            except Exception:
+                _full_text = ""
+            if _full_text:
+                logger.debug(
+                    "[Xero] non-json error response (truncated): %s",
+                    _full_text[:200],
+                )
+            erp_error_detail = f"http_{status_code}_non_json_response"
 
         detail_lower = erp_error_detail.lower()
         reason = f"http_{status_code}"
@@ -640,7 +651,7 @@ async def reverse_bill_from_xero(
             "reference_id": erp_reference,
             "reversal_method": "void",
             "reason": "bill_reversal_failed",
-            "erp_error_detail": str(exc),
+            "erp_error_detail": type(exc).__name__,
         }
 
 

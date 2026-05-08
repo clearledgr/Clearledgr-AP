@@ -1283,6 +1283,64 @@ def test_post_bill_to_sap_b1_validates_currency_length():
     assert "currency" in result["missing_fields"]
 
 
+def test_post_bill_to_quickbooks_does_not_leak_raw_response_body_on_non_json_error():
+    """Memory rule: no raw response bodies in returned values. Pre-fix
+    a non-JSON error response (HTML 502, gateway error, auth-redirect
+    body) was sliced [:200] and returned in ``erp_error_detail`` —
+    which lands on AP item ``last_error`` and the admin console.
+    Those bodies can carry partial bearer tokens echoed in headers,
+    internal hostnames, or PII from the bill payload. The detail
+    field now carries an opaque ``http_<status>_non_json_response``
+    placeholder; the truncated body is logged at debug for ops.
+    """
+    from clearledgr.integrations.erp_quickbooks import post_bill_to_quickbooks
+    import httpx
+
+    sensitive_body = (
+        "<html><body>500 Internal Server Error\n"
+        "Bearer abc.def.ghi (leaked-token-fragment)\n"
+        "internal-host: prod-qbo-host-1.intuit.svc"
+        "</body></html>"
+    )
+
+    class _LeakyResp:
+        status_code = 502
+        text = sensitive_body
+
+        def json(self):
+            raise ValueError("not json")
+
+        def raise_for_status(self):
+            req = httpx.Request("POST", "https://quickbooks.api.intuit.com/v3/company/x/bill")
+            resp = httpx.Response(502, request=req)
+            raise httpx.HTTPStatusError("502", request=req, response=self)
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=_LeakyResp())
+
+    conn = ERPConnection(
+        type="quickbooks", access_token="tok", realm_id="123",
+        client_id="cid", client_secret="csec",
+    )
+    bill = _make_bill()
+
+    with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        result = asyncio.run(post_bill_to_quickbooks(conn, bill))
+
+    assert result["status"] == "error"
+    detail = str(result.get("erp_error_detail") or "")
+    # The opaque placeholder is the only thing returned.
+    assert detail == "http_502_non_json_response", (
+        f"unexpected erp_error_detail: {detail!r}"
+    )
+    # None of the sensitive fragments appear anywhere in the result.
+    flat = str(result)
+    assert "Bearer" not in flat
+    assert "leaked-token-fragment" not in flat
+    assert "internal-host" not in flat
+    assert "prod-qbo-host-1" not in flat
+
+
 def test_verify_bill_posted_returns_indeterminate_on_finder_exception(db):
     """Pre-fix, ``verify_bill_posted`` returned ``verified=True`` on
     finder lookup error / rate-limit / no-finder branches — making

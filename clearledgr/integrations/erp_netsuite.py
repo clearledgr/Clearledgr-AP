@@ -331,8 +331,13 @@ async def post_bill_to_netsuite(
         _amt = 0.0
     if _amt <= 0:
         missing_fields.append("amount")
+    # Currency is OPTIONAL on NetSuite Vendor Bill — when omitted,
+    # NetSuite uses the subsidiary's default. We only flag it as
+    # invalid when the caller provided something non-empty that's
+    # not a 3-letter code (typo guard). Mirror the loose-on-empty,
+    # strict-on-malformed pattern.
     bill_currency_validate = str(getattr(bill, "currency", "") or "").strip().upper()
-    if not bill_currency_validate or len(bill_currency_validate) != 3:
+    if bill_currency_validate and len(bill_currency_validate) != 3:
         missing_fields.append("currency")
     # OneWorld tenants require a subsidiary on every Vendor Bill.
     # ``ERPConnection.subsidiary_id`` is set at onboarding for
@@ -624,7 +629,18 @@ async def post_bill_to_netsuite(
             if not erp_error_detail:
                 erp_error_detail = error_body.get("message") or error_body.get("title") or ""
         except Exception:
-            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+            # Memory rule: no raw response bodies in returned values.
+            # Log truncated text for debug, return opaque placeholder.
+            try:
+                _full_text = e.response.text if hasattr(e.response, "text") else ""
+            except Exception:
+                _full_text = ""
+            if _full_text:
+                logger.debug(
+                    "[NetSuite] non-json error response (truncated): %s",
+                    _full_text[:200],
+                )
+            erp_error_detail = f"http_{status_code}_non_json_response"
 
         detail_lower = erp_error_detail.lower()
         code_upper = erp_error_code.upper()
@@ -659,7 +675,11 @@ async def post_bill_to_netsuite(
         }
     except Exception as e:
         logger.error("NetSuite Vendor Bill error: %s: %s", type(e).__name__, e)
-        return {"status": "error", "erp": "netsuite", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
+        return {
+            "status": "error", "erp": "netsuite",
+            "reason": "bill_posting_failed",
+            "erp_error_detail": type(e).__name__,
+        }
 
 
 # ==================== Bill Reversal ====================
@@ -832,7 +852,7 @@ async def reverse_bill_from_netsuite(
             "reference_id": erp_reference,
             "reversal_method": "delete",
             "reason": "bill_reversal_failed",
-            "erp_error_detail": str(exc),
+            "erp_error_detail": type(exc).__name__,
         }
 
 

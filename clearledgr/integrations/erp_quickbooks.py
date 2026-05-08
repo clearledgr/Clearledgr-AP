@@ -383,7 +383,25 @@ async def post_bill_to_quickbooks(
                 erp_error_detail = errors[0].get("Detail") or errors[0].get("Message") or ""
                 erp_error_code = errors[0].get("code") or ""
         except Exception:
-            erp_error_detail = e.response.text[:200] if hasattr(e.response, "text") else ""
+            # Pre-fix this fell back to ``e.response.text[:200]``,
+            # which under non-JSON paths (HTML 502s, gateway errors,
+            # auth-redirect bodies) can include partial bearer
+            # tokens echoed in headers, internal hostnames, or PII
+            # from the bill payload — and the value lands in
+            # ``last_error`` on AP items + the admin console.
+            # Memory rule: no raw response bodies in returned
+            # values. Log the truncated text for debug, return an
+            # opaque placeholder.
+            try:
+                _full_text = e.response.text if hasattr(e.response, "text") else ""
+            except Exception:
+                _full_text = ""
+            if _full_text:
+                logger.debug(
+                    "[QB] non-json error response (truncated): %s",
+                    _full_text[:200],
+                )
+            erp_error_detail = f"http_{status_code}_non_json_response"
 
         reason = f"http_{status_code}"
         if status_code == 404:
@@ -408,8 +426,16 @@ async def post_bill_to_quickbooks(
             "needs_reauth": status_code == 401,
         }
     except Exception as e:
+        # Don't return ``str(e)`` — exception messages can include
+        # full URLs with query strings, SSL handshake info, or the
+        # raw response body on httpx.HTTPStatusError. Log it for
+        # debug, return only the exception type name.
         logger.error("QuickBooks Bill error: %s: %s", type(e).__name__, e)
-        return {"status": "error", "erp": "quickbooks", "reason": "bill_posting_failed", "erp_error_detail": str(e)}
+        return {
+            "status": "error", "erp": "quickbooks",
+            "reason": "bill_posting_failed",
+            "erp_error_detail": type(e).__name__,
+        }
 
 
 # ==================== Bill Lookup ====================
@@ -769,7 +795,7 @@ async def reverse_bill_from_quickbooks(
             "reference_id": erp_reference,
             "reversal_method": "delete",
             "reason": "bill_reversal_failed",
-            "erp_error_detail": str(exc),
+            "erp_error_detail": type(exc).__name__,
         }
 
 
