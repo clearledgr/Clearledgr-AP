@@ -68,6 +68,119 @@ def _days_since(iso: Optional[str]) -> Optional[int]:
         return None
 
 
+def evaluate_fraud_thresholds(
+    *,
+    vendor_profile: Optional[Dict[str, Any]] = None,
+    invoice_amount: Optional[float] = None,
+    org_thresholds: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Module 4 customer-configurable fraud-threshold checks.
+
+    Single source of truth for the three fraud rules whose thresholds
+    are tunable per-org via ``settings_json["fraud_thresholds"]``:
+
+      1. ``new_vendor_high_amount`` — vendor created within the last
+         ``new_vendor_days`` AND first invoice over
+         ``new_vendor_first_invoice_max``.
+      2. ``low_frequency_high_amount`` — vendor with fewer than
+         ``low_frequency_invoice_count_threshold`` prior invoices,
+         current invoice over
+         ``low_frequency_invoice_multiplier`` × vendor's average.
+      3. ``recent_bank_change`` / ``bank_change_warn`` — bank details
+         changed within ``bank_change_alert_days`` (error) or
+         ``bank_change_warn_days`` (warning).
+
+    Returns a list of finding dicts, one per threshold that fired.
+    Empty list = all thresholds passed.
+
+    Used by both ``compute_vendor_risk_score`` (decision-layer scoring,
+    risk_flags) and ``InvoiceValidationMixin._evaluate_deterministic_validation``
+    (gate-layer rule_results audit trail). One implementation, two
+    consumers — no chance for the gate's audit verdicts to drift from
+    the decision layer's flags.
+    """
+    profile = vendor_profile or {}
+    thresholds = dict(org_thresholds or {})
+    try:
+        amount = float(invoice_amount or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    bank_alert_days = int(thresholds.get("bank_change_alert_days") or 14)
+    bank_warn_days = int(thresholds.get("bank_change_warn_days") or 30)
+    low_freq_count = int(thresholds.get("low_frequency_invoice_count_threshold") or 3)
+    low_freq_mult = float(thresholds.get("low_frequency_invoice_multiplier") or 3.0)
+    new_vendor_days = int(thresholds.get("new_vendor_days") or 30)
+    new_vendor_max = float(thresholds.get("new_vendor_first_invoice_max") or 10000.0)
+
+    findings: List[Dict[str, Any]] = []
+    invoice_count = int(profile.get("invoice_count") or 0)
+
+    # Rule 3: new vendor + high first invoice
+    if invoice_count == 0:
+        vendor_created_at = (
+            profile.get("created_at") or profile.get("first_seen_at")
+        )
+        vendor_age_days = _days_since(vendor_created_at)
+        if amount > new_vendor_max and (
+            vendor_age_days is None or vendor_age_days <= new_vendor_days
+        ):
+            findings.append({
+                "flag": "new_vendor_high_amount",
+                "severity": "warning",
+                "rule_id": "fraud_threshold_new_vendor_high_amount",
+                "details": {
+                    "amount": amount,
+                    "new_vendor_first_invoice_max": new_vendor_max,
+                    "vendor_age_days": vendor_age_days,
+                    "new_vendor_days_threshold": new_vendor_days,
+                },
+            })
+
+    # Rule 2: low-frequency vendor + unusually large invoice
+    elif invoice_count < low_freq_count:
+        avg_amount = float(profile.get("avg_invoice_amount") or 0)
+        if avg_amount > 0 and amount > avg_amount * low_freq_mult:
+            findings.append({
+                "flag": "low_frequency_high_amount",
+                "severity": "warning",
+                "rule_id": "fraud_threshold_low_frequency_high_amount",
+                "details": {
+                    "amount": amount,
+                    "vendor_avg_amount": avg_amount,
+                    "low_frequency_invoice_multiplier": low_freq_mult,
+                    "vendor_invoice_count": invoice_count,
+                    "low_frequency_invoice_count_threshold": low_freq_count,
+                },
+            })
+
+    # Rule 1: bank-change recency
+    bank_days = _days_since(profile.get("bank_details_changed_at"))
+    if bank_days is not None:
+        if bank_days <= bank_alert_days:
+            findings.append({
+                "flag": "recent_bank_change",
+                "severity": "error",
+                "rule_id": "fraud_threshold_recent_bank_change",
+                "details": {
+                    "days_since_bank_change": bank_days,
+                    "bank_change_alert_days": bank_alert_days,
+                },
+            })
+        elif bank_days <= bank_warn_days:
+            findings.append({
+                "flag": "bank_change_warn",
+                "severity": "warning",
+                "rule_id": "fraud_threshold_bank_change_warn",
+                "details": {
+                    "days_since_bank_change": bank_days,
+                    "bank_change_warn_days": bank_warn_days,
+                },
+            })
+
+    return findings
+
+
 def compute_vendor_risk_score(
     vendor_profile: Optional[Dict[str, Any]] = None,
     cross_invoice_analysis: Optional[Dict[str, Any]] = None,
@@ -103,46 +216,39 @@ def compute_vendor_risk_score(
     ap_item = ap_item or {}
     thresholds = dict(org_thresholds or {})
 
-    # Customer-configurable threshold defaults (Module 4 fraud rules)
-    bank_alert_days = int(thresholds.get("bank_change_alert_days") or 14)
-    bank_warn_days = int(thresholds.get("bank_change_warn_days") or 30)
     low_freq_count = int(thresholds.get("low_frequency_invoice_count_threshold") or 3)
-    low_freq_mult = float(thresholds.get("low_frequency_invoice_multiplier") or 3.0)
-    new_vendor_days = int(thresholds.get("new_vendor_days") or 30)
-    new_vendor_max = float(thresholds.get("new_vendor_first_invoice_max") or 10000.0)
 
     scores: Dict[str, float] = {}
     flags: list = []
 
-    # 1. Vendor familiarity (new = risky). Customer-configurable
-    #    "low_freq_count" tunes when "low_history" kicks in.
+    # Module 4 fraud thresholds (rules 1-3) are evaluated by the
+    # shared ``evaluate_fraud_thresholds`` helper so the validation
+    # gate's rule_results SoR cannot drift from the decision-layer
+    # risk_flags. We then translate findings into score components
+    # below.
+    fraud_findings = evaluate_fraud_thresholds(
+        vendor_profile=vendor_profile,
+        invoice_amount=ap_item.get("amount"),
+        org_thresholds=thresholds,
+    )
+    fraud_flag_set = {f["flag"] for f in fraud_findings}
+
+    # 1. Vendor familiarity (new = risky). Threshold-tunable
+    #    ``new_vendor_high_amount`` / ``low_frequency_high_amount``
+    #    flags come from the helper above; familiarity scoring +
+    #    the always-emitted ``new_vendor`` / ``low_history`` markers
+    #    stay inline since they're not threshold-driven.
     invoice_count = int(vendor_profile.get("invoice_count") or 0)
     if invoice_count == 0:
         scores["vendor_familiarity"] = 1.0
         flags.append("new_vendor")
-        # Spec rule #3: vendor created in last `new_vendor_days` AND
-        # first invoice over `new_vendor_first_invoice_max` is a
-        # configurable fraud signal.
-        try:
-            amount = float(ap_item.get("amount") or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
-        vendor_created_at = vendor_profile.get("created_at") or vendor_profile.get("first_seen_at")
-        vendor_age_days = _days_since(vendor_created_at)
-        if amount > new_vendor_max and (vendor_age_days is None or vendor_age_days <= new_vendor_days):
+        if "new_vendor_high_amount" in fraud_flag_set:
             flags.append("new_vendor_high_amount")
             scores["vendor_familiarity"] = 1.0
     elif invoice_count < low_freq_count:
         scores["vendor_familiarity"] = 0.6
         flags.append("low_history")
-        # Spec rule #2: unusually large invoice from low-frequency
-        # vendor. "Unusually large" = amount > multiplier × vendor avg.
-        try:
-            amount = float(ap_item.get("amount") or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
-        avg_amount = float(vendor_profile.get("avg_invoice_amount") or 0)
-        if avg_amount > 0 and amount > avg_amount * low_freq_mult:
+        if "low_frequency_high_amount" in fraud_flag_set:
             flags.append("low_frequency_high_amount")
     else:
         scores["vendor_familiarity"] = 0.0
@@ -179,13 +285,13 @@ def compute_vendor_risk_score(
     else:
         scores["override_risk"] = 0.0
 
-    # 5. Bank change recency. Spec rule #1: "new IBAN doesn't match
-    #    prior payments." Customer-configurable alert window.
-    bank_days = _days_since(vendor_profile.get("bank_details_changed_at"))
-    if bank_days is not None and bank_days <= bank_alert_days:
+    # 5. Bank change recency. Threshold-tunable ``recent_bank_change``
+    #    / ``bank_change_warn`` flags come from the helper; score
+    #    weight stays inline.
+    if "recent_bank_change" in fraud_flag_set:
         scores["bank_change_risk"] = 1.0
         flags.append("recent_bank_change")
-    elif bank_days is not None and bank_days <= bank_warn_days:
+    elif "bank_change_warn" in fraud_flag_set:
         scores["bank_change_risk"] = 0.5
         flags.append("bank_change_warn")
     else:

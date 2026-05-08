@@ -2500,6 +2500,81 @@ class InvoiceValidationMixin:
 
         # ---------------------------------------------------------------
         _record_rule_verdict("confidence_gate", _baseline_confidence_gate, severity="warning")
+        # 5b) Module 4 customer-configurable fraud thresholds.
+        # ``evaluate_fraud_thresholds`` is the single source of truth
+        # for the three threshold rules (new_vendor_high_amount,
+        # low_frequency_high_amount, recent_bank_change /
+        # bank_change_warn). The decision-layer ``compute_vendor_risk_score``
+        # calls the same helper, so the gate's rule_results audit
+        # verdicts can never drift from the routing layer's risk_flags.
+        # Pre-C6 these rules ran at the decision layer only — the gate
+        # had no rule_results entry for them, leaving an audit-trail
+        # blind spot the System B audit flagged.
+        _baseline_fraud_thresholds = len(reasons)
+        _exc_fraud_thresholds: Optional[BaseException] = None
+        try:
+            from clearledgr.services.ap_decision import evaluate_fraud_thresholds
+            # Gate already loads ``vendor_profile`` in earlier rules
+            # (currency_consistency, sanctions_status, etc.); we re-
+            # fetch here rather than threading the variable through
+            # every rule block — vendor_profile reads come from the
+            # per-DSN psycopg pool and are well under a millisecond.
+            _vp_for_thresholds = None
+            if invoice.vendor_name and hasattr(self.db, "get_vendor_profile"):
+                try:
+                    _vp_for_thresholds = self.db.get_vendor_profile(
+                        self.organization_id, invoice.vendor_name,
+                    )
+                except Exception:
+                    _vp_for_thresholds = None
+            # Org thresholds live under ``settings_json["fraud_thresholds"]``
+            # — the same key the decision layer's helper reads.
+            _org_thresholds: Dict[str, Any] = {}
+            try:
+                _org_for_thresholds = (
+                    self.db.get_organization(self.organization_id)
+                    if hasattr(self.db, "get_organization") else None
+                ) or {}
+                _settings_blob = (
+                    _org_for_thresholds.get("settings_json")
+                    or _org_for_thresholds.get("settings")
+                    or {}
+                )
+                if isinstance(_settings_blob, str):
+                    try:
+                        _settings_blob = json.loads(_settings_blob)
+                    except Exception:
+                        _settings_blob = {}
+                if isinstance(_settings_blob, dict):
+                    _ft = _settings_blob.get("fraud_thresholds") or {}
+                    if isinstance(_ft, dict):
+                        _org_thresholds = _ft
+            except Exception:
+                _org_thresholds = {}
+
+            findings = evaluate_fraud_thresholds(
+                vendor_profile=_vp_for_thresholds or {},
+                invoice_amount=invoice.amount,
+                org_thresholds=_org_thresholds,
+            )
+            for finding in findings or []:
+                add_reason(
+                    str(finding.get("flag") or "fraud_threshold"),
+                    f"Module 4 fraud threshold fired: {finding.get('flag')}",
+                    severity=str(finding.get("severity") or "warning"),
+                    details=dict(finding.get("details") or {}),
+                )
+        except Exception as ft_exc:
+            logger.warning(
+                "[Gate] fraud_thresholds evaluation raised: %s", ft_exc,
+            )
+            _exc_fraud_thresholds = ft_exc
+
+        _record_rule_verdict(
+            "fraud_thresholds", _baseline_fraud_thresholds,
+            severity="warning", exc=_exc_fraud_thresholds,
+        )
+
         _baseline_fraud_controls = len(reasons)
         # ``_exc_fraud_controls`` tracks the FIRST exception caught by
         # any of the inner sub-check try/excepts (first_payment_hold,

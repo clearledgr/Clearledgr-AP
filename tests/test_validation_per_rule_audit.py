@@ -456,3 +456,147 @@ async def test_currency_consistency_passes_org_id_first_to_get_vendor_profile(po
         "currency_consistency must pass (organization_id, vendor_name) — pre-fix "
         f"the order was reversed and the lookup never matched. Got: {currency_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_fraud_thresholds_gate_records_low_frequency_high_amount(postgres_test_db):
+    """C6: Module 4 fraud thresholds now appear in the gate's
+    ``rule_results``, not just the decision layer's ``risk_flags``.
+
+    The shared ``evaluate_fraud_thresholds`` helper drives both the
+    decision-layer ``compute_vendor_risk_score`` and the gate's new
+    ``fraud_thresholds`` rule, so the gate's audit verdict cannot
+    drift from the routing layer's flag.
+
+    This test seeds a low-frequency vendor (1 prior invoice, avg
+    $500) and submits a $5000 invoice — 10x the average. The
+    Module-4 ``low_frequency_high_amount`` threshold should fire
+    AND the gate's ``rule_results`` should carry a fail verdict for
+    rule_id ``fraud_thresholds`` with the threshold details as
+    evidence.
+    """
+    db = get_db()
+    db.initialize()
+    org_id = "default"
+    vendor = "Low-Frequency Vendor"
+    if not db.get_organization(org_id):
+        db.create_organization(organization_id=org_id, name="Default Org")
+
+    # Seed vendor with 1 prior invoice (below default threshold of 3),
+    # average amount $500. Defaults: low_frequency_invoice_multiplier=3.0,
+    # so $5000 (= 10× $500) > $500 × 3 = $1500 → threshold fires.
+    db.upsert_vendor_profile(
+        organization_id=org_id,
+        vendor_name=vendor,
+        invoice_count=1,
+        avg_invoice_amount=500.0,
+        last_invoice_amount=500.0,
+    )
+
+    _seed_ap_item_for_validation(
+        db, vendor_name=vendor, invoice_number="INV-LFHA-1", amount=5000.0,
+    )
+
+    invoice = InvoiceData(
+        gmail_id="thread-INV-LFHA-1",
+        subject=f"Bill from {vendor}",
+        sender="lf@example.com",
+        vendor_name=vendor,
+        amount=5000.0,
+        currency="USD",
+        invoice_number="INV-LFHA-1",
+        confidence=0.99,
+        organization_id=org_id,
+        user_id="test-user",
+    )
+
+    workflow = _make_workflow()
+    gate = await workflow._evaluate_deterministic_validation(invoice)
+
+    # The fraud_thresholds rule should be in rule_results with verdict=fail.
+    rule_results = gate.get("rule_results") or []
+    fraud_thresholds_rule = next(
+        (r for r in rule_results if r["rule_id"] == "fraud_thresholds"), None,
+    )
+    assert fraud_thresholds_rule is not None, (
+        f"missing fraud_thresholds entry in rule_results: "
+        f"{[r['rule_id'] for r in rule_results]}"
+    )
+    assert fraud_thresholds_rule["verdict"] == "fail", (
+        f"expected fraud_thresholds verdict=fail, got {fraud_thresholds_rule['verdict']!r}"
+    )
+
+    # The fired flag should land in reason_codes.
+    reason_codes = gate.get("reason_codes") or []
+    assert "low_frequency_high_amount" in reason_codes, (
+        f"low_frequency_high_amount not in reason_codes: {reason_codes}"
+    )
+
+    # Evidence on the rule_result must include the threshold details.
+    evidence = fraud_thresholds_rule.get("evidence", {})
+    new_reasons = evidence.get("reasons") or []
+    assert any(
+        r.get("code") == "low_frequency_high_amount"
+        for r in new_reasons
+    ), f"low_frequency_high_amount not in rule evidence: {new_reasons}"
+
+
+@pytest.mark.asyncio
+async def test_fraud_thresholds_gate_passes_when_no_threshold_fires(postgres_test_db):
+    """A vendor with healthy history + a normal-sized invoice should
+    produce a ``pass`` verdict for the fraud_thresholds rule and emit
+    no Module-4 reason_codes. Pins the negative case so we know the
+    rule isn't a false-positive machine."""
+    db = get_db()
+    db.initialize()
+    org_id = "default"
+    vendor = "Established Vendor"
+    if not db.get_organization(org_id):
+        db.create_organization(organization_id=org_id, name="Default Org")
+
+    db.upsert_vendor_profile(
+        organization_id=org_id,
+        vendor_name=vendor,
+        invoice_count=12,           # well above low-freq threshold of 3
+        avg_invoice_amount=1000.0,
+        last_invoice_amount=1000.0,
+    )
+
+    _seed_ap_item_for_validation(
+        db, vendor_name=vendor, invoice_number="INV-OK-1", amount=900.0,
+    )
+    invoice = InvoiceData(
+        gmail_id="thread-INV-OK-1",
+        subject=f"Bill from {vendor}",
+        sender="ok@example.com",
+        vendor_name=vendor,
+        amount=900.0,
+        currency="USD",
+        invoice_number="INV-OK-1",
+        confidence=0.99,
+        organization_id=org_id,
+        user_id="test-user",
+    )
+
+    workflow = _make_workflow()
+    gate = await workflow._evaluate_deterministic_validation(invoice)
+
+    rule_results = gate.get("rule_results") or []
+    fraud_thresholds_rule = next(
+        (r for r in rule_results if r["rule_id"] == "fraud_thresholds"), None,
+    )
+    assert fraud_thresholds_rule is not None
+    assert fraud_thresholds_rule["verdict"] == "pass", (
+        f"expected pass on healthy vendor, got {fraud_thresholds_rule['verdict']!r}"
+    )
+
+    reason_codes = gate.get("reason_codes") or []
+    for module4_code in (
+        "new_vendor_high_amount",
+        "low_frequency_high_amount",
+        "recent_bank_change",
+        "bank_change_warn",
+    ):
+        assert module4_code not in reason_codes, (
+            f"{module4_code} fired unexpectedly on healthy vendor: {reason_codes}"
+        )
