@@ -183,6 +183,82 @@ def test_erp_webhook_secret_lookup_distinguishes_db_error_from_not_configured():
     )
 
 
+def test_slack_received_lock_short_circuits_concurrent_retry():
+    """Pre-fix the Slack /interactive handler had a TOCTOU race on
+    its own ``received_key`` audit row: it CHECKED the row before
+    dispatch but only WROTE it after dispatch. Two concurrent
+    deliveries of the same payload (Slack 3s retry) both passed
+    the check, both dispatched, both fired the underlying intent.
+
+    Now the handler writes the received_key sentinel BEFORE dispatch
+    via ``_try_acquire_received_lock``, which uses the
+    ``audit_events.idempotency_key`` UNIQUE constraint to grant
+    exactly one writer the lock. The loser's correlation_id won't
+    match the winner's row → returns False → short-circuits as
+    duplicate.
+
+    Tests the lock primitive in isolation: simulate the
+    unique-constraint by having the second call's correlation_id
+    differ from the row's. Real DB integration is exercised by
+    the channel-approval contract tests; this asserts the
+    primitive's contract.
+    """
+    from clearledgr.api.slack_invoices import _try_acquire_received_lock
+
+    # First call: row created with correlation_id "corr-A".
+    # Second call: same idempotency_key, different correlation_id "corr-B".
+    # The store would return the existing winner row (corr-A).
+    #
+    # We fake the store by recording the first-write's correlation_id
+    # and returning it on every subsequent get_ap_audit_event_by_key.
+    state: dict = {"row": None}
+
+    class _FakeDB:
+        def append_audit_event(self_inner, payload):
+            # First write wins; subsequent writes are no-ops in our fake
+            # (the real store would raise UniqueViolation, but
+            # ``_try_acquire_received_lock`` only cares about what
+            # ``get_ap_audit_event_by_key`` returns afterwards).
+            if state["row"] is None:
+                state["row"] = dict(payload)
+
+        def get_ap_audit_event_by_key(self_inner, key):
+            return state["row"]
+
+    fake_db = _FakeDB()
+
+    # First request acquires the lock.
+    won_first = _try_acquire_received_lock(
+        fake_db,
+        idempotency_key="key-XYZ",
+        organization_id="org_test",
+        ap_item_id="ap-1",
+        actor_id="alice@co",
+        correlation_id="corr-A",
+        source="slack",
+        metadata={},
+    )
+    assert won_first is True, "first request must acquire the lock"
+
+    # Concurrent retry with the SAME idempotency_key but different
+    # correlation_id — must lose, return False.
+    won_second = _try_acquire_received_lock(
+        fake_db,
+        idempotency_key="key-XYZ",
+        organization_id="org_test",
+        ap_item_id="ap-1",
+        actor_id="alice@co",
+        correlation_id="corr-B",
+        source="slack",
+        metadata={},
+    )
+    assert won_second is False, (
+        "second request with different correlation_id must lose the lock "
+        "(short-circuits as duplicate); got True which would let the "
+        "concurrent retry double-dispatch."
+    )
+
+
 def test_gmail_register_token_refuses_unprovisioned_email():
     """Pre-fix the Gmail extension's /register-token endpoint
     auto-provisioned ANY new email into ``org_id="default"`` when

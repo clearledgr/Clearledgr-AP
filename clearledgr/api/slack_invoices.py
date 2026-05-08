@@ -242,6 +242,85 @@ def _audit_callback_event(
         logger.error("Could not audit %s callback event: %s", source, exc)
 
 
+def _try_acquire_received_lock(
+    db,
+    *,
+    idempotency_key: str,
+    organization_id: str,
+    ap_item_id: str | None,
+    actor_id: str | None,
+    correlation_id: str | None,
+    source: str,
+    metadata: Dict[str, Any] | None = None,
+) -> bool:
+    """Pre-dispatch dedup primitive for Slack/Teams approval webhooks.
+
+    Slack retries an interactivity payload after a 3s timeout. Two
+    near-simultaneous deliveries of the same click would both pass
+    the audit-row precedence check ``already_processed=False``,
+    both dispatch, and both fire the underlying intent — the
+    runtime then sees two ``approve_invoice`` calls for the same
+    AP item.
+
+    This helper writes a ``received_key`` audit row BEFORE dispatch
+    via the canonical ``append_audit_event`` path. The audit_events
+    table has ``UNIQUE(idempotency_key)`` so only one writer wins
+    per key. The store handles the unique-conflict by returning the
+    *winner's* row (ap_store.py ~L2118). We then compare the
+    winner's ``correlation_id`` to ours: match → we won, return
+    True (caller proceeds to dispatch). Mismatch → another worker
+    is mid-flight on this same key, return False (caller short-
+    circuits with ``duplicate``).
+
+    Returns False on any failure (DB outage, missing helpers) — fail
+    closed. The cost of one false-positive "duplicate" is a single
+    Slack message saying "Action already received"; the cost of
+    failing open here is a duplicate ERP post.
+    """
+    if not idempotency_key or not correlation_id:
+        return False
+    resolved_ap_item_id = ap_item_id or f"channel_callback:{source}:{organization_id}"
+    payload = {
+        "ap_item_id": resolved_ap_item_id,
+        "event_type": "channel_action_received",
+        "actor_type": "user" if actor_id else "system",
+        "actor_id": actor_id or f"{source}_callback",
+        "source": source,
+        "idempotency_key": idempotency_key,
+        "correlation_id": correlation_id,
+        "metadata": metadata or {},
+        "organization_id": organization_id,
+    }
+    try:
+        db.append_audit_event(payload)
+    except Exception as exc:
+        logger.error(
+            "[%s] received-lock write failed for key=%s: %s — failing closed",
+            source, idempotency_key, exc,
+        )
+        return False
+    try:
+        winner = db.get_ap_audit_event_by_key(idempotency_key)
+    except Exception as exc:
+        logger.error(
+            "[%s] received-lock readback failed for key=%s: %s — failing closed",
+            source, idempotency_key, exc,
+        )
+        return False
+    if not winner:
+        logger.error(
+            "[%s] received-lock readback returned no row for key=%s — failing closed",
+            source, idempotency_key,
+        )
+        return False
+    winner_corr = str(winner.get("correlation_id") or "").strip()
+    if winner_corr != str(correlation_id or "").strip():
+        # Another worker already wrote this received_key with a
+        # different correlation_id — treat as duplicate.
+        return False
+    return True
+
+
 def _resolve_ap_context(db, organization_id: str, gmail_id: str) -> tuple[str, str | None]:
     org_id, ap_item = resolve_shared_ap_context(db, organization_id, gmail_id)
     ap_item_id = str((ap_item or {}).get("id") or "").strip() or None
@@ -881,6 +960,25 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         )
         return _slack_duplicate_response()
 
+    # Pre-dispatch race-free lock. Slack retries deliver the same
+    # interactivity payload after 3s; two near-simultaneous workers
+    # would both pass the precedence check above (TOCTOU on the
+    # audit-row read) and both dispatch. The received-lock primitive
+    # writes a sentinel via ``append_audit_event`` whose UNIQUE
+    # constraint on ``idempotency_key`` ensures only ONE writer wins
+    # per (channel, message_ts, action_id). Loser short-circuits.
+    if not _try_acquire_received_lock(
+        db,
+        idempotency_key=received_key,
+        organization_id=normalized.organization_id,
+        ap_item_id=normalized.ap_item_id,
+        actor_id=normalized.actor_id,
+        correlation_id=normalized.correlation_id,
+        source="slack",
+        metadata={"action": normalized.to_dict()},
+    ):
+        return _slack_duplicate_response()
+
     if precedence.status == "stale":
         _audit_callback_event(
             db,
@@ -914,17 +1012,12 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             "text": f"Action not allowed: {precedence.reason}",
         }
 
-    _audit_callback_event(
-        db,
-        event_type="channel_action_received",
-        source="slack",
-        organization_id=normalized.organization_id,
-        ap_item_id=normalized.ap_item_id,
-        actor_id=normalized.actor_id,
-        idempotency_key=received_key,
-        metadata={"action": normalized.to_dict()},
-        correlation_id=normalized.correlation_id,
-    )
+    # ``channel_action_received`` was written above by
+    # ``_try_acquire_received_lock`` with the same payload shape — no
+    # second write needed here. Pre-fix this site wrote the same
+    # row a second time, which collided on the UNIQUE
+    # idempotency_key constraint and was silently swallowed by
+    # ``_audit_callback_event``'s try/except.
 
     # §2: Enqueue approval event to durable queue
     try:
