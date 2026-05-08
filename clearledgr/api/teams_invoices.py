@@ -300,11 +300,40 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         )
         raise HTTPException(status_code=400, detail="invalid_payload")
     email_candidate = str(payload.get("email_id") or payload.get("gmail_id") or "").strip()
+    # Pre-fix this read ``organization_id`` from the (untrusted) request
+    # body; the AAD bot-token claims proved the caller was a valid
+    # Microsoft principal but didn't bind them to a Solden tenant —
+    # so an attacker holding any valid bot token could post
+    # ``{"organization_id": "victim", "email_id": "<their_invoice>"}``
+    # and approve invoices in the victim tenant. Now the body
+    # ``organization_id`` is ignored entirely; the org comes solely
+    # from the AP-item resolution. If the email_candidate doesn't
+    # resolve to an AP item, the click is refused — fail-closed.
+    #
+    # Long-term TODO: add a ``teams_tenant_id`` column on
+    # ``organizations`` (or a ``teams_installations`` table mirroring
+    # ``slack_installations``) and verify ``claims["tid"]`` matches
+    # before the AP-item lookup, so the team→org boundary is
+    # enforced before any DB read.
     organization_id, ap_item_id = _resolve_ap_context(
         db,
-        str(payload.get("organization_id") or "default"),
+        "default",
         email_candidate,
     )
+    if not ap_item_id:
+        body_hash = hashlib.sha256(raw_body or b"").hexdigest()[:16]
+        _audit_callback_event(
+            db,
+            event_type="channel_action_invalid",
+            organization_id="default",
+            idempotency_key=f"teams:no_ap_item:{body_hash}",
+            reason="no_ap_item_resolution",
+            metadata={
+                "email_id": email_candidate or None,
+                "aad_tid": (claims or {}).get("tid"),
+            },
+        )
+        raise HTTPException(status_code=404, detail="ap_item_not_found")
     try:
         normalized = _normalize_teams_action(payload, claims=claims, organization_id=organization_id)
     except ApprovalActionContractError as exc:

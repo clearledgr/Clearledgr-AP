@@ -740,6 +740,43 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
             gmail_candidate = action_id.rsplit("_", 1)[-1]
     organization_id, ap_item_id = _resolve_ap_context(db, "default", gmail_candidate)
 
+    # Cross-tenant guard: bind the click to the workspace the verified
+    # payload claims to come from. Pre-fix the org came from the AP
+    # item alone, so an attacker whose Slack workspace was connected
+    # to one tenant could submit a click whose ``value`` JSON
+    # references another tenant's gmail_id and have the click execute
+    # against that other tenant. The Slack signing secret is
+    # workspace-shared but the team→org mapping is the authoritative
+    # tenant boundary — refuse the click when the team isn't bound
+    # to the resolved AP item's org.
+    _slack_team_id = str(((payload.get("team") or {}) if isinstance(payload.get("team"), dict) else {}).get("id") or "").strip()
+    if organization_id and _slack_team_id and hasattr(db, "get_slack_installation_by_team"):
+        try:
+            install = db.get_slack_installation_by_team(_slack_team_id)
+        except Exception as exc:
+            install = None
+            logger.warning(
+                "[slack/interactive] team→org lookup failed for team=%s ap_item=%s: %s",
+                _slack_team_id, ap_item_id, exc,
+            )
+        bound_org = str((install or {}).get("organization_id") or "").strip()
+        if install and bound_org and bound_org != str(organization_id or "").strip():
+            _body_hash = hashlib.sha256(body or b"").hexdigest()[:16]
+            _audit_callback_event(
+                db,
+                event_type="channel_action_invalid",
+                source="slack",
+                idempotency_key=f"slack:tenant_mismatch:{_body_hash}",
+                reason="tenant_mismatch",
+                metadata={
+                    "slack_team_id": _slack_team_id,
+                    "team_bound_org": bound_org,
+                    "ap_item_org": organization_id,
+                    "ap_item_id": ap_item_id,
+                },
+            )
+            raise HTTPException(status_code=403, detail="tenant_mismatch")
+
     ApprovalActionContractError = _approval_action_error_type()
     try:
         normalized = _normalize_slack_action(
@@ -944,13 +981,21 @@ async def handle_slack_events(request: Request, background_tasks: BackgroundTask
 
     "What's our outstanding with AWS this month?" — agent returns live data.
     No slash commands — plain English. Agent responds in thread.
+
+    All events MUST be signed by Slack. Pre-fix this route accepted
+    unsigned JSON, letting any attacker fan out to ``_handle_mention_reply_sync``
+    (writes ap_item timeline) and ``_handle_conversational_query``
+    (sends messages on the org's bot token). The signature check is
+    the same primitive ``/interactive`` already uses.
     """
+    raw_body = await _require_slack_signature(request)
     try:
-        body = await request.json()
+        body = json.loads(raw_body.decode("utf-8") if isinstance(raw_body, (bytes, bytearray)) else raw_body)
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_json")
 
-    # Slack URL verification challenge
+    # Slack URL verification challenge — Slack signs this request too,
+    # so the verification above already gates it.
     if body.get("type") == "url_verification":
         return {"challenge": body.get("challenge", "")}
 
