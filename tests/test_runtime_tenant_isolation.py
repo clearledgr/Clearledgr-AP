@@ -142,19 +142,38 @@ class TestResolvePayloadOrg:
 
     def test_platform_runtime_accepts_any_payload_org(self, db):
         """The platform runtime is the only legitimate cross-tenant
-        dispatcher. It accepts the payload's org as the write
-        target."""
+        dispatcher. Platform privilege is gated by the explicit
+        ``is_platform=True`` flag (M10) — the legacy
+        ``organization_id == "default"`` string-sentinel was the
+        landmine the audit flagged."""
         runtime = far.FinanceAgentRuntime(
-            organization_id="default", actor_id="system", db=db
+            organization_id="default", actor_id="system", db=db,
+            is_platform=True,
         )
         result = runtime._resolve_payload_org(
             {"organization_id": "orgA"}, context="platform_dispatch"
         )
         assert result == "orgA"
 
+    def test_default_org_runtime_without_is_platform_is_tenant_confined(self, db):
+        """M10 regression: a runtime constructed with
+        ``organization_id="default"`` but WITHOUT ``is_platform=True``
+        must be tenant-confined like any other tenant runtime. The
+        prior shape used the string ``"default"`` as the privilege
+        sentinel, which any silent ``"default"`` fallback could
+        accidentally trigger."""
+        runtime = far.FinanceAgentRuntime(
+            organization_id="default", actor_id="u1", db=db,
+        )
+        with pytest.raises(ValueError, match="cross_tenant_write_blocked"):
+            runtime._resolve_payload_org(
+                {"organization_id": "orgA"}, context="default_string_sentinel"
+            )
+
     def test_platform_runtime_with_no_payload_org_returns_default(self, db):
         runtime = far.FinanceAgentRuntime(
-            organization_id="default", actor_id="system", db=db
+            organization_id="default", actor_id="system", db=db,
+            is_platform=True,
         )
         result = runtime._resolve_payload_org({}, context="test")
         assert result == "default"

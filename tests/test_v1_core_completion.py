@@ -214,9 +214,19 @@ def _run_worklist_test(monkeypatch, client, db):
         return {"status": "error"}
 
     monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _fake_dispatch)
+    # M9 contract: the Teams interactive callback resolves the AAD ``tid``
+    # claim against ``teams_installations`` BEFORE any AP-item lookup. Seed
+    # the install for "default" and stub the token to return a matching tid.
+    _aad_tid_v1 = "aad-tid-v1-core-completion"
+    db.set_teams_installation(
+        organization_id="default",
+        aad_tenant_id=_aad_tid_v1,
+        tenant_name="V1 Core Test AAD",
+        bot_app_id="test-bot",
+    )
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
-        lambda _auth: {"appid": "test-bot", "iat": 1890000000},
+        lambda _auth: {"appid": "test-bot", "iat": 1890000000, "tid": _aad_tid_v1},
     )
 
     interactive_response = client.post(

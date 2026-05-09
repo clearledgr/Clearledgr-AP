@@ -1216,11 +1216,12 @@ def test_entity_route_resolution_handler_clears_entity_blocker(db):
         )
     )
 
+    # M7 contract: org is derived from the authenticated user, not
+    # passed as a kwarg. The user's session org becomes the runtime org.
     payload = asyncio.run(
         resolve_ap_item_entity_route(
             item["id"],
             ResolveEntityRouteRequest(selection="GH-01"),
-            organization_id="default",
             user=SimpleNamespace(
                 email="user-test@default.example",
                 user_id="user-test",

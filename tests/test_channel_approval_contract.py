@@ -31,6 +31,34 @@ def client(db):
     return TestClient(app)
 
 
+# M9 contract: every Teams interactive callback resolves the AAD ``tid``
+# claim against ``teams_installations`` BEFORE any AP-item lookup. Tests
+# that exercise the bot callback under FEATURE_TEAMS_ENABLED must seed
+# an installation row whose AAD tenant id matches the stubbed token's
+# ``tid`` claim, otherwise the handler refuses with 403
+# ``aad_tenant_not_provisioned``.
+_TEST_AAD_TID = "aad-tenant-test"
+
+
+def _seed_teams_install_for_default_org(db) -> None:
+    db.set_teams_installation(
+        organization_id="default",
+        aad_tenant_id=_TEST_AAD_TID,
+        tenant_name="Test AAD",
+        bot_app_id="bot-test",
+    )
+
+
+def _stub_teams_claims():
+    """Return a Teams token claim dict with a ``tid`` matching the
+    seeded installation. Use as the ``_verify_teams_token`` stub."""
+    return {
+        "appid": "bot-test",
+        "iat": int(time.time()),
+        "tid": _TEST_AAD_TID,
+    }
+
+
 def _create_ap_item(db, *, gmail_id: str) -> dict:
     return db.create_ap_item(
         {
@@ -1269,7 +1297,7 @@ def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
     monkeypatch.setattr(db, "append_audit_event", _spy_append)
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
-        lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
+        lambda _auth: _stub_teams_claims(),
     )
 
     response = client.post(
@@ -1293,11 +1321,12 @@ def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
 
 def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_stale(monkeypatch, client, db):
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
+    _seed_teams_install_for_default_org(db)
     item = _create_ap_item(db, gmail_id="thread-teams-1")
     runtime = _RuntimeStub()
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
-        lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
+        lambda _auth: _stub_teams_claims(),
     )
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
@@ -1361,12 +1390,13 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
 
 def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch, client, db):
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
+    _seed_teams_install_for_default_org(db)
     item = _create_ap_item(db, gmail_id="thread-teams-superseded")
     db.update_ap_item(item["id"], state="approved")
 
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
-        lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
+        lambda _auth: _stub_teams_claims(),
     )
 
     headers = {"Authorization": "Bearer test-token"}
@@ -1444,6 +1474,7 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
     # rollout-control path can be exercised (the rollout control is a
     # per-org toggle separate from the V1 surface gate).
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
+    _seed_teams_install_for_default_org(db)
     item = _create_ap_item(db, gmail_id="thread-teams-blocked")
     db.ensure_organization("default", organization_name="default")
     db.update_organization(
@@ -1458,7 +1489,7 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
     runtime = _RuntimeStub()
     monkeypatch.setattr(
         "clearledgr.api.teams_invoices._verify_teams_token",
-        lambda _auth: {"appid": "bot-test", "iat": int(time.time())},
+        lambda _auth: _stub_teams_claims(),
     )
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
