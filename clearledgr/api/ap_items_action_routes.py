@@ -950,21 +950,51 @@ def create_ap_item_task(
     return {"status": "created", "task": task}
 
 
+def _require_task_in_session_org(db: Any, task_id: str, user: Any) -> Dict[str, Any]:
+    """Fetch a task by id, fail closed (404) unless its org matches the
+    caller's session org.
+
+    Pre-fix the three task routes (status / assign / comments) called
+    ``get_task(task_id)`` then ``_resolve_task_owner_item(db, task)``,
+    which uses ``task.organization_id`` (NOT ``user.organization_id``)
+    to scope the AP-item lookup. Result: a tenant-A user holding any
+    tenant-B task_id could update its status, reassign, or comment on
+    it — the helper returned tenant-B's AP item because task and item
+    shared the (foreign) org. Plus a leftover indentation glitch from
+    M7's perl-based sweep meant the gated mutations actually ran
+    unconditionally and then ``return ... task=updated`` raised
+    NameError when no item resolved (500 leaked existence anyway).
+
+    The new helper enforces ``task.organization_id == user.organization_id``
+    BEFORE any side-effecting call. 404 (not 403) on mismatch so we
+    don't leak existence of tasks in other tenants.
+    """
+    from clearledgr.services.email_tasks import get_task
+
+    organization_id = _session_org(user)
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    if str(task.get("organization_id") or "") != organization_id:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    # task.org is now guaranteed to equal organization_id; the AP-item
+    # resolution is bounded to the caller's tenant by construction.
+    if not _resolve_task_owner_item(db, task):
+        raise HTTPException(status_code=404, detail="task_not_found")
+    return task
+
+
 @router.post("/tasks/{task_id}/status")
 def update_ap_item_task_status(
     task_id: str,
     request: UpdateApItemTaskStatusRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    from clearledgr.services.email_tasks import get_task, update_task_status
+    from clearledgr.services.email_tasks import update_task_status
 
     db = get_db()
-    task = get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task_not_found")
-    item = _resolve_task_owner_item(db, task)
-    if item:
-            updated = update_task_status(
+    _require_task_in_session_org(db, task_id, _user)
+    updated = update_task_status(
         task_id,
         request.status,
         changed_by=shared._authenticated_actor(_user),
@@ -979,15 +1009,11 @@ def assign_ap_item_task(
     request: AssignApItemTaskRequest,
     _user=Depends(require_ops_user),
 ) -> Dict[str, Any]:
-    from clearledgr.services.email_tasks import assign_task, get_task
+    from clearledgr.services.email_tasks import assign_task
 
     db = get_db()
-    task = get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task_not_found")
-    item = _resolve_task_owner_item(db, task)
-    if item:
-            updated = assign_task(task_id, request.assignee_email, shared._authenticated_actor(_user))
+    _require_task_in_session_org(db, task_id, _user)
+    updated = assign_task(task_id, request.assignee_email, shared._authenticated_actor(_user))
     return {"status": "updated", "task": updated}
 
 
@@ -1000,12 +1026,8 @@ def add_ap_item_task_comment(
     from clearledgr.services.email_tasks import add_comment, get_task
 
     db = get_db()
-    task = get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task_not_found")
-    item = _resolve_task_owner_item(db, task)
-    if item:
-            comment = add_comment(task_id, shared._authenticated_actor(_user), request.comment)
+    _require_task_in_session_org(db, task_id, _user)
+    comment = add_comment(task_id, shared._authenticated_actor(_user), request.comment)
     refreshed = get_task(task_id)
     return {"status": "created", "comment": comment, "task": refreshed}
 

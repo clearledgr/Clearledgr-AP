@@ -629,7 +629,16 @@ async def get_autopilot_status(
     try:
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 
-        org_id = str(getattr(_user, "organization_id", "default") or "default")
+        # Pre-fix this coerced ``getattr(_user, "organization_id", "default") or "default"``,
+        # which under M10 silently obtains an ``is_platform=True`` runtime
+        # keyed to the legacy ``"default"`` org whenever the session's
+        # organization_id was missing or empty. The runtime then
+        # surfaces other tenants' agent-skill readiness and pending
+        # retry job state on this endpoint, plus grants cross-tenant
+        # dispatch privilege if any later call dispatches through it.
+        # Use the canonical session-scoped resolver — same fail-closed
+        # contract as every other ``/api/ops/*`` route on this surface.
+        org_id = _assert_org_access(_user, getattr(_user, "organization_id", None))
         runtime = get_platform_finance_runtime(org_id)
         execution_contract = _execution_contract_status()
         enabled_by_config = _env_flag("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", True)

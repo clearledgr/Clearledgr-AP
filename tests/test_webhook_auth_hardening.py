@@ -551,6 +551,87 @@ def test_slack_runtime_per_org_fallback_off_by_default():
     )
 
 
+def test_ops_autopilot_status_does_not_silently_escalate_to_default_org():
+    """M11 (post-codex-review CRITICAL): ``api/ops.py:get_autopilot_status``
+    pre-fix did
+    ``org_id = str(getattr(_user, "organization_id", "default") or "default")``
+    then ``get_platform_finance_runtime(org_id)``. A session whose
+    organization_id was missing/empty silently obtained an
+    ``is_platform=True`` runtime keyed to the legacy ``"default"`` org —
+    surfaced other tenants' agent-skill readiness + pending retry job
+    state on the response, plus granted cross-tenant dispatch privilege
+    if any later call dispatched.
+
+    Fix: derive the org via ``_assert_org_access(_user, ...)`` which
+    fail-closes (403 ``user_missing_organization_id``) when the session
+    has no org. Pinned via source inspection because the M10 platform-
+    privilege gate is the load-bearing invariant.
+    """
+    from pathlib import Path
+    import re
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src = (repo_root / "clearledgr" / "api" / "ops.py").read_text()
+    # Strip docstrings + comments before scanning.
+    body = re.sub(r'""".*?"""', "", src, flags=re.DOTALL)
+    body = re.sub(r"#.*$", "", body, flags=re.MULTILINE)
+    bad = re.compile(
+        r'getattr\(\s*_?user\s*,\s*["\']organization_id["\']\s*,\s*["\']default["\']\s*\)'
+    )
+    assert not bad.search(body), (
+        "api/ops.py still defaults the user's organization_id to "
+        "'default' before constructing the platform finance runtime. "
+        "That re-arms the M10 cross-tenant escalation."
+    )
+
+
+def test_ap_item_task_routes_check_user_org_against_task_org():
+    """M12 (post-codex-review CRITICAL): the three task-mutation routes
+    (``/tasks/{task_id}/status`` / ``/assign`` / ``/comments``) pre-fix
+    derived org from ``task.organization_id`` via
+    ``_resolve_task_owner_item`` and never compared it to
+    ``user.organization_id``. A user from Tenant A could submit any
+    Tenant B task_id and update its status, reassign it, or comment.
+
+    The fix routes all three through ``_require_task_in_session_org``
+    which asserts ``task.organization_id == _session_org(user)`` BEFORE
+    any side-effecting call. 404 (not 403) on mismatch so existence of
+    tasks in other tenants doesn't leak.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src = (repo_root / "clearledgr" / "api" / "ap_items_action_routes.py").read_text()
+
+    assert "def _require_task_in_session_org" in src, (
+        "ap_items_action_routes.py must define "
+        "_require_task_in_session_org(db, task_id, user) — the helper "
+        "that fail-closes when task.org != user.org."
+    )
+    helper_body = src.split("def _require_task_in_session_org", 1)[1].split("\ndef ", 1)[0]
+    assert '_session_org(user)' in helper_body, (
+        "_require_task_in_session_org must derive org via _session_org(user), "
+        "not from the task row itself."
+    )
+    assert 'task.get("organization_id")' in helper_body and "!=" in helper_body, (
+        "_require_task_in_session_org must compare task.organization_id "
+        "against the session-derived org and refuse on mismatch."
+    )
+
+    # Each of the 3 task routes must call the helper before any mutation.
+    for route_marker in (
+        "/tasks/{task_id}/status",
+        "/tasks/{task_id}/assign",
+        "/tasks/{task_id}/comments",
+    ):
+        route_body = src.split(route_marker, 1)[1].split("\n@router.", 1)[0]
+        assert "_require_task_in_session_org" in route_body, (
+            f"Route {route_marker} must call _require_task_in_session_org "
+            f"before any task mutation — pre-fix it relied on "
+            f"_resolve_task_owner_item which used task.org, not user.org."
+        )
+
+
 def test_finance_runtime_platform_privilege_gated_by_explicit_flag():
     """Tier 2: ``FinanceAgentRuntime`` previously gated cross-tenant
     write privilege on ``self.organization_id == "default"`` — a
