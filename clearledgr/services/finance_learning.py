@@ -41,7 +41,7 @@ class FinanceLearningService:
         # programming error and must raise to prevent cross-tenant
         # learning data from landing in the platform store.
         if organization_id is None:
-            organization_id = "default"
+            organization_id = "default"  # noqa: org-default — intentional platform-mode sentinel
         normalized = str(organization_id).strip()
         if not normalized:
             raise ValueError(

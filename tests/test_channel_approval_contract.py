@@ -1442,6 +1442,7 @@ def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch,
 
 def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-blocked")
+    _seed_slack_install_for_default_org(db)
     db.ensure_organization("default", organization_name="default")
     db.update_organization(
         "default",

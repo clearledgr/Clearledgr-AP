@@ -90,7 +90,13 @@ class TestRuntimeInitRejectsEmptyOrg:
 
     def test_default_org_explicitly_constructs(self, db):
         """The platform runtime ('default') is allowed when passed
-        explicitly. Only empty/None is rejected."""
+        explicitly. Only empty/None is rejected. Note: the literal
+        ``"default"`` here is the in-memory M10 platform sentinel,
+        it's never written to a DB row (the platform runtime
+        re-resolves to a target tenant via ``_resolve_payload_org``
+        before any write). Migration v79's CHECK constraint blocks
+        ``"default"`` from landing as ``organization_id`` on any row
+        but does not affect this in-memory-only construction."""
         runtime = far.FinanceAgentRuntime(
             organization_id="default",
             actor_id="system",

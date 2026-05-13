@@ -13,6 +13,7 @@ from clearledgr.services.policy_compliance import (
     get_approval_automation_policy,
     get_policy_compliance,
 )
+from clearledgr.core.org_utils import require_org
 
 
 router = APIRouter(prefix="/api/ap/policies", tags=["ap-policies"])

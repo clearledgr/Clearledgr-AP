@@ -84,17 +84,47 @@ apply.
 The 37 modified files + 18 new modules from the replay are also
 committed on this branch, as a single bundled commit.
 
+## Follow-up: 35 gaps closed by hand (commit 2)
+
+A follow-up commit walks `nomatches.json` and patches all 35 sites:
+
+* **12 sites** were no-ops — the JSONL `new_string` was already
+  present in the file (older Edit chains the replay had already
+  applied via a later Write or a more recent Edit). Marked resolved.
+* **4 sites** were superseded by Mo's "no AI tells" rule — JSONL
+  used em-dashes, the canonical form is plain commas. Already in
+  desired form.
+* **19 sites** were genuine missing content, applied by hand:
+  * Tenant-rename imports + helpers wired into `ap_policies`,
+    `policies`, `gmail_extension`, `workspace_shell`,
+    `agent_retry_jobs`, `finance_runtime_actions`.
+  * `_resolve_org_id` rewritten on `workspace_shell` with the legacy
+    `org_access_denied` back-compat shim.
+  * Slack OAuth state-payload now raises 400 on missing org instead
+    of 500.
+  * `ui_perf` beacon drops unscoped requests silently (telemetry
+    contract preserves 200).
+  * `noqa: org-default` markers added to platform-mode sentinels in
+    `finance_learning`, `correction_learning`, `agent_memory`.
+  * `slack_notifications` log uses `<unscoped>` instead of `default`
+    coerce.
+  * `tests/test_runtime_tenant_isolation` doc explains in-memory
+    sentinel vs v79 CHECK.
+  * `tests/test_channel_approval_contract` seeds Slack install for
+    rollout-control test.
+  * Migration **v80** (per-table CHECK constraints, M21), **v81**
+    (policy branches table, Sprint 2), and **v82** (data_branches
+    + overlay columns on row-set tables, Sprint 5 Phase B) appended
+    to `migrations.py` (~293 new lines).
+
+Tree compile-check stays clean after follow-up.
+
 ## Next steps
 
-1. Review this branch's diff vs `origin/main`. The 18 new modules
-   (in `clearledgr/cli/`, `clearledgr/services/`, and matching
-   `tests/`) are fully reconstructed and were the heart of Sprints
-   1 – 4 Phase 2.
-2. Walk `nomatches.json` — for each entry decide whether to (a) apply
-   the `new_string` fragment by hand against the current file, (b)
-   re-author the change from scratch, or (c) drop it.
-3. Spot-check `bash_commands.log` for any `mv`, `rm`, or `perl -i`
+1. Run the test suite against Postgres locally to confirm no
+   regressions from the hand-patches.
+2. Spot-check `bash_commands.log` for any `mv`, `rm`, or `perl -i`
    operations that affected files outside the 74 touched here.
-4. Once the gaps are patched, cherry-pick this branch's commit back
-   onto `main` (or merge), or split it into the original M15 → M19f →
-   Sprint-1/2/3/4 commit groups for cleaner history.
+3. Cherry-pick or merge this branch back into `main` (or split it
+   into the original M15 → M19f → Sprint-1/2/3/4 commit groups for
+   cleaner history).

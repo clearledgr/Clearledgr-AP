@@ -5,6 +5,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.org_utils import assert_org_id
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ def build_finance_lead_summary_payload(
         try:
             from clearledgr.services.agent_memory import get_agent_memory_service
 
-            organization_id = str(item.get("organization_id") or runtime.organization_id or "default").strip() or "default"
+            organization_id = assert_org_id(item.get("organization_id") or runtime.organization_id, context="finance_runtime_actions")
             ap_item_id = str(item.get("id") or "").strip()
             if ap_item_id:
                 agent_memory = get_agent_memory_service(

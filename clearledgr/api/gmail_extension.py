@@ -43,6 +43,7 @@ from clearledgr.api.gmail_extension_common import (
     build_finance_runtime as _build_finance_runtime,
     resolve_org_id_for_user as _resolve_org_id_for_user,
 )
+from clearledgr.core.org_utils import require_org
 from clearledgr.api.gmail_extension_support_routes import router as support_routes_router
 from clearledgr.core.auth import get_current_user, require_ops_user, create_access_token, get_user_by_email, has_admin_access
 from clearledgr.core.database import get_db
@@ -1964,7 +1965,17 @@ async def get_workflow_status(
     row = db.get_task_run(workflow_id)
     if not row:
         raise HTTPException(status_code=404, detail="workflow_not_found")
-    _assert_user_org_access(user, str(row.get("organization_id") or "default"))
+    # M19+: M19b deleted the post-fetch tenant-access check as part of
+    # the verify_org_access redundancy sweep. But this route has no
+    # _require_item upstream — the row is fetched purely by
+    # workflow_id (i.e. task_run id, which is global). The delete
+    # silently dropped tenant scope, letting any authenticated user
+    # iterate task_run ids and read any tenant's workflow status +
+    # last_error contents. Restore the post-fetch tenant check (404,
+    # not 403, so existence doesn't leak).
+    row_org = str(row.get("organization_id") or "").strip()
+    if row_org != require_org(user):
+        raise HTTPException(status_code=404, detail="workflow_not_found")
     return {
         "workflow_id": row.get("id"),
         "status": row.get("status"),

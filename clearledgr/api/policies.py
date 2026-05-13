@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import get_current_user
+from clearledgr.core.org_utils import require_org
 from clearledgr.services.policy_service import (
     PolicyKindError,
     PolicyService,
@@ -41,8 +42,9 @@ router = APIRouter(prefix="/api/policies", tags=["policies"])
 
 
 def _service(organization_id: str, user) -> PolicyService:
-    org = str(organization_id or "default").strip() or "default"
-    verify_org_access(org, user)
+    # M19+: route helper. Use require_org so missing/mismatched org
+    # surfaces as HTTPException(403) instead of a ValueError -> 500.
+    org = require_org(user, requested=organization_id)
     return PolicyService(organization_id=org)
 
 

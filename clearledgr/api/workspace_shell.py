@@ -320,18 +320,28 @@ def _workspace_capabilities(role: Optional[str]) -> Dict[str, bool]:
 
 
 def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:
-    """Resolve + enforce tenant scope.
+    """Resolve + enforce tenant scope on the workspace surface.
 
-    Previously allowed owner role to access any org — cross-tenant
+    Previously allowed owner role to access any org, cross-tenant
     vulnerability. Owner controls authority within the org, not across
     orgs. No platform-level super-admin concept exists on tenant APIs.
+
+    M19 sweep: delegates to ``require_org`` for the canonical
+    resolution + cross-check, but re-raises the existing
+    ``"org_access_denied"`` detail string on mismatch so existing
+    workspace test fixtures + frontend error handling that key on
+    the legacy detail keep working. ``require_org``'s native
+    ``"org_mismatch"`` / ``"user_missing_organization_id"`` strings
+    are exposed on every other surface (ops, ap_items_action_routes,
+    teams, slack), the workspace surface is the back-compat
+    exception until the next breaking-change pass.
     """
-    resolved = (organization_id or user.organization_id or "default").strip()
-    if not resolved:
-        resolved = "default"
-    if resolved != str(user.organization_id or "").strip():
-        raise HTTPException(status_code=403, detail="org_access_denied")
-    return resolved
+    try:
+        return require_org(user, requested=organization_id)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise HTTPException(status_code=403, detail="org_access_denied") from exc
+        raise
 
 
 def _default_org_name(user: TokenData, org_id: str) -> str:
@@ -1312,7 +1322,14 @@ async def slack_install_callback(
         raise HTTPException(status_code=400, detail="missing_code_or_state")
 
     state_payload = _unsign_state(state)
-    org_id = str(state_payload.get("organization_id") or "default")
+    # M19+: pre-fix coerced missing org to "default"; M19b switched to
+    # ``assert_org_id`` which raises ValueError -> 500 stack trace
+    # surfaced to the user during OAuth. State-payload corruption is
+    # a 400, not an internal error, re-cast.
+    raw_org = str(state_payload.get("organization_id") or "").strip()
+    if not raw_org:
+        raise HTTPException(status_code=400, detail="invalid_state_payload")
+    org_id = raw_org
     mode = str(state_payload.get("mode") or "per_org")
 
     client_id = os.getenv("SLACK_CLIENT_ID", "").strip()
