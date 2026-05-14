@@ -47,7 +47,7 @@ def _seed_session_and_token(db) -> tuple[str, str, str]:
     Returns ``(session_id, raw_token, token_id)``.
     """
     session = db.create_vendor_onboarding_session(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Acme Inc",
         invited_by="ap@default",
     )

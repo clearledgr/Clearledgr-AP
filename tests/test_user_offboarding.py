@@ -37,14 +37,14 @@ from clearledgr.services.user_offboarding import offboard_user  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
 @pytest.fixture()
 def two_entities(db):
-    eu = db.create_entity(organization_id="default", code="EU", name="EU subsidiary")
-    us = db.create_entity(organization_id="default", code="US", name="US subsidiary")
+    eu = db.create_entity(organization_id="org-test", code="EU", name="EU subsidiary")
+    us = db.create_entity(organization_id="org-test", code="US", name="US subsidiary")
     return eu["id"], us["id"]
 
 
@@ -54,7 +54,7 @@ def two_entities(db):
 def test_create_team_invite_persists_entity_restrictions(db, two_entities):
     eu, us = two_entities
     invite = db.create_team_invite(
-        organization_id="default",
+        organization_id="org-test",
         email="alice@example.test",
         role="ap_clerk",
         created_by="owner-user",
@@ -72,7 +72,7 @@ def test_create_team_invite_no_entity_restrictions(db):
     """When the admin doesn't pass entity_restrictions the column is
     NULL → decoder returns []."""
     invite = db.create_team_invite(
-        organization_id="default",
+        organization_id="org-test",
         email="bob@example.test",
         role="ap_clerk",
         created_by="owner-user",
@@ -84,14 +84,14 @@ def test_create_team_invite_no_entity_restrictions(db):
 def test_list_team_invites_decodes_entity_restrictions(db, two_entities):
     eu, _us = two_entities
     db.create_team_invite(
-        organization_id="default",
+        organization_id="org-test",
         email="carol@example.test",
         role="ap_clerk",
         created_by="owner-user",
         expires_at=None,
         entity_restrictions=[eu],
     )
-    invites = db.list_team_invites("default")
+    invites = db.list_team_invites("org-test")
     assert any(
         inv["entity_restrictions"] == [eu] for inv in invites
     )
@@ -102,12 +102,12 @@ def test_list_team_invites_decodes_entity_restrictions(db, two_entities):
 
 def test_offboard_user_soft_deletes(db):
     user = db.create_user(
-        email="d@example.test", name="D", organization_id="default", role=ROLE_AP_MANAGER,
+        email="d@example.test", name="D", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     res = offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )
@@ -119,13 +119,13 @@ def test_offboard_user_soft_deletes(db):
 
 def test_offboard_user_clears_slack_user_id(db):
     user = db.create_user(
-        email="e@example.test", name="E", organization_id="default", role=ROLE_AP_MANAGER,
+        email="e@example.test", name="E", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     db.update_user(user["id"], slack_user_id="U-SLACK-1")
     res = offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )
@@ -139,40 +139,40 @@ def test_offboard_user_does_not_touch_org_webhooks(db):
     not per-user. Offboarding must NOT take the org's audit-event
     forwarding offline when a user leaves."""
     user = db.create_user(
-        email="f@example.test", name="F", organization_id="default", role=ROLE_AP_MANAGER,
+        email="f@example.test", name="F", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     sub = db.create_webhook_subscription(
-        organization_id="default", url="https://siem.example/hook",
+        organization_id="org-test", url="https://siem.example/hook",
         event_types=["invoice.approved"], description="org SIEM",
     )
     offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )
-    sub_after = db.get_webhook_subscription(sub["id"], "default")
+    sub_after = db.get_webhook_subscription(sub["id"], "org-test")
     assert sub_after and sub_after["is_active"] is True
 
 
 def test_offboard_user_clears_entity_role_assignments(db, two_entities):
     eu, us = two_entities
     user = db.create_user(
-        email="h@example.test", name="H", organization_id="default", role=ROLE_AP_MANAGER,
+        email="h@example.test", name="H", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     db.set_user_entity_role(
-        user_id=user["id"], entity_id=eu, organization_id="default",
+        user_id=user["id"], entity_id=eu, organization_id="org-test",
         role="read_only",
     )
     db.set_user_entity_role(
-        user_id=user["id"], entity_id=us, organization_id="default",
+        user_id=user["id"], entity_id=us, organization_id="org-test",
         role="ap_clerk",
     )
     res = offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )
@@ -182,17 +182,17 @@ def test_offboard_user_clears_entity_role_assignments(db, two_entities):
 
 def test_offboard_user_emits_audit_event(db):
     user = db.create_user(
-        email="i@example.test", name="I", organization_id="default", role=ROLE_AP_MANAGER,
+        email="i@example.test", name="I", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["user_offboarded"],
     )
     matching = [e for e in events.get("events", []) if e.get("box_id") == user["id"]]
@@ -213,12 +213,12 @@ def test_offboard_user_runs_steps_independently_when_one_fails(db):
     exist for the slack lookup (the user_id passed to delete_user
     short-circuits cleanly because delete_user is forgiving)."""
     user = db.create_user(
-        email="j@example.test", name="J", organization_id="default", role=ROLE_AP_MANAGER,
+        email="j@example.test", name="J", organization_id="org-test", role=ROLE_AP_MANAGER,
     )
     res = offboard_user(
         db,
         user_id=user["id"],
-        organization_id="default",
+        organization_id="org-test",
         actor_email="owner@example.test",
         revoke_google_token_remotely=False,
     )

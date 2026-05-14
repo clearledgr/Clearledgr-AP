@@ -45,7 +45,7 @@ def _create_validated_item(db, item_id: str = "ap-black-box-1") -> dict:
             "currency": "USD",
             "invoice_number": f"INV-{item_id}",
             "state": "validated",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {"correlation_id": f"corr-{item_id}"},
         }
     )
@@ -84,7 +84,7 @@ def test_request_approval_black_box_route_drives_runtime_workflow_and_audit(tmp_
     client = TestClient(app)
     response = client.post(
         "/api/agent/intents/execute",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
         json={
             "intent": "request_approval",
             "input": {
@@ -92,7 +92,7 @@ def test_request_approval_black_box_route_drives_runtime_workflow_and_audit(tmp_
                 "email_id": item["thread_id"],
                 "reason": "black_box_wedge_test",
             },
-            "organization_id": "default",
+            "organization_id": "org-test",
             "idempotency_key": "idem-black-box-request-approval",
         },
     )

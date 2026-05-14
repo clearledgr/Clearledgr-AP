@@ -155,7 +155,7 @@ def test_detail_endpoint_returns_canonical_ap_item(client, db):
     item = db.create_ap_item(
         _item_payload(
             "detail-alpha",
-            "default",
+            "org-test",
             vendor_name="Google Payments",
             invoice_number="5499678906",
             state="received",
@@ -163,8 +163,8 @@ def test_detail_endpoint_returns_canonical_ap_item(client, db):
     )
 
     response = client.get(
-        f"/api/ap/items/{item['id']}?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}?organization_id=org-test",
+        headers=_auth_headers("org-test"),
     )
 
     assert response.status_code == 200
@@ -178,7 +178,7 @@ def test_detail_endpoint_includes_agent_memory_surface(client, db):
     item = db.create_ap_item(
         _item_payload(
             "detail-agent-memory",
-            "default",
+            "org-test",
             vendor_name="Canonical Memory Co",
             state="needs_approval",
         )
@@ -205,8 +205,8 @@ def test_detail_endpoint_includes_agent_memory_surface(client, db):
         return_value=_FakeMemory(),
     ):
         response = client.get(
-            f"/api/ap/items/{item['id']}?organization_id=default",
-            headers=_auth_headers("default"),
+            f"/api/ap/items/{item['id']}?organization_id=org-test",
+            headers=_auth_headers("org-test"),
         )
 
     assert response.status_code == 200
@@ -221,7 +221,7 @@ def test_detail_endpoint_resolves_invoice_number_alias(client, db):
     item = db.create_ap_item(
         _item_payload(
             "detail-beta",
-            "default",
+            "org-test",
             vendor_name="Google Payments",
             invoice_number="INV-GOOGLE-2026-02",
             state="received",
@@ -229,8 +229,8 @@ def test_detail_endpoint_resolves_invoice_number_alias(client, db):
     )
 
     response = client.get(
-        "/api/ap/items/INV-GOOGLE-2026-02?organization_id=default",
-        headers=_auth_headers("default"),
+        "/api/ap/items/INV-GOOGLE-2026-02?organization_id=org-test",
+        headers=_auth_headers("org-test"),
     )
 
     assert response.status_code == 200
@@ -243,7 +243,7 @@ def test_build_worklist_item_surfaces_attachment_metadata_from_sources(db):
     item = db.create_ap_item(
         _item_payload(
             "attachment-1",
-            "default",
+            "org-test",
             extra={"attachment_url": "https://files.example/invoice.pdf"},
         )
     )
@@ -274,7 +274,7 @@ def test_build_worklist_item_includes_agent_memory_projection(db):
     item = db.create_ap_item(
         _item_payload(
             "agent-memory-1",
-            "default",
+            "org-test",
             vendor_name="Agent Memory Vendor",
             state="needs_approval",
         )
@@ -318,7 +318,7 @@ def test_build_worklist_item_recovers_google_invoice_attachment_signal_for_legac
     item = db.create_ap_item(
         _item_payload(
             "google-attachment-1",
-            "default",
+            "org-test",
             vendor_name="Google Payments",
             extra={
                 "subject": "Google Workspace: Your invoice is available for clearledgr.com",
@@ -337,7 +337,7 @@ def test_build_worklist_item_surfaces_extraction_conflicts_and_provenance(db):
     item = db.create_ap_item(
         _item_payload(
             "conflict-1",
-            "default",
+            "org-test",
             extra={
                 "exception_code": "field_conflict",
                 "exception_severity": "high",
@@ -408,7 +408,7 @@ def test_build_worklist_item_surfaces_specific_failed_post_connector_reason(db):
     item = db.create_ap_item(
         _item_payload(
             "failed-post-no-erp",
-            "default",
+            "org-test",
             state="failed_post",
             extra={
                 "last_error": "No ERP connected for organization",
@@ -433,7 +433,7 @@ def test_build_worklist_item_surfaces_confidence_threshold_in_pipeline_blockers(
     item = db.create_ap_item(
         _item_payload(
             "confidence-review-1",
-            "default",
+            "org-test",
             state="received",
             extra={"due_date": "2026-04-01",
                 "confidence": 0.85,
@@ -467,7 +467,7 @@ def test_build_worklist_item_recalibrates_google_sender_confidence_gate(db):
     item = db.create_ap_item(
         _item_payload(
             "google-calibration-1",
-            "default",
+            "org-test",
             vendor_name="Google Cloud EMEA Limited",
             state="received",
             extra={
@@ -511,7 +511,7 @@ def test_build_worklist_item_hides_planner_failed_behind_field_review_blockers(d
     item = db.create_ap_item(
         _item_payload(
             "planner-failed-1",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "field_confidences": {
@@ -540,7 +540,7 @@ def test_build_worklist_item_surfaces_planner_failed_as_processing_issue_without
     item = db.create_ap_item(
         _item_payload(
             "planner-failed-2",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "metadata": {
@@ -572,7 +572,7 @@ def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_bl
     item = db.create_ap_item(
         _item_payload(
             "resolve-1",
-            "default",
+            "org-test",
             amount=400.0,
             state="received",
             extra={
@@ -615,8 +615,8 @@ def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_bl
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "field": "amount",
             "source": "attachment",
@@ -645,7 +645,7 @@ def test_field_review_resolution_endpoint_updates_canonical_record_and_clears_bl
     audit_events = db.list_ap_audit_events(item["id"])
     assert any(event["event_type"] == "field_correction" for event in audit_events)
 
-    snapshot = CorrectionLearningService("default").get_extraction_review_calibration_snapshot(
+    snapshot = CorrectionLearningService("org-test").get_extraction_review_calibration_snapshot(
         vendor_name="Acme",
         sender_domain="ap@acme.example",
         document_type="invoice",
@@ -660,7 +660,7 @@ def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_bloc
     item = db.create_ap_item(
         _item_payload(
             "resolve-resume-1",
-            "default",
+            "org-test",
             amount=125.0,
             state="failed_post",
             extra={
@@ -704,8 +704,8 @@ def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_bloc
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/field-review/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "field": "amount",
             "source": "email",
@@ -725,7 +725,7 @@ def test_bulk_field_review_resolution_endpoint_updates_multiple_items(client, db
     first = db.create_ap_item(
         _item_payload(
             "bulk-resolve-1",
-            "default",
+            "org-test",
             amount=100.0,
             state="received",
             extra={
@@ -758,7 +758,7 @@ def test_bulk_field_review_resolution_endpoint_updates_multiple_items(client, db
     second = db.create_ap_item(
         _item_payload(
             "bulk-resolve-2",
-            "default",
+            "org-test",
             amount=200.0,
             state="received",
             extra={
@@ -790,8 +790,8 @@ def test_bulk_field_review_resolution_endpoint_updates_multiple_items(client, db
     )
 
     response = client.post(
-        "/api/ap/items/field-review/bulk-resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        "/api/ap/items/field-review/bulk-resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "ap_item_ids": [first["id"], second["id"]],
             "field": "vendor",
@@ -821,7 +821,7 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     related_invoice = db.create_ap_item(
         _item_payload(
             "invoice-target-1",
-            "default",
+            "org-test",
             state="ready_to_post",
             extra={
                 "invoice_number": "INV-12345",
@@ -835,7 +835,7 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     item = db.create_ap_item(
         _item_payload(
             "credit-note-1",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "invoice_number": "CN-001",
@@ -845,8 +845,8 @@ def test_non_invoice_resolution_endpoint_closes_credit_note_with_reference(clien
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "outcome": "apply_to_invoice",
             "related_reference": "INV-12345",
@@ -903,7 +903,7 @@ def test_non_invoice_resolution_endpoint_links_refund_to_related_payment_record(
     related_invoice = db.create_ap_item(
         _item_payload(
             "invoice-payment-target-1",
-            "default",
+            "org-test",
             state="posted_to_erp",
             extra={
                 "invoice_number": "PAY-APPLIED-9",
@@ -917,7 +917,7 @@ def test_non_invoice_resolution_endpoint_links_refund_to_related_payment_record(
     item = db.create_ap_item(
         _item_payload(
             "refund-doc-1",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "invoice_number": "RF-001",
@@ -927,8 +927,8 @@ def test_non_invoice_resolution_endpoint_links_refund_to_related_payment_record(
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "outcome": "link_to_payment",
             "related_reference": "PAY-APPLIED-9",
@@ -964,7 +964,7 @@ def test_non_invoice_resolution_endpoint_records_payment_confirmation(client, db
     item = db.create_ap_item(
         _item_payload(
             "payment-doc-1",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "invoice_number": "PAY-001",
@@ -974,8 +974,8 @@ def test_non_invoice_resolution_endpoint_records_payment_confirmation(client, db
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "outcome": "record_payment_confirmation",
             "close_record": True,
@@ -1001,7 +1001,7 @@ def test_non_invoice_resolution_endpoint_sends_bank_statement_to_reconciliation(
     item = db.create_ap_item(
         _item_payload(
             "statement-doc-1",
-            "default",
+            "org-test",
             state="received",
             extra={
                 "invoice_number": "STMT-001",
@@ -1011,8 +1011,8 @@ def test_non_invoice_resolution_endpoint_sends_bank_statement_to_reconciliation(
     )
 
     response = client.post(
-        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=default",
-        headers=_auth_headers("default"),
+        f"/api/ap/items/{item['id']}/non-invoice/resolve?organization_id=org-test",
+        headers=_auth_headers("org-test"),
         json={
             "outcome": "send_to_reconciliation",
             "close_record": True,
@@ -1045,7 +1045,7 @@ def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
     db.create_ap_item(
         _item_payload(
             "vend-1",
-            "default",
+            "org-test",
             vendor_name="Acme",
             state="ready_to_post",
             amount=400.0,
@@ -1054,7 +1054,7 @@ def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
     db.create_ap_item(
         _item_payload(
             "vend-2",
-            "default",
+            "org-test",
             vendor_name="Acme",
             state="posted_to_erp",
             amount=650.0,
@@ -1062,7 +1062,7 @@ def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
         )
     )
     db.upsert_vendor_profile(
-        "default",
+        "org-test",
         "Acme",
         requires_po=True,
         payment_terms="Net 15",
@@ -1070,7 +1070,7 @@ def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
         vendor_aliases=["Acme Corp"],
     )
     db.record_vendor_invoice(
-        "default",
+        "org-test",
         "Acme",
         "vend-hist-1",
         invoice_number="INV-HIST-1",
@@ -1080,8 +1080,8 @@ def test_vendor_record_endpoint_returns_shared_vendor_context(client, db):
     )
 
     response = client.get(
-        "/api/ap/items/vendors/Acme?organization_id=default",
-        headers=_auth_headers("default"),
+        "/api/ap/items/vendors/Acme?organization_id=org-test",
+        headers=_auth_headers("org-test"),
     )
     assert response.status_code == 200
     payload = response.json()
@@ -1099,7 +1099,7 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
     previous = db.create_ap_item(
         _item_payload(
             "ctx-prev",
-            "default",
+            "org-test",
             vendor_name="Acme",
             invoice_number="INV-OLD-1",
             state="rejected",
@@ -1108,7 +1108,7 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
     current = db.create_ap_item(
         _item_payload(
             "ctx-current",
-            "default",
+            "org-test",
             vendor_name="Acme",
             invoice_number="INV-42",
             state="needs_info",
@@ -1118,7 +1118,7 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
     duplicate = db.create_ap_item(
         _item_payload(
             "ctx-dup",
-            "default",
+            "org-test",
             vendor_name="Other Vendor",
             invoice_number="INV-42",
             state="validated",
@@ -1127,7 +1127,7 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
     vendor_recent = db.create_ap_item(
         _item_payload(
             "ctx-vendor",
-            "default",
+            "org-test",
             vendor_name="Acme",
             invoice_number="INV-77",
             state="ready_to_post",
@@ -1157,7 +1157,7 @@ def test_context_endpoint_includes_related_records_and_source_groups(client, db)
 
     response = client.get(
         f"/api/ap/items/{current['id']}/context?refresh=true",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert response.status_code == 200
     payload = response.json()
@@ -1175,7 +1175,7 @@ def test_build_worklist_item_surfaces_entity_routing_and_approval_followup(db):
     item = db.create_ap_item(
         _item_payload(
             "entity-approval-1",
-            "default",
+            "org-test",
             state="needs_approval",
             metadata={
                 "approval_requested_at": "2026-03-18T08:00:00+00:00",
@@ -1205,7 +1205,7 @@ def test_entity_route_resolution_handler_clears_entity_blocker(db):
     item = db.create_ap_item(
         _item_payload(
             "entity-route-1",
-            "default",
+            "org-test",
             state="validated",
             metadata={
                 "entity_candidates": [
@@ -1225,7 +1225,7 @@ def test_entity_route_resolution_handler_clears_entity_blocker(db):
             user=SimpleNamespace(
                 email="user-test@default.example",
                 user_id="user-test",
-                organization_id="default",
+                organization_id="org-test",
                 role="operator",
             ),
         )
@@ -1240,9 +1240,9 @@ def test_entity_route_resolution_handler_clears_entity_blocker(db):
 
 def test_build_worklist_item_applies_org_entity_routing_rules(db):
     if hasattr(db, "ensure_organization"):
-        db.ensure_organization("default", organization_name="default")
+        db.ensure_organization("org-test", organization_name="org-test")
     db.update_organization(
-        "default",
+        "org-test",
         settings={
             "entity_routing": {
                 "entities": [
@@ -1262,7 +1262,7 @@ def test_build_worklist_item_applies_org_entity_routing_rules(db):
     item = db.create_ap_item(
         _item_payload(
             "entity-org-rule-1",
-            "default",
+            "org-test",
             state="validated",
             extra={"sender": "billing@ghana.vendor.example"},
         )
@@ -1277,9 +1277,9 @@ def test_build_worklist_item_applies_org_entity_routing_rules(db):
 
 def test_build_worklist_item_requires_manual_review_when_multi_entity_rules_do_not_match(db):
     if hasattr(db, "ensure_organization"):
-        db.ensure_organization("default", organization_name="default")
+        db.ensure_organization("org-test", organization_name="org-test")
     db.update_organization(
-        "default",
+        "org-test",
         settings={
             "entity_routing": {
                 "entities": [
@@ -1298,7 +1298,7 @@ def test_build_worklist_item_requires_manual_review_when_multi_entity_rules_do_n
     item = db.create_ap_item(
         _item_payload(
             "entity-org-rule-2",
-            "default",
+            "org-test",
             state="validated",
             extra={"sender": "billing@unknown.vendor.example"},
         )
@@ -1316,7 +1316,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     item = db.create_ap_item(
         _item_payload(
             "gmail-record-1",
-            "default",
+            "org-test",
             vendor_name="Acme Supplies",
             invoice_number="INV-GMAIL-1",
             state="received",
@@ -1325,7 +1325,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     db.create_ap_item(
         _item_payload(
             "gmail-record-2",
-            "default",
+            "org-test",
             vendor_name="Northwind Logistics",
             invoice_number="INV-NORTH-2",
             state="validated",
@@ -1347,8 +1347,8 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     assert _is_strict_profile_allowed_path("/api/ap/items/tasks/task-1/comments") is True
 
     search_response = client.get(
-        "/api/ap/items/search?organization_id=default&q=Northwind",
-        headers=_auth_headers("default"),
+        "/api/ap/items/search?organization_id=org-test&q=Northwind",
+        headers=_auth_headers("org-test"),
     )
     assert search_response.status_code == 200
     assert [row["vendor_name"] for row in search_response.json()["items"]] == ["Northwind Logistics"]
@@ -1356,7 +1356,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     fields_response = client.patch(
         f"/api/ap/items/{item['id']}/fields",
         json={"vendor_name": "Acme Holdings", "po_number": "PO-77"},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert fields_response.status_code == 200
     fields_payload = fields_response.json()
@@ -1370,14 +1370,14 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     task_create_response = client.post(
         f"/api/ap/items/{item['id']}/tasks",
         json={"title": task_title, "due_date": "2026-04-10"},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert task_create_response.status_code == 200
     assert task_create_response.json()["status"] == "created"
 
     tasks_response = client.get(
         f"/api/ap/items/{item['id']}/tasks",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert tasks_response.status_code == 200
     tasks_payload = tasks_response.json()
@@ -1387,7 +1387,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     task_status_response = client.post(
         f"/api/ap/items/tasks/{task_id}/status",
         json={"status": "in_progress"},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert task_status_response.status_code == 200
     assert task_status_response.json()["task"]["status"] == "in_progress"
@@ -1396,7 +1396,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     task_assign_response = client.post(
         f"/api/ap/items/tasks/{task_id}/assign",
         json={"assignee_email": "ap-owner@default.example"},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert task_assign_response.status_code == 200
     assert task_assign_response.json()["task"]["assignee_email"] == "ap-owner@default.example"
@@ -1404,7 +1404,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     task_comment_response = client.post(
         f"/api/ap/items/tasks/{task_id}/comments",
         json={"comment": "Waiting on vendor callback."},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert task_comment_response.status_code == 200
     assert task_comment_response.json()["task"]["comments"][0]["comment"] == "Waiting on vendor callback."
@@ -1412,14 +1412,14 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     note_create_response = client.post(
         f"/api/ap/items/{item['id']}/notes",
         json={"body": "Vendor promised revised invoice on Friday."},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert note_create_response.status_code == 200
     assert note_create_response.json()["status"] == "created"
 
     notes_response = client.get(
         f"/api/ap/items/{item['id']}/notes",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert notes_response.status_code == 200
     notes_payload = notes_response.json()
@@ -1429,14 +1429,14 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     comment_create_response = client.post(
         f"/api/ap/items/{item['id']}/comments",
         json={"body": "Controller approved the revised draft response."},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert comment_create_response.status_code == 200
     assert comment_create_response.json()["status"] == "created"
 
     comments_response = client.get(
         f"/api/ap/items/{item['id']}/comments",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert comments_response.status_code == 200
     comments_payload = comments_response.json()
@@ -1446,14 +1446,14 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     file_create_response = client.post(
         f"/api/ap/items/{item['id']}/files",
         json={"label": "Vendor quote", "url": "https://docs.example.com/vendor-quote", "file_type": "drive_link"},
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert file_create_response.status_code == 200
     assert file_create_response.json()["status"] == "created"
 
     files_response = client.get(
         f"/api/ap/items/{item['id']}/files",
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert files_response.status_code == 200
     files_payload = files_response.json()
@@ -1468,7 +1468,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
             "subject": "Invoice follow-up",
             "sender": "billing@acme.example",
         },
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert link_response.status_code == 200
     link_payload = link_response.json()
@@ -1486,7 +1486,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
             "body_preview": "Can you confirm the credit memo amount?",
             "note": "Drafted from Gmail compose.",
         },
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert compose_create_response.status_code == 200
     compose_create_payload = compose_create_response.json()
@@ -1494,8 +1494,8 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
     created_compose_item_id = compose_create_payload["ap_item"]["id"]
 
     compose_lookup_response = client.get(
-        "/api/ap/items/compose/lookup?organization_id=default&draft_id=draft-compose-1",
-        headers=_auth_headers("default"),
+        "/api/ap/items/compose/lookup?organization_id=org-test&draft_id=draft-compose-1",
+        headers=_auth_headers("org-test"),
     )
     assert compose_lookup_response.status_code == 200
     assert compose_lookup_response.json()["status"] == "found"
@@ -1510,7 +1510,7 @@ def test_gmail_sidebar_record_routes_are_available_in_strict_profile_and_mutate_
             "recipients": ["billing@acme.example"],
             "body_preview": "Sharing the updated payment timeline.",
         },
-        headers=_auth_headers("default"),
+        headers=_auth_headers("org-test"),
     )
     assert compose_link_response.status_code == 200
     assert compose_link_response.json()["status"] == "linked"
@@ -1520,20 +1520,20 @@ def test_workspace_team_approver_directory_is_available_in_strict_profile_and_re
     admin = db.create_user(
         email="admin@company.com",
         name="Admin User",
-        organization_id="default",
+        organization_id="org-test",
         role="admin",
     )
     db.update_user(admin["id"], slack_user_id="UADMIN")
     approver = db.create_user(
         email="approver@company.com",
         name="Approver User",
-        organization_id="default",
+        organization_id="org-test",
         role="operator",
     )
     unresolved = db.create_user(
         email="missing@company.com",
         name="Missing User",
-        organization_id="default",
+        organization_id="org-test",
         role="operator",
     )
 
@@ -1552,8 +1552,8 @@ def test_workspace_team_approver_directory_is_available_in_strict_profile_and_re
         return_value=_SlackClient(),
     ):
         response = client.get(
-            "/api/workspace/team/approvers?organization_id=default",
-            headers=_auth_headers("default", admin["id"], "admin"),
+            "/api/workspace/team/approvers?organization_id=org-test",
+            headers=_auth_headers("org-test", admin["id"], "admin"),
         )
 
     assert response.status_code == 200

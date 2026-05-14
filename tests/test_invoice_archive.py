@@ -59,12 +59,12 @@ from clearledgr.services.invoice_archive import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
 
-def _user(org_id: str = "default", role: str = "owner"):
+def _user(org_id: str = "org-test", role: str = "owner"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=f"{role}-user",
@@ -101,14 +101,14 @@ def alt_pdf():
 def test_archive_round_trip_returns_identical_bytes(db, sample_pdf):
     out = archive_pdf(
         db,
-        organization_id="default",
+        organization_id="org-test",
         content=sample_pdf,
         filename="acme-inv.pdf",
         content_type="application/pdf",
     )
     assert out.size_bytes == len(sample_pdf)
     fetched = fetch_pdf(
-        db, organization_id="default", content_hash=out.content_hash,
+        db, organization_id="org-test", content_hash=out.content_hash,
     )
     assert fetched is not None
     assert fetched["content"] == sample_pdf
@@ -118,7 +118,7 @@ def test_archive_round_trip_returns_identical_bytes(db, sample_pdf):
 
 def test_content_hash_is_sha256_hex(db, sample_pdf):
     out = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
     )
     expected = hashlib.sha256(sample_pdf).hexdigest()
     assert out.content_hash == expected
@@ -128,11 +128,11 @@ def test_content_hash_is_sha256_hex(db, sample_pdf):
 
 def test_dedup_returns_existing_row_no_duplicate(db, sample_pdf):
     first = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
         filename="first.pdf",
     )
     second = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
         filename="second.pdf",  # different filename, same bytes
     )
     assert first.content_hash == second.content_hash
@@ -142,7 +142,7 @@ def test_dedup_returns_existing_row_no_duplicate(db, sample_pdf):
         cur.execute(
             "SELECT COUNT(*) AS n FROM invoice_originals "
             "WHERE organization_id = %s AND content_hash = %s",
-            ("default", first.content_hash),
+            ("org-test", first.content_hash),
         )
         row = cur.fetchone()
     if isinstance(row, dict):
@@ -156,7 +156,7 @@ def test_dedup_returns_existing_row_no_duplicate(db, sample_pdf):
 
 def test_tenant_isolation_same_bytes_two_rows(db, sample_pdf):
     out_a = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
     )
     out_b = archive_pdf(
         db, organization_id="other-tenant", content=sample_pdf,
@@ -165,13 +165,13 @@ def test_tenant_isolation_same_bytes_two_rows(db, sample_pdf):
     assert out_a.content_hash == out_b.content_hash
     # Cross-tenant fetch returns None (not the bytes)
     cross = fetch_pdf(
-        db, organization_id="default",
+        db, organization_id="org-test",
         content_hash=out_b.content_hash,
     )
     # Same hash works because it's our own row, but verify ap_item_id
     # came from default tenant's row, not other-tenant's:
     assert cross is not None
-    assert cross["organization_id"] == "default"
+    assert cross["organization_id"] == "org-test"
 
     # An org with no archived row gets None
     not_found = fetch_pdf(
@@ -185,28 +185,28 @@ def test_tenant_isolation_same_bytes_two_rows(db, sample_pdf):
 
 
 def test_update_on_invoice_originals_is_rejected(db, sample_pdf):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     with pytest.raises(Exception) as excinfo:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
                 "UPDATE invoice_originals SET filename = 'tampered.pdf' "
                 "WHERE organization_id = %s AND content_hash = %s",
-                ("default", out.content_hash),
+                ("org-test", out.content_hash),
             )
             conn.commit()
     assert "append-only" in str(excinfo.value).lower()
 
 
 def test_delete_on_invoice_originals_is_rejected(db, sample_pdf):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     with pytest.raises(Exception) as excinfo:
         with db.connect() as conn:
             cur = conn.cursor()
             cur.execute(
                 "DELETE FROM invoice_originals "
                 "WHERE organization_id = %s AND content_hash = %s",
-                ("default", out.content_hash),
+                ("org-test", out.content_hash),
             )
             conn.commit()
     assert "append-only" in str(excinfo.value).lower()
@@ -216,7 +216,7 @@ def test_delete_on_invoice_originals_is_rejected(db, sample_pdf):
 
 
 def test_retention_default_is_seven_years(db, sample_pdf):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     upload_dt = datetime.fromisoformat(out.uploaded_at)
     retention_dt = datetime.fromisoformat(out.retention_until)
     delta_days = (retention_dt - upload_dt).days
@@ -227,10 +227,10 @@ def test_retention_default_is_seven_years(db, sample_pdf):
 
 def test_retention_override_via_org_settings(db, sample_pdf):
     db.update_organization(
-        "default",
+        "org-test",
         settings_json={"retention_years": 10},
     )
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     upload_dt = datetime.fromisoformat(out.uploaded_at)
     retention_dt = datetime.fromisoformat(out.retention_until)
     delta_days = (retention_dt - upload_dt).days
@@ -243,14 +243,14 @@ def test_retention_override_via_org_settings(db, sample_pdf):
 
 def test_empty_content_rejected(db):
     with pytest.raises(ArchiveError) as excinfo:
-        archive_pdf(db, organization_id="default", content=b"")
+        archive_pdf(db, organization_id="org-test", content=b"")
     assert "empty" in str(excinfo.value).lower()
 
 
 def test_oversized_content_rejected(db):
     too_big = b"X" * (MAX_CONTENT_BYTES + 1)
     with pytest.raises(ArchiveError) as excinfo:
-        archive_pdf(db, organization_id="default", content=too_big)
+        archive_pdf(db, organization_id="org-test", content=too_big)
     assert "too_large" in str(excinfo.value).lower()
 
 
@@ -263,10 +263,10 @@ def test_missing_org_rejected(db, sample_pdf):
 
 
 def test_link_archive_to_ap_item_persists_hash(db, sample_pdf):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     item = db.create_ap_item({
         "id": "AP-link-test-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 100.0,
         "state": "received",
@@ -284,20 +284,20 @@ def test_list_originals_via_ap_item_hash(db, sample_pdf, alt_pdf):
     archive even if the archive's own ap_item_id is NULL (the typical
     intake pattern: archive first, link via AP item later)."""
     out = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
         # ap_item_id intentionally NOT passed — simulating intake
         # archive before AP item exists
     )
     item = db.create_ap_item({
         "id": "AP-list-test-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 100.0,
         "state": "received",
         "attachment_content_hash": out.content_hash,
     })
     rows = list_originals_for_ap_item(
-        db, organization_id="default", ap_item_id=item["id"],
+        db, organization_id="org-test", ap_item_id=item["id"],
     )
     assert len(rows) == 1
     assert rows[0]["content_hash"] == out.content_hash
@@ -307,9 +307,9 @@ def test_list_originals_via_ap_item_hash(db, sample_pdf, alt_pdf):
 
 
 def test_archive_emits_audit_event(db, sample_pdf):
-    archive_pdf(db, organization_id="default", content=sample_pdf)
+    archive_pdf(db, organization_id="org-test", content=sample_pdf)
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["invoice_original_archived"],
     )
     matching = events.get("events", [])
@@ -317,10 +317,10 @@ def test_archive_emits_audit_event(db, sample_pdf):
 
 
 def test_dedupe_emits_separate_audit_event(db, sample_pdf):
-    archive_pdf(db, organization_id="default", content=sample_pdf)
-    archive_pdf(db, organization_id="default", content=sample_pdf)
+    archive_pdf(db, organization_id="org-test", content=sample_pdf)
+    archive_pdf(db, organization_id="org-test", content=sample_pdf)
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["invoice_original_archived"],
     )
     # Idempotency_key uses outcome — first is "inserted",
@@ -333,17 +333,17 @@ def test_dedupe_emits_separate_audit_event(db, sample_pdf):
 
 
 def test_list_endpoint_returns_originals(db, sample_pdf, client):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     item = db.create_ap_item({
         "id": "AP-http-list-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 100.0,
         "state": "received",
         "attachment_content_hash": out.content_hash,
     })
     resp = client.get(
-        f"/api/workspace/ap/items/{item['id']}/originals?organization_id=default",
+        f"/api/workspace/ap/items/{item['id']}/originals?organization_id=org-test",
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -353,11 +353,11 @@ def test_list_endpoint_returns_originals(db, sample_pdf, client):
 
 def test_download_endpoint_streams_bytes(db, sample_pdf, client):
     out = archive_pdf(
-        db, organization_id="default", content=sample_pdf,
+        db, organization_id="org-test", content=sample_pdf,
         filename="acme.pdf",
     )
     resp = client.get(
-        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=default",
+        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=org-test",
     )
     assert resp.status_code == 200, resp.text
     assert resp.content == sample_pdf
@@ -372,18 +372,18 @@ def test_download_cross_tenant_returns_404(db, sample_pdf, client):
         db, organization_id="other-tenant", content=sample_pdf,
     )
     resp = client.get(
-        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=default",
+        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=org-test",
     )
     assert resp.status_code == 404
 
 
 def test_download_emits_audit_event(db, sample_pdf, client):
-    out = archive_pdf(db, organization_id="default", content=sample_pdf)
+    out = archive_pdf(db, organization_id="org-test", content=sample_pdf)
     client.get(
-        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=default",
+        f"/api/workspace/ap/items/originals/{out.content_hash}?organization_id=org-test",
     )
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["invoice_original_downloaded"],
     )
     assert events.get("events"), "expected invoice_original_downloaded audit event"

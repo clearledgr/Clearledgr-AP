@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,

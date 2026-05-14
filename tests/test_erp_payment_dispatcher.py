@@ -54,12 +54,12 @@ from clearledgr.services.erp_payment_dispatcher import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
 def _make_awaiting_ap_item(
-    db, *, item_id: str, erp_reference: str, org: str = "default",
+    db, *, item_id: str, erp_reference: str, org: str = "org-test",
 ) -> dict:
     db.ensure_organization(org, organization_name=org)
     item = db.create_ap_item({
@@ -154,7 +154,7 @@ async def test_qb_dispatch_records_confirmation_end_to_end(db):
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
 
     assert result["events_parsed"] == 1
@@ -162,7 +162,7 @@ async def test_qb_dispatch_records_confirmation_end_to_end(db):
     fresh = db.get_ap_item(item["id"])
     assert fresh["state"] == "payment_executed"
 
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert len(rows) == 1
     assert rows[0]["payment_id"] == "BP-77"
     assert rows[0]["source"] == "quickbooks"
@@ -201,13 +201,13 @@ async def test_qb_dispatch_voided_billpayment_marks_failed(db):
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
 
     assert result["events_dispatched"] == 1
     fresh = db.get_ap_item(item["id"])
     assert fresh["state"] == "payment_failed"
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert rows[0]["status"] == "failed"
     assert rows[0]["failure_reason"] == "voided"
 
@@ -245,7 +245,7 @@ async def test_qb_dispatch_multi_linked_bills_emits_one_event_each(db):
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
     assert result["events_dispatched"] == 2
     assert db.get_ap_item(a["id"])["state"] == "payment_executed"
@@ -283,15 +283,15 @@ async def test_qb_dispatch_redelivery_idempotent(db):
         new=fake_fetch,
     ):
         first = await dispatch_quickbooks_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
         second = await dispatch_quickbooks_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
     assert first["events_dispatched"] == 1
     assert second["duplicates"] == 1
     assert second["events_dispatched"] == 0
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert len(rows) == 1
 
 
@@ -354,12 +354,12 @@ async def test_xero_dispatch_records_paid_invoice(db):
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
     assert result["events_dispatched"] == 1
     fresh = db.get_ap_item(item["id"])
     assert fresh["state"] == "payment_executed"
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert rows[0]["source"] == "xero"
     assert rows[0]["payment_id"] == "xero-pmt-77"
 
@@ -385,10 +385,10 @@ async def test_xero_dispatch_unpaid_invoice_no_event(db):
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
     assert result["events_dispatched"] == 0
-    rows = db.list_payment_confirmations("default")
+    rows = db.list_payment_confirmations("org-test")
     assert rows == []
 
 
@@ -417,7 +417,7 @@ async def test_xero_dispatch_voided_payment_records_failure(db):
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(
-            organization_id="default", raw_body=body, db=db,
+            organization_id="org-test", raw_body=body, db=db,
         )
     assert result["events_dispatched"] == 1
     fresh = db.get_ap_item(item["id"])
@@ -487,7 +487,7 @@ def test_netsuite_dispatch_end_to_end(db):
         b' "status": "Paid In Full"}]}'
     )
     result = dispatch_netsuite_payment_webhook(
-        organization_id="default", raw_body=body, db=db,
+        organization_id="org-test", raw_body=body, db=db,
     )
     assert result["events_dispatched"] == 1
     fresh = db.get_ap_item(item["id"])
@@ -503,10 +503,10 @@ def test_netsuite_dispatch_redelivery_idempotent(db):
         b' "status": "Paid In Full"}]}'
     )
     first = dispatch_netsuite_payment_webhook(
-        organization_id="default", raw_body=body, db=db,
+        organization_id="org-test", raw_body=body, db=db,
     )
     second = dispatch_netsuite_payment_webhook(
-        organization_id="default", raw_body=body, db=db,
+        organization_id="org-test", raw_body=body, db=db,
     )
     assert first["events_dispatched"] == 1
     assert second["duplicates"] == 1
@@ -525,7 +525,7 @@ def test_dispatcher_orphan_emits_audit(db):
         b' "status": "Paid In Full"}]}'
     )
     result = dispatch_netsuite_payment_webhook(
-        organization_id="default", raw_body=body, db=db,
+        organization_id="org-test", raw_body=body, db=db,
     )
     assert result["events_skipped"] == 1
     expected_key = (

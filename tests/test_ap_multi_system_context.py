@@ -52,7 +52,7 @@ def _create_item(db: ClearledgrDB, *, item_id: str, vendor: str, metadata: dict)
             "currency": "USD",
             "invoice_number": f"INV-{item_id}",
             "state": "needs_info",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": metadata,
         }
     )
@@ -129,7 +129,7 @@ def test_context_links_card_and_dms_sources(tmp_path: Path):
 def test_context_links_procurement_source_with_po_match(tmp_path: Path):
     db = _make_db(tmp_path)
 
-    po_service = get_purchase_order_service("default")
+    po_service = get_purchase_order_service("org-test")
     po = po_service.create_po(
         vendor_id="vendor-google",
         vendor_name="Google",
@@ -228,7 +228,7 @@ def test_ap_aggregation_metrics_exposes_vendor_spend_and_source_density(tmp_path
     _build_context_payload(db, item_one)
     _build_context_payload(db, item_two)
 
-    metrics = db.get_ap_aggregation_metrics("default")
+    metrics = db.get_ap_aggregation_metrics("org-test")
     assert metrics["totals"]["items"] >= 2
     assert metrics["sources"]["total_links"] >= 2
     assert metrics["sources"]["avg_links_per_item"] > 0

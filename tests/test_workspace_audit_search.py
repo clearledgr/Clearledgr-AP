@@ -40,12 +40,12 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
 
-def _admin_user(org_id: str = "default"):
+def _admin_user(org_id: str = "org-test"):
     return SimpleNamespace(
         email="admin@example.com",
         user_id="admin-user",
@@ -54,7 +54,7 @@ def _admin_user(org_id: str = "default"):
     )
 
 
-def _operator_user(org_id: str = "default"):
+def _operator_user(org_id: str = "org-test"):
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
@@ -73,7 +73,7 @@ def client_factory(db):
     return _build
 
 
-def _seed_event(db, *, box_id: str, event_type: str, organization_id: str = "default", actor_id: str = "admin@example.com", box_type: str = "ap_item", ts: str | None = None):
+def _seed_event(db, *, box_id: str, event_type: str, organization_id: str = "org-test", actor_id: str = "admin@example.com", box_type: str = "ap_item", ts: str | None = None):
     """Insert a minimal audit event. Returns the inserted row dict."""
     payload = {
         "box_id": box_id,
@@ -100,7 +100,7 @@ def _seed_event(db, *, box_id: str, event_type: str, organization_id: str = "def
 
 def test_search_requires_admin(client_factory):
     client = client_factory(_operator_user)
-    resp = client.get("/api/workspace/audit/search?organization_id=default")
+    resp = client.get("/api/workspace/audit/search?organization_id=org-test")
     assert resp.status_code == 403
     assert resp.json()["detail"] == "admin_role_required"
 
@@ -141,7 +141,7 @@ def test_search_returns_newest_first(db, client_factory):
     e3 = _seed_event(db, box_id="ap-1", event_type="erp_post_completed", ts="2026-04-28T10:00:00+00:00")
 
     client = client_factory(_admin_user)
-    resp = client.get("/api/workspace/audit/search?organization_id=default&limit=10")
+    resp = client.get("/api/workspace/audit/search?organization_id=org-test&limit=10")
     assert resp.status_code == 200
     body = resp.json()
     ids = [e["id"] for e in body["events"]]
@@ -156,7 +156,7 @@ def test_search_filters_by_event_type(db, client_factory):
 
     client = client_factory(_admin_user)
     resp = client.get(
-        "/api/workspace/audit/search?organization_id=default&event_type=invoice_approved,erp_post_completed&limit=10"
+        "/api/workspace/audit/search?organization_id=org-test&event_type=invoice_approved,erp_post_completed&limit=10"
     )
     assert resp.status_code == 200
     types = {e["event_type"] for e in resp.json()["events"]}
@@ -169,7 +169,7 @@ def test_search_filters_by_actor(db, client_factory):
 
     client = client_factory(_admin_user)
     resp = client.get(
-        "/api/workspace/audit/search?organization_id=default&actor_id=alice@example.com&limit=10"
+        "/api/workspace/audit/search?organization_id=org-test&actor_id=alice@example.com&limit=10"
     )
     assert resp.status_code == 200
     actors = {e["actor_id"] for e in resp.json()["events"]}
@@ -182,7 +182,7 @@ def test_search_filters_by_box(db, client_factory):
 
     client = client_factory(_admin_user)
     resp = client.get(
-        "/api/workspace/audit/search?organization_id=default&box_type=ap_item&box_id=ap-4a&limit=10"
+        "/api/workspace/audit/search?organization_id=org-test&box_type=ap_item&box_id=ap-4a&limit=10"
     )
     assert resp.status_code == 200
     box_ids = {e["box_id"] for e in resp.json()["events"]}
@@ -196,7 +196,7 @@ def test_search_filters_by_date_range(db, client_factory):
 
     client = client_factory(_admin_user)
     resp = client.get(
-        "/api/workspace/audit/search?organization_id=default&from_ts=2026-04-26T00:00:00%2B00:00&to_ts=2026-04-29T00:00:00%2B00:00&box_id=ap-5&limit=10"
+        "/api/workspace/audit/search?organization_id=org-test&from_ts=2026-04-26T00:00:00%2B00:00&to_ts=2026-04-29T00:00:00%2B00:00&box_id=ap-5&limit=10"
     )
     assert resp.status_code == 200
     ids = [e["id"] for e in resp.json()["events"]]
@@ -226,7 +226,7 @@ def test_search_paginates_with_cursor(db, client_factory):
     cursor = None
     pages = 0
     while True:
-        url = "/api/workspace/audit/search?organization_id=default&box_id=ap-paginate&limit=2"
+        url = "/api/workspace/audit/search?organization_id=org-test&box_id=ap-paginate&limit=2"
         if cursor:
             url += f"&cursor={cursor}"
         resp = client.get(url)
@@ -248,7 +248,7 @@ def test_search_paginates_with_cursor(db, client_factory):
 def test_search_returns_no_cursor_when_results_fit_in_one_page(db, client_factory):
     _seed_event(db, box_id="ap-onepage", event_type="state_transition")
     client = client_factory(_admin_user)
-    resp = client.get("/api/workspace/audit/search?organization_id=default&box_id=ap-onepage&limit=10")
+    resp = client.get("/api/workspace/audit/search?organization_id=org-test&box_id=ap-onepage&limit=10")
     assert resp.status_code == 200
     body = resp.json()
     assert body["next_cursor"] is None

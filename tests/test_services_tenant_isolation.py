@@ -2,7 +2,7 @@
 fallbacks in services/stores layer that mirrored the same hazard the
 runtime had.
 
-Pattern: each fix lets None / unset map to "default" (legitimate
+Pattern: each fix lets None / unset map to "org-test" (legitimate
 platform-mode sentinel) but rejects empty string explicitly passed
 (programming error masking cross-tenant data leakage).
 """
@@ -188,7 +188,7 @@ class TestRuntimeInvoiceProcessingPayloadTrust:
 class TestPurchaseOrdersRowOrgGuard:
     """Schema is NOT NULL on organization_id for both purchase_orders
     and goods_receipts. The dataclass deserializers used to silently
-    fall back to "default" if the column came back empty, which would
+    fall back to "org-test" if the column came back empty, which would
     rewrite the row under the platform tenant on the next save. Now
     refuse loudly so corruption is visible."""
 
@@ -264,7 +264,7 @@ class TestPurchaseOrdersRowOrgGuard:
 
 class TestSlackDeliveryRequiresOrg:
     """The Slack workspace is per-tenant. Routing a tenant DM through
-    the platform 'default' workspace silently leaks data. Refuse
+    the platform 'org-test' workspace silently leaks data. Refuse
     instead — caller treats it as a delivery failure (the existing
     return-False contract).
 

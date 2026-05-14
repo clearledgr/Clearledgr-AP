@@ -28,13 +28,13 @@ from clearledgr.services.adaptive_thresholds import (  # noqa: E402
 def db(tmp_path, monkeypatch):
     _db = db_module.get_db()
     _db.initialize()
-    _db.create_organization("default", "Default", settings={})
+    _db.create_organization("org-test", "Default", settings={})
     return _db
 
 
 @pytest.fixture()
 def svc(db):
-    return AdaptiveThresholdService(organization_id="default")
+    return AdaptiveThresholdService(organization_id="org-test")
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class TestGetThresholdForVendor:
 
     def test_returns_learned_threshold_from_vendor_profile(self, svc, db):
         db.upsert_vendor_profile(
-            "default", "Acme Corp",
+            "org-test", "Acme Corp",
             metadata={"learned_auto_approve_threshold": 0.88},
         )
         threshold = svc.get_threshold_for_vendor("Acme Corp")
@@ -57,7 +57,7 @@ class TestGetThresholdForVendor:
 
     def test_clamps_to_min(self, svc, db):
         db.upsert_vendor_profile(
-            "default", "Acme Corp",
+            "org-test", "Acme Corp",
             metadata={"learned_auto_approve_threshold": 0.50},
         )
         threshold = svc.get_threshold_for_vendor("Acme Corp")
@@ -65,7 +65,7 @@ class TestGetThresholdForVendor:
 
     def test_clamps_to_max(self, svc, db):
         db.upsert_vendor_profile(
-            "default", "Acme Corp",
+            "org-test", "Acme Corp",
             metadata={"learned_auto_approve_threshold": 1.5},
         )
         threshold = svc.get_threshold_for_vendor("Acme Corp")
@@ -102,7 +102,7 @@ class TestRecordDecisionOutcome:
             )
 
         # Read the vendor profile to check the learned threshold
-        profile = db.get_vendor_profile("default", vendor) or {}
+        profile = db.get_vendor_profile("org-test", vendor) or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -131,7 +131,7 @@ class TestRecordDecisionOutcome:
                 confidence=0.96,
             )
 
-        profile = db.get_vendor_profile("default", vendor) or {}
+        profile = db.get_vendor_profile("org-test", vendor) or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -150,7 +150,7 @@ class TestRecordDecisionOutcome:
                 confidence=0.96,
             )
 
-        profile = db.get_vendor_profile("default", vendor) or {}
+        profile = db.get_vendor_profile("org-test", vendor) or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)

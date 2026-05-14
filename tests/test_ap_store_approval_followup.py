@@ -14,7 +14,7 @@ def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, mo
     db.create_ap_item(
         {
             "id": "ap-followup-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-followup-1",
             "state": "needs_approval",
             "metadata": {
@@ -25,7 +25,7 @@ def test_get_pending_approver_ids_falls_back_to_pending_chain_steps(tmp_path, mo
 
     chain = SimpleNamespace(
         chain_id="chain-followup-1",
-        organization_id="default",
+        organization_id="org-test",
         invoice_id="gmail-thread-followup-1",
         vendor_name="Approval Chain Co",
         amount=10.0,
@@ -64,7 +64,7 @@ def test_get_pending_approver_ids_prefers_delivery_targets_metadata(tmp_path, mo
     db.create_ap_item(
         {
             "id": "ap-followup-2",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-followup-2",
             "state": "needs_approval",
             "metadata": {

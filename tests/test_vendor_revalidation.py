@@ -48,7 +48,7 @@ from clearledgr.services.vendor_revalidation import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -56,7 +56,7 @@ def _user(role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.test",
         user_id=uid,
-        organization_id="default",
+        organization_id="org-test",
         role=role,
     )
 
@@ -72,7 +72,7 @@ def client():
 def _seed_ap_item(db, *, item_id: str, vendor_name: str, state: str = "needs_approval"):
     return db.create_ap_item({
         "id": item_id,
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": vendor_name,
         "amount": 250.0,
         "currency": "USD",
@@ -85,13 +85,13 @@ def _seed_ap_item(db, *, item_id: str, vendor_name: str, state: str = "needs_app
 
 
 def test_revalidation_flags_in_flight_items(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeRV")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeRV")
     a = _seed_ap_item(db, item_id="ap-rv-1", vendor_name="AcmeRV", state="needs_approval")
     b = _seed_ap_item(db, item_id="ap-rv-2", vendor_name="AcmeRV", state="ready_to_post")
 
     out = revalidate_in_flight_ap_items(
         db,
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="AcmeRV",
         reason="vendor_blocked",
         actor="alice@example.test",
@@ -114,7 +114,7 @@ def test_revalidation_flags_in_flight_items(db):
 def test_revalidation_severity_for_archived_status(db):
     _seed_ap_item(db, item_id="ap-rv-arch-1", vendor_name="AcmeRVArch", state="needs_approval")
     revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeRVArch",
+        db, organization_id="org-test", vendor_name="AcmeRVArch",
         reason="vendor_status_archived", actor="bob@example.test",
     )
     item = db.get_ap_item("ap-rv-arch-1")
@@ -125,7 +125,7 @@ def test_revalidation_severity_for_archived_status(db):
 def test_revalidation_severity_for_iban_change(db):
     _seed_ap_item(db, item_id="ap-rv-iban-1", vendor_name="AcmeRVIban", state="needs_approval")
     revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeRVIban",
+        db, organization_id="org-test", vendor_name="AcmeRVIban",
         reason="vendor_iban_change_pending", actor="system:iban",
     )
     item = db.get_ap_item("ap-rv-iban-1")
@@ -134,7 +134,7 @@ def test_revalidation_severity_for_iban_change(db):
 
 
 def test_revalidation_skips_terminal_states(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeRVTerm")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeRVTerm")
     # Use create_ap_item with state directly. CLOSED/REJECTED/REVERSED
     # may need to be reached via valid transitions; for this test we
     # write the state on create which the create path accepts.
@@ -144,7 +144,7 @@ def test_revalidation_skips_terminal_states(db):
     _seed_ap_item(db, item_id="ap-rv-term-4", vendor_name="AcmeRVTerm", state="posted_to_erp")
 
     out = revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeRVTerm",
+        db, organization_id="org-test", vendor_name="AcmeRVTerm",
         reason="vendor_blocked", actor="alice@example.test",
     )
     assert len(out.affected_ap_item_ids) == 0
@@ -152,16 +152,16 @@ def test_revalidation_skips_terminal_states(db):
 
 
 def test_revalidation_idempotent_on_same_reason(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeIdem")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeIdem")
     _seed_ap_item(db, item_id="ap-rv-idem-1", vendor_name="AcmeIdem")
     revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeIdem",
+        db, organization_id="org-test", vendor_name="AcmeIdem",
         reason="vendor_blocked", actor="alice@example.test",
     )
     # Second call with same reason should skip the already-flagged
     # item and report it under skipped_already_flagged.
     out2 = revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeIdem",
+        db, organization_id="org-test", vendor_name="AcmeIdem",
         reason="vendor_blocked", actor="alice@example.test",
     )
     assert len(out2.affected_ap_item_ids) == 0
@@ -170,7 +170,7 @@ def test_revalidation_idempotent_on_same_reason(db):
 
 def test_revalidation_unknown_vendor_returns_empty_no_errors(db):
     out = revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="DoesNotExist",
+        db, organization_id="org-test", vendor_name="DoesNotExist",
         reason="vendor_blocked", actor="alice@example.test",
     )
     assert out.affected_ap_item_ids == []
@@ -178,15 +178,15 @@ def test_revalidation_unknown_vendor_returns_empty_no_errors(db):
 
 
 def test_revalidation_emits_audit_per_item(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeAudit")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeAudit")
     _seed_ap_item(db, item_id="ap-rv-audit-1", vendor_name="AcmeAudit")
     _seed_ap_item(db, item_id="ap-rv-audit-2", vendor_name="AcmeAudit")
     revalidate_in_flight_ap_items(
-        db, organization_id="default", vendor_name="AcmeAudit",
+        db, organization_id="org-test", vendor_name="AcmeAudit",
         reason="vendor_blocked", actor="alice@example.test",
     )
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_revalidation_triggered"],
     )
     matching = [
@@ -214,12 +214,12 @@ def test_severity_sets_are_disjoint():
 
 
 def test_status_flip_to_blocked_triggers_revalidation(db, client):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeBlock")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeBlock")
     _seed_ap_item(db, item_id="ap-block-1", vendor_name="AcmeBlock", state="needs_approval")
     _seed_ap_item(db, item_id="ap-block-2", vendor_name="AcmeBlock", state="ready_to_post")
 
     resp = client.patch(
-        "/api/vendors/AcmeBlock/status?organization_id=default",
+        "/api/vendors/AcmeBlock/status?organization_id=org-test",
         json={"status": "blocked", "reason": "AML hit"},
     )
     assert resp.status_code == 200, resp.text
@@ -238,10 +238,10 @@ def test_status_flip_to_blocked_triggers_revalidation(db, client):
 
 
 def test_status_flip_to_archived_uses_medium_severity(db, client):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeArch")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeArch")
     _seed_ap_item(db, item_id="ap-arch-1", vendor_name="AcmeArch")
     resp = client.patch(
-        "/api/vendors/AcmeArch/status?organization_id=default",
+        "/api/vendors/AcmeArch/status?organization_id=org-test",
         json={"status": "archived"},
     )
     assert resp.status_code == 200
@@ -253,14 +253,14 @@ def test_status_flip_to_archived_uses_medium_severity(db, client):
 def test_status_no_op_skips_revalidation(db, client):
     """Re-saving the same status should NOT trigger revalidation —
     the response carries no ``revalidation`` block."""
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeNoOp")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeNoOp")
     db.set_vendor_status(
-        organization_id="default", vendor_name="AcmeNoOp", status="blocked",
+        organization_id="org-test", vendor_name="AcmeNoOp", status="blocked",
     )
     _seed_ap_item(db, item_id="ap-noop-1", vendor_name="AcmeNoOp")
 
     resp = client.patch(
-        "/api/vendors/AcmeNoOp/status?organization_id=default",
+        "/api/vendors/AcmeNoOp/status?organization_id=org-test",
         json={"status": "blocked"},
     )
     assert resp.status_code == 200
@@ -276,10 +276,10 @@ def test_status_flip_back_to_active_does_not_clear_flags(db, client):
     """Going back to active doesn't auto-clear vendor_blocked flags
     — the original cause may still apply; operators clear via
     explicit AP-item resolution."""
-    db.upsert_vendor_profile(organization_id="default", vendor_name="AcmeRevert")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="AcmeRevert")
     _seed_ap_item(db, item_id="ap-revert-1", vendor_name="AcmeRevert")
     db.set_vendor_status(
-        organization_id="default", vendor_name="AcmeRevert", status="blocked",
+        organization_id="org-test", vendor_name="AcmeRevert", status="blocked",
     )
     db.update_ap_item(
         "ap-revert-1",
@@ -288,7 +288,7 @@ def test_status_flip_back_to_active_does_not_clear_flags(db, client):
     )
     # Now flip to active via the API
     resp = client.patch(
-        "/api/vendors/AcmeRevert/status?organization_id=default",
+        "/api/vendors/AcmeRevert/status?organization_id=org-test",
         json={"status": "active"},
     )
     assert resp.status_code == 200

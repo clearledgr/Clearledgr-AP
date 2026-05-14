@@ -57,7 +57,7 @@ pytestmark = _vo_skip_pytest.mark.skip(
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -65,7 +65,7 @@ def _user(role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=uid,
-        organization_id="default",
+        organization_id="org-test",
         role=role,
     )
 
@@ -195,12 +195,12 @@ def test_commit_upserts_valid_rows(db):
     )
     preview = parse_and_validate(csv_text)
     summary = commit_rows(
-        db, "default", preview.rows, actor="owner@example.test",
+        db, "org-test", preview.rows, actor="owner@example.test",
     )
     assert summary["applied_count"] == 2
     assert summary["skipped_count"] == 0
 
-    acme = db.get_vendor_profile("default", "Acme")
+    acme = db.get_vendor_profile("org-test", "Acme")
     assert acme is not None
     assert acme.get("primary_contact_email") == "ap@acme.test"
     assert acme.get("payment_terms") == "Net 30"
@@ -214,23 +214,23 @@ def test_commit_skips_invalid_rows(db):
     )
     preview = parse_and_validate(csv_text)
     summary = commit_rows(
-        db, "default", preview.rows, actor="owner@example.test",
+        db, "org-test", preview.rows, actor="owner@example.test",
     )
     assert summary["applied_count"] == 1
     assert summary["skipped_count"] == 1
     # Acme landed; BadVendor did not
-    assert db.get_vendor_profile("default", "Acme") is not None
-    assert db.get_vendor_profile("default", "BadVendor") is None
+    assert db.get_vendor_profile("org-test", "Acme") is not None
+    assert db.get_vendor_profile("org-test", "BadVendor") is None
 
 
 def test_commit_emits_audit_event(db):
     csv_text = "vendor_name\nAcme\nGlobex\n"
     preview = parse_and_validate(csv_text)
     commit_rows(
-        db, "default", preview.rows, actor="owner@example.test",
+        db, "org-test", preview.rows, actor="owner@example.test",
     )
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_bulk_imported"],
     )
     assert events.get("events"), "expected vendor_bulk_imported event"
@@ -247,7 +247,7 @@ def test_commit_emits_audit_event(db):
 def test_preview_endpoint_admin_gated(client_factory):
     client = client_factory(lambda: _user(role=ROLE_AP_CLERK, uid="clerk"))
     resp = client.post(
-        "/api/vendors/import/preview?organization_id=default",
+        "/api/vendors/import/preview?organization_id=org-test",
         json={"csv_text": "vendor_name\nAcme\n"},
     )
     assert resp.status_code == 403
@@ -256,7 +256,7 @@ def test_preview_endpoint_admin_gated(client_factory):
 def test_preview_endpoint_returns_validation_payload(client_factory):
     client = client_factory()
     resp = client.post(
-        "/api/vendors/import/preview?organization_id=default",
+        "/api/vendors/import/preview?organization_id=org-test",
         json={"csv_text": "vendor_name,email\nAcme,bad-email\n"},
     )
     assert resp.status_code == 200, resp.text
@@ -269,13 +269,13 @@ def test_preview_endpoint_returns_validation_payload(client_factory):
 def test_commit_endpoint_writes_profiles(db, client_factory):
     client = client_factory()
     resp = client.post(
-        "/api/vendors/import/commit?organization_id=default",
+        "/api/vendors/import/commit?organization_id=org-test",
         json={"csv_text": "vendor_name,email\nFreshlyImported,ap@imp.test\n"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["applied_count"] == 1
-    profile = db.get_vendor_profile("default", "FreshlyImported")
+    profile = db.get_vendor_profile("org-test", "FreshlyImported")
     assert profile is not None
     assert profile.get("primary_contact_email") == "ap@imp.test"
 
@@ -283,7 +283,7 @@ def test_commit_endpoint_writes_profiles(db, client_factory):
 def test_commit_endpoint_rejects_fatal_csv(client_factory):
     client = client_factory()
     resp = client.post(
-        "/api/vendors/import/commit?organization_id=default",
+        "/api/vendors/import/commit?organization_id=org-test",
         json={"csv_text": "email,address\nfoo,bar\n"},  # missing vendor_name
     )
     assert resp.status_code == 422

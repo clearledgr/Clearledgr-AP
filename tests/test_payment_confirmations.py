@@ -52,11 +52,11 @@ from clearledgr.services.payment_tracking import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
-def _make_posted_ap_item(db, *, item_id: str, org: str = "default") -> dict:
+def _make_posted_ap_item(db, *, item_id: str, org: str = "org-test") -> dict:
     """AP item walked to posted_to_erp — the realistic starting state
     for a payment-tracking webhook."""
     db.ensure_organization(org, organization_name=org)
@@ -74,7 +74,7 @@ def _make_posted_ap_item(db, *, item_id: str, org: str = "default") -> dict:
     return db.get_ap_item(item["id"])
 
 
-def _make_awaiting_ap_item(db, *, item_id: str, org: str = "default") -> dict:
+def _make_awaiting_ap_item(db, *, item_id: str, org: str = "org-test") -> dict:
     item = _make_posted_ap_item(db, item_id=item_id, org=org)
     db.update_ap_item(item["id"], state="awaiting_payment")
     return db.get_ap_item(item["id"])
@@ -86,7 +86,7 @@ def _make_awaiting_ap_item(db, *, item_id: str, org: str = "default") -> dict:
 def test_create_and_get_by_id(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-roundtrip-1")
     row = db.create_payment_confirmation(
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-100",
         source="quickbooks",
@@ -112,13 +112,13 @@ def test_create_and_get_by_id(db):
 def test_get_by_external_composite_key(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-extkey-1")
     db.create_payment_confirmation(
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-EXT-1",
         source="xero",
     )
     fetched = db.get_payment_confirmation_by_external_id(
-        "default", "xero", "PAY-EXT-1",
+        "org-test", "xero", "PAY-EXT-1",
     )
     assert fetched is not None
     assert fetched["payment_id"] == "PAY-EXT-1"
@@ -128,14 +128,14 @@ def test_get_by_external_composite_key(db):
 def test_unique_composite_key_raises_conflict(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-conflict-1")
     db.create_payment_confirmation(
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-DUP",
         source="quickbooks",
     )
     with pytest.raises(PaymentConfirmationConflict):
         db.create_payment_confirmation(
-            organization_id="default",
+            organization_id="org-test",
             ap_item_id=item["id"],
             payment_id="PAY-DUP",
             source="quickbooks",
@@ -146,7 +146,7 @@ def test_invalid_status_rejected(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-bad-status")
     with pytest.raises(ValueError):
         db.create_payment_confirmation(
-            organization_id="default",
+            organization_id="org-test",
             ap_item_id=item["id"],
             payment_id="PAY-BS",
             source="manual",
@@ -158,7 +158,7 @@ def test_amount_coercion_accepts_str_float_decimal(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-amt")
     for i, amt in enumerate(["123.45", 678.90, Decimal("999.99")]):
         row = db.create_payment_confirmation(
-            organization_id="default",
+            organization_id="org-test",
             ap_item_id=item["id"],
             payment_id=f"PAY-AMT-{i}",
             source="manual",
@@ -170,7 +170,7 @@ def test_amount_coercion_accepts_str_float_decimal(db):
 def test_list_for_ap_item_newest_first(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-list-1")
     db.create_payment_confirmation(
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-A",
         source="manual",
@@ -179,14 +179,14 @@ def test_list_for_ap_item_newest_first(db):
         failure_reason="insufficient_funds",
     )
     db.create_payment_confirmation(
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-B",
         source="manual",
         status="confirmed",
         settlement_at="2026-04-15T10:00:00+00:00",
     )
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert len(rows) == 2
     # Newest first by settlement_at DESC.
     assert rows[0]["payment_id"] == "PAY-B"
@@ -199,16 +199,16 @@ def test_list_for_ap_item_newest_first(db):
 def test_list_filter_by_status(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-filter-1")
     db.create_payment_confirmation(
-        organization_id="default", ap_item_id=item["id"],
+        organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-OK", source="manual", status="confirmed",
     )
     db.create_payment_confirmation(
-        organization_id="default", ap_item_id=item["id"],
+        organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-X", source="manual", status="failed",
         failure_reason="bank_returned",
     )
-    confirmed = db.list_payment_confirmations("default", status="confirmed")
-    failed = db.list_payment_confirmations("default", status="failed")
+    confirmed = db.list_payment_confirmations("org-test", status="confirmed")
+    failed = db.list_payment_confirmations("org-test", status="failed")
     confirmed_ids = {r["payment_id"] for r in confirmed}
     failed_ids = {r["payment_id"] for r in failed}
     assert "PAY-OK" in confirmed_ids
@@ -218,20 +218,20 @@ def test_list_filter_by_status(db):
 
 def test_list_filter_invalid_status_rejects(db):
     with pytest.raises(ValueError):
-        db.list_payment_confirmations("default", status="bogus")
+        db.list_payment_confirmations("org-test", status="bogus")
 
 
 def test_list_filter_by_source(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-src-1")
     db.create_payment_confirmation(
-        organization_id="default", ap_item_id=item["id"],
+        organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-QB", source="quickbooks",
     )
     db.create_payment_confirmation(
-        organization_id="default", ap_item_id=item["id"],
+        organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-XR", source="xero",
     )
-    qb = db.list_payment_confirmations("default", source="quickbooks")
+    qb = db.list_payment_confirmations("org-test", source="quickbooks")
     qb_ids = {r["payment_id"] for r in qb}
     assert "PAY-QB" in qb_ids
     assert "PAY-XR" not in qb_ids
@@ -263,7 +263,7 @@ def test_service_posted_to_erp_walks_to_executed(db):
     item = _make_posted_ap_item(db, item_id="AP-pc-walk-1")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-WALK-1",
         source="quickbooks",
@@ -284,7 +284,7 @@ def test_service_awaiting_payment_skips_to_executed(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-walk-2")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-WALK-2",
         source="sap_b1",
@@ -299,7 +299,7 @@ def test_service_in_flight_to_executed(db):
     db.update_ap_item(item["id"], state="payment_in_flight")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-WALK-3",
         source="xero",
@@ -313,7 +313,7 @@ def test_service_failure_walk(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-walk-4")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-WALK-4",
         source="quickbooks",
@@ -332,7 +332,7 @@ def test_service_failed_then_retry_to_executed(db):
     db.update_ap_item(item["id"], state="payment_failed")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-WALK-5",
         source="quickbooks",
@@ -346,7 +346,7 @@ def test_service_disputed_records_no_transition(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-disputed")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-DISPUTED",
         source="manual",
@@ -365,7 +365,7 @@ def test_service_terminal_state_no_transition(db):
     db.update_ap_item(item["id"], state="closed")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-TERM",
         source="manual",
@@ -383,7 +383,7 @@ def test_service_already_at_target_no_transition(db):
     db.update_ap_item(item["id"], state="payment_executed")
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-ALREADY",
         source="manual",
@@ -401,7 +401,7 @@ def test_service_idempotent_redelivery(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-idem")
     first = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-IDEM",
         source="quickbooks",
@@ -412,7 +412,7 @@ def test_service_idempotent_redelivery(db):
     # Same external key again → duplicate.
     second = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-IDEM",
         source="quickbooks",
@@ -423,7 +423,7 @@ def test_service_idempotent_redelivery(db):
     assert second.ap_state_unchanged_reason == "duplicate_redelivery"
 
     # Exactly one confirmation row.
-    rows = db.list_payment_confirmations_for_ap_item("default", item["id"])
+    rows = db.list_payment_confirmations_for_ap_item("org-test", item["id"])
     assert len(rows) == 1
 
 
@@ -434,14 +434,14 @@ def test_service_audit_event_idempotency_key_present(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-audit-idem")
     record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=item["id"],
         payment_id="PAY-AUDIT-1",
         source="xero",
         status="confirmed",
     )
     expected_key = (
-        f"payment_confirmation:default:xero:PAY-AUDIT-1:{item['id']}"
+        f"payment_confirmation:org-test:xero:PAY-AUDIT-1:{item['id']}"
     )
     fetched = db.get_ap_audit_event_by_key(expected_key)
     assert fetched is not None
@@ -453,11 +453,11 @@ def test_service_audit_event_idempotency_key_present(db):
 def test_service_redelivery_does_not_double_emit_audit(db):
     item = _make_awaiting_ap_item(db, item_id="AP-pc-audit-no-double")
     record_payment_confirmation(
-        db, organization_id="default", ap_item_id=item["id"],
+        db, organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-NDD", source="manual", status="confirmed",
     )
     record_payment_confirmation(
-        db, organization_id="default", ap_item_id=item["id"],
+        db, organization_id="org-test", ap_item_id=item["id"],
         payment_id="PAY-NDD", source="manual", status="confirmed",
     )
     matching = [
@@ -507,7 +507,7 @@ def test_service_missing_ap_item_still_records(db):
     bogus_id = f"AP-missing-{uuid.uuid4().hex[:8]}"
     result = record_payment_confirmation(
         db,
-        organization_id="default",
+        organization_id="org-test",
         ap_item_id=bogus_id,
         payment_id="PAY-ORPHAN",
         source="manual",

@@ -43,12 +43,12 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
 
-def _admin_user(org_id: str = "default"):
+def _admin_user(org_id: str = "org-test"):
     return SimpleNamespace(
         email="admin@example.com",
         user_id="admin-user",
@@ -61,7 +61,7 @@ def _operator_user():
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
-        organization_id="default",
+        organization_id="org-test",
         role="ap_clerk",
     )
 
@@ -76,7 +76,7 @@ def client_factory(db):
     return _build
 
 
-def _seed_event(db, *, box_id="ap-fanout-1", event_type="state_transition", organization_id="default"):
+def _seed_event(db, *, box_id="ap-fanout-1", event_type="state_transition", organization_id="org-test"):
     """Seed an event WITHOUT triggering fan-out — patches the dispatch
     task to no-op so tests can control timing."""
     with patch("clearledgr.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
@@ -111,7 +111,7 @@ def test_append_audit_event_dispatches_fanout(db):
             "event_type": "state_transition",
             "actor_type": "user",
             "actor_id": "admin@example.com",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "source": "test_seed",
             "payload_json": {"reason": "test"},
             "idempotency_key": f"dispatch_test:{time.time_ns()}",
@@ -133,7 +133,7 @@ def test_append_audit_event_swallows_dispatch_errors(db):
             "event_type": "state_transition",
             "actor_type": "user",
             "actor_id": "admin@example.com",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "source": "test_seed",
             "payload_json": {"reason": "test"},
             "idempotency_key": f"swallow_test:{time.time_ns()}",
@@ -163,19 +163,19 @@ def test_dispatch_enqueues_one_task_per_matching_subscription(db):
     """Two subs for the same event_type → two deliver tasks. A third
     sub for a different event_type is skipped."""
     sub_a = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition", "invoice_approved"],
         secret="topsecret",
     )
     sub_b = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem-b.example.com/audit",
         event_types=["state_transition"],
         secret="topsecret",
     )
     db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://noisy.example.com",
         event_types=["invoice_approved"],
         secret="",
@@ -200,7 +200,7 @@ def test_dispatch_enqueues_one_task_per_matching_subscription(db):
 
 def test_deliver_records_success_row(db):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition"],
         secret="topsecret",
@@ -217,7 +217,7 @@ def test_deliver_records_success_row(db):
 
     assert result["status"] == "success"
     rows = db.list_webhook_deliveries(
-        organization_id="default", webhook_subscription_id=sub["id"],
+        organization_id="org-test", webhook_subscription_id=sub["id"],
     )
     assert len(rows) == 1
     assert rows[0]["status"] == "success"
@@ -227,7 +227,7 @@ def test_deliver_records_success_row(db):
 
 def test_deliver_records_failure_and_schedules_retry(db):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://flaky.example.com/audit",
         event_types=["state_transition"],
         secret="s",
@@ -246,7 +246,7 @@ def test_deliver_records_failure_and_schedules_retry(db):
     # First failure: record as 'retrying' (we know there's a retry coming).
     assert result["status"] == "retrying"
     rows = db.list_webhook_deliveries(
-        organization_id="default", webhook_subscription_id=sub["id"],
+        organization_id="org-test", webhook_subscription_id=sub["id"],
     )
     assert len(rows) == 1
     assert rows[0]["status"] == "retrying"
@@ -263,7 +263,7 @@ def test_deliver_terminal_failure_at_max_attempts(db):
     """At attempt == _AUDIT_WEBHOOK_MAX_ATTEMPTS, no more retries are
     scheduled and the row is recorded as 'failed' (terminal)."""
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://dead.example.com/audit",
         event_types=["state_transition"],
         secret="s",
@@ -285,7 +285,7 @@ def test_deliver_terminal_failure_at_max_attempts(db):
             )
     assert result["status"] == "failed"
     rows = db.list_webhook_deliveries(
-        organization_id="default", webhook_subscription_id=sub["id"],
+        organization_id="org-test", webhook_subscription_id=sub["id"],
     )
     assert rows[0]["status"] == "failed"
     assert rows[0]["next_retry_at"] is None
@@ -294,12 +294,12 @@ def test_deliver_terminal_failure_at_max_attempts(db):
 
 def test_deliver_skips_inactive_subscription(db):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition"],
         secret="s",
     )
-    db.delete_webhook_subscription(sub["id"], "default")  # marks is_active=False per existing infra
+    db.delete_webhook_subscription(sub["id"], "org-test")  # marks is_active=False per existing infra
     event = _seed_event(db, event_type="state_transition")
 
     from clearledgr.services.celery_tasks import deliver_audit_webhook
@@ -310,7 +310,7 @@ def test_deliver_skips_inactive_subscription(db):
     mock_deliver.assert_not_called()
     # No delivery row written either.
     rows = db.list_webhook_deliveries(
-        organization_id="default", webhook_subscription_id=sub["id"],
+        organization_id="org-test", webhook_subscription_id=sub["id"],
     )
     assert rows == []
 
@@ -322,7 +322,7 @@ def test_deliver_skips_inactive_subscription(db):
 
 def test_deliveries_endpoint_requires_admin(client_factory, db):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition"],
         secret="s",
@@ -348,7 +348,7 @@ def test_deliveries_endpoint_404s_cross_tenant(db, client_factory):
 
 def test_deliveries_endpoint_returns_log_newest_first(db, client_factory):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition"],
         secret="s",
@@ -356,7 +356,7 @@ def test_deliveries_endpoint_returns_log_newest_first(db, client_factory):
     # Three delivery attempts spaced apart to make ordering observable.
     for i in range(3):
         db.insert_webhook_delivery(
-            organization_id="default",
+            organization_id="org-test",
             webhook_subscription_id=sub["id"],
             event_type="state_transition",
             request_url=sub["url"],
@@ -379,13 +379,13 @@ def test_deliveries_endpoint_returns_log_newest_first(db, client_factory):
 
 def test_deliveries_endpoint_filters_by_status(db, client_factory):
     sub = db.create_webhook_subscription(
-        organization_id="default",
+        organization_id="org-test",
         url="https://siem.example.com/audit",
         event_types=["state_transition"],
         secret="s",
     )
     db.insert_webhook_delivery(
-        organization_id="default",
+        organization_id="org-test",
         webhook_subscription_id=sub["id"],
         event_type="state_transition",
         request_url=sub["url"],
@@ -393,7 +393,7 @@ def test_deliveries_endpoint_filters_by_status(db, client_factory):
         http_status_code=200,
     )
     db.insert_webhook_delivery(
-        organization_id="default",
+        organization_id="org-test",
         webhook_subscription_id=sub["id"],
         event_type="state_transition",
         request_url=sub["url"],

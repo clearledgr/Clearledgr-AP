@@ -2,14 +2,14 @@
 
 Covers:
   * FinanceAgentRuntime.__init__ rejects empty/whitespace organization_id
-    rather than silently falling back to "default" (the prior behaviour
+    rather than silently falling back to "org-test" (the prior behaviour
     that allowed a tokenless caller to drift onto the platform tenant).
   * _resolve_payload_org rejects cross-tenant payloads on real-org
-    runtimes; accepts any payload org on the platform ("default") runtime.
+    runtimes; accepts any payload org on the platform ("org-test") runtime.
   * get_platform_finance_runtime is bounded LRU + thread-safe + refreshes
     a stale db handle on cache hit.
   * resolve_org_id_for_user (FastAPI dep) raises 403 instead of
-    silently routing to "default" when the user has no organization_id.
+    silently routing to "org-test" when the user has no organization_id.
   * build_channel_runtime raises ValueError on empty org_id.
 """
 from __future__ import annotations
@@ -89,20 +89,20 @@ class TestRuntimeInitRejectsEmptyOrg:
         assert runtime.organization_id == "orgX"
 
     def test_default_org_explicitly_constructs(self, db):
-        """The platform runtime ('default') is allowed when passed
+        """The platform runtime ('org-test') is allowed when passed
         explicitly. Only empty/None is rejected. Note: the literal
-        ``"default"`` here is the in-memory M10 platform sentinel,
+        ``"org-test"`` here is the in-memory M10 platform sentinel,
         it's never written to a DB row (the platform runtime
         re-resolves to a target tenant via ``_resolve_payload_org``
         before any write). Migration v79's CHECK constraint blocks
-        ``"default"`` from landing as ``organization_id`` on any row
+        ``"org-test"`` from landing as ``organization_id`` on any row
         but does not affect this in-memory-only construction."""
         runtime = far.FinanceAgentRuntime(
-            organization_id="default",
+            organization_id="org-test",
             actor_id="system",
             db=db,
         )
-        assert runtime.organization_id == "default"
+        assert runtime.organization_id == "org-test"
 
     def test_strips_surrounding_whitespace(self, db):
         runtime = far.FinanceAgentRuntime(
@@ -150,10 +150,10 @@ class TestResolvePayloadOrg:
         """The platform runtime is the only legitimate cross-tenant
         dispatcher. Platform privilege is gated by the explicit
         ``is_platform=True`` flag (M10) — the legacy
-        ``organization_id == "default"`` string-sentinel was the
+        ``organization_id == "org-test"`` string-sentinel was the
         landmine the audit flagged."""
         runtime = far.FinanceAgentRuntime(
-            organization_id="default", actor_id="system", db=db,
+            organization_id="org-test", actor_id="system", db=db,
             is_platform=True,
         )
         result = runtime._resolve_payload_org(
@@ -163,13 +163,13 @@ class TestResolvePayloadOrg:
 
     def test_default_org_runtime_without_is_platform_is_tenant_confined(self, db):
         """M10 regression: a runtime constructed with
-        ``organization_id="default"`` but WITHOUT ``is_platform=True``
+        ``organization_id="org-test"`` but WITHOUT ``is_platform=True``
         must be tenant-confined like any other tenant runtime. The
-        prior shape used the string ``"default"`` as the privilege
-        sentinel, which any silent ``"default"`` fallback could
+        prior shape used the string ``"org-test"`` as the privilege
+        sentinel, which any silent ``"org-test"`` fallback could
         accidentally trigger."""
         runtime = far.FinanceAgentRuntime(
-            organization_id="default", actor_id="u1", db=db,
+            organization_id="org-test", actor_id="u1", db=db,
         )
         with pytest.raises(ValueError, match="cross_tenant_write_blocked"):
             runtime._resolve_payload_org(
@@ -178,11 +178,11 @@ class TestResolvePayloadOrg:
 
     def test_platform_runtime_with_no_payload_org_returns_default(self, db):
         runtime = far.FinanceAgentRuntime(
-            organization_id="default", actor_id="system", db=db,
+            organization_id="org-test", actor_id="system", db=db,
             is_platform=True,
         )
         result = runtime._resolve_payload_org({}, context="test")
-        assert result == "default"
+        assert result == "org-test"
 
     def test_error_message_includes_context_and_orgs(self, db):
         runtime = far.FinanceAgentRuntime(organization_id="orgA", actor_id="u1", db=db)
@@ -209,8 +209,8 @@ class TestPlatformRuntimeCache:
             far.get_platform_finance_runtime("   ")
 
     def test_explicit_default_allowed(self):
-        runtime = far.get_platform_finance_runtime("default")
-        assert runtime.organization_id == "default"
+        runtime = far.get_platform_finance_runtime("org-test")
+        assert runtime.organization_id == "org-test"
 
     def test_returns_same_instance_on_second_call(self):
         runtime1 = far.get_platform_finance_runtime("orgA")

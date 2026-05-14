@@ -61,7 +61,7 @@ def test_router_backed_adapter_post_delegates_to_handler():
     adapter = get_erp_bill_adapter(erp_type="xero", post_handler=_fake_post)
     result = asyncio.run(
         adapter.post(
-            "default",
+            "org-test",
             _bill(),
             ap_item_id="ap-1",
             idempotency_key="idem-erp-adapter-1",
@@ -69,7 +69,7 @@ def test_router_backed_adapter_post_delegates_to_handler():
     )
 
     assert result["status"] == "success"
-    assert calls["organization_id"] == "default"
+    assert calls["organization_id"] == "org-test"
     assert calls["invoice_number"] == "INV-1001"
     assert calls["kwargs"]["ap_item_id"] == "ap-1"
     assert calls["kwargs"]["idempotency_key"] == "idem-erp-adapter-1"
@@ -80,8 +80,8 @@ def test_router_backed_adapter_status_and_reconcile_unconfigured_shape():
         return {"status": "success"}
 
     adapter = get_erp_bill_adapter(erp_type="sap", post_handler=_fake_post)
-    status = asyncio.run(adapter.get_status("default", "ERP-123"))
-    reconcile = asyncio.run(adapter.reconcile("default", "ap-1"))
+    status = asyncio.run(adapter.get_status("org-test", "ERP-123"))
+    reconcile = asyncio.run(adapter.reconcile("org-test", "ap-1"))
 
     assert status["status"] == "unconfigured"
     assert status["erp_type"] == "sap"
@@ -98,7 +98,7 @@ def test_router_backed_adapter_status_and_reconcile_for_posted_item(db):
         return {"status": "success"}
 
     set_erp_connection(
-        "default",
+        "org-test",
         ERPConnection(
             type="netsuite",
             account_id="12345",
@@ -121,15 +121,15 @@ def test_router_backed_adapter_status_and_reconcile_for_posted_item(db):
             "currency": "USD",
             "invoice_number": "INV-1001",
             "state": "posted_to_erp",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "erp_reference": "ERP-123",
             "erp_posted_at": datetime.now(timezone.utc).isoformat(),
         }
     )
 
     adapter = get_erp_bill_adapter(erp_type="netsuite", post_handler=_fake_post)
-    status = asyncio.run(adapter.get_status("default", "ERP-123"))
-    reconcile = asyncio.run(adapter.reconcile("default", created["id"]))
+    status = asyncio.run(adapter.get_status("org-test", "ERP-123"))
+    reconcile = asyncio.run(adapter.reconcile("org-test", created["id"]))
 
     assert status["status"] == "posted"
     assert status["connected"] is True

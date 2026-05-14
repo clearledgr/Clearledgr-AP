@@ -211,7 +211,7 @@ def test_approval_reminder_no_duplicate(db, monkeypatch):
     item_id = "dup-remind-1"
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # M20 tenant-rename: ``"default"`` is no longer a valid org id —
+    # M20 tenant-rename: ``"org-test"`` is no longer a valid org id —
     # migration v79's CHECK constraint blocks it. Use a real-shaped
     # tenant id; the test's behavior (milestone dedup) is org-id-
     # agnostic.

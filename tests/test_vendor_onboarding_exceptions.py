@@ -57,7 +57,7 @@ pytestmark = _vo_skip_pytest.mark.skip(
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -65,7 +65,7 @@ def _user(role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=uid,
-        organization_id="default",
+        organization_id="org-test",
         role=role,
     )
 
@@ -86,7 +86,7 @@ def _create_session(
     vendor_name: str,
     state: str,
     last_activity_at: str,
-    organization_id: str = "default",
+    organization_id: str = "org-test",
 ) -> str:
     """Create a vendor_onboarding_sessions row directly via SQL.
 
@@ -121,7 +121,7 @@ def _create_session(
 
 
 def test_synthesizer_returns_empty_for_quiet_org(db):
-    out = synthesize_onboarding_exceptions(db, "default")
+    out = synthesize_onboarding_exceptions(db, "org-test")
     assert out == []
 
 
@@ -131,7 +131,7 @@ def test_synthesizer_surfaces_blocked_session(db):
         state=VendorOnboardingState.BLOCKED.value,
         last_activity_at=datetime.now(timezone.utc).isoformat(),
     )
-    out = synthesize_onboarding_exceptions(db, "default")
+    out = synthesize_onboarding_exceptions(db, "org-test")
     assert len(out) == 1
     row = out[0]
     assert row["id"] == f"vos:{sid}"
@@ -154,7 +154,7 @@ def test_synthesizer_surfaces_stalled_invited(db):
         state=VendorOnboardingState.INVITED.value,
         last_activity_at=stale_ts,
     )
-    out = synthesize_onboarding_exceptions(db, "default", stall_hours=48)
+    out = synthesize_onboarding_exceptions(db, "org-test", stall_hours=48)
     assert len(out) == 1
     row = out[0]
     assert row["id"] == f"vos:{sid}"
@@ -176,7 +176,7 @@ def test_synthesizer_skips_fresh_sessions(db):
         state=VendorOnboardingState.KYC.value,
         last_activity_at=fresh_ts,
     )
-    out = synthesize_onboarding_exceptions(db, "default", stall_hours=48)
+    out = synthesize_onboarding_exceptions(db, "org-test", stall_hours=48)
     assert out == []
 
 
@@ -189,7 +189,7 @@ def test_synthesizer_filters_by_organization(db):
         last_activity_at=datetime.now(timezone.utc).isoformat(),
         organization_id="other-tenant",
     )
-    out = synthesize_onboarding_exceptions(db, "default")
+    out = synthesize_onboarding_exceptions(db, "org-test")
     assert out == []
 
 
@@ -202,7 +202,7 @@ def test_synthesizer_dedupes_overlapping_sessions(db):
         state=VendorOnboardingState.BLOCKED.value,
         last_activity_at=datetime.now(timezone.utc).isoformat(),
     )
-    out = synthesize_onboarding_exceptions(db, "default")
+    out = synthesize_onboarding_exceptions(db, "org-test")
     matching = [r for r in out if r["box_id"] == sid]
     assert len(matching) == 1
 

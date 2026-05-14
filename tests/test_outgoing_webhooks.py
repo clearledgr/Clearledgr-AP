@@ -52,7 +52,7 @@ def client(db):
         return TokenData(
             user_id="wh-user",
             email="wh@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -71,7 +71,7 @@ def client(db):
 class TestWebhookStore:
     def test_create_and_list(self, db):
         sub = db.create_webhook_subscription(
-            organization_id="default",
+            organization_id="org-test",
             url="https://example.com/hook",
             event_types=["invoice.approved", "invoice.posted_to_erp"],
             secret="s3cret",
@@ -81,51 +81,51 @@ class TestWebhookStore:
         assert sub["url"] == "https://example.com/hook"
         assert sub["event_types"] == ["invoice.approved", "invoice.posted_to_erp"]
 
-        subs = db.list_webhook_subscriptions("default")
+        subs = db.list_webhook_subscriptions("org-test")
         assert len(subs) == 1
         assert subs[0]["is_active"] is True
 
     def test_get_by_id(self, db):
-        sub = db.create_webhook_subscription("default", "https://a.com/h", ["*"])
-        found = db.get_webhook_subscription(sub["id"], "default")
+        sub = db.create_webhook_subscription("org-test", "https://a.com/h", ["*"])
+        found = db.get_webhook_subscription(sub["id"], "org-test")
         assert found is not None
         assert found["url"] == "https://a.com/h"
         # M3 fail-closed: same id from a different org is invisible.
         assert db.get_webhook_subscription(sub["id"], "other-tenant") is None
 
     def test_delete(self, db):
-        sub = db.create_webhook_subscription("default", "https://b.com/h", ["*"])
+        sub = db.create_webhook_subscription("org-test", "https://b.com/h", ["*"])
         # Cross-tenant delete is a no-op.
         assert db.delete_webhook_subscription(sub["id"], "other-tenant") is False
-        assert db.get_webhook_subscription(sub["id"], "default") is not None
+        assert db.get_webhook_subscription(sub["id"], "org-test") is not None
         # Same-tenant delete works once.
-        assert db.delete_webhook_subscription(sub["id"], "default") is True
-        assert db.get_webhook_subscription(sub["id"], "default") is None
+        assert db.delete_webhook_subscription(sub["id"], "org-test") is True
+        assert db.get_webhook_subscription(sub["id"], "org-test") is None
 
     def test_update(self, db):
-        sub = db.create_webhook_subscription("default", "https://c.com/h", ["invoice.approved"])
+        sub = db.create_webhook_subscription("org-test", "https://c.com/h", ["invoice.approved"])
         # Cross-tenant update is a no-op.
         assert db.update_webhook_subscription(sub["id"], "other-tenant", is_active=False) is False
         # Same-tenant update sticks.
-        db.update_webhook_subscription(sub["id"], "default", is_active=False)
-        updated = db.get_webhook_subscription(sub["id"], "default")
+        db.update_webhook_subscription(sub["id"], "org-test", is_active=False)
+        updated = db.get_webhook_subscription(sub["id"], "org-test")
         assert updated["is_active"] is False
 
     def test_get_active_for_event(self, db):
-        db.create_webhook_subscription("default", "https://d.com/h1", ["invoice.approved"])
-        db.create_webhook_subscription("default", "https://d.com/h2", ["invoice.rejected"])
-        db.create_webhook_subscription("default", "https://d.com/h3", ["*"])
+        db.create_webhook_subscription("org-test", "https://d.com/h1", ["invoice.approved"])
+        db.create_webhook_subscription("org-test", "https://d.com/h2", ["invoice.rejected"])
+        db.create_webhook_subscription("org-test", "https://d.com/h3", ["*"])
 
-        matches = db.get_active_webhooks_for_event("default", "invoice.approved")
+        matches = db.get_active_webhooks_for_event("org-test", "invoice.approved")
         urls = {m["url"] for m in matches}
         assert "https://d.com/h1" in urls  # exact match
         assert "https://d.com/h3" in urls  # wildcard
         assert "https://d.com/h2" not in urls
 
     def test_inactive_excluded(self, db):
-        sub = db.create_webhook_subscription("default", "https://e.com/h", ["*"])
-        db.update_webhook_subscription(sub["id"], "default", is_active=False)
-        assert db.get_active_webhooks_for_event("default", "invoice.approved") == []
+        sub = db.create_webhook_subscription("org-test", "https://e.com/h", ["*"])
+        db.update_webhook_subscription(sub["id"], "org-test", is_active=False)
+        assert db.get_active_webhooks_for_event("org-test", "invoice.approved") == []
 
 
 # ---------------------------------------------------------------------------
@@ -200,11 +200,11 @@ class TestWebhookDelivery:
 
 class TestEmitWebhookEvent:
     def test_emit_to_matching_subscriptions(self, db):
-        db.create_webhook_subscription("default", "https://f.com/h", ["invoice.approved"], secret="sec")
+        db.create_webhook_subscription("org-test", "https://f.com/h", ["invoice.approved"], secret="sec")
 
         with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
             count = asyncio.run(emit_webhook_event(
-                organization_id="default",
+                organization_id="org-test",
                 event_type="invoice.approved",
                 payload={"ap_item_id": "ap-1"},
             ))
@@ -213,15 +213,15 @@ class TestEmitWebhookEvent:
         mock_deliver.assert_called_once()
 
     def test_no_subscriptions_returns_zero(self, db):
-        count = asyncio.run(emit_webhook_event("default", "invoice.approved", {}))
+        count = asyncio.run(emit_webhook_event("org-test", "invoice.approved", {}))
         assert count == 0
 
     def test_failed_delivery_enqueues_retry(self, db):
-        db.create_webhook_subscription("default", "https://g.com/h", ["invoice.posted_to_erp"])
+        db.create_webhook_subscription("org-test", "https://g.com/h", ["invoice.posted_to_erp"])
 
         with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=False):
             asyncio.run(emit_webhook_event(
-                organization_id="default",
+                organization_id="org-test",
                 event_type="invoice.posted_to_erp",
                 payload={"ap_item_id": "ap-2"},
             ))
@@ -234,11 +234,11 @@ class TestEmitWebhookEvent:
 
 class TestEmitStateChangeWebhook:
     def test_maps_state_to_event_type(self, db):
-        db.create_webhook_subscription("default", "https://h.com/h", ["*"])
+        db.create_webhook_subscription("org-test", "https://h.com/h", ["*"])
 
         with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
             count = asyncio.run(emit_state_change_webhook(
-                organization_id="default",
+                organization_id="org-test",
                 ap_item_id="ap-3",
                 new_state="approved",
                 prev_state="needs_approval",
@@ -255,7 +255,7 @@ class TestEmitStateChangeWebhook:
         assert payload["box_type"] == "ap_item"
 
     def test_unknown_state_returns_zero(self, db):
-        count = asyncio.run(emit_state_change_webhook("default", "ap-4", "unknown_state"))
+        count = asyncio.run(emit_state_change_webhook("org-test", "ap-4", "unknown_state"))
         assert count == 0
 
     def test_sync_state_transition_enqueues_webhook_without_instantiating_coroutine(self, db):
@@ -271,7 +271,7 @@ class TestEmitStateChangeWebhook:
                 "currency": "USD",
                 "invoice_number": "INV-WH-1",
                 "state": "received",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "user_id": "webhook-test",
             }
         )
@@ -322,13 +322,13 @@ class TestWebhookEndpoints:
         assert data["secret"] == "***"  # redacted
 
     def test_list_webhooks(self, client, db):
-        db.create_webhook_subscription("default", "https://i.com/h", ["*"])
+        db.create_webhook_subscription("org-test", "https://i.com/h", ["*"])
         resp = client.get("/api/workspace/webhooks")
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
 
     def test_delete_webhook(self, client, db):
-        sub = db.create_webhook_subscription("default", "https://j.com/h", ["*"])
+        sub = db.create_webhook_subscription("org-test", "https://j.com/h", ["*"])
         resp = client.delete(f"/api/workspace/webhooks/{sub['id']}")
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
@@ -338,7 +338,7 @@ class TestWebhookEndpoints:
         assert resp.status_code == 404
 
     def test_test_webhook(self, client, db):
-        sub = db.create_webhook_subscription("default", "https://k.com/h", ["*"])
+        sub = db.create_webhook_subscription("org-test", "https://k.com/h", ["*"])
         with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True):
             resp = client.post(f"/api/workspace/webhooks/{sub['id']}/test")
         assert resp.status_code == 200
@@ -381,7 +381,7 @@ class TestWebhookCrossOrgIsolation:
             url="https://other-org-internal.example/hook",
             event_types=["*"],
         )
-        # Caller's token belongs to 'default' (per the client fixture).
+        # Caller's token belongs to 'org-test' (per the client fixture).
         # Trying to list 'other-org' webhooks by query param must be rejected.
         resp = client.get("/api/workspace/webhooks?organization_id=other-org")
         assert resp.status_code == 403, (
@@ -391,7 +391,7 @@ class TestWebhookCrossOrgIsolation:
     def test_list_without_param_scopes_to_caller_org_only(self, client, db):
         # Seed one webhook per org.
         own = db.create_webhook_subscription(
-            "default", "https://own.example/hook", ["*"]
+            "org-test", "https://own.example/hook", ["*"]
         )
         db.create_webhook_subscription(
             "other-org", "https://other.example/hook", ["*"]
@@ -405,11 +405,11 @@ class TestWebhookCrossOrgIsolation:
         assert data["webhooks"][0]["id"] == own["id"]
         # Belt and braces: no webhook in the response belongs to another org.
         assert all(
-            sub["organization_id"] == "default" for sub in data["webhooks"]
+            sub["organization_id"] == "org-test" for sub in data["webhooks"]
         )
 
     def test_create_with_query_param_spoofing_returns_403(self, client, db):
-        # Caller is in 'default'; try to create a webhook targeted at 'other-org'.
+        # Caller is in 'org-test'; try to create a webhook targeted at 'other-org'.
         resp = client.post(
             "/api/workspace/webhooks?organization_id=other-org",
             json={
@@ -430,7 +430,7 @@ class TestWebhookCrossOrgIsolation:
             url="https://other-org.example/hook",
             event_types=["*"],
         )
-        # Caller (in 'default') tries to delete by ID. Post-M3 the
+        # Caller (in 'org-test') tries to delete by ID. Post-M3 the
         # store's lookup is scoped to the caller's org at the SQL
         # level, so a foreign id is invisible. Return 404 (same as
         # missing) so we don't leak existence of webhooks in other

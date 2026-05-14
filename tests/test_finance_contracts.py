@@ -11,12 +11,12 @@ from clearledgr.core.finance_contracts import (
 
 def test_skill_request_from_intent_normalizes_defaults():
     request = SkillRequest.from_intent(
-        org_id="default",
+        org_id="org-test",
         skill_id="ap_v1",
         task_type="Route_Low_Risk_For_Approval",
         payload={"email_id": "gmail-thread-1"},
     )
-    assert request.org_id == "default"
+    assert request.org_id == "org-test"
     assert request.skill_id == "ap_v1"
     assert request.task_type == "route_low_risk_for_approval"
     assert request.payload["email_id"] == "gmail-thread-1"
@@ -55,7 +55,7 @@ def test_action_execution_to_dict():
 
 def test_audit_event_to_dict_has_required_fields():
     event = AuditEvent(
-        org_id="default",
+        org_id="org-test",
         skill_id="ap_v1",
         entity_id="ap-item-1",
         action="route_low_risk_for_approval",
@@ -65,7 +65,7 @@ def test_audit_event_to_dict_has_required_fields():
         evidence_refs=["gmail-thread-1"],
     )
     data = event.to_dict()
-    assert data["org_id"] == "default"
+    assert data["org_id"] == "org-test"
     assert data["skill_id"] == "ap_v1"
     assert data["entity_id"] == "ap-item-1"
     assert data["correlation_id"] == "corr-1"

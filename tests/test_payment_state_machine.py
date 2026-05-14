@@ -53,7 +53,7 @@ from clearledgr.core.ap_states import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -220,7 +220,7 @@ def test_db_state_guard_accepts_new_payment_states(db):
     trigger doesn't reject."""
     item = db.create_ap_item({
         "id": "AP-payment-state-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "state": "received",
@@ -247,7 +247,7 @@ def test_db_state_guard_rejects_invalid_state(db):
     """Bogus state values are still rejected by the trigger."""
     item = db.create_ap_item({
         "id": "AP-bogus-state-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "state": "received",
@@ -272,7 +272,7 @@ def test_db_state_guard_rejects_legal_app_state_via_illegal_transition(db):
     in one shot (illegal — must go through validated etc)."""
     item = db.create_ap_item({
         "id": "AP-illegal-trans-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "state": "received",

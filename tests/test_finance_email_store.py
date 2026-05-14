@@ -15,7 +15,7 @@ def test_save_finance_email_upsert_refreshes_extracted_fields(tmp_path, monkeypa
     db.save_finance_email(
         FinanceEmail(
             id="finance-email-1",
-            organization_id="default",
+            organization_id="org-test",
             gmail_id="gmail-1",
             subject="Invoice detected",
             sender="billing@example.com",
@@ -31,7 +31,7 @@ def test_save_finance_email_upsert_refreshes_extracted_fields(tmp_path, monkeypa
     db.save_finance_email(
         FinanceEmail(
             id="finance-email-1",
-            organization_id="default",
+            organization_id="org-test",
             gmail_id="gmail-1",
             subject="Invoice INV-100",
             sender="Vendor Co <billing@vendor.test>",

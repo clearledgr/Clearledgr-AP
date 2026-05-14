@@ -61,7 +61,7 @@ def _seed_ap_item_with_metadata(db, *, ap_item_id: str = "AP-DC-1") -> str:
         "approval_policy_version": "v2",
         "confidence": 0.95,
         "field_confidences": {"vendor_name": 0.99, "amount": 0.97},
-        "organization_id": "default",
+        "organization_id": "org-test",
         "metadata": metadata,
     }
     db.create_ap_item(payload)

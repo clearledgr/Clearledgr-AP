@@ -73,7 +73,7 @@ def _create_ap_item(
             "invoice_number": f"INV-{item_id}",
             "state": state,
             "confidence": 0.99,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "erp_reference": erp_reference,
             "document_type": document_type,
             "metadata": metadata or {},
@@ -283,7 +283,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                 document_type="credit_note",
                 outcome="apply_to_invoice",
                 actor_id="test-user",
-                organization_id="default",
+                organization_id="org-test",
             )
         result = asyncio.run(_run())
         assert result is not None
@@ -307,7 +307,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="credit_note",
                     outcome="apply_to_invoice",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
         assert result is not None
@@ -344,7 +344,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                 document_type="statement",
                 outcome="send_to_reconciliation",
                 actor_id="test-user",
-                organization_id="default",
+                organization_id="org-test",
             )
         result = asyncio.run(_run())
         assert result is None
@@ -362,7 +362,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                 document_type="credit_note",
                 outcome="apply_to_invoice",
                 actor_id="test-user",
-                organization_id="default",
+                organization_id="org-test",
             )
         result = asyncio.run(_run())
         assert result is not None
@@ -391,13 +391,13 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="credit_note",
                     outcome="apply_to_invoice",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
 
         mock_api.assert_called_once()
         call_kwargs = mock_api.call_args.kwargs
-        assert call_kwargs["organization_id"] == "default"
+        assert call_kwargs["organization_id"] == "org-test"
         assert call_kwargs["target_erp_reference"] == "ERP-REF-005"
         assert call_kwargs["amount"] == 75.0
         assert call_kwargs["currency"] == "USD"
@@ -426,7 +426,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="refund",
                     outcome="link_to_payment",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
 
@@ -459,7 +459,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="credit_note",
                     outcome="apply_to_invoice",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
 
@@ -488,7 +488,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="payment",
                     outcome="link_to_payment",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
 
@@ -516,7 +516,7 @@ class TestExecuteNonInvoiceERPFollowOn:
                     document_type="receipt",
                     outcome="link_to_payment",
                     actor_id="test-user",
-                    organization_id="default",
+                    organization_id="org-test",
                 )
             result = asyncio.run(_run())
 
@@ -800,7 +800,7 @@ class TestERPFollowOnReconciliation:
 
     def test_no_items_returns_zero(self, db):
         """Empty DB returns checked=0."""
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 0
         assert result["mismatches"] == 0
         assert result["repaired"] == 0
@@ -817,7 +817,7 @@ class TestERPFollowOnReconciliation:
             "non_invoice_resolution": {"outcome": "mark_as_duplicate"},
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 0
         assert result["mismatches"] == 0
 
@@ -840,7 +840,7 @@ class TestERPFollowOnReconciliation:
             },
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 1
         assert result["mismatches"] == 0
         assert result["repaired"] == 0
@@ -865,7 +865,7 @@ class TestERPFollowOnReconciliation:
             },
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 1
         assert result["mismatches"] == 1
         assert result["repaired"] == 1
@@ -900,7 +900,7 @@ class TestERPFollowOnReconciliation:
             },
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 1
         assert result["mismatches"] == 1
         assert result["repaired"] == 1
@@ -925,7 +925,7 @@ class TestERPFollowOnReconciliation:
             },
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["checked"] == 1
         assert result["mismatches"] == 0
         assert result["repaired"] == 0
@@ -949,7 +949,7 @@ class TestERPFollowOnReconciliation:
             },
         })
 
-        result = reconcile_erp_follow_on_state(db=db, organization_id="default")
+        result = reconcile_erp_follow_on_state(db=db, organization_id="org-test")
         assert result["repaired"] == 1
 
         # Check audit events for the related item

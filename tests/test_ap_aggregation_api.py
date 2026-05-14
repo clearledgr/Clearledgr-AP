@@ -25,7 +25,7 @@ def client(db):
         return TokenData(
             user_id="ops-user-1",
             email="ops@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -40,7 +40,7 @@ def client(db):
 def test_ap_aggregation_ops_endpoint_requires_auth(db):
     app.dependency_overrides.pop(ops_module.get_current_user, None)
     client = TestClient(app)
-    response = client.get("/api/ops/ap-aggregation?organization_id=default")
+    response = client.get("/api/ops/ap-aggregation?organization_id=org-test")
     assert response.status_code == 401
 
 
@@ -58,7 +58,7 @@ def _create_item(db, item_id: str, vendor: str, amount: float) -> dict:
             "currency": "USD",
             "invoice_number": f"INV-{item_id}",
             "state": "needs_approval",
-            "organization_id": "default",
+            "organization_id": "org-test",
         }
     )
 
@@ -85,14 +85,14 @@ def test_ap_aggregation_endpoints_return_multi_system_metrics(client, db):
         }
     )
 
-    ap_items_response = client.get("/api/ap/items/metrics/aggregation?organization_id=default")
+    ap_items_response = client.get("/api/ap/items/metrics/aggregation?organization_id=org-test")
     assert ap_items_response.status_code == 200
     ap_items_metrics = ap_items_response.json()["metrics"]
     assert ap_items_metrics["totals"]["items"] >= 2
     assert ap_items_metrics["sources"]["total_links"] >= 2
     assert any(row["vendor_name"] == "Google" for row in ap_items_metrics["spend_by_vendor"])
 
-    ops_response = client.get("/api/ops/ap-aggregation?organization_id=default")
+    ops_response = client.get("/api/ops/ap-aggregation?organization_id=org-test")
     assert ops_response.status_code == 200
     ops_metrics = ops_response.json()["metrics"]
     assert ops_metrics["totals"]["items"] >= 2
@@ -120,7 +120,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "currency": "USD",
             "invoice_number": "INV-PILOT-TOUCHLESS-1",
             "state": "posted_to_erp",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "created_at": approved_created_at,
             "updated_at": posted_at,
             "erp_posted_at": posted_at,
@@ -144,7 +144,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "invoice_number": "INV-PILOT-HANDLED-1",
             "state": "posted_to_erp",
             "approval_required": True,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "created_at": approved_created_at,
             "updated_at": posted_at,
             "erp_posted_at": posted_at,
@@ -162,7 +162,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "status": "approved",
             "approved_by": "approver-1",
             "approved_at": approved_at,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "created_at": approved_created_at,
         }
     )
@@ -172,7 +172,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "erp_post_attempted",
             "actor_type": "system",
             "actor_id": "erp-adapter",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": approved_at,
         }
     )
@@ -182,7 +182,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "erp_post_succeeded",
             "actor_type": "system",
             "actor_id": "erp-adapter",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": posted_at,
         }
     )
@@ -192,7 +192,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "erp_post_attempted",
             "actor_type": "system",
             "actor_id": "erp-adapter",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": approved_at,
         }
     )
@@ -202,7 +202,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "erp_post_failed",
             "actor_type": "system",
             "actor_id": "erp-adapter",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": approved_at,
         }
     )
@@ -212,7 +212,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "erp_post_succeeded",
             "actor_type": "system",
             "actor_id": "erp-adapter",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": posted_at,
         }
     )
@@ -222,7 +222,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "ap_decision_override",
             "actor_type": "user",
             "actor_id": "ops-user-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": posted_at,
         }
     )
@@ -242,7 +242,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "state": "needs_approval",
             "approval_required": True,
             "approval_requested_at": overdue_requested_at,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "created_at": overdue_created_at,
             "updated_at": overdue_requested_at,
             "metadata": {
@@ -260,7 +260,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "message_ts": "1710000000.002",
             "source_channel": "slack",
             "status": "pending",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "created_at": overdue_requested_at,
         }
     )
@@ -270,7 +270,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "approval_escalation_sent",
             "actor_type": "system",
             "actor_id": "runtime",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": now.isoformat(),
         }
     )
@@ -280,7 +280,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "approval_reassigned",
             "actor_type": "system",
             "actor_id": "runtime",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": now.isoformat(),
         }
     )
@@ -298,7 +298,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "currency": "USD",
             "invoice_number": "INV-PILOT-ENTITY-1",
             "state": "validated",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {
                 "entity_routing": {
                     "status": "needs_review",
@@ -325,7 +325,7 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "currency": "USD",
             "invoice_number": "INV-PILOT-ENTITY-2",
             "state": "ready_to_post",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {
                 "entity_routing": {
                     "status": "resolved",
@@ -341,12 +341,12 @@ def test_ap_kpis_surface_operator_metrics_and_pilot_scorecard(client, db):
             "event_type": "entity_route_resolved",
             "actor_type": "user",
             "actor_id": "ops-user-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "ts": now.isoformat(),
         }
     )
 
-    response = client.get("/api/ops/ap-kpis?organization_id=default")
+    response = client.get("/api/ops/ap-kpis?organization_id=org-test")
     assert response.status_code == 200
     payload = response.json()["kpis"]
 

@@ -49,7 +49,7 @@ def _create_ap_item(
             "invoice_number": f"INV-{item_id}",
             "state": state,
             "confidence": confidence,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": metadata,
         }
     )
@@ -66,7 +66,7 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
         return TokenData(
             user_id="test-user",
             email="test@default.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
         )
@@ -91,7 +91,7 @@ def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
     )
 
     try:
-        response = client.get("/extension/pipeline?organization_id=default")
+        response = client.get("/extension/pipeline?organization_id=org-test")
         assert response.status_code == 200
         payload = response.json()
         rows = payload.get("pending_approval", [])
@@ -128,7 +128,7 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
         return TokenData(
             user_id="test-user",
             email="test@default.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
         )
@@ -159,7 +159,7 @@ def _run_worklist_test(monkeypatch, client, db):
         },
     )
 
-    worklist_response = client.get("/extension/worklist?organization_id=default")
+    worklist_response = client.get("/extension/worklist?organization_id=org-test")
     assert worklist_response.status_code == 200
     worklist_rows = worklist_response.json()["items"]
     row = next((entry for entry in worklist_rows if entry.get("id") == item["id"]), None)
@@ -186,7 +186,7 @@ def _run_worklist_test(monkeypatch, client, db):
     )
     db.update_ap_item(confidence_item["id"], confidence=0.99)
 
-    worklist_response = client.get("/extension/worklist?organization_id=default")
+    worklist_response = client.get("/extension/worklist?organization_id=org-test")
     assert worklist_response.status_code == 200
     worklist_rows = worklist_response.json()["items"]
     confidence_row = next(
@@ -216,10 +216,10 @@ def _run_worklist_test(monkeypatch, client, db):
     monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _fake_dispatch)
     # M9 contract: the Teams interactive callback resolves the AAD ``tid``
     # claim against ``teams_installations`` BEFORE any AP-item lookup. Seed
-    # the install for "default" and stub the token to return a matching tid.
+    # the install for "org-test" and stub the token to return a matching tid.
     _aad_tid_v1 = "aad-tid-v1-core-completion"
     db.set_teams_installation(
-        organization_id="default",
+        organization_id="org-test",
         aad_tenant_id=_aad_tid_v1,
         tenant_name="V1 Core Test AAD",
         bot_app_id="test-bot",
@@ -234,7 +234,7 @@ def _run_worklist_test(monkeypatch, client, db):
         json={
             "action": "approve_budget_override",
             "email_id": item["thread_id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "actor": "approver@clearledgr.com",
             "conversation_id": "19:finance",
             "message_id": "msg-001",

@@ -219,7 +219,7 @@ def test_sap_preflight_passes_valid_bill():
 
 
 def test_qb_token_refresh_retry_on_401(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     first_call = True
 
@@ -248,7 +248,7 @@ def test_qb_token_refresh_retry_on_401(db):
             type="quickbooks", access_token="old", refresh_token="rt", realm_id="123",
             client_id="cid", client_secret="csec",
         )
-        result = asyncio.run(post_bill("default", bill))
+        result = asyncio.run(post_bill("org-test", bill))
 
     assert result["status"] == "success"
     assert result["bill_id"] == "123"
@@ -256,7 +256,7 @@ def test_qb_token_refresh_retry_on_401(db):
 
 
 def test_qb_token_refresh_failure_returns_original_error(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     async def mock_post_bill_to_qb(conn, bill, **_kwargs):
         return {"status": "error", "erp": "quickbooks", "reason": "Token expired", "needs_reauth": True}
@@ -274,7 +274,7 @@ def test_qb_token_refresh_failure_returns_original_error(db):
             type="quickbooks", access_token="old", refresh_token="rt", realm_id="123",
             client_id="cid", client_secret="csec",
         )
-        result = asyncio.run(post_bill("default", bill))
+        result = asyncio.run(post_bill("org-test", bill))
 
     assert result["status"] == "error"
     assert result["needs_reauth"] is True
@@ -319,7 +319,7 @@ def test_quickbooks_credit_application_uses_native_vendor_credit_and_bill_paymen
          patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-credit-qb-1",
                 idempotency_key="idem-credit-qb-1",
@@ -384,7 +384,7 @@ def test_quickbooks_settlement_uses_native_bill_payment_api():
          patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-settlement-qb-1",
                 idempotency_key="idem-settlement-qb-1",
@@ -419,7 +419,7 @@ def test_quickbooks_refund_settlement_stays_off_native_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
          patch("clearledgr.integrations.erp_quickbooks.get_http_client") as mock_client:
-        result = asyncio.run(apply_settlement("default", application))
+        result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
     assert result["reason"] == "refund_settlement_api_not_available_for_connector"
@@ -427,7 +427,7 @@ def test_quickbooks_refund_settlement_stays_off_native_api():
 
 
 def test_quickbooks_credit_application_refresh_retry_on_401(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     first_call = True
 
@@ -454,7 +454,7 @@ def test_quickbooks_credit_application_refresh_retry_on_401(db):
          patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
          patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _quickbooks_connection(access_token="old_qb_token")
-        result = asyncio.run(apply_credit_note("default", application, idempotency_key="idem-credit-qb-refresh"))
+        result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-qb-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "bp-qb-401"
@@ -462,7 +462,7 @@ def test_quickbooks_credit_application_refresh_retry_on_401(db):
 
 
 def test_quickbooks_settlement_refresh_retry_on_401(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     first_call = True
 
@@ -490,7 +490,7 @@ def test_quickbooks_settlement_refresh_retry_on_401(db):
          patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
          patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _quickbooks_connection(access_token="old_qb_token")
-        result = asyncio.run(apply_settlement("default", application, idempotency_key="idem-settlement-qb-refresh"))
+        result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-qb-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "bp-qb-402"
@@ -542,7 +542,7 @@ def test_xero_credit_application_uses_native_allocation_api():
          patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-credit-1",
                 idempotency_key="idem-credit-1",
@@ -591,7 +591,7 @@ def test_xero_settlement_uses_native_payment_api():
          patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-settlement-1",
                 idempotency_key="idem-settlement-1",
@@ -620,7 +620,7 @@ def test_xero_refund_settlement_stays_off_native_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
          patch("clearledgr.integrations.erp_xero.get_http_client") as mock_client:
-        result = asyncio.run(apply_settlement("default", application))
+        result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
     assert result["reason"] == "refund_settlement_api_not_available_for_connector"
@@ -628,7 +628,7 @@ def test_xero_refund_settlement_stays_off_native_api():
 
 
 def test_xero_credit_application_refresh_retry_on_401(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     first_call = True
 
@@ -655,7 +655,7 @@ def test_xero_credit_application_refresh_retry_on_401(db):
          patch("clearledgr.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
          patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _xero_connection(access_token="old_token")
-        result = asyncio.run(apply_credit_note("default", application, idempotency_key="idem-credit-refresh"))
+        result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "allocation-xero-2"
@@ -663,7 +663,7 @@ def test_xero_credit_application_refresh_retry_on_401(db):
 
 
 def test_xero_settlement_refresh_retry_on_401(db):
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     first_call = True
 
@@ -691,7 +691,7 @@ def test_xero_settlement_refresh_retry_on_401(db):
          patch("clearledgr.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
          patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _xero_connection(access_token="old_token")
-        result = asyncio.run(apply_settlement("default", application, idempotency_key="idem-settlement-refresh"))
+        result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "payment-xero-2"
@@ -733,7 +733,7 @@ def test_netsuite_credit_application_uses_native_update_api():
          patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-credit-ns-1",
                 idempotency_key="idem-credit-ns-1",
@@ -784,7 +784,7 @@ def test_netsuite_settlement_uses_native_vendor_payment_api():
          patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-settlement-ns-1",
                 idempotency_key="idem-settlement-ns-1",
@@ -812,7 +812,7 @@ def test_netsuite_refund_settlement_stays_off_native_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
          patch("clearledgr.integrations.erp_netsuite.get_http_client") as mock_client:
-        result = asyncio.run(apply_settlement("default", application))
+        result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
     assert result["reason"] == "refund_settlement_api_not_available_for_connector"
@@ -838,7 +838,7 @@ def test_netsuite_credit_application_retry_on_401():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
          patch("clearledgr.integrations.erp_router.apply_credit_note_to_netsuite", side_effect=mock_apply_credit_to_netsuite):
-        result = asyncio.run(apply_credit_note("default", application, idempotency_key="idem-credit-ns-refresh"))
+        result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-ns-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "credit-ns-2:bill-ns-4"
@@ -864,7 +864,7 @@ def test_netsuite_settlement_retry_on_401():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
          patch("clearledgr.integrations.erp_router.apply_settlement_to_netsuite", side_effect=mock_apply_settlement_to_netsuite):
-        result = asyncio.run(apply_settlement("default", application, idempotency_key="idem-settlement-ns-refresh"))
+        result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-ns-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "payment-ns-2"
@@ -918,7 +918,7 @@ def test_sap_credit_application_uses_native_purchase_credit_note_api():
          patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-credit-sap-1",
                 idempotency_key="idem-credit-sap-1",
@@ -981,7 +981,7 @@ def test_sap_settlement_uses_native_vendor_payment_api():
          patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
-                "default",
+                "org-test",
                 application,
                 ap_item_id="ap-settlement-sap-1",
                 idempotency_key="idem-settlement-sap-1",
@@ -1015,7 +1015,7 @@ def test_sap_refund_settlement_stays_off_native_api():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
          patch("clearledgr.integrations.erp_sap.get_http_client") as mock_client:
-        result = asyncio.run(apply_settlement("default", application))
+        result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
     assert result["reason"] == "refund_settlement_api_not_available_for_connector"
@@ -1041,7 +1041,7 @@ def test_sap_credit_application_retry_on_401():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
          patch("clearledgr.integrations.erp_router.apply_credit_note_to_sap", side_effect=mock_apply_credit_to_sap):
-        result = asyncio.run(apply_credit_note("default", application, idempotency_key="idem-credit-sap-refresh"))
+        result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-sap-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "credit-sap-2"
@@ -1067,7 +1067,7 @@ def test_sap_settlement_retry_on_401():
 
     with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
          patch("clearledgr.integrations.erp_router.apply_settlement_to_sap", side_effect=mock_apply_settlement_to_sap):
-        result = asyncio.run(apply_settlement("default", application, idempotency_key="idem-settlement-sap-refresh"))
+        result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-sap-refresh"))
 
     assert result["status"] == "success"
     assert result["erp_reference"] == "payment-sap-2"
@@ -1352,7 +1352,7 @@ def test_verify_bill_posted_returns_indeterminate_on_finder_exception(db):
     """
     from clearledgr.integrations.erp_router import verify_bill_posted
 
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     # finder raises → indeterminate
     async def exploding_finder(connection, invoice_number):
@@ -1368,7 +1368,7 @@ def test_verify_bill_posted_returns_indeterminate_on_finder_exception(db):
             client_id="cid", client_secret="csec",
         )
         result = asyncio.run(verify_bill_posted(
-            "default", "INV-001", expected_amount=500.0,
+            "org-test", "INV-001", expected_amount=500.0,
         ))
 
     assert result["verified"] is False
@@ -1426,7 +1426,7 @@ def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
     the kwarg at the entry but dropped it before the adapter call —
     every adapter call posted without dedupe.
     """
-    db.ensure_organization("default")
+    db.ensure_organization("org-test")
 
     captured_kwargs: dict = {}
 
@@ -1443,7 +1443,7 @@ def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
             client_id="cid", client_secret="csec",
         )
         result = asyncio.run(post_bill(
-            "default", bill, idempotency_key="auto:ap-router-1:erp_post",
+            "org-test", bill, idempotency_key="auto:ap-router-1:erp_post",
         ))
 
     assert result["status"] == "success"

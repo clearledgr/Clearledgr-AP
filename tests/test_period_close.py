@@ -29,7 +29,7 @@ from clearledgr.services.period_close import PeriodCloseService
 def db(tmp_path, monkeypatch):
     inst = db_module.get_db()
     inst.initialize()
-    inst.create_organization("default", "Default Org", settings={})
+    inst.create_organization("org-test", "Default Org", settings={})
     return inst
 
 
@@ -47,7 +47,7 @@ def _create_ap_item(db, item_id, vendor, amount, state="approved", invoice_date=
         "invoice_number": f"INV-{item_id}",
         "invoice_date": invoice_date,
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
     if created_at:
         sql = "UPDATE ap_items SET created_at = %s WHERE id = %s"
@@ -62,7 +62,7 @@ def _create_ap_item(db, item_id, vendor, amount, state="approved", invoice_date=
 
 class TestCurrentPeriod:
     def test_returns_period_info(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         result = svc.get_current_period()
         assert "period" in result
         assert "closes_on" in result
@@ -70,7 +70,7 @@ class TestCurrentPeriod:
         assert "days_until_close" in result
 
     def test_default_close_day(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         result = svc.get_current_period()
         assert result["close_day_offset"] == 5
 
@@ -81,39 +81,39 @@ class TestCurrentPeriod:
 
 class TestPeriodLock:
     def test_lock_period(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         assert svc.lock_period("2026-03") is True
         assert svc.is_period_locked("2026-03") is True
 
     def test_lock_idempotent(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         svc.lock_period("2026-03")
         assert svc.lock_period("2026-03") is False  # already locked
 
     def test_unlock_period(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         svc.lock_period("2026-03")
         assert svc.unlock_period("2026-03") is True
         assert svc.is_period_locked("2026-03") is False
 
     def test_unlock_not_locked(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         assert svc.unlock_period("2026-03") is False
 
     def test_posting_blocked_on_locked_period(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         svc.lock_period("2026-03")
         result = svc.check_posting_allowed("2026-03-15")
         assert result["allowed"] is False
         assert result["reason"] == "period_locked"
 
     def test_posting_allowed_on_open_period(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         result = svc.check_posting_allowed("2026-04-10")
         assert result["allowed"] is True
 
     def test_posting_allowed_with_no_date(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         result = svc.check_posting_allowed(None)
         assert result["allowed"] is True
 
@@ -133,7 +133,7 @@ class TestAccrualReport:
         _create_ap_item(db, "acc-3", "Gamma", 1000.0, state="closed",
                         created_at="2026-03-10T10:00:00+00:00")
 
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         report = svc.generate_accrual_report("2026-03")
 
         assert report["accrual_count"] == 2
@@ -141,7 +141,7 @@ class TestAccrualReport:
         assert len(report["vendor_breakdown"]) == 2
 
     def test_empty_period(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         report = svc.generate_accrual_report("2025-01")
         assert report["accrual_count"] == 0
         assert report["total_by_currency"] == {}
@@ -158,7 +158,7 @@ class TestBackdatedDetection:
                         invoice_date="2026-03-25",
                         created_at="2026-04-10T10:00:00+00:00")
 
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         items = svc.detect_backdated_invoices("2026-03")
         assert len(items) == 1
         assert items[0]["vendor_name"] == "Late Vendor"
@@ -169,7 +169,7 @@ class TestBackdatedDetection:
                         invoice_date="2026-03-25",
                         created_at="2026-03-30T10:00:00+00:00")
 
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         items = svc.detect_backdated_invoices("2026-03")
         assert len(items) == 0
 
@@ -180,7 +180,7 @@ class TestBackdatedDetection:
 
 class TestConfigPersistence:
     def test_save_and_load(self, db):
-        svc = PeriodCloseService("default")
+        svc = PeriodCloseService("org-test")
         config = {"close_day_offset": 10, "locked_periods": ["2026-01"], "auto_lock": True}
         svc.save_config(config)
 
@@ -203,7 +203,7 @@ class TestPeriodCloseEndpoints:
             return TokenData(
                 user_id="pc-user",
                 email="pc@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )

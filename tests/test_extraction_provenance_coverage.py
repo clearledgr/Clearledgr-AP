@@ -305,7 +305,7 @@ def test_save_invoice_status_persists_field_provenance(postgres_test_db):
         amount=500.0,
         currency="USD",
         invoice_number="INV-99",
-        organization_id="default",
+        organization_id="org-test",
         field_provenance=field_provenance,
         field_evidence=field_evidence,
         erp_metadata=erp_metadata,

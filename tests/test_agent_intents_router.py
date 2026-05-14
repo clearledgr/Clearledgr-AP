@@ -15,7 +15,7 @@ def _fake_user() -> TokenData:
     return TokenData(
         user_id="ops-user",
         email="ops@example.com",
-        organization_id="default",
+        organization_id="org-test",
         role="owner",
         exp=datetime.now(timezone.utc) + timedelta(hours=1),
     )
@@ -42,7 +42,7 @@ def test_preview_intent_returns_structured_unhandled_runtime_error(monkeypatch):
         json={
             "intent": "review_ap_item",
             "input": {"ap_item_id": "ap-123"},
-            "organization_id": "default",
+            "organization_id": "org-test",
         },
     )
 

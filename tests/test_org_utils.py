@@ -1,5 +1,5 @@
 """Unit tests for ``clearledgr/core/org_utils.py`` — the canonical
-replacement for M4 ``or "default"`` coercion.
+replacement for M4 ``or "org-test"`` coercion.
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class TestAssertOrgId:
         # id. Migration v79 renamed any extant org with id="default"
         # to ``"org_legacy_default"`` and added a CHECK constraint
         # blocking future rows. ``assert_org_id`` rejects the literal
-        # the same way it rejects an empty string — a write path that
+        # the same way it rejects an empty string, a write path that
         # somehow surfaces ``"default"`` is a regression.
         with pytest.raises(OrgIdMissing):
             assert_org_id("default")
@@ -91,7 +91,7 @@ class TestRequireOrg:
 
     def test_requested_legacy_default_treated_as_empty(self):
         # The "default" string is a legacy placeholder for "no value
-        # supplied" — extension clients in the wild still send it.
+        # supplied", extension clients in the wild still send it.
         assert require_org(self._user("acme"), requested="default") == "acme"
 
     def test_requested_matches_session_returns_session(self):
@@ -108,7 +108,7 @@ class TestRequireOrg:
         ``"default"`` is no longer treated as a real tenant. Migration
         v79 renamed any such row to ``"org_legacy_default"``; if
         ``require_org`` ever sees ``"default"`` again it's a hard
-        regression — fail closed with 403, same as a missing org.
+        regression, fail closed with 403, same as a missing org.
         """
         u = self._user("default")
         with pytest.raises(HTTPException) as exc_info:

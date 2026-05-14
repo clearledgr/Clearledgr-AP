@@ -45,7 +45,7 @@ from clearledgr.integrations.erp_router import Bill  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -321,7 +321,7 @@ def test_ap_item_carries_erp_journal_entry_id_through_update(db):
     and survives the AP-store update path."""
     item = db.create_ap_item({
         "id": "AP-A2-persist-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 250.0,
         "state": "ready_to_post",
@@ -344,7 +344,7 @@ def test_je_id_index_is_queryable(db):
     should let auditors find an AP item by JE id quickly."""
     item = db.create_ap_item({
         "id": "AP-A2-index-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 100.0,
         "state": "ready_to_post",
@@ -362,7 +362,7 @@ def test_je_id_index_is_queryable(db):
         cur.execute(
             "SELECT id FROM ap_items "
             "WHERE organization_id = %s AND erp_journal_entry_id = %s",
-            ("default", "audit-trace-target"),
+            ("org-test", "audit-trace-target"),
         )
         row = cur.fetchone()
     assert row is not None

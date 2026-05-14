@@ -42,7 +42,7 @@ def _create_ap_item(db, item_id, vendor="Test Vendor"):
         "currency": "USD",
         "invoice_number": f"INV-{item_id}",
         "state": "needs_info",
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -55,7 +55,7 @@ class TestDisputeStore:
         _create_ap_item(db, "ap-1")
         dispute = db.create_dispute(
             ap_item_id="ap-1",
-            organization_id="default",
+            organization_id="org-test",
             dispute_type="missing_po",
             vendor_name="Test Vendor",
             description="PO number missing from invoice",
@@ -63,7 +63,7 @@ class TestDisputeStore:
         assert dispute["id"].startswith("dsp_")
         assert dispute["status"] == "open"
 
-        found = db.get_dispute(dispute["id"], "default")
+        found = db.get_dispute(dispute["id"], "org-test")
         # Cross-tenant fail-closed: the same id from a different org → None.
         assert db.get_dispute(dispute["id"], "other-tenant") is None
         assert found is not None
@@ -72,41 +72,41 @@ class TestDisputeStore:
     def test_list_by_org(self, db):
         _create_ap_item(db, "ap-2")
         _create_ap_item(db, "ap-3")
-        db.create_dispute("ap-2", "default", "wrong_amount")
-        db.create_dispute("ap-3", "default", "duplicate")
+        db.create_dispute("ap-2", "org-test", "wrong_amount")
+        db.create_dispute("ap-3", "org-test", "duplicate")
 
-        disputes = db.list_disputes("default")
+        disputes = db.list_disputes("org-test")
         assert len(disputes) == 2
 
     def test_list_by_status(self, db):
         _create_ap_item(db, "ap-4")
-        d = db.create_dispute("ap-4", "default", "missing_info")
-        db.update_dispute(d["id"], "default", status="resolved", resolved_at=datetime.now(timezone.utc).isoformat())
+        d = db.create_dispute("ap-4", "org-test", "missing_info")
+        db.update_dispute(d["id"], "org-test", status="resolved", resolved_at=datetime.now(timezone.utc).isoformat())
 
-        open_disputes = db.list_disputes("default", status="open")
+        open_disputes = db.list_disputes("org-test", status="open")
         assert len(open_disputes) == 0
 
-        resolved = db.list_disputes("default", status="resolved")
+        resolved = db.list_disputes("org-test", status="resolved")
         assert len(resolved) == 1
 
     def test_get_disputes_for_item(self, db):
         _create_ap_item(db, "ap-5")
-        db.create_dispute("ap-5", "default", "missing_po")
-        db.create_dispute("ap-5", "default", "wrong_amount")
+        db.create_dispute("ap-5", "org-test", "missing_po")
+        db.create_dispute("ap-5", "org-test", "wrong_amount")
 
-        disputes = db.get_disputes_for_item("ap-5", "default")
+        disputes = db.get_disputes_for_item("ap-5", "org-test")
         assert len(disputes) == 2
 
     def test_update(self, db):
         _create_ap_item(db, "ap-6")
-        d = db.create_dispute("ap-6", "default", "other")
-        db.update_dispute(d["id"], "default", status="vendor_contacted", vendor_contacted_at="2026-04-04T10:00:00Z")
+        d = db.create_dispute("ap-6", "org-test", "other")
+        db.update_dispute(d["id"], "org-test", status="vendor_contacted", vendor_contacted_at="2026-04-04T10:00:00Z")
 
-        updated = db.get_dispute(d["id"], "default")
+        updated = db.get_dispute(d["id"], "org-test")
         assert updated["status"] == "vendor_contacted"
 
     def test_get_nonexistent(self, db):
-        assert db.get_dispute("dsp_nonexistent", "default") is None
+        assert db.get_dispute("dsp_nonexistent", "org-test") is None
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ class TestDisputeStore:
 class TestDisputeService:
     def test_full_lifecycle(self, db):
         _create_ap_item(db, "lc-1", "Acme Corp")
-        svc = DisputeService("default")
+        svc = DisputeService("org-test")
 
         # Open
         dispute = svc.open_dispute("lc-1", "missing_po", description="No PO on invoice")
@@ -125,44 +125,44 @@ class TestDisputeService:
 
         # Contact vendor
         svc.mark_vendor_contacted(dispute["id"], followup_thread_id="thread-123")
-        d = db.get_dispute(dispute["id"], "default")
+        d = db.get_dispute(dispute["id"], "org-test")
         assert d["status"] == "vendor_contacted"
         assert d["followup_count"] == 1
 
         # Response received
         svc.mark_response_received(dispute["id"])
-        d = db.get_dispute(dispute["id"], "default")
+        d = db.get_dispute(dispute["id"], "org-test")
         assert d["status"] == "response_received"
 
         # Resolve
         svc.resolve_dispute(dispute["id"], "Vendor provided PO #12345")
-        d = db.get_dispute(dispute["id"], "default")
+        d = db.get_dispute(dispute["id"], "org-test")
         assert d["status"] == "resolved"
         assert d["resolution"] == "Vendor provided PO #12345"
 
     def test_escalation(self, db):
         _create_ap_item(db, "esc-1")
-        svc = DisputeService("default")
+        svc = DisputeService("org-test")
         dispute = svc.open_dispute("esc-1", "vendor_mismatch")
         svc.escalate_dispute(dispute["id"])
 
-        d = db.get_dispute(dispute["id"], "default")
+        d = db.get_dispute(dispute["id"], "org-test")
         assert d["status"] == "escalated"
         assert d["escalated_at"] is not None
 
     def test_close_without_resolution(self, db):
         _create_ap_item(db, "cls-1")
-        svc = DisputeService("default")
+        svc = DisputeService("org-test")
         dispute = svc.open_dispute("cls-1", "duplicate")
         svc.close_dispute(dispute["id"], "Duplicate dispute — merged with DSP-001")
 
-        d = db.get_dispute(dispute["id"], "default")
+        d = db.get_dispute(dispute["id"], "org-test")
         assert d["status"] == "closed"
 
     def test_list_open(self, db):
         _create_ap_item(db, "lo-1")
         _create_ap_item(db, "lo-2")
-        svc = DisputeService("default")
+        svc = DisputeService("org-test")
         svc.open_dispute("lo-1", "missing_po")
         d2 = svc.open_dispute("lo-2", "wrong_amount")
         svc.resolve_dispute(d2["id"], "Fixed")
@@ -174,7 +174,7 @@ class TestDisputeService:
         _create_ap_item(db, "sm-1")
         _create_ap_item(db, "sm-2")
         _create_ap_item(db, "sm-3")
-        svc = DisputeService("default")
+        svc = DisputeService("org-test")
         svc.open_dispute("sm-1", "missing_po")
         svc.open_dispute("sm-2", "missing_po")
         d3 = svc.open_dispute("sm-3", "wrong_amount")
@@ -201,7 +201,7 @@ class TestDisputeEndpoints:
             return TokenData(
                 user_id="dsp-user",
                 email="dsp@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )
@@ -223,21 +223,21 @@ class TestDisputeEndpoints:
 
     def test_list_disputes(self, client, db):
         _create_ap_item(db, "api-2")
-        db.create_dispute("api-2", "default", "wrong_amount")
+        db.create_dispute("api-2", "org-test", "wrong_amount")
         resp = client.get("/api/workspace/disputes")
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
 
     def test_summary_endpoint(self, client, db):
         _create_ap_item(db, "api-3")
-        db.create_dispute("api-3", "default", "duplicate")
+        db.create_dispute("api-3", "org-test", "duplicate")
         resp = client.get("/api/workspace/disputes/summary")
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1
 
     def test_resolve_endpoint(self, client, db):
         _create_ap_item(db, "api-4")
-        d = db.create_dispute("api-4", "default", "missing_info")
+        d = db.create_dispute("api-4", "org-test", "missing_info")
         resp = client.post(
             f"/api/workspace/disputes/{d['id']}/resolve",
             json={"resolution": "Vendor provided info"},
@@ -247,7 +247,7 @@ class TestDisputeEndpoints:
 
     def test_escalate_endpoint(self, client, db):
         _create_ap_item(db, "api-5")
-        d = db.create_dispute("api-5", "default", "vendor_mismatch")
+        d = db.create_dispute("api-5", "org-test", "vendor_mismatch")
         resp = client.post(f"/api/workspace/disputes/{d['id']}/escalate")
         assert resp.status_code == 200
         assert resp.json()["status"] == "escalated"

@@ -331,7 +331,7 @@ class TestResolveUserOrgId:
         # M20 tenant-rename: missing-user fallback now returns the
         # ``_unprovisioned`` sentinel so downstream ``assert_org_id``
         # rejects the webhook write closed instead of silently binding
-        # to the legacy ``"default"`` bucket.
+        # to the legacy ``"org-test"`` bucket.
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.return_value = None

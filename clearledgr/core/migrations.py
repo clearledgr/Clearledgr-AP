@@ -4411,36 +4411,11 @@ def _v78_teams_installations(cur, db):
     )
 
 
-# NOTE: migrations v79 (retire literal 'default' org id) and v80
-# (per-table CHECK constraints) are both DEFERRED pending a test-
-# fixture sweep. Per MEMORY.md's audit handoff (2026-05-09),
-# tenant-rename was flagged as "the last open item before audit
-# fully closes" — the data migration was active in-progress work
-# when the disk corruption hit, not a finished atomic change.
-#
-# Why deferred:
-#   * v79's `ADD CHECK (id NOT IN ('default', '_unprovisioned'))` on
-#     organizations breaks every fixture that calls
-#     `db.ensure_organization("default", ...)`.
-#   * v80's per-table CHECKs cascade the same break to ap_items,
-#     audit_events, and ~30 other tenant tables.
-#   * `core/org_utils.require_org` (already shipping in this branch)
-#     ALSO rejects session_org="default" at the application layer,
-#     so even reverting migrations doesn't make tests green: the
-#     fixture sweep is the load-bearing follow-up.
-#
-# What still ships in this branch:
-#   * The full application-layer M19 work (require_org / assert_org_id
-#     wired through every audited route). That's the canonical
-#     production defense.
-#   * Migrations v81 (policy branches) and v82 (data branches +
-#     overlay columns) — additive only, no existing-row impact.
-#
-# The function body below is preserved as a reference for the eventual
-# re-add. It is NOT decorated with @migration so the migrator won't
-# run it. When the fixture sweep ships, re-decorate as @migration(83)
-# and rename _v79_tenant_rename_default -> _v83_tenant_rename_default.
-def _v79_tenant_rename_default_deferred(cur, db):
+@migration(
+    79,
+    "tenant rename: retire literal 'default' org id (M19 audit close-out)",
+)
+def _v79_tenant_rename_default(cur, db):
     """Retire the literal ``"default"`` organization id.
 
     Pre-fix: ``"default"`` had a dual identity — it was both a real
@@ -4571,17 +4546,54 @@ def _v79_tenant_rename_default_deferred(cur, db):
             raise
 
 
-# NOTE: migration v80 (per-table CHECK constraints on every
-# organization_id column) is deferred. The JSONL replay captured it
-# as part of M21, but v79's own docstring already flags the catch:
-# "Re-add [per-table CHECKs] in a follow-up ticket once the test
-# fixtures are swept (~395 failing tests scoped under M21)." The
-# test sweep never landed before the disk corruption, so applying
-# v80 today fails the entire test suite on the ap_items, audit_events,
-# and ~30 other tenant tables whose fixtures pass organization_id=
-# "default". Track the resumption of M21 (test sweep + v80 re-add)
-# separately. v81 and v82 below are additive only (CHECKs on brand-
-# new tables) so they ship now.
+@migration(
+    80,
+    "tenant rename: per-table CHECK constraints on every organization_id column (M21)",
+)
+def _v80_per_table_org_id_checks(cur, db):
+    """Defense-in-depth: block ``organization_id IN ('default',
+    '_unprovisioned')`` on every tenant-bound table.
+
+    M20 (migration v79) renamed the legacy ``"default"`` org row and
+    added a CHECK constraint on ``organizations.id``. The application
+    layer (``assert_org_id`` / ``require_org``) is the canonical
+    defense against the literal landing on tenant-data rows. M21
+    completes the picture: per-table CHECK constraints catch any
+    future code path that bypasses the application guard.
+
+    Exception: ``users`` legitimately holds the ``"_unprovisioned"``
+    sentinel as a placeholder until ops attaches the user to a real
+    org. Constrain ``users`` to forbid only ``"default"``, the
+    sentinel stays valid there.
+    """
+    cur.execute(
+        """
+        SELECT table_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND column_name = 'organization_id'
+          AND table_name <> 'schema_versions'
+        """
+    )
+    tenant_tables = [r["table_name"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+
+    for table in tenant_tables:
+        constraint_name = f"{table}_org_id_not_legacy_default"[:63]
+        if table == "users":
+            check_clause = "organization_id <> 'default'"
+        else:
+            check_clause = "organization_id NOT IN ('default', '_unprovisioned')"
+        try:
+            cur.execute(
+                f'ALTER TABLE "{table}" '
+                f'ADD CONSTRAINT "{constraint_name}" '
+                f"CHECK ({check_clause})"
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg or "duplicate" in msg:
+                continue
+            raise
 
 
 @migration(

@@ -57,7 +57,7 @@ def test_resolve_ap_context_refuses_cross_tenant_org_swap():
     """M13 tightening: pre-fix this function called
     ``db.get_invoice_status(ref)`` WITHOUT passing organization_id,
     then ADOPTED the matched row's org as the resolved org. A caller
-    asking for ``"default"`` would silently swap to whichever tenant
+    asking for ``"org-test"`` would silently swap to whichever tenant
     happened to own the thread_id in the DB. That was the cross-
     tenant org-swap landmine. The function now passes the requested
     org through and refuses to adopt a foreign org from the row.
@@ -72,9 +72,9 @@ def test_resolve_ap_context_refuses_cross_tenant_org_swap():
 
     # Caller passes a different org. The pre-fix function would have
     # returned ``("org-eu-1", ap-1)`` — silent org swap. Post-fix it
-    # returns ``("default", None)``.
-    org_id, item = resolve_ap_context(db, "default", "gmail-msg-1")
-    assert org_id == "default"
+    # returns ``("org-test", None)``.
+    org_id, item = resolve_ap_context(db, "org-test", "gmail-msg-1")
+    assert org_id == "org-test"
     assert item is None
 
 
@@ -116,7 +116,7 @@ def test_resolve_ap_correlation_id_refuses_cross_tenant_lookup():
 
     correlation_id = resolve_ap_correlation_id(
         db,
-        "default",
+        "org-test",
         reference_id="gmail-thread-1",
     )
 

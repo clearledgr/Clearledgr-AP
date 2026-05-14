@@ -55,7 +55,7 @@ def _fake_user():
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
-        organization_id="default",
+        organization_id="org-test",
         role="ops",
     )
 
@@ -81,7 +81,7 @@ def _make_ap_item(db, item_id: str, state: str = "needs_approval") -> dict:
         "currency": "USD",
         "invoice_number": f"INV-{item_id}",
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -116,7 +116,7 @@ class TestLoadSaveRoundTrip:
             {"status": "approved", "ap_item_id": "ITEM-RT-1"},
             box_id="ITEM-RT-1",
             box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
         )
 
         replay = load_idempotent_response(db, "key-roundtrip-1")
@@ -139,7 +139,7 @@ class TestLoadSaveRoundTrip:
             db,
             "key-bulk-1",
             {"total": 3, "succeeded": 3},
-            organization_id="default",
+            organization_id="org-test",
         )
         replay = load_idempotent_response(db, "key-bulk-1")
         assert replay is not None
@@ -279,7 +279,7 @@ class TestRetryPostHeaderIdempotency:
 
         headers = {"Idempotency-Key": "retry-key-1"}
         r1 = client.post(
-            f"/api/ap/items/{item['id']}/retry-post?organization_id=default",
+            f"/api/ap/items/{item['id']}/retry-post?organization_id=org-test",
             headers=headers,
         )
         assert r1.status_code == 200, r1.text
@@ -287,7 +287,7 @@ class TestRetryPostHeaderIdempotency:
         assert first_count == 1
 
         r2 = client.post(
-            f"/api/ap/items/{item['id']}/retry-post?organization_id=default",
+            f"/api/ap/items/{item['id']}/retry-post?organization_id=org-test",
             headers=headers,
         )
         assert r2.status_code == 200, r2.text

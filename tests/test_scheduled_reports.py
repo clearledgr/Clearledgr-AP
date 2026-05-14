@@ -26,13 +26,13 @@ from clearledgr.services.scheduled_reports import (  # noqa: E402
 def db(tmp_path, monkeypatch):
     _db = db_module.get_db()
     _db.initialize()
-    _db.create_organization("default", "Default", settings={})
+    _db.create_organization("org-test", "Default", settings={})
     return _db
 
 
 @pytest.fixture()
 def svc(db):
-    return ScheduledReportService(organization_id="default")
+    return ScheduledReportService(organization_id="org-test")
 
 
 # ---------------------------------------------------------------------------
@@ -49,13 +49,13 @@ class TestGetSchedules:
     def test_returns_custom_schedules_when_configured(self, svc, db):
         custom = [{"id": "custom_daily", "report_type": "posting_status",
                     "frequency": "daily", "hour_utc": 9, "enabled": True}]
-        db.update_organization("default", settings_json={"report_schedules": custom})
+        db.update_organization("org-test", settings_json={"report_schedules": custom})
         schedules = svc.get_schedules()
         assert len(schedules) == 1
         assert schedules[0]["id"] == "custom_daily"
 
     def test_defaults_returned_when_settings_empty(self, svc, db):
-        db.update_organization("default", settings_json={})
+        db.update_organization("org-test", settings_json={})
         schedules = svc.get_schedules()
         assert schedules == DEFAULT_SCHEDULES
 

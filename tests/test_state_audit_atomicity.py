@@ -46,7 +46,7 @@ def _seed(db, box_id: str = "AP-ATOM") -> None:
         "currency": "USD",
         "invoice_number": f"INV-{box_id}",
         "state": "received",
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 

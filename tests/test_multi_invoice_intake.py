@@ -188,7 +188,7 @@ class TestTriageMultiInvoiceFanout:
                 mock_classify.return_value = {"type": "noise"}
                 result = await run_inline_gmail_triage(
                     payload={"email_id": "msg-1", "sender": "test@x.com", "subject": "X"},
-                    org_id="default",
+                    org_id="org-test",
                     combined_text="",
                     attachments=[{"filename": "a.pdf"}],
                 )
@@ -217,7 +217,7 @@ class TestTriageMultiInvoiceFanout:
         ):
             result = await run_inline_gmail_triage(
                 payload={"email_id": "msg-1", "sender": "test@x.com", "subject": "X"},
-                org_id="default",
+                org_id="org-test",
                 combined_text="",
                 attachments=[{"filename": "stack.pdf"}],
             )
@@ -285,7 +285,7 @@ class TestTriageMultiInvoiceFanout:
             primary = await _fan_out_multi_invoice(
                 units=units,
                 payload={"email_id": "msg-1"},
-                org_id="default",
+                org_id="org-test",
                 combined_text="",
                 agent_reasoning_fn=None,
             )

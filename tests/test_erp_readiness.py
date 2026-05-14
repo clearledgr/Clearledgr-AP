@@ -13,14 +13,14 @@ def _db(tmp_path, monkeypatch):
 def test_connector_readiness_passes_for_enabled_connector_with_completed_checklist(tmp_path, monkeypatch):
     db = _db(tmp_path, monkeypatch)
     db.save_erp_connection(
-        organization_id="default",
+        organization_id="org-test",
         erp_type="quickbooks",
         access_token="token",
         refresh_token="refresh",
         realm_id="realm-1",
     )
     set_ga_readiness(
-        "default",
+        "org-test",
         {
             "connector_checklists": {
                 "quickbooks": {"completed": True, "signed_off": True},
@@ -30,7 +30,7 @@ def test_connector_readiness_passes_for_enabled_connector_with_completed_checkli
         db=db,
     )
 
-    readiness = evaluate_erp_connector_readiness("default", db=db)
+    readiness = evaluate_erp_connector_readiness("org-test", db=db)
     summary = readiness["summary"]
     quickbooks = next(row for row in readiness["connectors"] if row["erp_type"] == "quickbooks")
 
@@ -46,14 +46,14 @@ def test_connector_readiness_passes_for_enabled_connector_with_completed_checkli
 def test_connector_readiness_blocks_when_configured_connector_is_rollback_disabled(tmp_path, monkeypatch):
     db = _db(tmp_path, monkeypatch)
     db.save_erp_connection(
-        organization_id="default",
+        organization_id="org-test",
         erp_type="quickbooks",
         access_token="token",
         refresh_token="refresh",
         realm_id="realm-1",
     )
     set_ga_readiness(
-        "default",
+        "org-test",
         {
             "connector_checklists": {
                 "quickbooks": {"completed": True, "signed_off": True},
@@ -63,13 +63,13 @@ def test_connector_readiness_blocks_when_configured_connector_is_rollback_disabl
         db=db,
     )
     set_rollback_controls(
-        "default",
+        "org-test",
         {"erp_connectors_disabled": ["quickbooks"], "reason": "incident"},
         updated_by="owner-1",
         db=db,
     )
 
-    readiness = evaluate_erp_connector_readiness("default", db=db)
+    readiness = evaluate_erp_connector_readiness("org-test", db=db)
     summary = readiness["summary"]
     quickbooks = next(row for row in readiness["connectors"] if row["erp_type"] == "quickbooks")
 

@@ -56,7 +56,7 @@ pytestmark = _vo_skip_pytest.mark.skip(
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -130,7 +130,7 @@ def test_build_safe_payload_drops_default_active_status():
 @pytest.mark.asyncio
 async def test_push_vendor_returns_failed_when_profile_missing(db):
     out = await push_vendor_to_erp(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Phantom",
     )
     assert out.status == "failed"
@@ -140,7 +140,7 @@ async def test_push_vendor_returns_failed_when_profile_missing(db):
 @pytest.mark.asyncio
 async def test_push_vendor_returns_failed_when_no_erp_connection(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
         metadata={"erp_vendor_id": "100"},
     )
@@ -149,7 +149,7 @@ async def test_push_vendor_returns_failed_when_no_erp_connection(db):
         return_value=None,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
     assert out.status == "failed"
     assert out.error == "no_erp_connection"
@@ -158,7 +158,7 @@ async def test_push_vendor_returns_failed_when_no_erp_connection(db):
 @pytest.mark.asyncio
 async def test_push_vendor_no_erp_id_when_metadata_missing(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
     )
     with patch(
@@ -166,7 +166,7 @@ async def test_push_vendor_no_erp_id_when_metadata_missing(db):
         return_value=_stub_connection("quickbooks"),
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
     assert out.status == "no_erp_id"
 
@@ -174,7 +174,7 @@ async def test_push_vendor_no_erp_id_when_metadata_missing(db):
 @pytest.mark.asyncio
 async def test_push_vendor_not_supported_for_netsuite(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
         metadata={"erp_vendor_id": "100"},
     )
@@ -183,7 +183,7 @@ async def test_push_vendor_not_supported_for_netsuite(db):
         return_value=_stub_connection("netsuite"),
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
     assert out.status == "not_supported"
     assert "netsuite" in (out.error or "").lower()
@@ -195,7 +195,7 @@ async def test_push_vendor_no_change_when_payload_empty(db):
     vendor name so prior tests in this module don't leak fields
     via upsert."""
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="EmptyPushFixture",
+        organization_id="org-test", vendor_name="EmptyPushFixture",
         metadata={"erp_vendor_id": "100"},
     )
     with patch(
@@ -203,7 +203,7 @@ async def test_push_vendor_no_change_when_payload_empty(db):
         return_value=_stub_connection("quickbooks"),
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="EmptyPushFixture",
+            organization_id="org-test", vendor_name="EmptyPushFixture",
         )
     assert out.status == "no_change", f"got {out.status}: {out.error}"
 
@@ -216,7 +216,7 @@ async def test_quickbooks_adapter_reads_sync_token_then_posts(db):
     """The QBO adapter MUST read SyncToken before pushing — required
     by QBO's optimistic-concurrency contract."""
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="QbAcme",
+        organization_id="org-test", vendor_name="QbAcme",
         primary_contact_email="ap@qb-acme.test",
         payment_terms="Net 30",
         metadata={"erp_vendor_id": "100"},
@@ -256,7 +256,7 @@ async def test_quickbooks_adapter_reads_sync_token_then_posts(db):
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="QbAcme",
+            organization_id="org-test", vendor_name="QbAcme",
         )
 
     assert out.status == "ok", out.error
@@ -273,7 +273,7 @@ async def test_quickbooks_adapter_reads_sync_token_then_posts(db):
 async def test_quickbooks_adapter_fails_on_get_4xx(db):
     """If the SyncToken read fails the push must fail closed."""
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
         metadata={"erp_vendor_id": "100"},
     )
@@ -298,7 +298,7 @@ async def test_quickbooks_adapter_fails_on_get_4xx(db):
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
 
     assert out.status == "failed"
@@ -312,7 +312,7 @@ async def test_quickbooks_adapter_fails_on_get_4xx(db):
 @pytest.mark.asyncio
 async def test_xero_adapter_posts_contact_with_id(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Globex",
+        organization_id="org-test", vendor_name="Globex",
         primary_contact_email="ap@globex.test",
         registered_address="100 High St, London",
         vat_number="GB12345",
@@ -342,7 +342,7 @@ async def test_xero_adapter_posts_contact_with_id(db):
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Globex",
+            organization_id="org-test", vendor_name="Globex",
         )
 
     assert out.status == "ok", out.error
@@ -359,7 +359,7 @@ async def test_xero_adapter_posts_contact_with_id(db):
 @pytest.mark.asyncio
 async def test_push_emits_audit_event_on_success(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
         metadata={"erp_vendor_id": "100"},
     )
@@ -383,12 +383,12 @@ async def test_push_emits_audit_event_on_success(db):
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
 
     assert out.status == "ok"
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_erp_pushed"],
     )
     matching = [e for e in events.get("events", []) if e.get("box_id") == "Acme"]
@@ -406,7 +406,7 @@ async def test_push_emits_audit_event_on_success(db):
 @pytest.mark.asyncio
 async def test_push_emits_audit_event_on_failure(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         primary_contact_email="ap@acme.test",
         metadata={"erp_vendor_id": "100"},
     )
@@ -429,12 +429,12 @@ async def test_push_emits_audit_event_on_failure(db):
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
         )
 
     assert out.status == "failed"
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_erp_pushed"],
     )
     matching = [e for e in events.get("events", []) if e.get("box_id") == "Acme"]

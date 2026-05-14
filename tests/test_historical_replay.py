@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def run_replay(
     db,
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     limit: int = 100,
 ) -> Dict[str, Any]:
     """Run historical replay against correction history.

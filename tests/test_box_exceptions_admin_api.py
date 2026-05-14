@@ -49,13 +49,13 @@ def _seed_ap_box(db, box_id: str) -> None:
         "currency": "USD",
         "invoice_number": f"INV-{box_id}",
         "state": "needs_approval",
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
 def _seed_exception(
     db, box_id: str, exception_type: str, severity: str = "medium",
-    organization_id: str = "default",
+    organization_id: str = "org-test",
 ) -> dict:
     return db.raise_box_exception(
         box_id=box_id,
@@ -69,7 +69,7 @@ def _seed_exception(
     )
 
 
-def _as_admin(email: str = "admin@acme.com", organization_id: str = "default") -> TokenData:
+def _as_admin(email: str = "admin@acme.com", organization_id: str = "org-test") -> TokenData:
     return TokenData(
         user_id=f"u-{email}",
         email=email,
@@ -156,7 +156,7 @@ def test_list_requires_admin_role(db):
         return TokenData(
             user_id="u-viewer",
             email="viewer@acme.com",
-            organization_id="default",
+            organization_id="org-test",
             role="viewer",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -272,7 +272,7 @@ def test_resolve_unknown_returns_404(client):
 def test_resolve_refuses_cross_tenant(db):
     # Act as admin@acme but the exception belongs to other-tenant.
     def _acme():
-        return _as_admin(email="admin@acme.com", organization_id="default")
+        return _as_admin(email="admin@acme.com", organization_id="org-test")
     app.dependency_overrides[admin_module.get_current_user] = _acme
     try:
         db.create_ap_item({

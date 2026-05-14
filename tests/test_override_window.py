@@ -319,7 +319,7 @@ class TestOverrideWindowServiceDuration:
             },
         )
         service = OverrideWindowService("org_t", db=tmp_db)
-        # Unknown action type → falls back to "default" key
+        # Unknown action type, falls back to "default" key
         assert service.get_window_duration_minutes("payment_execution") == 45
         # Same for the standard erp_post action
         assert service.get_window_duration_minutes("erp_post") == 45
@@ -343,7 +343,7 @@ class TestOverrideWindowServiceDuration:
         service = OverrideWindowService("org_t", db=tmp_db)
         assert service.get_window_duration_minutes("erp_post") == 5
         assert service.get_window_duration_minutes("payment_execution") == 60
-        # An action not in the map falls through to 'default'
+        # An action not in the map falls through to 'org-test'
         assert service.get_window_duration_minutes("vendor_onboarding") == 15
 
     def test_dict_with_no_default_or_action_returns_constant_default(self, tmp_db):

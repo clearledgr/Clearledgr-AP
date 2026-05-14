@@ -50,7 +50,7 @@ def _create_item(db) -> Dict[str, str]:
             "state": "validated",
             "confidence": 0.95,
             "approval_required": True,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "user_id": "api-first-test",
         }
     )
@@ -93,7 +93,7 @@ def test_post_bill_api_first_success_records_attempt_and_success(db, monkeypatch
 
     result = asyncio.run(
         erp_api_first_module.post_bill_api_first(
-            organization_id="default",
+            organization_id="org-test",
             bill=_default_bill(item),
             actor_id="tester",
             ap_item_id=str(item["id"]),
@@ -144,7 +144,7 @@ def test_post_bill_api_first_fails_safe_when_connector_fallback_disabled(db, mon
 
     result = asyncio.run(
         erp_api_first_module.post_bill_api_first(
-            organization_id="default",
+            organization_id="org-test",
             bill=_default_bill(item),
             actor_id="tester",
             ap_item_id=str(item["id"]),
@@ -194,7 +194,7 @@ def test_post_bill_api_first_propagates_explicit_idempotency_key(db, monkeypatch
 
     result = asyncio.run(
         erp_api_first_module.post_bill_api_first(
-            organization_id="default",
+            organization_id="org-test",
             bill=_default_bill(item),
             actor_id="tester",
             ap_item_id=str(item["id"]),
@@ -241,7 +241,7 @@ def test_apply_credit_note_api_first_prefers_quickbooks_api_and_records_success(
 
     result = asyncio.run(
         erp_api_first_module.apply_credit_note_api_first(
-            organization_id="default",
+            organization_id="org-test",
             target_ap_item_id=str(item["id"]),
             source_ap_item_id="source-credit-qb-10",
             actor_id="tester",
@@ -293,7 +293,7 @@ def test_apply_credit_note_api_first_prefers_xero_api_and_records_success(db, mo
 
     result = asyncio.run(
         erp_api_first_module.apply_credit_note_api_first(
-            organization_id="default",
+            organization_id="org-test",
             target_ap_item_id=str(item["id"]),
             source_ap_item_id="source-credit-10",
             actor_id="tester",
@@ -346,7 +346,7 @@ def test_apply_credit_note_api_first_prefers_netsuite_api_and_records_success(db
 
     result = asyncio.run(
         erp_api_first_module.apply_credit_note_api_first(
-            organization_id="default",
+            organization_id="org-test",
             target_ap_item_id=str(item["id"]),
             source_ap_item_id="source-credit-ns-10",
             actor_id="tester",
@@ -398,7 +398,7 @@ def test_apply_credit_note_api_first_prefers_sap_api_and_records_success(db, mon
 
     result = asyncio.run(
         erp_api_first_module.apply_credit_note_api_first(
-            organization_id="default",
+            organization_id="org-test",
             target_ap_item_id=str(item["id"]),
             source_ap_item_id="source-credit-sap-10",
             actor_id="tester",
@@ -426,9 +426,9 @@ def test_apply_credit_note_api_first_prefers_sap_api_and_records_success(db, mon
 
 def test_post_bill_api_first_blocks_when_rollout_control_disables_erp_posting(db, monkeypatch):
     item = _create_item(db)
-    db.ensure_organization("default", organization_name="default")
+    db.ensure_organization("org-test", organization_name="org-test")
     db.update_organization(
-        "default",
+        "org-test",
         settings={
             "rollback_controls": {
                 "erp_posting_disabled": True,
@@ -453,7 +453,7 @@ def test_post_bill_api_first_blocks_when_rollout_control_disables_erp_posting(db
 
     result = asyncio.run(
         erp_api_first_module.post_bill_api_first(
-            organization_id="default",
+            organization_id="org-test",
             bill=_default_bill(item),
             actor_id="tester",
             ap_item_id=str(item["id"]),
@@ -501,7 +501,7 @@ def test_post_bill_api_first_treats_already_posted_as_successful_idempotent_resu
 
     result = asyncio.run(
         erp_api_first_module.post_bill_api_first(
-            organization_id="default",
+            organization_id="org-test",
             bill=_default_bill(item),
             actor_id="tester",
             ap_item_id=str(item["id"]),

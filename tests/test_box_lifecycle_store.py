@@ -48,7 +48,7 @@ def _seed_ap_box(db, box_id: str = "AP-1", state: str = "needs_approval") -> dic
         "currency": "USD",
         "invoice_number": f"INV-{box_id}",
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -63,7 +63,7 @@ class TestRaiseException:
         row = db.raise_box_exception(
             box_id="AP-EXC-1",
             box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="po_required_missing",
             reason="PO number is required for this vendor",
             raised_by="agent",
@@ -85,7 +85,7 @@ class TestRaiseException:
         row = db.raise_box_exception(
             box_id="AP-EXC-2",
             box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="something",
             reason="r",
             raised_by="agent",
@@ -97,7 +97,7 @@ class TestRaiseException:
         _seed_ap_box(db, "AP-EXC-3")
         first = db.raise_box_exception(
             box_id="AP-EXC-3", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="dup", reason="duplicate invoice",
             raised_by="agent",
             idempotency_key="key-1",
@@ -105,7 +105,7 @@ class TestRaiseException:
         # Replay with identical key → returns the same row, not a dup.
         second = db.raise_box_exception(
             box_id="AP-EXC-3", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="dup", reason="duplicate invoice",
             raised_by="agent",
             idempotency_key="key-1",
@@ -120,7 +120,7 @@ class TestRaiseException:
         _seed_ap_box(db, "AP-EXC-4")
         db.raise_box_exception(
             box_id="AP-EXC-4", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="fraud_flag:unusual_amount",
             reason="Invoice 10x above vendor's 90-day median",
             raised_by="agent",
@@ -136,7 +136,7 @@ class TestResolveException:
         _seed_ap_box(db, "AP-RES-1")
         raised = db.raise_box_exception(
             box_id="AP-RES-1", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="duplicate_invoice", reason="Seen before",
             raised_by="agent", severity="high",
         )
@@ -160,7 +160,7 @@ class TestResolveException:
         _seed_ap_box(db, "AP-RES-2")
         raised = db.raise_box_exception(
             box_id="AP-RES-2", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="x", reason="x",
             raised_by="agent",
         )
@@ -184,7 +184,7 @@ class TestResolveException:
         _seed_ap_box(db, "AP-RES-3")
         raised = db.raise_box_exception(
             box_id="AP-RES-3", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="extraction_confidence_low",
             reason="Vendor confidence 0.42",
             raised_by="agent",
@@ -205,12 +205,12 @@ class TestListing:
         _seed_ap_box(db, "AP-B")
         db.raise_box_exception(
             box_id="AP-A", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t1", reason="r", raised_by="agent",
         )
         db.raise_box_exception(
             box_id="AP-B", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t2", reason="r", raised_by="agent",
         )
         a_excs = db.list_box_exceptions(box_type="ap_item", box_id="AP-A")
@@ -222,12 +222,12 @@ class TestListing:
         _seed_ap_box(db, "AP-UNR")
         first = db.raise_box_exception(
             box_id="AP-UNR", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t1", reason="r", raised_by="agent",
         )
         second = db.raise_box_exception(
             box_id="AP-UNR", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t2", reason="r", raised_by="agent",
         )
         db.resolve_box_exception(
@@ -246,17 +246,17 @@ class TestListing:
         _seed_ap_box(db, "AP-ORG-2")
         db.raise_box_exception(
             box_id="AP-ORG-1", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t1", reason="r", raised_by="agent",
             severity="low",
         )
         db.raise_box_exception(
             box_id="AP-ORG-2", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             exception_type="t2", reason="r", raised_by="agent",
             severity="critical",
         )
-        queue = db.list_unresolved_exceptions("default")
+        queue = db.list_unresolved_exceptions("org-test")
         assert len(queue) == 2
         # critical before low (DESC severity ordering is string-based;
         # 'medium' > 'low' alphabetically... actually not reliable.
@@ -277,7 +277,7 @@ class TestOutcomes:
         _seed_ap_box(db, "AP-OUT-1", state="ready_to_post")
         out = db.record_box_outcome(
             box_id="AP-OUT-1", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="posted_to_erp",
             recorded_by="agent",
             data={"erp_reference": "QB-BILL-42", "erp_type": "quickbooks"},
@@ -292,7 +292,7 @@ class TestOutcomes:
         _seed_ap_box(db, "AP-OUT-2", state="ready_to_post")
         first = db.record_box_outcome(
             box_id="AP-OUT-2", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="posted_to_erp",
             recorded_by="agent",
             data={"erp_reference": "A"},
@@ -300,7 +300,7 @@ class TestOutcomes:
         # Second attempt — must return the first, not overwrite.
         second = db.record_box_outcome(
             box_id="AP-OUT-2", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="rejected",
             recorded_by="user",
             data={"reason": "should not overwrite"},
@@ -312,7 +312,7 @@ class TestOutcomes:
         _seed_ap_box(db, "AP-OUT-3", state="ready_to_post")
         db.record_box_outcome(
             box_id="AP-OUT-3", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="posted_to_erp",
             recorded_by="agent",
             data={"erp_reference": "XERO-777"},
@@ -327,30 +327,30 @@ class TestOutcomes:
         _seed_ap_box(db, "AP-LIST-3", state="needs_approval")
         db.record_box_outcome(
             box_id="AP-LIST-1", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="posted_to_erp",
             recorded_by="agent",
         )
         db.record_box_outcome(
             box_id="AP-LIST-2", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="posted_to_erp",
             recorded_by="agent",
         )
         db.record_box_outcome(
             box_id="AP-LIST-3", box_type="ap_item",
-            organization_id="default",
+            organization_id="org-test",
             outcome_type="rejected",
             recorded_by="user",
             data={"reason": "unverified vendor"},
         )
         posted = db.list_outcomes_by_type(
-            "default", box_type="ap_item", outcome_type="posted_to_erp",
+            "org-test", box_type="ap_item", outcome_type="posted_to_erp",
         )
         rejected = db.list_outcomes_by_type(
-            "default", box_type="ap_item", outcome_type="rejected",
+            "org-test", box_type="ap_item", outcome_type="rejected",
         )
-        all_ap = db.list_outcomes_by_type("default", box_type="ap_item")
+        all_ap = db.list_outcomes_by_type("org-test", box_type="ap_item")
         assert len(posted) == 2
         assert len(rejected) == 1
         assert len(all_ap) == 3

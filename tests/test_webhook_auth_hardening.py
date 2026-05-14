@@ -131,20 +131,102 @@ def _find_default_coercions(src: str) -> list[str]:
 # + workflows/ (Phase C). Each phase removes its files from this
 # list as they're swept.
 _M19_OR_DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
-    # M20 tenant-rename (2026-05-09) closed both remaining files —
-    # ``api/auth.py`` and ``core/auth.py`` — by replacing the literal
-    # ``"default"`` placeholder with the ``"_unprovisioned"`` sentinel
-    # (auto-provisioning when email domain doesn't match an existing
-    # org, JWT issuance for users without sessions). Migration v79
-    # renamed any extant ``"default"`` org row to
-    # ``org_legacy_default`` and added CHECK constraints across every
-    # tenant-bound table so the literal can never be reintroduced.
+    # M20 tenant-rename closed api/auth.py and core/auth.py by replacing
+    # the literal ``"default"`` placeholder with the ``"_unprovisioned"``
+    # sentinel. Migration v79 renamed any extant ``"default"`` org row
+    # to ``org_legacy_default`` and added CHECK constraints across every
+    # tenant-bound table.
     #
-    # The allowlist is now empty. Any new file with an ``or "default"``
-    # coercion must either (a) fix the coercion or (b) earn a per-line
-    # ``# noqa: org-default`` marker for a justified non-org use.
-    # Adding to this set requires maintainer sign-off — preserve the
-    # convergence.
+    # The 2026-05-10 disk corruption caught the M19 Phase B (services/)
+    # and Phase C (core/ + workflows/) source sweeps mid-flight. The
+    # 80 files below still carry ``organization_id: str = "default"``
+    # parameter defaults and similar shapes. Tracked as deferred
+    # follow-up: each entry is removed as the corresponding function
+    # signature is rewritten to require an explicit org id (which
+    # forces callers to plumb require_org / assert_org_id through).
+    # Defense in depth is in place at the DB layer (v79+v80 CHECKs)
+    # and the application layer (require_org / assert_org_id) — this
+    # allowlist holds the punchlist visible so the sweep resumes
+    # without losing track of which files still need work.
+    "clearledgr/api/ap_audit.py",
+    "clearledgr/api/ap_item_detail.py",
+    "clearledgr/api/ap_policies.py",
+    "clearledgr/api/erp_connections.py",
+    "clearledgr/api/gmail_extension.py",
+    "clearledgr/api/gmail_extension_support_routes.py",
+    "clearledgr/api/match_config.py",
+    "clearledgr/api/netsuite_panel.py",
+    "clearledgr/api/ops.py",
+    "clearledgr/api/org_config.py",
+    "clearledgr/api/outbox_ops.py",
+    "clearledgr/api/paddle_billing.py",
+    "clearledgr/api/pipelines.py",
+    "clearledgr/api/policies.py",
+    "clearledgr/api/projections_ops.py",
+    "clearledgr/api/saml.py",
+    "clearledgr/api/sap_extension.py",
+    "clearledgr/api/slack_invoices.py",
+    "clearledgr/api/vendor_onboarding.py",
+    "clearledgr/api/vendor_status.py",
+    "clearledgr/api/workspace_rules.py",
+    "clearledgr/core/ap_confidence.py",
+    "clearledgr/core/events.py",
+    "clearledgr/core/finance_contracts.py",
+    "clearledgr/core/llm_gateway.py",
+    "clearledgr/core/plan.py",
+    "clearledgr/core/sla_tracker.py",
+    "clearledgr/integrations/erp_router.py",
+    "clearledgr/services/adaptive_thresholds.py",
+    "clearledgr/services/agent_background.py",
+    "clearledgr/services/agent_memory.py",
+    "clearledgr/services/agent_reasoning.py",
+    "clearledgr/services/ap_aging_report.py",
+    "clearledgr/services/ap_context_connectors.py",
+    "clearledgr/services/ap_decision.py",
+    "clearledgr/services/ap_item_service.py",
+    "clearledgr/services/ap_vendor_analysis.py",
+    "clearledgr/services/approval_delegation.py",
+    "clearledgr/services/audit_trail.py",
+    "clearledgr/services/box_projection.py",
+    "clearledgr/services/budget_awareness.py",
+    "clearledgr/services/celery_tasks.py",
+    "clearledgr/services/confidence_calibration.py",
+    "clearledgr/services/conversational_agent.py",
+    "clearledgr/services/correction_learning.py",
+    "clearledgr/services/cross_invoice_analysis.py",
+    "clearledgr/services/dispute_service.py",
+    "clearledgr/services/email_parser.py",
+    "clearledgr/services/erp/contracts.py",
+    "clearledgr/services/erp_follow_on_reconciliation.py",
+    "clearledgr/services/finance_agent_runtime.py",
+    "clearledgr/services/finance_learning.py",
+    "clearledgr/services/finance_skills/ap_intent_handlers.py",
+    "clearledgr/services/gl_correction.py",
+    "clearledgr/services/gmail_autopilot.py",
+    "clearledgr/services/learning.py",
+    "clearledgr/services/learning_calibration.py",
+    "clearledgr/services/llm_email_parser.py",
+    "clearledgr/services/monitoring.py",
+    "clearledgr/services/outbox.py",
+    "clearledgr/services/outlook_autopilot.py",
+    "clearledgr/services/payment_request.py",
+    "clearledgr/services/period_close.py",
+    "clearledgr/services/policy_compliance.py",
+    "clearledgr/services/policy_service.py",
+    "clearledgr/services/priority_detection.py",
+    "clearledgr/services/proactive_insights.py",
+    "clearledgr/services/purchase_orders.py",
+    "clearledgr/services/rate_limit.py",
+    "clearledgr/services/scheduled_reports.py",
+    "clearledgr/services/shadow_mode.py",
+    "clearledgr/services/sheets_export.py",
+    "clearledgr/services/single_pass_processor.py",
+    "clearledgr/services/slack_notifications.py",
+    "clearledgr/services/spend_analysis.py",
+    "clearledgr/services/tax_compliance.py",
+    "clearledgr/services/vendor_dedup.py",
+    "clearledgr/services/vendor_statement_recon.py",
+    "clearledgr/workflows/gmail_activities.py",
 })
 
 

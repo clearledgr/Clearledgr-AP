@@ -11,7 +11,7 @@ Flow per test:
   4. Assert the resulting state.
 
 Tests intentionally use ``"org-branch-test"`` style ids — never the
-literal ``"default"`` / ``"_unprovisioned"`` sentinels (see M19/M20
+literal ``"org-test"`` / ``"_unprovisioned"`` sentinels (see M19/M20
 tenancy walls).
 """
 from __future__ import annotations

@@ -35,7 +35,7 @@ def db(tmp_path, monkeypatch):
 
 class TestDelegationRules:
     def test_create_and_list(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         rule = svc.create_rule(
             delegator_id="u1", delegator_email="alice@co.com",
             delegate_id="u2", delegate_email="bob@co.com",
@@ -49,7 +49,7 @@ class TestDelegationRules:
         assert rules[0]["delegator_email"] == "alice@co.com"
 
     def test_deactivate(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         rule = svc.create_rule(
             delegator_id="u1", delegator_email="alice@co.com",
             delegate_id="u2", delegate_email="bob@co.com",
@@ -64,7 +64,7 @@ class TestDelegationRules:
         assert all_rules[0]["is_active"] is False
 
     def test_get_rule(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         rule = svc.create_rule(
             delegator_id="u1", delegator_email="a@co.com",
             delegate_id="u2", delegate_email="b@co.com",
@@ -74,7 +74,7 @@ class TestDelegationRules:
         assert found["delegate_email"] == "b@co.com"
 
     def test_get_nonexistent(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         assert svc.get_rule("dlg_nonexistent") is None
 
 
@@ -84,7 +84,7 @@ class TestDelegationRules:
 
 class TestDelegateResolution:
     def test_finds_delegate(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         svc.create_rule(
             delegator_id="u1", delegator_email="alice@co.com",
             delegate_id="u2", delegate_email="bob@co.com",
@@ -92,11 +92,11 @@ class TestDelegateResolution:
         assert svc.get_delegate_for("alice@co.com") == "bob@co.com"
 
     def test_no_delegate_returns_none(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         assert svc.get_delegate_for("charlie@co.com") is None
 
     def test_date_range_active(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
         svc.create_rule(
@@ -107,7 +107,7 @@ class TestDelegateResolution:
         assert svc.get_delegate_for("alice@co.com") == "bob@co.com"
 
     def test_date_range_not_yet_started(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
         next_week = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         svc.create_rule(
@@ -118,7 +118,7 @@ class TestDelegateResolution:
         assert svc.get_delegate_for("alice@co.com") is None
 
     def test_date_range_expired(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         last_week = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         svc.create_rule(
@@ -129,7 +129,7 @@ class TestDelegateResolution:
         assert svc.get_delegate_for("alice@co.com") is None
 
     def test_resolve_approvers_swaps_delegated(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         svc.create_rule(
             delegator_id="u1", delegator_email="alice@co.com",
             delegate_id="u2", delegate_email="bob@co.com",
@@ -138,7 +138,7 @@ class TestDelegateResolution:
         assert resolved == ["bob@co.com", "charlie@co.com"]
 
     def test_resolve_approvers_no_delegation(self, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         resolved = svc.resolve_approvers(["alice@co.com", "bob@co.com"])
         assert resolved == ["alice@co.com", "bob@co.com"]
 
@@ -157,7 +157,7 @@ class TestDelegationEndpoints:
             return TokenData(
                 user_id="dlg-user",
                 email="dlg@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )
@@ -183,14 +183,14 @@ class TestDelegationEndpoints:
         assert data["delegate_email"] == "bob@co.com"
 
     def test_list_rules(self, client, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         svc.create_rule("u1", "a@co.com", "u2", "b@co.com")
         resp = client.get("/api/workspace/delegation-rules")
         assert resp.status_code == 200
         assert len(resp.json()["rules"]) == 1
 
     def test_deactivate_rule(self, client, db):
-        svc = DelegationService("default")
+        svc = DelegationService("org-test")
         rule = svc.create_rule("u1", "a@co.com", "u2", "b@co.com")
         resp = client.post(f"/api/workspace/delegation-rules/{rule['id']}/deactivate")
         assert resp.status_code == 200

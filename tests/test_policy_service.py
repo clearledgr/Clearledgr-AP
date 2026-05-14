@@ -94,6 +94,21 @@ def test_merge_round_trips_for_every_kind():
             "customer_webhook": {"enabled": False, "filter_event_types": [], "include_metadata": True},
             "slack_card_update": {"enabled": False, "show_actor_attribution": True},
         },
+        # Sprint 5 Phase A — branchable backoffice config kinds.
+        "sanctions_list": {"entries": [], "default_action": "block"},
+        "erp_field_mappings": {"netsuite": {}, "sap": {}, "quickbooks": {}, "xero": {}},
+        "approval_routing": {
+            "slack_channel": "",
+            "teams_team_id": "",
+            "email_distribution": [],
+            "fallback_channel": "slack",
+        },
+        "org_settings": {
+            "timezone": "UTC",
+            "fiscal_year_start": "01-01",
+            "default_currency": "USD",
+            "default_payment_terms_days": 30,
+        },
     }
     for kind in POLICY_KINDS:
         settings: Dict[str, Any] = {}
@@ -130,10 +145,10 @@ def test_match_threshold_band_respects_vendor_filter():
     from clearledgr.services.policy_service import _match_threshold_band
     thresholds = [
         {"min_amount": 0, "max_amount": 10000, "label": "vip", "vendors": ["acme"]},
-        {"min_amount": 0, "max_amount": 10000, "label": "default"},
+        {"min_amount": 0, "max_amount": 10000, "label": "org-test"},
     ]
     assert _match_threshold_band(thresholds, 500, {"vendor_name": "Acme"}) == "vip"
-    assert _match_threshold_band(thresholds, 500, {"vendor_name": "Other Co"}) == "default"
+    assert _match_threshold_band(thresholds, 500, {"vendor_name": "Other Co"}) == "org-test"
 
 
 # ─── Replay strategies ─────────────────────────────────────────────

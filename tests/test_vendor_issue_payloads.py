@@ -28,7 +28,7 @@ def test_vendor_payload_surfaces_open_issue_rollups(db):
             "currency": "USD",
             "invoice_number": "INV-ACME-1",
             "state": "needs_info",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "exception_code": "po_missing_reference",
             "metadata": {
                 "needs_info_question": "Please send the PO number for INV-ACME-1.",
@@ -48,12 +48,12 @@ def test_vendor_payload_surfaces_open_issue_rollups(db):
             "currency": "USD",
             "invoice_number": "INV-ACME-2",
             "state": "failed_post",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "exception_code": "erp_post_failed",
         }
     )
 
-    vendor_rows = _build_vendor_summary_rows(db, "default", search="Acme Vendor", limit=10)
+    vendor_rows = _build_vendor_summary_rows(db, "org-test", search="Acme Vendor", limit=10)
     assert len(vendor_rows) == 1
     summary = vendor_rows[0]
     assert summary["vendor_name"] == "Acme Vendor"
@@ -65,7 +65,7 @@ def test_vendor_payload_surfaces_open_issue_rollups(db):
         "erp_post_failed",
     }
 
-    payload = _build_vendor_detail_payload(db, "default", "Acme Vendor")
+    payload = _build_vendor_detail_payload(db, "org-test", "Acme Vendor")
     assert payload["issue_summary"]["total"] == 2
     assert payload["issue_summary"]["needs_info"] == 1
     assert payload["issue_summary"]["failed_post"] == 1

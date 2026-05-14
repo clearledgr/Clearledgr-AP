@@ -117,12 +117,16 @@ class UserEntityRolesStore:
                 raise ValueError("approval_ceiling must be non-negative")
 
         now = datetime.now(timezone.utc).isoformat()
+        # v82 replaced the strict user_entity_roles_pkey with a partial
+        # unique index keyed on (user_id, entity_id) WHERE branch_id IS
+        # NULL, leaving branch overlay rows free to share the same
+        # composite key. ON CONFLICT must reference the partial index.
         sql = (
             "INSERT INTO user_entity_roles "
             "(user_id, entity_id, organization_id, role, approval_ceiling, "
             " created_at, updated_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (user_id, entity_id) "
+            "ON CONFLICT (user_id, entity_id) WHERE branch_id IS NULL "
             "DO UPDATE SET role = EXCLUDED.role, "
             "              approval_ceiling = EXCLUDED.approval_ceiling, "
             "              organization_id = EXCLUDED.organization_id, "
@@ -203,11 +207,12 @@ class UserEntityRolesStore:
                             f"invalid approval_ceiling for entity {entity_id}: {exc}"
                         ) from exc
                 cur.execute(
+                    # v82 partial unique index: target main rows only.
                     "INSERT INTO user_entity_roles "
                     "(user_id, entity_id, organization_id, role, approval_ceiling, "
                     " created_at, updated_at) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (user_id, entity_id) "
+                    "ON CONFLICT (user_id, entity_id) WHERE branch_id IS NULL "
                     "DO UPDATE SET role = EXCLUDED.role, "
                     "              approval_ceiling = EXCLUDED.approval_ceiling, "
                     "              organization_id = EXCLUDED.organization_id, "

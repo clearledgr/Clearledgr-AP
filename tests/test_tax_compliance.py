@@ -53,7 +53,7 @@ def _create_posted_item(db, item_id, vendor, amount, currency="USD"):
         "currency": currency,
         "invoice_number": f"INV-{item_id}",
         "state": "posted_to_erp",
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
     # Backdate to this year
     sql = "UPDATE ap_items SET created_at = %s WHERE id = %s"
@@ -179,7 +179,7 @@ class TestTaxComplianceService:
         _create_posted_item(db, "t2", "Acme Corp", 3000.0)
         _create_posted_item(db, "t3", "Beta LLC", 2000.0)
 
-        svc = TaxComplianceService("default")
+        svc = TaxComplianceService("org-test")
         now = datetime.now(timezone.utc)
         totals = svc.get_vendor_payment_totals(
             f"{now.year}-01-01", f"{now.year + 1}-01-01",
@@ -194,7 +194,7 @@ class TestTaxComplianceService:
     def test_tax_summary(self, db):
         _create_posted_item(db, "ts1", "Vendor X", 10000.0)
 
-        svc = TaxComplianceService("default")
+        svc = TaxComplianceService("org-test")
         summary = svc.generate_tax_summary(year=datetime.now(timezone.utc).year)
 
         assert summary["vendor_count"] >= 1
@@ -221,7 +221,7 @@ class TestTaxComplianceEndpoints:
             return TokenData(
                 user_id="tax-user",
                 email="tax@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )

@@ -253,7 +253,7 @@ def test_coverage_skips_vendor_restricted_bands():
                 "vendors": ["Stripe Inc"],
             },
             {
-                "label": "default",
+                "label": "org-test",
                 "min_amount": 0,
                 "max_amount": None,
                 "approvers": ["ap@x.com"],

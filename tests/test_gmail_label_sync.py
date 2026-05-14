@@ -77,7 +77,7 @@ def _make_label_event(intent: str, *, box_id: str = "AP-1",
     return AgentEvent(
         type=AgentEventType.LABEL_CHANGED,
         source="gmail_label_sync",
-        organization_id="default",
+        organization_id="org-test",
         payload={
             "box_id": box_id,
             "thread_id": "thread-1",
@@ -154,7 +154,7 @@ def test_label_changed_missing_box_id_returns_empty_plan():
     event = AgentEvent(
         type=AgentEventType.LABEL_CHANGED,
         source="gmail_label_sync",
-        organization_id="default",
+        organization_id="org-test",
         payload={
             "label_name": "Clearledgr/Invoice/Approved",
             "intent": "approve_invoice",
@@ -189,7 +189,7 @@ async def test_process_label_changes_enqueues_for_action_label_on_known_thread()
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=token,
-        organization_id="default",
+        organization_id="org-test",
         db=mock_db,
         queue=mock_queue,
         records=[
@@ -221,7 +221,7 @@ async def test_process_label_changes_ignores_status_only_labels():
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=SimpleNamespace(email="ops@example.com", user_id="u1"),
-        organization_id="default",
+        organization_id="org-test",
         db=mock_db,
         queue=mock_queue,
         records=[{"message_id": "m1", "thread_id": "t1", "label_ids": ["Label_MATCHED"]}],
@@ -244,7 +244,7 @@ async def test_process_label_changes_ignores_threads_without_ap_box():
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=SimpleNamespace(email="ops@example.com", user_id="u1"),
-        organization_id="default",
+        organization_id="org-test",
         db=mock_db,
         queue=mock_queue,
         records=[{"message_id": "m1", "thread_id": "t1", "label_ids": ["Label_APPROVED"]}],
@@ -277,7 +277,7 @@ async def test_process_label_changes_dedupes_via_idempotency_key():
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=SimpleNamespace(email="ops@example.com", user_id="u1"),
-        organization_id="default",
+        organization_id="org-test",
         db=mock_db,
         queue=mock_queue,
         records=records,
@@ -307,7 +307,7 @@ async def test_process_label_changes_picks_first_action_label_when_multiple():
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=SimpleNamespace(email="ops@example.com", user_id="u1"),
-        organization_id="default",
+        organization_id="org-test",
         db=mock_db,
         queue=mock_queue,
         records=[{
@@ -328,7 +328,7 @@ async def test_process_label_changes_noop_on_empty_records():
     await gmail_webhooks._process_label_changes(
         client=mock_client,
         token=SimpleNamespace(email="x", user_id="y"),
-        organization_id="default",
+        organization_id="org-test",
         db=MagicMock(),
         queue=MagicMock(),
         records=[],
