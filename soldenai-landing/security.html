@@ -6,12 +6,12 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>Security · Solden</title>
-    <meta name="description" content="How Solden secures finance data: SOC 2 Type 1 controls, DPA, sub-processors, and the architecture decisions behind a coordination layer that touches Gmail, Slack, Teams, NetSuite and SAP." />
-    <meta name="theme-color" content="#0A1F44" />
+    <meta name="description" content="Defaults an audit committee can sign off on. SOC 2 controls, DPA, sub-processors, append-only audit at the schema layer. Solden never debits, credits, or initiates a payment." />
+    <meta name="theme-color" content="#050B1E" />
 
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=3" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=3" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=3" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=4" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=4" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=4" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
@@ -19,17 +19,17 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/pages.css" />
   </head>
-  <body>
+  <body class="theme-dark theme-subpage">
     <header class="topbar">
       <div class="shell topbar__row">
         <a class="brand" href="/" aria-label="Solden home">
-          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
+          <img class="brand__lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
         </a>
         <nav class="nav" aria-label="Primary">
           <a class="nav__link nav__link--manifesto" href="/manifesto.html">Manifesto</a>
           <a class="nav__link" href="/#how">How it works</a>
-          <a class="nav__link" href="/#surfaces">Surfaces</a>
-          <a class="nav__link" href="/security.html">Security</a>
+          <a class="nav__link" href="/#fits">Surfaces</a>
+          <a class="nav__link nav__link--active" href="/security.html" aria-current="page">Security</a>
           <a class="nav__link" href="/about.html">About</a>
         </nav>
         <div class="topbar__cta">
@@ -38,20 +38,25 @@
       </div>
     </header>
 
-    <!-- Hero ────────────────────────────────────────────────── -->
-    <section class="subpage-hero">
-      <div class="subpage-hero__grid-bg" aria-hidden="true"></div>
-      <div class="shell subpage-hero__inner">
-        <span class="subpage-hero__eyebrow">Security &amp; Trust</span>
-        <h1 class="subpage-hero__title">Defaults an audit committee can sign off on.</h1>
-        <p class="subpage-hero__sub">
-          Solden touches finance data across Gmail, Slack, Teams, NetSuite and SAP. The architecture is built to that brief: least-privilege scopes, deterministic decision rules, append-only audit, and a vendor footprint we can defend in a DPIA.
+    <!-- Cover ───────────────────────────────────────────────── -->
+    <section class="page-cover">
+      <div class="page-cover__glow" aria-hidden="true"></div>
+      <div class="shell shell--narrow page-cover__inner">
+        <p class="page-cover__eyebrow">Security &amp; Trust</p>
+        <h1 class="page-cover__title">
+          Defaults an audit committee can <span class="page-cover__title-accent">sign off on</span>.
+        </h1>
+        <p class="page-cover__sub page-cover__sub--stanza">
+          <span>Least-privilege scopes.</span>
+          <span>Deterministic decision rules.</span>
+          <span>Append-only audit at the schema layer.</span>
+          <span>A vendor footprint we can defend in a DPIA.</span>
         </p>
       </div>
     </section>
 
     <!-- Body ────────────────────────────────────────────────── -->
-    <section class="section">
+    <section class="page-section">
       <div class="shell shell--tight">
 
         <div class="prose">
@@ -269,18 +274,19 @@
         <div class="footer__row">
           <div class="footer__brand-block">
             <img class="footer__brand-lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
-            <p class="footer__tagline">The coordination layer for finance teams. AP records that don't drop a thread.</p>
+            <p class="footer__tagline">The bonding layer for back office work. Workflows that hold.</p>
           </div>
           <div>
-            <span class="footer__col-title">Product</span>
+            <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="/#how">How it works</a></li>
-              <li><a href="/#surfaces">Surfaces</a></li>
+              <li><a href="/#problem">Problem</a></li>
+              <li><a href="/#product">Product</a></li>
+              <li><a href="/#fits">How it fits</a></li>
               <li><a href="/contact.html">Talk to us</a></li>
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Trust</span>
+            <span class="footer__col-title">trust</span>
             <ul class="footer__col-list">
               <li><a href="/security.html">Security</a></li>
               <li><a href="/security.html#dpa">DPA</a></li>
@@ -288,8 +294,9 @@
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Company</span>
+            <span class="footer__col-title">company</span>
             <ul class="footer__col-list">
+              <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/about.html">About</a></li>
               <li><a href="/contact.html">Contact</a></li>
             </ul>

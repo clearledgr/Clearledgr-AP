@@ -2630,3 +2630,407 @@ body.theme-manifesto {
 .solution__sub-stanza span:last-child {
   color: var(--text-on-dark);
 }
+
+/* ═════════════════════════════════════════════════════════════
+   Subpage cover + content (dark theme — about, contact, security)
+   ───────────────────────────────────────────────────────────── */
+
+body.theme-subpage {
+  background: var(--bg-dark);
+  color: var(--text-on-dark);
+}
+
+.page-cover {
+  position: relative;
+  padding: 88px 0 56px;
+  overflow: hidden;
+}
+.page-cover__glow {
+  position: absolute;
+  inset: -200px 0 0 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(24, 191, 176, 0.14) 0%, transparent 60%),
+    radial-gradient(80% 60% at 50% 0%, rgba(10, 31, 68, 0.85) 0%, transparent 70%);
+}
+.page-cover__inner { position: relative; }
+
+.page-cover__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-on-dark-soft);
+  margin: 0 0 24px;
+}
+
+.page-cover__title {
+  font-size: clamp(40px, 6.2vw, 80px);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+  margin: 0 0 32px;
+  color: var(--text-on-dark);
+}
+.page-cover__title-accent {
+  background: linear-gradient(180deg, var(--teal-soft) 0%, var(--teal) 60%, var(--teal-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.page-cover__sub {
+  margin: 0;
+  max-width: 640px;
+  font-size: clamp(20px, 2.4vw, 26px);
+  line-height: 1.35;
+  letter-spacing: -0.018em;
+  color: var(--text-on-dark-soft);
+  font-weight: 500;
+}
+.page-cover__sub--stanza {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.page-cover__sub--stanza span:last-child {
+  color: var(--text-on-dark);
+}
+
+.page-cover__hint {
+  margin: 28px 0 0;
+  font-size: 15px;
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.55));
+  font-style: italic;
+}
+
+.page-section {
+  padding: 64px 0;
+  position: relative;
+}
+.page-section + .page-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.page-section--alt {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.page-h {
+  font-size: clamp(26px, 3.4vw, 38px);
+  line-height: 1.14;
+  letter-spacing: -0.028em;
+  font-weight: 700;
+  margin: 0 0 24px;
+  color: var(--text-on-dark);
+}
+
+.page-prose {
+  font-size: 18px;
+  line-height: 1.62;
+  margin: 0 0 22px;
+  color: var(--text-on-dark-soft);
+}
+.page-prose strong { color: var(--text-on-dark); font-weight: 600; }
+.page-prose--em {
+  font-size: clamp(20px, 2.2vw, 24px) !important;
+  line-height: 1.32 !important;
+  letter-spacing: -0.018em;
+  color: var(--text-on-dark) !important;
+  font-weight: 600;
+}
+
+.page-link {
+  color: var(--teal-soft);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(24, 191, 176, 0.3);
+  transition: border-color .2s var(--ease-out), color .2s var(--ease-out);
+}
+.page-link:hover {
+  color: var(--teal);
+  border-bottom-color: var(--teal);
+}
+
+.page-defs {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 8px 0 0;
+}
+.page-def dt {
+  font-size: clamp(19px, 2.2vw, 23px);
+  font-weight: 700;
+  letter-spacing: -0.018em;
+  color: var(--text-on-dark);
+  margin: 0 0 6px;
+}
+.page-def dd {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text-on-dark-soft);
+}
+
+/* Founders grid */
+.founders-head {
+  text-align: center;
+  margin: 0 auto 48px;
+  max-width: 640px;
+}
+
+.founders-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+@media (max-width: 920px) {
+  .founders-grid { grid-template-columns: 1fr; max-width: 520px; margin: 0 auto; }
+}
+
+.founder-card {
+  background: rgba(14, 26, 51, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 28px 26px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color .25s var(--ease-out), transform .25s var(--ease-out);
+}
+.founder-card:hover {
+  border-color: rgba(24, 191, 176, 0.45);
+  transform: translateY(-2px);
+}
+.founder-card__mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(24, 191, 176, 0.2) 0%, rgba(10, 31, 68, 0.55) 100%);
+  border: 1px solid rgba(24, 191, 176, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--teal-soft);
+  margin-bottom: 6px;
+}
+.founder-card__role {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.5));
+  margin: 0;
+}
+.founder-card__name {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.018em;
+  font-weight: 700;
+  color: var(--text-on-dark);
+}
+.founder-card__bio {
+  margin: 4px 0 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-on-dark-soft);
+}
+.founder-card__bio strong { color: var(--text-on-dark); font-weight: 600; }
+
+/* Contact page — aside + form together */
+.contact-shell {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 920px) {
+  .contact-shell { grid-template-columns: 1fr; gap: 24px; }
+}
+
+.contact-aside {
+  background: rgba(14, 26, 51, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 28px 26px;
+}
+.contact-aside__title {
+  font-size: 18px;
+  letter-spacing: -0.012em;
+  font-weight: 600;
+  color: var(--text-on-dark);
+  margin: 0 0 12px;
+}
+.contact-aside__body {
+  margin: 0 0 24px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-on-dark-soft);
+}
+
+.contact-channels {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 18px;
+}
+.contact-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.contact-channel__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.5));
+}
+.contact-channel__value {
+  font-size: 14px;
+  color: var(--text-on-dark);
+  font-weight: 500;
+}
+
+/* Dark mode form override (the form was light-only before) */
+body.theme-dark .form {
+  background: rgba(14, 26, 51, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+body.theme-dark .form__label {
+  color: var(--text-on-dark-soft);
+}
+body.theme-dark .form__input,
+body.theme-dark .form__select,
+body.theme-dark .form__textarea {
+  background: rgba(5, 11, 30, 0.65);
+  color: var(--text-on-dark);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+body.theme-dark .form__input:focus,
+body.theme-dark .form__select:focus,
+body.theme-dark .form__textarea:focus {
+  border-color: var(--teal);
+  outline-color: rgba(24, 191, 176, 0.4);
+}
+body.theme-dark .form__hint {
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.55));
+}
+body.theme-dark .form__hint a {
+  color: var(--teal-soft);
+}
+
+/* Dark mode for the security controls + table */
+body.theme-dark .controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+body.theme-dark .control {
+  background: rgba(14, 26, 51, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+body.theme-dark .control__name {
+  color: var(--text-on-dark);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+body.theme-dark .control__body {
+  color: var(--text-on-dark-soft);
+  font-size: 14.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+body.theme-dark .subprocs {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(14, 26, 51, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+body.theme-dark .subprocs th,
+body.theme-dark .subprocs td {
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.45;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+body.theme-dark .subprocs th {
+  background: rgba(5, 11, 30, 0.55);
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.55));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+body.theme-dark .subprocs td { color: var(--text-on-dark-soft); }
+body.theme-dark .subprocs td:first-child {
+  color: var(--text-on-dark);
+  font-weight: 600;
+}
+body.theme-dark .subprocs__group {
+  background: rgba(24, 191, 176, 0.06) !important;
+  color: var(--teal-soft) !important;
+  font-family: var(--font-mono);
+  font-size: 12px !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+body.theme-dark .muted {
+  color: var(--text-on-dark-faint, rgba(255, 255, 255, 0.5)) !important;
+}
+
+/* Make .prose readable on dark background — security page body */
+body.theme-dark .prose h2 {
+  color: var(--text-on-dark);
+  font-size: clamp(24px, 3vw, 32px);
+  letter-spacing: -0.022em;
+  margin: 48px 0 16px;
+}
+body.theme-dark .prose h2:first-child { margin-top: 0; }
+body.theme-dark .prose p {
+  color: var(--text-on-dark-soft);
+  font-size: 17px;
+  line-height: 1.6;
+}
+body.theme-dark .prose p strong { color: var(--text-on-dark); }
+body.theme-dark .prose a {
+  color: var(--teal-soft);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(24, 191, 176, 0.3);
+}
+body.theme-dark .prose a:hover {
+  border-bottom-color: var(--teal);
+  color: var(--teal);
+}
+body.theme-dark .prose code {
+  background: rgba(5, 11, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.92em;
+  color: var(--teal-soft);
+}
+
+/* Footer-CTA title styling on dark subpages */
+body.theme-dark .footer-cta__title {
+  color: var(--text-on-dark);
+}
+body.theme-dark .footer-cta__sub {
+  color: var(--text-on-dark-soft);
+}

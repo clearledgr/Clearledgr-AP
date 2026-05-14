@@ -6,12 +6,12 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>About · Solden</title>
-    <meta name="description" content="Solden is the coordination layer for finance teams. Founded by operators from Paystack, Anchor and Datadog who lived the problem of AP records that drop the thread between Gmail, Slack, Teams and the ERP." />
-    <meta name="theme-color" content="#0A1F44" />
+    <meta name="description" content="Solden is the bonding layer for back office work. Built by repeat founders from Paystack, Anchor and Datadog. Finance is the wedge. The pattern generalizes." />
+    <meta name="theme-color" content="#050B1E" />
 
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=3" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=3" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=3" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=4" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=4" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=4" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
@@ -19,18 +19,18 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/pages.css" />
   </head>
-  <body>
+  <body class="theme-dark theme-subpage">
     <header class="topbar">
       <div class="shell topbar__row">
         <a class="brand" href="/" aria-label="Solden home">
-          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
+          <img class="brand__lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
         </a>
         <nav class="nav" aria-label="Primary">
           <a class="nav__link nav__link--manifesto" href="/manifesto.html">Manifesto</a>
           <a class="nav__link" href="/#how">How it works</a>
-          <a class="nav__link" href="/#surfaces">Surfaces</a>
+          <a class="nav__link" href="/#fits">Surfaces</a>
           <a class="nav__link" href="/security.html">Security</a>
-          <a class="nav__link" href="/about.html">About</a>
+          <a class="nav__link nav__link--active" href="/about.html" aria-current="page">About</a>
         </nav>
         <div class="topbar__cta">
           <a class="btn btn--primary" href="/contact.html">Talk to us</a>
@@ -38,75 +38,122 @@
       </div>
     </header>
 
-    <!-- Hero ────────────────────────────────────────────────── -->
-    <section class="subpage-hero">
-      <div class="subpage-hero__grid-bg" aria-hidden="true"></div>
-      <div class="shell subpage-hero__inner">
-        <span class="subpage-hero__eyebrow">About</span>
-        <h1 class="subpage-hero__title">Finance teams don't pick a tool. They live across them.</h1>
-        <p class="subpage-hero__sub">
-          Solden is the coordination layer that keeps an AP record coherent as it crosses Gmail, Slack, Teams, NetSuite and SAP. We built it because every finance team we've worked with had the same complaint: the work fragments faster than the ERP can catch.
+    <!-- Cover ───────────────────────────────────────────────── -->
+    <section class="page-cover">
+      <div class="page-cover__glow" aria-hidden="true"></div>
+      <div class="shell shell--narrow page-cover__inner">
+        <p class="page-cover__eyebrow">About</p>
+        <h1 class="page-cover__title">
+          We are building the bonding layer<br />
+          for <span class="page-cover__title-accent">back office work</span>.
+        </h1>
+        <p class="page-cover__sub page-cover__sub--stanza">
+          <span>The systems work.</span>
+          <span>The components are capable.</span>
+          <span>What&rsquo;s missing is the substrate that holds them together.</span>
         </p>
       </div>
     </section>
 
-    <!-- Mission ─────────────────────────────────────────────── -->
-    <section class="section">
-      <div class="shell shell--tight">
-        <div class="prose">
-          <h2>Why this, why now</h2>
-          <p>
-            ERPs are systems of record. They were never designed to be the place where a controller asks an AP analyst a question, or where an approver gets a Slack ping at 5pm on a Friday. So that work happens elsewhere, in inboxes, threads, spreadsheets, DMs, and the ERP gets a clean entry only at the very end. The middle is invisible.
-          </p>
-          <p>
-            That gap is where errors live. Duplicate invoices, mis-coded GL, vendor-master drift, unsigned approvals, lost context on disputed POs. The ERP can't show you any of it because the ERP wasn't part of the conversation.
-          </p>
-          <p>
-            <strong>Solden does the cross-checks the ERP doesn't run, and keeps the conversation tied to the record.</strong> One AP item, one auditable thread, every surface your team already uses. We don't replace the ERP. We don't author your vendor master. We don't initiate payments. We do the coordination work that humans currently do over Slack at 11pm.
-          </p>
+    <!-- Thesis ──────────────────────────────────────────────── -->
+    <section class="page-section">
+      <div class="shell shell--narrow">
+        <h2 class="page-h">The thesis</h2>
+        <p class="page-prose">Back office work has moved through four eras &mdash; paper, systems of record, SaaS sprawl, AI copilots. Each one added more capable components. None of them was a bonding layer. The work moved through systems. The workflow lived in human memory.</p>
+        <p class="page-prose">Right now humans are the solder. They hold the workflow open through PTO, escalations, retries, reversals, and audits. Your best people are the most fragile component in the circuit. When they break, the work goes silent.</p>
+        <p class="page-prose page-prose--em">Solden is the substrate built to hold what humans cannot hold reliably: the workflow itself. Persistent, structured, governed, reversible.</p>
+        <p class="page-prose">
+          <a class="page-link" href="/manifesto.html">Read the full manifesto &rarr;</a>
+        </p>
+      </div>
+    </section>
 
-          <h2>How we build</h2>
-          <p>
-            Deterministic where it matters: matching, tolerance, sanctions, budget, 3-way logic. The model reads invoices and writes prose; it doesn't get a vote on routing. Append-only audit trail enforced at the database, not the application. Least-privilege scopes on every integration. We default to behaviours an audit committee can sign off on, then add ergonomics on top.
-          </p>
-          <p>
-            Tools are render targets, not data homes. <strong>Gmail is for capture and context. Slack and Teams are for decisions. NetSuite and SAP are for the record.</strong> Solden writes back to whichever surface your team is in, and the audit trail follows the record, not the surface.
-          </p>
-        </div>
+    <!-- Why finance ─────────────────────────────────────────── -->
+    <section class="page-section page-section--alt">
+      <div class="shell shell--narrow">
+        <h2 class="page-h">Why we start in finance</h2>
+        <p class="page-prose">A thesis must be proven where the cost of failure is highest before it can be claimed where the cost is broader. Finance cannot tolerate workflow ambiguity. A delayed invoice means a missed early-pay discount. A duplicate payment means audit exposure. A stalled close means a delayed earnings report.</p>
+        <p class="page-prose">Finance has the acute pain. Finance has the budget. Finance is buying.</p>
+        <p class="page-prose">But the architecture is not finance-specific. The state machine doesn&rsquo;t care about the domain &mdash; it cares about the primitives: long-lived state, deterministic transitions, structured exceptions, reversibility, audit trail. <strong>The architecture that runs AP runs procurement, compliance, vendor onboarding, internal audit, and every other back office workflow.</strong></p>
+      </div>
+    </section>
 
-        <h2 style="margin: 64px 0 0; font-size: 28px; line-height: 1.15; letter-spacing: -0.02em; color: var(--navy);">Founders</h2>
+    <!-- Founders ────────────────────────────────────────────── -->
+    <section class="page-section">
+      <div class="shell">
+        <header class="founders-head">
+          <h2 class="page-h" style="text-align:center;">Founders</h2>
+          <p class="page-prose" style="max-width:560px;margin:0 auto;text-align:center;">Repeat founders who lived the coordination gap from both sides of the table.</p>
+        </header>
 
-        <div class="founders">
-          <article class="founder">
-            <span class="founder__role">Co-founder &amp; CEO</span>
-            <h3 class="founder__name">Mo Mbalam</h3>
-            <p class="founder__bio">
-              Repeat founder (two prior startups). Ex-<strong>Paystack</strong> and ex-<strong>Anchor</strong> (both YC). <strong>Startupbootcamp Fintech &amp; Cybersecurity 2022</strong> alumnus. Spent the last decade building fintech operations from the inside, and saw the AP coordination gap from the customer side and the operator side both.
+        <div class="founders-grid">
+          <article class="founder-card">
+            <div class="founder-card__mark" aria-hidden="true">
+              <span>M</span>
+            </div>
+            <p class="founder-card__role">Co-founder &amp; CEO</p>
+            <h3 class="founder-card__name">Mo Mbalam</h3>
+            <p class="founder-card__bio">
+              Repeat founder. Two prior startups. Ex-<strong>Paystack</strong> and ex-<strong>Anchor</strong>, both YC. Startupbootcamp Fintech &amp; Cybersecurity 2022 alumnus. Saw the coordination gap from the operator side and the customer side both.
             </p>
           </article>
-          <article class="founder">
-            <span class="founder__role">Co-founder &amp; CRO</span>
-            <h3 class="founder__name">Joseph Isiramen</h3>
-            <p class="founder__bio">
-              Ex-<strong>Datadog</strong>. Brings the enterprise GTM playbook for selling into mid-market and enterprise finance teams. The buyers Solden was built for, where Slack, Teams, SAP, and NetSuite all coexist on the same record.
+
+          <article class="founder-card">
+            <div class="founder-card__mark" aria-hidden="true">
+              <span>J</span>
+            </div>
+            <p class="founder-card__role">Co-founder &amp; CRO</p>
+            <h3 class="founder-card__name">Joseph Isiramen</h3>
+            <p class="founder-card__bio">
+              Ex-<strong>Datadog</strong>. Built the enterprise GTM playbook for selling into mid-market and enterprise finance &mdash; where Slack, Teams, SAP, and NetSuite all coexist on the same record.
             </p>
           </article>
-          <article class="founder">
-            <span class="founder__role">Co-founder &amp; CTO</span>
-            <h3 class="founder__name">Suleiman Mohammed</h3>
-            <p class="founder__bio">
-              Repeat founder. Owns Solden's architecture: the coordination engine, the deterministic decision rules, and the integration footprint across five render targets and the major ERPs.
+
+          <article class="founder-card">
+            <div class="founder-card__mark" aria-hidden="true">
+              <span>S</span>
+            </div>
+            <p class="founder-card__role">Co-founder &amp; CTO</p>
+            <h3 class="founder-card__name">Suleiman Mohammed</h3>
+            <p class="founder-card__bio">
+              Repeat founder. Owns Solden&rsquo;s architecture: the coordination engine, the deterministic decision rules, and the integration footprint across five render targets and the major ERPs.
             </p>
           </article>
         </div>
+      </div>
+    </section>
 
-        <div class="prose">
-          <h2 style="margin-top: 56px">Working with us</h2>
-          <p>
-            We're hiring carefully and deploying to early customers in the EU and UK. If your finance team is duct-taping AP across Gmail, Slack, Teams and an ERP, and you've started to feel the cost of that, <a href="/contact.html">talk to us</a>. We'd rather have one calibrated conversation than a hundred unqualified ones.
-          </p>
-        </div>
+    <!-- How we build ────────────────────────────────────────── -->
+    <section class="page-section page-section--alt">
+      <div class="shell shell--narrow">
+        <h2 class="page-h">How we build</h2>
 
+        <dl class="page-defs">
+          <div class="page-def">
+            <dt>Deterministic where it matters.</dt>
+            <dd>Matching, tolerance, sanctions, budget, three-way logic. The model reads invoices and writes prose. It does not get a vote on routing.</dd>
+          </div>
+          <div class="page-def">
+            <dt>Append-only at the schema layer.</dt>
+            <dd>Audit trail enforced by database triggers, not application logic. Every transition carries a hash linked to the prior event&rsquo;s hash. Strip a row and the chain breaks.</dd>
+          </div>
+          <div class="page-def">
+            <dt>Tools are render targets, not data homes.</dt>
+            <dd>Gmail for capture. Slack and Teams for decisions. NetSuite and SAP for the record. The state lives once on the runtime. Surfaces are how operators interact with it.</dd>
+          </div>
+          <div class="page-def">
+            <dt>Sovereign by design.</dt>
+            <dd>The workflow record is the operator&rsquo;s. Not ours. Not the point tool&rsquo;s. Yours. The runtime is removable; components remain whole if you ever take it out.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Working with us ─────────────────────────────────────── -->
+    <section class="page-section">
+      <div class="shell shell--narrow">
+        <h2 class="page-h">Working with us</h2>
+        <p class="page-prose">We&rsquo;re deploying to early customers in the EU and UK. If your finance team is duct-taping AP across Gmail, Slack, Teams and an ERP, and you&rsquo;ve started to feel the cost of that, <a class="page-link" href="/contact.html">talk to us</a>. We&rsquo;d rather have one calibrated conversation than a hundred unqualified ones.</p>
       </div>
     </section>
 
@@ -114,32 +161,32 @@
     <section class="footer-cta">
       <div class="shell shell--tight">
         <h2 class="footer-cta__title">See Solden against your AP backlog.</h2>
-        <p class="footer-cta__sub">30-minute demo. We'll route a sample invoice through your stack and show the audit trail.</p>
+        <p class="footer-cta__sub">30-minute demo. One sample invoice through your stack. The full audit chain.</p>
         <div class="footer-cta__ctas">
           <a class="btn btn--teal btn--lg" href="/contact.html">Talk to us</a>
-          <a class="btn btn--ghost btn--lg" href="/security.html">Security overview</a>
+          <a class="btn btn--ghost btn--lg" href="/manifesto.html">Read the manifesto</a>
         </div>
       </div>
     </section>
 
-    <!-- Footer ─────────────────────────────────────────────── -->
     <footer class="footer">
       <div class="shell">
         <div class="footer__row">
           <div class="footer__brand-block">
             <img class="footer__brand-lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
-            <p class="footer__tagline">The coordination layer for finance teams. AP records that don't drop a thread.</p>
+            <p class="footer__tagline">The bonding layer for back office work. Workflows that hold.</p>
           </div>
           <div>
-            <span class="footer__col-title">Product</span>
+            <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="/#how">How it works</a></li>
-              <li><a href="/#surfaces">Surfaces</a></li>
+              <li><a href="/#problem">Problem</a></li>
+              <li><a href="/#product">Product</a></li>
+              <li><a href="/#fits">How it fits</a></li>
               <li><a href="/contact.html">Talk to us</a></li>
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Trust</span>
+            <span class="footer__col-title">trust</span>
             <ul class="footer__col-list">
               <li><a href="/security.html">Security</a></li>
               <li><a href="/security.html#dpa">DPA</a></li>
@@ -147,8 +194,9 @@
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Company</span>
+            <span class="footer__col-title">company</span>
             <ul class="footer__col-list">
+              <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/about.html">About</a></li>
               <li><a href="/contact.html">Contact</a></li>
             </ul>

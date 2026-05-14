@@ -6,12 +6,12 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>Talk to us · Solden</title>
-    <meta name="description" content="Tell us about your AP stack and what's slowing it down. We'll route the conversation to the right person: demos, security, or support." />
-    <meta name="theme-color" content="#0A1F44" />
+    <meta name="description" content="Tell us about your AP stack. A founder will reply within one business day. 30-minute first call. One sample invoice through your stack." />
+    <meta name="theme-color" content="#050B1E" />
 
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=3" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=3" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=3" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=4" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=4" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=4" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
@@ -19,16 +19,16 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/pages.css" />
   </head>
-  <body>
+  <body class="theme-dark theme-subpage">
     <header class="topbar">
       <div class="shell topbar__row">
         <a class="brand" href="/" aria-label="Solden home">
-          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
+          <img class="brand__lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
         </a>
         <nav class="nav" aria-label="Primary">
           <a class="nav__link nav__link--manifesto" href="/manifesto.html">Manifesto</a>
           <a class="nav__link" href="/#how">How it works</a>
-          <a class="nav__link" href="/#surfaces">Surfaces</a>
+          <a class="nav__link" href="/#fits">Surfaces</a>
           <a class="nav__link" href="/security.html">Security</a>
           <a class="nav__link" href="/about.html">About</a>
         </nav>
@@ -38,55 +38,54 @@
       </div>
     </header>
 
-    <!-- Hero ────────────────────────────────────────────────── -->
-    <section class="subpage-hero">
-      <div class="subpage-hero__grid-bg" aria-hidden="true"></div>
-      <div class="shell subpage-hero__inner">
-        <span class="subpage-hero__eyebrow">Contact</span>
-        <h1 class="subpage-hero__title">Tell us about your AP stack.</h1>
-        <p class="subpage-hero__sub">
-          Where do invoices land today? Which surfaces does your team approve in? Which ERP is the system of record? Twenty seconds of context lets us route this to the right person and prepare a useful first call.
+    <!-- Cover ───────────────────────────────────────────────── -->
+    <section class="page-cover">
+      <div class="page-cover__glow" aria-hidden="true"></div>
+      <div class="shell shell--narrow page-cover__inner">
+        <p class="page-cover__eyebrow">Talk to us</p>
+        <h1 class="page-cover__title">
+          Tell us about <span class="page-cover__title-accent">your AP stack</span>.
+        </h1>
+        <p class="page-cover__sub page-cover__sub--stanza">
+          <span>Where invoices land.</span>
+          <span>Where approvals happen.</span>
+          <span>What breaks.</span>
         </p>
+        <p class="page-cover__hint">Twenty seconds of context. One business day to a reply.</p>
       </div>
     </section>
 
     <!-- Body ────────────────────────────────────────────────── -->
-    <section class="section">
+    <section class="page-section">
       <div class="shell">
-        <div class="contact">
+        <div class="contact-shell">
 
-          <aside class="contact__aside">
-            <h3>What happens next</h3>
-            <p>
-              A founder will reply within one business day. The first call is 30 minutes. We'll show Solden against an invoice from your stack and walk the audit trail. No prepared deck.
+          <aside class="contact-aside">
+            <h3 class="contact-aside__title">What happens next</h3>
+            <p class="contact-aside__body">
+              A founder replies within one business day. First call is 30 minutes. We&rsquo;ll route a sample invoice from your stack through Solden and walk the audit chain on screen. No prepared deck.
             </p>
 
-            <div class="contact__channel">
-              <span class="contact__channel-label">Demo &amp; pricing</span>
-              <span class="contact__channel-value">Use this form. Fastest response.</span>
-            </div>
-            <div class="contact__channel">
-              <span class="contact__channel-label">Security &amp; compliance</span>
-              <span class="contact__channel-value">Select "Security" below. Routes to security@</span>
-            </div>
-            <div class="contact__channel">
-              <span class="contact__channel-label">Support (existing customers)</span>
-              <span class="contact__channel-value">support@soldenai.com, 9 to 5 EU business hours</span>
-            </div>
-            <div class="contact__channel">
-              <span class="contact__channel-label">Press &amp; partnerships</span>
-              <span class="contact__channel-value">press@soldenai.com</span>
-            </div>
+            <ul class="contact-channels">
+              <li class="contact-channel">
+                <span class="contact-channel__label">Demo &amp; pricing</span>
+                <span class="contact-channel__value">Use the form. Fastest path.</span>
+              </li>
+              <li class="contact-channel">
+                <span class="contact-channel__label">Security &amp; compliance</span>
+                <span class="contact-channel__value">Pick &ldquo;Security&rdquo; below. Routes to security@.</span>
+              </li>
+              <li class="contact-channel">
+                <span class="contact-channel__label">Existing customers</span>
+                <span class="contact-channel__value">support@soldenai.com · 9-5 EU</span>
+              </li>
+              <li class="contact-channel">
+                <span class="contact-channel__label">Press &amp; partnerships</span>
+                <span class="contact-channel__value">press@soldenai.com</span>
+              </li>
+            </ul>
           </aside>
 
-          <!--
-            Posts to our own Express server (`POST /api/contact`),
-            which writes to a small Postgres `leads` table and
-            optionally fires a Slack notification. site.js intercepts
-            the submit, sends JSON via fetch, and shows the success
-            state in place. The form still has a real `action`
-            attribute so it degrades to a plain POST if JS is off.
-          -->
           <form
             class="form"
             name="contact"
@@ -149,23 +148,23 @@
               </div>
 
               <div class="form__field">
-                <label class="form__label" for="message">What's slowing your AP down?</label>
-                <textarea class="form__textarea" id="message" name="message" placeholder="A sentence or two is plenty. Where do invoices land? Where do approvals happen? What breaks?"></textarea>
+                <label class="form__label" for="message">What&rsquo;s slowing your AP down?</label>
+                <textarea class="form__textarea" id="message" name="message" placeholder="A sentence or two is plenty. Where invoices land. Where approvals happen. What breaks."></textarea>
               </div>
 
               <button class="btn btn--primary form__submit" type="submit">
                 Send
               </button>
-              <p class="form__hint">By submitting you agree to our <a href="/security.html">privacy posture</a>. We'll never share your data.</p>
+              <p class="form__hint">By submitting you agree to our <a href="/security.html">privacy posture</a>. We won&rsquo;t share your data.</p>
             </div>
 
             <div class="form__success">
-              <strong>Thanks. We've got it.</strong><br />
+              <strong>Thanks. We&rsquo;ve got it.</strong><br />
               A founder will reply within one business day.
             </div>
 
             <div class="form__error" role="alert">
-              Something broke on our end. Email <strong>hello@soldenai.com</strong> directly and we'll pick it up.
+              Something broke on our end. Email <strong>hello@soldenai.com</strong> directly and we&rsquo;ll pick it up.
             </div>
           </form>
 
@@ -173,24 +172,24 @@
       </div>
     </section>
 
-    <!-- Footer ─────────────────────────────────────────────── -->
     <footer class="footer">
       <div class="shell">
         <div class="footer__row">
           <div class="footer__brand-block">
             <img class="footer__brand-lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
-            <p class="footer__tagline">The coordination layer for finance teams. AP records that don't drop a thread.</p>
+            <p class="footer__tagline">The bonding layer for back office work. Workflows that hold.</p>
           </div>
           <div>
-            <span class="footer__col-title">Product</span>
+            <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="/#how">How it works</a></li>
-              <li><a href="/#surfaces">Surfaces</a></li>
+              <li><a href="/#problem">Problem</a></li>
+              <li><a href="/#product">Product</a></li>
+              <li><a href="/#fits">How it fits</a></li>
               <li><a href="/contact.html">Talk to us</a></li>
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Trust</span>
+            <span class="footer__col-title">trust</span>
             <ul class="footer__col-list">
               <li><a href="/security.html">Security</a></li>
               <li><a href="/security.html#dpa">DPA</a></li>
@@ -198,8 +197,9 @@
             </ul>
           </div>
           <div>
-            <span class="footer__col-title">Company</span>
+            <span class="footer__col-title">company</span>
             <ul class="footer__col-list">
+              <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/about.html">About</a></li>
               <li><a href="/contact.html">Contact</a></li>
             </ul>
