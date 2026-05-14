@@ -90,7 +90,7 @@ The `box` object identifies the workflow instance.
 
 | Field | Type | Notes |
 |---|---|---|
-| `type` | string | BoxType name. Currently always `"ap_item"`. Future BoxTypes register their name in `clearledgr.core.box_registry`. |
+| `type` | string | BoxType name. Currently `"ap_item"` or `"bank_match"`. Future BoxTypes register their name in `clearledgr.core.box_registry`. |
 | `id` | string | Stable Box identifier. Opaque; treat as a string. |
 | `organization_id` | string | The owning tenant. Always populated. |
 | `entity_id` | string \| null | The owning entity inside the tenant (multi-entity organizations). Null when the Box is not entity-scoped. |
@@ -126,6 +126,28 @@ Stable keys callers can rely on:
 
 All other keys are domain-specific extensions; consumers should
 preserve them but not depend on them.
+
+### Box fields (`bank_match`)
+
+A `bank_match` Box is AP-subordinate — every Box has a non-null
+`parent_ap_item_id` pointing to the AP item it reconciles, surfaced
+in the export at `links.parent_box`. Stable keys on `fields`:
+
+| Key | Type | Notes |
+|---|---|---|
+| `parent_ap_item_id` | string | AP item this match is hanging off of. |
+| `payment_confirmation_id` | string \| null | The payment-side row we're matching against. |
+| `bank_statement_line_id` | string \| null | The bank-statement-side row. |
+| `confidence` | number \| null | 0.0 to 1.0. Populated by the matcher. |
+| `proposed_by` | string | Source of the proposal (e.g. `bank_reconciliation_matcher`). |
+| `proposed_at` | ISO-8601 string | When the match was proposed. |
+| `decided_by` | string \| null | Operator who accepted/rejected. Null while still `proposed`. |
+| `decided_at` | ISO-8601 string \| null | When the decision was recorded. |
+| `rejection_reason` | string \| null | Free-text. Only populated when state is `rejected`. |
+| `metadata_json` | object | Matcher-specific structured fields. |
+
+`bank_match` states: `proposed`, `accepted` (terminal), `rejected`
+(terminal). See `clearledgr.core.bank_match_states.BankMatchState`.
 
 ## History event
 
