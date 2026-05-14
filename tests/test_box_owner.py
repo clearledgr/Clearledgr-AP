@@ -214,6 +214,93 @@ def test_apply_resolved_owner_writes_columns_and_audit_event(db):
     assert body.get("owner_email") == "controller@example.com"
 
 
+def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
+    """If the audit INSERT fails, the ap_items UPDATE must also roll back.
+
+    Simulates a downstream audit failure by patching the INSERT cursor
+    method to raise. Asserts the AP item's owner_* columns are
+    unchanged afterward — proving the two writes share a transaction.
+    """
+    _configure_routing(db, "orgOwn", {"needs_approval": "controller@example.com"})
+    item = _make_ap_item(db, item_id="AP-own-atomic", state="needs_approval")
+    pre = db.get_ap_item(item["id"])
+    assert pre.get("owner_email") in (None, "")
+
+    # Inject a failure on the audit INSERT. We patch the connect()
+    # context manager's cursor.execute so the SECOND execute call
+    # (the audit INSERT) raises while the first (the UPDATE on
+    # ap_items) succeeds — exactly the half-write scenario the
+    # transactional fix is meant to guarantee against.
+    real_connect = db.connect
+    call_state = {"count": 0}
+
+    class _FailingCursor:
+        def __init__(self, real_cursor):
+            self._real = real_cursor
+
+        def execute(self, sql, params=None):
+            call_state["count"] += 1
+            if call_state["count"] == 2:
+                raise RuntimeError("simulated audit INSERT failure")
+            return self._real.execute(sql, params) if params is not None else self._real.execute(sql)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    class _WrappedConn:
+        def __init__(self, real_conn):
+            self._real = real_conn
+
+        def cursor(self):
+            return _FailingCursor(self._real.cursor())
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    class _ConnCtx:
+        def __init__(self, ctx):
+            self._ctx = ctx
+
+        def __enter__(self):
+            conn = self._ctx.__enter__()
+            return _WrappedConn(conn)
+
+        def __exit__(self, *args):
+            return self._ctx.__exit__(*args)
+
+    def _patched_connect():
+        return _ConnCtx(real_connect())
+
+    # Patch only for the set_ap_item_owner_atomic call. We need the
+    # call to enter via the patched connect; reads through
+    # _lookup_user_id_by_email + get_organization etc. happen before
+    # and after the atomic block — let them through the real
+    # connection.
+    assignment = resolve_owner(box=item, organization_id="orgOwn", db=db)
+    assert assignment is not None
+
+    monkeypatch.setattr(db, "connect", _patched_connect)
+    with pytest.raises(RuntimeError, match="simulated audit INSERT failure"):
+        apply_resolved_owner(
+            db=db,
+            ap_item_id=item["id"],
+            organization_id="orgOwn",
+            assignment=assignment,
+            actor_id="test",
+        )
+    # Restore real connect for the post-condition read.
+    monkeypatch.setattr(db, "connect", real_connect)
+
+    post = db.get_ap_item(item["id"])
+    # Atomicity: owner columns unchanged after the simulated audit
+    # failure. With the old two-transaction implementation, owner_*
+    # would have committed before the audit INSERT raised.
+    assert post.get("owner_email") in (None, ""), (
+        f"owner_email leaked through a failed-audit transaction: {post.get('owner_email')!r}"
+    )
+    assert post.get("owner_source") in (None, "")
+
+
 # ─── reassign_manually ─────────────────────────────────────────────
 
 

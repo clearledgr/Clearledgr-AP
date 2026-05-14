@@ -2199,6 +2199,143 @@ class APStore:
 
         return self.get_ap_audit_event(event_id)
 
+    def set_ap_item_owner_atomic(
+        self,
+        ap_item_id: str,
+        *,
+        owner_id: Optional[str],
+        owner_email: str,
+        owner_source: str,
+        organization_id: str,
+        actor_id: str,
+        actor_type: str,
+        audit_payload: Dict[str, Any],
+        decision_reason: str = "",
+        correlation_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Single-transaction ownership write: ap_items UPDATE + audit_events INSERT.
+
+        The default ownership write path (``update_ap_item(owner_*=...)``
+        followed by ``append_audit_event({...})``) runs as two separate
+        transactions because ``update_ap_item`` only co-commits the
+        audit row on STATE transitions. Owner-only updates left a
+        partial-write hazard: AP row could land with the new owner
+        but the audit row could fail to write, leaving the audit trail
+        disagreeing with the row.
+
+        This method addresses the hazard by composing both writes into
+        a single connection scope. Trade-off: duplicates the audit
+        INSERT SQL from :meth:`append_audit_event`. The duplication is
+        contained, contract-stable (the INSERT shape is locked by the
+        ``audit_events`` schema and the hash-chain trigger), and the
+        alternative — threading an optional ``conn`` through both
+        ``update_ap_item`` and ``append_audit_event`` — has a much
+        bigger blast radius (30+ callsites). Revisit if a third
+        atomic write pattern emerges and the duplication grows.
+
+        Webhook fan-out runs after commit, fire-and-forget — same
+        contract as :meth:`append_audit_event`.
+        """
+        import uuid
+        from clearledgr.core.ap_states import CURRENT_AP_POLICY_VERSION
+
+        if not actor_id or not str(actor_id).strip():
+            raise ValueError(
+                "set_ap_item_owner_atomic requires a non-empty actor_id "
+                "for audit-trail integrity"
+            )
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = f"EVT-{uuid.uuid4().hex}"
+        idempotency_key = f"owner-change:{ap_item_id}:{owner_email}:{now}"
+
+        # Try to resolve entity_id off the AP item (mirrors the
+        # resolution path in append_audit_event so audit rows for
+        # owner changes are scoped consistently with state-transition
+        # rows on the same Box).
+        entity_id: Optional[str] = None
+        try:
+            ap_row = self.get_ap_item(ap_item_id)
+            if ap_row:
+                entity_id = ap_row.get("entity_id")
+        except Exception as exc:
+            logger.debug(
+                "[set_ap_item_owner_atomic] entity_id lookup failed for %s: %s",
+                ap_item_id, exc,
+            )
+
+        update_sql = (
+            "UPDATE ap_items SET owner_id = %s, owner_email = %s, "
+            "owner_assigned_at = %s, owner_source = %s, updated_at = %s "
+            "WHERE id = %s"
+        )
+        insert_sql = """
+            INSERT INTO audit_events
+            (id, box_id, box_type, event_type, prev_state, new_state,
+             actor_type, actor_id, payload_json, external_refs,
+             idempotency_key, source, correlation_id, workflow_id, run_id,
+             decision_reason, governance_verdict, agent_confidence,
+             organization_id, entity_id, policy_version, ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        try:
+            with self.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(update_sql, (
+                    owner_id, owner_email, now, owner_source, now, ap_item_id,
+                ))
+                cur.execute(insert_sql, (
+                    event_id,
+                    ap_item_id,
+                    "ap_item",
+                    "owner_changed",
+                    None,  # prev_state — not a state transition
+                    None,  # new_state — not a state transition
+                    actor_type,
+                    actor_id,
+                    json.dumps(audit_payload or {}),
+                    json.dumps({}),
+                    idempotency_key,
+                    "box_owner.apply_resolved_owner",
+                    correlation_id,
+                    None,  # workflow_id
+                    None,  # run_id
+                    decision_reason or None,
+                    None,  # governance_verdict
+                    None,  # agent_confidence
+                    organization_id,
+                    entity_id,
+                    CURRENT_AP_POLICY_VERSION,
+                    now,
+                ))
+                conn.commit()
+        except Exception as exc:
+            # Same idempotency-collision contract as append_audit_event:
+            # a UNIQUE-violation on idempotency_key means someone else
+            # already wrote this exact event — return their row, don't
+            # 500. The UPDATE on ap_items is also retried by the conflict
+            # path because both writes share the transaction; the second
+            # caller's UPDATE just no-ops (same values).
+            if idempotency_key and _is_unique_violation(exc):
+                winner = self.get_ap_audit_event_by_key(idempotency_key)
+                if winner:
+                    return winner
+            raise
+
+        # Post-commit webhook fan-out — same fire-and-forget contract
+        # as append_audit_event. A broker outage logs and continues;
+        # the audit row is the source of truth.
+        try:
+            from clearledgr.services.celery_tasks import dispatch_audit_webhooks
+            dispatch_audit_webhooks.delay(event_id)
+        except Exception as fanout_exc:
+            logger.warning(
+                "[set_ap_item_owner_atomic] webhook fan-out enqueue failed for %s: %s",
+                event_id, fanout_exc,
+            )
+
+        return self.get_ap_audit_event(event_id)
+
     def get_ap_audit_event(self, event_id: str) -> Optional[Dict[str, Any]]:
         self.initialize()
         sql = "SELECT * FROM audit_events WHERE id = %s"

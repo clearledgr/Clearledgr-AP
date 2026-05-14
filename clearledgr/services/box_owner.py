@@ -244,38 +244,38 @@ def apply_resolved_owner(
 ) -> None:
     """Persist an :class:`OwnerAssignment` to ``ap_items`` and the audit trail.
 
-    Single funnel for ownership writes so the AP item row and the
-    ``owner_changed`` audit event stay consistent. Safe to call
-    repeatedly — the audit event uses a deterministic idempotency
-    key derived from (ap_item_id, owner_email, owner_assigned_at).
+    Atomic: the ap_items UPDATE and the owner_changed audit event
+    share a single transaction via :meth:`ApStore.set_ap_item_owner_atomic`.
+    Either both writes commit or neither does. The previous
+    implementation ran them as two separate transactions, leaving a
+    partial-write hazard where the AP row could land with the new
+    owner but the audit trail could disagree.
+
+    Safe to call repeatedly — the audit event uses a deterministic
+    idempotency key. A second call with the same args at the same
+    timestamp returns the prior event (UNIQUE violation handled
+    inside the store).
     """
-    now = datetime.now(timezone.utc).isoformat()
-    db.update_ap_item(
+    decision_reason = (
+        f"owner_source={assignment.owner_source}"
+        + (
+            f"; delegated from {assignment.original_owner_email}"
+            if assignment.owner_email != assignment.original_owner_email
+            else ""
+        )
+    )
+    db.set_ap_item_owner_atomic(
         ap_item_id,
         owner_id=assignment.owner_id,
         owner_email=assignment.owner_email,
-        owner_assigned_at=now,
         owner_source=assignment.owner_source,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        actor_type="system" if assignment.owner_source != "manual" else "user",
+        audit_payload=assignment.to_audit_payload(),
+        decision_reason=decision_reason,
+        correlation_id=correlation_id,
     )
-    db.append_audit_event({
-        "box_id": ap_item_id,
-        "box_type": "ap_item",
-        "event_type": "owner_changed",
-        "actor_type": "system" if assignment.owner_source != "manual" else "user",
-        "actor_id": actor_id,
-        "organization_id": organization_id,
-        "decision_reason": (
-            f"owner_source={assignment.owner_source}"
-            + (
-                f"; delegated from {assignment.original_owner_email}"
-                if assignment.owner_email != assignment.original_owner_email
-                else ""
-            )
-        ),
-        "payload_json": assignment.to_audit_payload(),
-        "correlation_id": correlation_id,
-        "idempotency_key": f"owner-change:{ap_item_id}:{assignment.owner_email}:{now}",
-    })
 
 
 def reassign_manually(
