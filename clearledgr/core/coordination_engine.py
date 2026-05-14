@@ -12,6 +12,44 @@ The Two Non-Negotiable Rules:
   Rule 2: The coordination engine never assumes success. Every external
           call must return a confirmation before the Box stage advances.
 
+Architectural note — what this is NOT (manifesto §"Coordination
+through shared state, not orchestration")
+
+The manifesto rejects the "master orchestrator / giant prompt /
+workflow engine routing everything through a chokepoint" pattern.
+``CoordinationEngine`` is **not** that pattern. To pre-empt the
+naming-induced confusion:
+
+  * No LLM in the loop. Plans are produced by a fully deterministic
+    ``DeterministicPlanningEngine`` (clearledgr/core/planning_engine.py).
+    There is no "giant prompt" deciding what action to take next.
+  * No chokepoint over decisions. Routing, validation, approval gates,
+    confidence thresholds, three-way match, and override policy all
+    live in their own deterministic modules
+    (``ap_decision.py``, ``planning_engine.py``, ``finance_agent_governance.py``).
+    The CoordinationEngine just executes the plan those modules
+    already decided on.
+  * Shared state is the substrate. Plans read from and write to
+    ``ap_items``, ``audit_events``, ``bank_match_boxes`` — the
+    Box record is the source of truth. The engine is a pure consumer
+    + producer of that state, not the holder of it.
+  * Reversibility is structural. Every action goes through
+    ``_pre_write`` (Rule 1) so a crashed execution leaves a Box in
+    a recoverable state, not a wedged one. Override windows
+    (``services/override_window.py``) and approval revert
+    (``services/approval_revert.py``) close the reversibility loop.
+
+What this module IS: a deterministic, audited, replay-safe dispatcher
+that turns a typed Plan into the right sequence of side effects
+(state transitions, ERP writes, Slack messages) while writing every
+step to the append-only audit trail. The name ``CoordinationEngine``
+predates the manifesto; ``ReactiveDispatcher`` would be more
+descriptive but the rename's blast radius (100+ callsites, several
+test fixtures, two surface tools) outweighs the cosmetic benefit. If
+you're reading this looking for the "no orchestrator" promise —
+this file IS the no-orchestrator implementation; the name is the
+artifact, not the architecture.
+
 Usage:
     from clearledgr.core.coordination_engine import CoordinationEngine
     from clearledgr.core.plan import Plan
