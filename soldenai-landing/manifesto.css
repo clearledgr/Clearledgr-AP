@@ -546,3 +546,407 @@ body.theme-manifesto-light .footer--light .footer__bottom {
   border-top: 1px solid rgba(31, 27, 22, 0.1);
   color: rgba(31, 27, 22, 0.5);
 }
+
+/* ═════════════════════════════════════════════════════════════
+   SUBPAGE LIGHT THEME — about / contact / security
+   Reuses .page-* classes from styles.css but overrides their
+   dark treatment with the same editorial palette + serif type
+   as the manifesto page.
+   ───────────────────────────────────────────────────────────── */
+
+body.theme-manifesto-light.theme-subpage-light {
+  background: #F4EDDC;
+  color: #1F1B16;
+}
+
+/* Cover */
+body.theme-subpage-light .page-cover {
+  position: relative;
+  padding: 80px 0 56px;
+  overflow: hidden;
+  background: transparent;
+}
+body.theme-subpage-light .page-cover__glow { display: none; }
+body.theme-subpage-light .page-cover__inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 32px;
+  position: relative;
+  text-align: left;
+}
+
+body.theme-subpage-light .page-cover__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.55);
+  margin: 0 0 28px;
+}
+
+body.theme-subpage-light .page-cover__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(38px, 5.6vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  margin: 0 0 32px;
+  color: #1F1B16;
+}
+body.theme-subpage-light .page-cover__title-accent {
+  background: none !important;
+  -webkit-text-fill-color: #1F1B16 !important;
+  color: #1F1B16 !important;
+  font-style: italic;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 8px;
+  text-decoration-color: rgba(31, 27, 22, 0.3);
+}
+
+body.theme-subpage-light .page-cover__sub {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px;
+  line-height: 1.4;
+  letter-spacing: -0.012em;
+  color: rgba(31, 27, 22, 0.78);
+  font-weight: 400;
+}
+body.theme-subpage-light .page-cover__sub--stanza {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+body.theme-subpage-light .page-cover__sub--stanza span:last-child {
+  color: #1F1B16;
+}
+body.theme-subpage-light .page-cover__hint {
+  font-size: 14px;
+  font-style: italic;
+  color: rgba(31, 27, 22, 0.55);
+}
+
+/* Sections */
+body.theme-subpage-light .page-section {
+  padding: 56px 0;
+  position: relative;
+}
+body.theme-subpage-light .page-section--alt {
+  background: rgba(31, 27, 22, 0.025);
+}
+body.theme-subpage-light .page-section + .page-section {
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+}
+
+body.theme-subpage-light .page-h {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(26px, 3.4vw, 38px);
+  line-height: 1.14;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 24px;
+}
+body.theme-subpage-light .page-prose {
+  font-family: var(--font);
+  font-size: 18px;
+  line-height: 1.7;
+  color: rgba(31, 27, 22, 0.85);
+  margin: 0 0 22px;
+}
+body.theme-subpage-light .page-prose strong { color: #1F1B16; }
+body.theme-subpage-light .page-prose--em {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 22px !important;
+  line-height: 1.4 !important;
+  color: #1F1B16 !important;
+  font-weight: 500;
+}
+body.theme-subpage-light .page-link {
+  color: #1F1B16;
+  font-weight: 600;
+  font-style: italic;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.4);
+}
+body.theme-subpage-light .page-link:hover {
+  border-bottom-color: #1F1B16;
+}
+
+body.theme-subpage-light .page-def dt {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 22px;
+  color: #1F1B16;
+}
+body.theme-subpage-light .page-def dd {
+  font-size: 17px;
+  line-height: 1.65;
+  color: rgba(31, 27, 22, 0.82);
+}
+
+/* Founders cards — light museum-card treatment */
+body.theme-subpage-light .founder-card {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 12px 28px -16px rgba(31,27,22,0.18);
+}
+body.theme-subpage-light .founder-card:hover {
+  border-color: rgba(31, 27, 22, 0.3);
+}
+body.theme-subpage-light .founder-card__mark {
+  background: linear-gradient(135deg, rgba(31, 27, 22, 0.08) 0%, rgba(31, 27, 22, 0.02) 100%);
+  border: 1px solid rgba(31, 27, 22, 0.18);
+  color: #1F1B16;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+}
+body.theme-subpage-light .founder-card__role {
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-subpage-light .founder-card__name {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: #1F1B16;
+}
+body.theme-subpage-light .founder-card__bio {
+  color: rgba(31, 27, 22, 0.78);
+}
+body.theme-subpage-light .founder-card__bio strong {
+  color: #1F1B16;
+}
+
+/* Contact: aside + form */
+body.theme-subpage-light .contact-aside {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 12px 28px -16px rgba(31,27,22,0.18);
+}
+body.theme-subpage-light .contact-aside__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 600;
+  color: #1F1B16;
+}
+body.theme-subpage-light .contact-aside__body {
+  color: rgba(31, 27, 22, 0.78);
+}
+body.theme-subpage-light .contact-channels {
+  border-top-color: rgba(31, 27, 22, 0.14);
+}
+body.theme-subpage-light .contact-channel__label {
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-subpage-light .contact-channel__value {
+  color: #1F1B16;
+}
+
+/* Light form */
+body.theme-subpage-light .form {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+body.theme-subpage-light .form__label {
+  color: rgba(31, 27, 22, 0.65);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+body.theme-subpage-light .form__input,
+body.theme-subpage-light .form__select,
+body.theme-subpage-light .form__textarea {
+  background: rgba(255, 255, 255, 0.7);
+  color: #1F1B16;
+  border-color: rgba(31, 27, 22, 0.2);
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 16px;
+}
+body.theme-subpage-light .form__input:focus,
+body.theme-subpage-light .form__select:focus,
+body.theme-subpage-light .form__textarea:focus {
+  border-color: #1F1B16;
+  outline-color: rgba(31, 27, 22, 0.3);
+}
+body.theme-subpage-light .form__hint {
+  color: rgba(31, 27, 22, 0.55);
+}
+body.theme-subpage-light .form__hint a {
+  color: #1F1B16;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.3);
+}
+body.theme-subpage-light .btn--primary {
+  background: #1F1B16;
+  color: #F4EDDC;
+  border-color: #1F1B16;
+}
+body.theme-subpage-light .btn--primary:hover {
+  background: #0a0907;
+}
+
+/* Security: controls grid + sub-processor table */
+body.theme-subpage-light .controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+body.theme-subpage-light .control {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+body.theme-subpage-light .control__name {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-weight: 600;
+  color: #1F1B16;
+  font-size: 17px;
+  margin: 0 0 8px;
+}
+body.theme-subpage-light .control__body {
+  color: rgba(31, 27, 22, 0.78);
+  font-size: 14.5px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+body.theme-subpage-light .subprocs {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  border-radius: 8px;
+  overflow: hidden;
+}
+body.theme-subpage-light .subprocs th,
+body.theme-subpage-light .subprocs td {
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.45;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.08);
+}
+body.theme-subpage-light .subprocs th {
+  background: rgba(31, 27, 22, 0.04);
+  color: rgba(31, 27, 22, 0.55);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+body.theme-subpage-light .subprocs td { color: rgba(31, 27, 22, 0.78); }
+body.theme-subpage-light .subprocs td:first-child {
+  color: #1F1B16;
+  font-weight: 600;
+}
+body.theme-subpage-light .subprocs__group {
+  background: rgba(31, 27, 22, 0.06) !important;
+  color: #1F1B16 !important;
+  font-family: var(--font-mono);
+  font-size: 11.5px !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-style: normal;
+  font-weight: 600;
+}
+body.theme-subpage-light .muted {
+  color: rgba(31, 27, 22, 0.55) !important;
+}
+
+/* Prose (security page main body) */
+body.theme-subpage-light .prose h2 {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500;
+  font-size: clamp(26px, 3vw, 34px);
+  letter-spacing: -0.018em;
+  color: #1F1B16;
+  margin: 48px 0 16px;
+}
+body.theme-subpage-light .prose h2:first-child { margin-top: 0; }
+body.theme-subpage-light .prose p {
+  font-size: 17px;
+  line-height: 1.65;
+  color: rgba(31, 27, 22, 0.85);
+}
+body.theme-subpage-light .prose p strong { color: #1F1B16; }
+body.theme-subpage-light .prose a {
+  color: #1F1B16;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.3);
+  text-decoration: none;
+}
+body.theme-subpage-light .prose a:hover {
+  border-bottom-color: #1F1B16;
+}
+body.theme-subpage-light .prose code {
+  background: rgba(31, 27, 22, 0.06);
+  border: 1px solid rgba(31, 27, 22, 0.12);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.92em;
+  color: #1F1B16;
+}
+
+/* Footer-CTA on subpages */
+body.theme-subpage-light .footer-cta {
+  background: rgba(31, 27, 22, 0.03);
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+  padding: 72px 0;
+}
+body.theme-subpage-light .footer-cta__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500;
+  color: #1F1B16;
+}
+body.theme-subpage-light .footer-cta__sub {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-subpage-light .btn--teal {
+  background: #1F1B16;
+  color: #F4EDDC;
+  border-color: #1F1B16;
+}
+body.theme-subpage-light .btn--teal:hover { background: #0a0907; }
+body.theme-subpage-light .btn--ghost {
+  background: transparent;
+  color: #1F1B16;
+  border: 1px solid rgba(31, 27, 22, 0.3);
+}
+body.theme-subpage-light .btn--ghost:hover {
+  border-color: #1F1B16;
+}
+
+/* Subpage topbar + footer — inherit the light editorial palette
+   without requiring per-page class changes on those elements. */
+body.theme-subpage-light .topbar {
+  background: #F4EDDC;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+
+body.theme-subpage-light .footer {
+  background: #EDE3CC;
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-subpage-light .footer .footer__col-title {
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-subpage-light .footer .footer__col-list a {
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-subpage-light .footer .footer__col-list a:hover {
+  color: #1F1B16;
+}
+body.theme-subpage-light .footer .footer__tagline {
+  color: rgba(31, 27, 22, 0.7);
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+}
+body.theme-subpage-light .footer .footer__bottom {
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  color: rgba(31, 27, 22, 0.5);
+}
