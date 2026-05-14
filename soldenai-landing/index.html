@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/manifesto.css?v=11" />
+    <link rel="stylesheet" href="/manifesto.css?v=12" />
   </head>
   <body class="theme-light-landing">
 
@@ -161,7 +161,7 @@
     <section class="strip" aria-label="Builders">
       <div class="shell">
         <p class="strip__text" data-reveal>
-          Built by repeat founders from <strong>Paystack</strong>, <strong>Anchor</strong> and <strong>Datadog</strong>.
+          Built by operators from <strong>Paystack</strong>, <strong>Anchor</strong>, <strong>Datadog</strong>. We&rsquo;ve been the team holding the seam.
         </p>
       </div>
     </section>
@@ -170,9 +170,9 @@
     <section class="why">
       <div class="shell">
         <div class="why__head" data-reveal>
-          <h2 class="section-title">Finance complexity has outgrown its tools.</h2>
+          <h2 class="section-title">Why now.</h2>
           <p class="section-sub">
-            More vendors, more transactions, more systems. Coordination is still manual. Three things shifted.
+            The model got reliable. The stack got open. The work didn&rsquo;t get coordinated. Three shifts made the runtime possible.
           </p>
         </div>
         <ol class="why__list">
@@ -190,8 +190,7 @@
           </li>
         </ol>
         <p class="why__close">
-          The model got reliable. The stack got open. The work didn't get coordinated.
-          <strong>That gap is the bottleneck now.</strong>
+          <strong>The work didn&rsquo;t get coordinated. That gap is the bottleneck now.</strong>
         </p>
       </div>
     </section>
@@ -263,7 +262,7 @@
     <section class="solution">
       <div class="shell">
         <div class="solution__head" data-reveal>
-          <h2 class="section-title">Every AP record becomes a live workflow.</h2>
+          <h2 class="section-title">Every AP record holds its own workflow.</h2>
           <p class="section-sub solution__sub-stanza">
             <span>One record.</span>
             <span>Four primitives.</span>
@@ -299,7 +298,7 @@
       <div class="shell product-intro__head" data-reveal>
         <h2 class="section-title">One record. Five stages.</h2>
         <p class="section-sub">
-          Same vendor, same PO, same amount. Different surface every step. Scroll to watch the record move.
+          Same vendor. Same PO. Same amount. A different surface every step.
         </p>
       </div>
     </section>
@@ -479,7 +478,7 @@
         <ol class="flow__copy">
           <li class="flow__step" data-flow-step="capture" id="capture">
             <span class="flow__step-num">01</span>
-            <h2 class="flow__step-title">It lands where your team already lives.</h2>
+            <h2 class="flow__step-title">Lands where your team works.</h2>
             <p class="flow__step-body">Gmail, Outlook, an ERP queue, PEPPOL UBL. Solden lifts line items, totals, taxes and references onto a fresh record. Vision fallback handles scans and photos.</p>
             <div class="flow__step-tags">
               <span class="flow__step-tag">PDF</span>
@@ -490,7 +489,7 @@
 
           <li class="flow__step" data-flow-step="validate" id="validate">
             <span class="flow__step-num">02</span>
-            <h2 class="flow__step-title">It clears every gate before a human looks.</h2>
+            <h2 class="flow__step-title">Clears every gate before a human looks.</h2>
             <p class="flow__step-body">Match against PO and GRN under your configured mode and tolerance. Sanctions, duplicate, budget, and bank-detail-change gates run deterministically. The model never votes.</p>
             <div class="flow__step-tags">
               <span class="flow__step-tag">PO · GRN · invoice</span>
@@ -501,7 +500,7 @@
 
           <li class="flow__step" data-flow-step="route" id="route">
             <span class="flow__step-num">03</span>
-            <h2 class="flow__step-title">It routes to the surface your team already decides in.</h2>
+            <h2 class="flow__step-title">Routes to the surface where decisions happen.</h2>
             <p class="flow__step-body">Slack and Teams for fast approvals. NetSuite SuiteApp and SAP Fiori for in-ERP review. Same record everywhere; the audit trail follows the record, not the surface.</p>
             <div class="flow__step-tags">
               <span class="flow__step-tag">amount band</span>
@@ -512,7 +511,7 @@
 
           <li class="flow__step" data-flow-step="post" id="post">
             <span class="flow__step-num">04</span>
-            <h2 class="flow__step-title">It writes back to your ERP. Never to your bank.</h2>
+            <h2 class="flow__step-title">Writes back to your ERP. Never to your bank.</h2>
             <p class="flow__step-body">Correct GL, vendor balance, FX, document references. Idempotent retries. Treasury runs the payment batch out of the ERP on its own schedule. Solden does not initiate payments.</p>
             <div class="flow__step-tags">
               <span class="flow__step-tag">NetSuite</span>
@@ -524,7 +523,7 @@
 
           <li class="flow__step" data-flow-step="logged" id="logged">
             <span class="flow__step-num">05</span>
-            <h2 class="flow__step-title">Every step is signed and chained.</h2>
+            <h2 class="flow__step-title">Every step. Signed and chained.</h2>
             <p class="flow__step-body">Append-only audit enforced by database triggers, not application code. Each event carries a hash linked to the prior event's hash. Tamper-evident at the schema layer.</p>
             <div class="flow__step-tags">
               <span class="flow__step-tag">DB triggers</span>
@@ -541,7 +540,7 @@
       <div class="shell shell--tight rules__head" data-reveal>
         <h2 class="section-title">Routing decisions are rules. The model never gets a vote.</h2>
         <p class="section-sub" style="margin-left:auto;margin-right:auto;text-align:center;">
-          Configurable match modes, tolerances, sanctions, duplicates, budget. All deterministic. The model reads. The model writes operator prose. The model never votes.
+          Match modes, tolerances, sanctions, duplicates, budget. Deterministic. The model reads. The model writes prose. The model never votes.
         </p>
       </div>
 
@@ -745,9 +744,9 @@
     <section class="fits" id="fits">
       <div class="shell">
         <div class="fits__head" data-reveal>
-          <h2 class="section-title">Sits beside your stack. Doesn't replace it.</h2>
+          <h2 class="section-title">Sits beside your stack. Doesn&rsquo;t replace it.</h2>
           <p class="section-sub">
-            Solden doesn't compete with the systems you already pay for. It sits across them. Tracks state. Assigns ownership. Moves work forward.
+            No migration. No new system of record. Tracks state. Assigns ownership. Moves the work forward.
           </p>
         </div>
 
@@ -811,7 +810,7 @@
         <div class="outcomes__head" data-reveal>
           <h2 class="section-title">What changes immediately.</h2>
           <p class="section-sub">
-            A week in, the symptoms of the coordination gap stop showing up &mdash; and an audit committee can sign off on the substrate underneath.
+            A week in, the symptoms stop. An audit committee can sign off on the substrate underneath.
           </p>
         </div>
         <ul class="outcomes__list">
