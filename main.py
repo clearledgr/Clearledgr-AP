@@ -118,6 +118,7 @@ from clearledgr.api.ops import router as ops_router
 from clearledgr.api.outbox_ops import router as outbox_ops_router
 from clearledgr.api.outlook_routes import router as outlook_router
 from clearledgr.api.box_export import router as box_export_router
+from clearledgr.api.box_owner_routes import router as box_owner_router
 from clearledgr.api.payment_confirmations import router as payment_confirmations_router
 from clearledgr.api.peppol import router as peppol_router
 from clearledgr.api.pipelines import (
@@ -756,6 +757,8 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/workspace/ap-items/[^/]+/bank-match$",
         # Sovereignty primitive: portable per-Box export (manifesto §"The substrate is yours").
         r"^/api/workspace/ap-items/[^/]+/export$",
+        # Ownership primitive: manual reassignment (manifesto §"Ownership").
+        r"^/api/workspace/ap-items/[^/]+/reassign$",
         r"^/api/agent/intents/skills/[^/]+/readiness$",
         r"^/api/agent/sessions/[^/]+$",
         r"^/api/agent/sessions/[^/]+/commands$",
@@ -1520,6 +1523,10 @@ app.include_router(erp_webhooks_router)
 # Sovereignty primitive: per-Box portable export (the manifesto's
 # "removable" promise — components remain whole if you take Solden out).
 app.include_router(box_export_router)
+
+# Ownership primitive: manual Box reassignment (the manifesto's
+# "ownership is explicit, enforceable, auditable" promise).
+app.include_router(box_owner_router)
 
 # Wave 2 / C4: manual payment confirmation surface
 app.include_router(payment_confirmations_router)
