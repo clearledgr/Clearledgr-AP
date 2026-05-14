@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/manifesto.css?v=8" />
+    <link rel="stylesheet" href="/manifesto.css?v=9" />
   </head>
   <body class="theme-light-landing">
 
@@ -56,12 +56,10 @@
         <p class="hero__sub hero__sub--stanza">
           <span class="hero__stanza-line">Workflows that hold.</span>
           <span class="hero__stanza-line">Agents that propose.</span>
-          <span class="hero__stanza-line">People decide.</span>
           <span class="hero__stanza-line">State you own.</span>
         </p>
         <div class="hero__ctas">
           <a class="btn btn--primary btn--lg" href="/contact.html">Talk to us</a>
-          <a class="btn btn--secondary btn--lg" href="/manifesto.html">Read the manifesto</a>
         </div>
       </div>
 
@@ -206,6 +204,23 @@
       </div>
     </section>
 
+    <!-- Worked-example spotlight ────────────────────────────── -->
+    <section class="spotlight" id="spotlight">
+      <div class="shell shell--narrow">
+        <p class="spotlight__eyebrow">A workflow that holds</p>
+        <h2 class="spotlight__title">11:42pm. The invoice arrives.</h2>
+        <div class="spotlight__body">
+          <p>A duplicate invoice from Northwind Logistics lands in <strong>ap@your-co</strong> at 11:42pm on a Thursday. Solden captures it, runs the three-way match, and finds the original — same vendor, same amount, same PO. Posted three weeks ago.</p>
+          <p>The agent doesn&rsquo;t reply to the vendor. It opens a <em>duplicate</em> exception, attaches the prior payment record, and routes the Box to Priya, the AP lead. She wakes up Friday to one Slack card with both invoices and the prior approval chain already linked. She marks the duplicate <em>declined-duplicate</em> with one click. The audit trail captures her decision, the prior reference, and the timestamp.</p>
+          <p>Nothing posts to the ERP. No email goes to Northwind. The vendor master stays clean. The audit committee sees the full chain six months later when they ask why a payment didn&rsquo;t go out twice.</p>
+        </div>
+        <p class="spotlight__close">
+          <span>That&rsquo;s one Box.</span>
+          <span class="spotlight__close-em">Solden runs thousands at once.</span>
+        </p>
+      </div>
+    </section>
+
     <!-- Solution ───────────────────────────────────────────── -->
     <section class="solution">
       <div class="shell">
@@ -238,23 +253,6 @@
         </div>
 
         <p class="solution__close">Not visibility. <em>Coordination.</em></p>
-      </div>
-    </section>
-
-    <!-- Worked-example spotlight ────────────────────────────── -->
-    <section class="spotlight" id="spotlight">
-      <div class="shell shell--narrow">
-        <p class="spotlight__eyebrow">A workflow that holds</p>
-        <h2 class="spotlight__title">11:42pm. The invoice arrives.</h2>
-        <div class="spotlight__body">
-          <p>A duplicate invoice from Northwind Logistics lands in <strong>ap@your-co</strong> at 11:42pm on a Thursday. Solden captures it, runs the three-way match, and finds the original — same vendor, same amount, same PO. Posted three weeks ago.</p>
-          <p>The agent doesn&rsquo;t reply to the vendor. It opens a <em>duplicate</em> exception, attaches the prior payment record, and routes the Box to Priya, the AP lead. She wakes up Friday to one Slack card with both invoices and the prior approval chain already linked. She marks the duplicate <em>declined-duplicate</em> with one click. The audit trail captures her decision, the prior reference, and the timestamp.</p>
-          <p>Nothing posts to the ERP. No email goes to Northwind. The vendor master stays clean. The audit committee sees the full chain six months later when they ask why a payment didn&rsquo;t go out twice.</p>
-        </div>
-        <p class="spotlight__close">
-          <span>That&rsquo;s one Box.</span>
-          <span class="spotlight__close-em">Solden runs thousands at once.</span>
-        </p>
       </div>
     </section>
 
@@ -775,7 +773,7 @@
         <div class="outcomes__head" data-reveal>
           <h2 class="section-title">What changes immediately.</h2>
           <p class="section-sub">
-            A week in, the symptoms of the coordination gap stop showing up.
+            A week in, the symptoms of the coordination gap stop showing up &mdash; and an audit committee can sign off on the substrate underneath.
           </p>
         </div>
         <ul class="outcomes__list">
@@ -787,16 +785,8 @@
           <li class="outcomes__item">Period close stops surprising you.</li>
         </ul>
         <p class="outcomes__close">The workflow holds.</p>
-      </div>
-    </section>
 
-    <!-- Defaults / trust stats ─────────────────────────────── -->
-    <section class="trust-row">
-      <div class="shell">
-        <div class="trust-row__head" data-reveal>
-          <h2 class="section-title">An audit committee can sign off on this.</h2>
-        </div>
-        <div class="stats" data-reveal data-reveal-delay="1">
+        <div class="stats stats--compact" data-reveal data-reveal-delay="1">
           <div class="stat">
             <span class="stat__num stat__num--accent">0</span>
             <span class="stat__label">emails Solden sends to your vendors. Vendor outreach stays with the operator.</span>
