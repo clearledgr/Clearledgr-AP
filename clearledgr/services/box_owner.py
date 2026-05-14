@@ -67,6 +67,20 @@ HUMAN_ACTION_STATES = frozenset({
 #   needs_approval → needs_second_approval (same class, sticky)
 #   needs_info → needs_approval (cross-class, re-resolve)
 #   needs_approval → failed_post (cross-class, re-resolve)
+#
+# Intentional omissions:
+#
+#   ready_to_post is NOT in the table. ready_to_post is normally an
+#   auto-progressable handoff state on the way to posted_to_erp,
+#   not a human-action state — HUMAN_ACTION_STATES gates resolve_owner
+#   so a manual owner can't be set on ready_to_post via the
+#   coordinator hook. The approval-revert path
+#   (ready_to_post → needs_approval) therefore evaluates the prior
+#   class as "" — which fails the same-class check and triggers
+#   re-resolution. That's the desired UX: revert ends the approval
+#   cycle and the next cycle gets fresh routing per the org's
+#   policy. If a future product call requires "revert preserves
+#   the original approver," add ready_to_post → "approval" here.
 STATE_CLASSES: Dict[str, str] = {
     APState.NEEDS_INFO.value: "info",
     APState.NEEDS_APPROVAL.value: "approval",
@@ -208,6 +222,13 @@ def resolve_owner(
     # (the last cycle-free hop). Without this, prior behaviour stopped
     # after one hop — a three-link chain silently misrouted to the
     # middle link.
+    #
+    # The walk is in-memory off a single ``list_rules`` SELECT. The
+    # previous implementation called ``get_delegate_for(cursor)``
+    # inside the loop, which re-runs the SELECT per hop — an N+1
+    # query for an N-link chain. We pay one query, build a
+    # ``{delegator → delegate}`` map filtered by the active date
+    # window, then walk in memory.
     delegate_email: Optional[str] = None
     delegation_reason = ""
     delegation_chain: list[str] = []
@@ -215,29 +236,56 @@ def resolve_owner(
         from clearledgr.services.approval_delegation import get_delegation_service
         delegation = get_delegation_service(organization_id=organization_id)
         active_rules = delegation.list_rules(active_only=True)
-        # Index rule reasons by (delegator, delegate) once so each hop
-        # is a dict lookup instead of a linear scan.
-        rule_reasons: Dict[tuple, str] = {}
+        # Build the effective {delegator → (delegate, reason)} map
+        # once, applying the same date-window filter
+        # ``get_delegate_for`` would have applied. UNIQUE constraint
+        # on (organization_id, delegator_email, delegate_email)
+        # guarantees one effective delegate per delegator within an
+        # org, so a single mapping is well-defined.
+        now = datetime.now(timezone.utc)
+        effective: Dict[str, tuple] = {}
         for rule in active_rules:
-            key = (rule.get("delegator_email"), rule.get("delegate_email"))
-            rule_reasons[key] = str(rule.get("reason") or "")
+            starts = rule.get("starts_at")
+            ends = rule.get("ends_at")
+            if starts:
+                try:
+                    starts_dt = datetime.fromisoformat(str(starts).replace("Z", "+00:00"))
+                    if now < starts_dt:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            if ends:
+                try:
+                    ends_dt = datetime.fromisoformat(str(ends).replace("Z", "+00:00"))
+                    if now > ends_dt:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            delegator = rule.get("delegator_email")
+            delegate = rule.get("delegate_email")
+            if not delegator or not delegate:
+                continue
+            effective[delegator] = (delegate, str(rule.get("reason") or ""))
 
         visited = {base_email}
         cursor = base_email
-        # Cap the walk at len(rules) + 1 hops as a belt-and-braces
+        # Cap the walk at len(effective) + 1 hops as a belt-and-braces
         # guard against malformed data (a rule whose delegate_email
         # equals its delegator_email, for instance).
-        for _ in range(len(active_rules) + 1):
-            next_hop = delegation.get_delegate_for(cursor)
-            if not next_hop or next_hop in visited:
-                # End of chain, or cycle detected — stop at the
-                # current cursor (the deepest cycle-free hop).
+        for _ in range(len(effective) + 1):
+            hop = effective.get(cursor)
+            if hop is None:
+                break
+            next_hop, hop_reason = hop
+            if next_hop in visited:
+                # Cycle detected — stop at the current cursor (the
+                # deepest cycle-free hop).
                 break
             delegation_chain.append(next_hop)
             visited.add(next_hop)
             # Reason of the most-recent hop wins; an auditor reading
             # the chain sees why work landed at its final destination.
-            delegation_reason = rule_reasons.get((cursor, next_hop), "")
+            delegation_reason = hop_reason
             cursor = next_hop
         if delegation_chain:
             delegate_email = delegation_chain[-1]

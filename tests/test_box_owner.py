@@ -217,32 +217,42 @@ def test_apply_resolved_owner_writes_columns_and_audit_event(db):
 def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
     """If the audit INSERT fails, the ap_items UPDATE must also roll back.
 
-    Simulates a downstream audit failure by patching the INSERT cursor
-    method to raise. Asserts the AP item's owner_* columns are
-    unchanged afterward — proving the two writes share a transaction.
+    The atomicity property: both writes commit together or neither
+    does. The test targets the failure on the audit INSERT
+    specifically — matching the SQL prefix ``INSERT INTO audit_events``
+    — rather than counting execute() calls, because
+    ``set_ap_item_owner_atomic`` runs an entity_id SELECT before the
+    transaction begins. Counting executes would silently fire on the
+    SELECT or the UPDATE, proving a weaker property than the one we
+    care about (a failed audit INSERT specifically).
     """
     _configure_routing(db, "orgOwn", {"needs_approval": "controller@example.com"})
     item = _make_ap_item(db, item_id="AP-own-atomic", state="needs_approval")
     pre = db.get_ap_item(item["id"])
-    assert pre.get("owner_email") in (None, "")
+    assert pre.get("owner_email") is None, (
+        "fixture seeded owner_email — atomicity post-condition would be ambiguous"
+    )
 
-    # Inject a failure on the audit INSERT. We patch the connect()
-    # context manager's cursor.execute so the SECOND execute call
-    # (the audit INSERT) raises while the first (the UPDATE on
-    # ap_items) succeeds — exactly the half-write scenario the
-    # transactional fix is meant to guarantee against.
     real_connect = db.connect
-    call_state = {"count": 0}
+    triggered = {"audit_insert": False}
 
-    class _FailingCursor:
+    class _AuditFailingCursor:
         def __init__(self, real_cursor):
             self._real = real_cursor
 
         def execute(self, sql, params=None):
-            call_state["count"] += 1
-            if call_state["count"] == 2:
+            # Fail ONLY on the audit_events INSERT. Anything else
+            # (the AP item UPDATE, the entity_id SELECT, etc.) runs
+            # normally so we test atomicity of the actual write pair.
+            sql_text = str(sql or "").lstrip()
+            if sql_text.upper().startswith("INSERT INTO AUDIT_EVENTS"):
+                triggered["audit_insert"] = True
                 raise RuntimeError("simulated audit INSERT failure")
-            return self._real.execute(sql, params) if params is not None else self._real.execute(sql)
+            return (
+                self._real.execute(sql, params)
+                if params is not None
+                else self._real.execute(sql)
+            )
 
         def __getattr__(self, name):
             return getattr(self._real, name)
@@ -252,7 +262,7 @@ def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
             self._real = real_conn
 
         def cursor(self):
-            return _FailingCursor(self._real.cursor())
+            return _AuditFailingCursor(self._real.cursor())
 
         def __getattr__(self, name):
             return getattr(self._real, name)
@@ -271,11 +281,8 @@ def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
     def _patched_connect():
         return _ConnCtx(real_connect())
 
-    # Patch only for the set_ap_item_owner_atomic call. We need the
-    # call to enter via the patched connect; reads through
-    # _lookup_user_id_by_email + get_organization etc. happen before
-    # and after the atomic block — let them through the real
-    # connection.
+    # resolve_owner runs DB reads — let it run against the real
+    # connect before we install the patch.
     assignment = resolve_owner(box=item, organization_id="orgOwn", db=db)
     assert assignment is not None
 
@@ -288,17 +295,29 @@ def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
             assignment=assignment,
             actor_id="test",
         )
-    # Restore real connect for the post-condition read.
     monkeypatch.setattr(db, "connect", real_connect)
 
+    assert triggered["audit_insert"], (
+        "audit_events INSERT never fired — the patch missed the call path; "
+        "the test would have silently passed without exercising atomicity"
+    )
+
     post = db.get_ap_item(item["id"])
-    # Atomicity: owner columns unchanged after the simulated audit
-    # failure. With the old two-transaction implementation, owner_*
-    # would have committed before the audit INSERT raised.
-    assert post.get("owner_email") in (None, ""), (
+    # Atomicity: owner columns unchanged after the audit INSERT
+    # rolled back. With the old two-transaction implementation,
+    # owner_* would have committed before the audit INSERT raised.
+    assert post.get("owner_email") is None, (
         f"owner_email leaked through a failed-audit transaction: {post.get('owner_email')!r}"
     )
-    assert post.get("owner_source") in (None, "")
+    assert post.get("owner_source") is None
+    # The audit_events table must also have no owner_changed event
+    # for this Box — the INSERT was rolled back as part of the same
+    # transaction.
+    events = db.list_ap_audit_events(item["id"])
+    owner_events = [e for e in events if e.get("event_type") == "owner_changed"]
+    assert not owner_events, (
+        f"audit row leaked through a failed-INSERT transaction: {owner_events!r}"
+    )
 
 
 # ─── reassign_manually ─────────────────────────────────────────────

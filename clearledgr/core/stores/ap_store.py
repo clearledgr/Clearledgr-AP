@@ -742,6 +742,60 @@ class APStore:
             conn.commit()
             return cur.rowcount > 0
 
+    def update_ap_item_metadata_remove_keys(
+        self,
+        ap_item_id: str,
+        keys: List[str],
+    ) -> bool:
+        """Remove specific top-level keys from an AP item's metadata.
+
+        SELECT ... FOR UPDATE serializes against concurrent patch
+        writers, so a writer adding a new key between this method's
+        read and write doesn't get clobbered the way a naive
+        read-modify-write would. Only the listed *keys* are removed;
+        every other key survives.
+
+        Returns True if the row exists (and we either removed at
+        least one matching key or were a no-op), False if the row
+        wasn't found. This sibling of
+        :meth:`update_ap_item_metadata_merge` exists so callers that
+        need to undo state on a Box (e.g. approval_revert clearing
+        ``payment_scheduled``) can do so without racing the merge.
+        """
+        if not keys:
+            return False
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT metadata FROM ap_items WHERE id = %s FOR UPDATE",
+                (ap_item_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.rollback()
+                return False
+            raw = row[0] if not isinstance(row, dict) else row.get("metadata")
+            try:
+                existing: Dict[str, Any] = json.loads(raw or "{}")
+            except Exception:
+                existing = {}
+            removed_any = False
+            for k in keys:
+                if k in existing:
+                    existing.pop(k, None)
+                    removed_any = True
+            if not removed_any:
+                conn.rollback()
+                return True  # row exists, just no-op
+            cur.execute(
+                "UPDATE ap_items SET metadata = %s, updated_at = %s WHERE id = %s",
+                (json.dumps(existing), now, ap_item_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
     def _record_rejected_transition_attempt(
         self,
         *,
@@ -2313,9 +2367,14 @@ class APStore:
             # Same idempotency-collision contract as append_audit_event:
             # a UNIQUE-violation on idempotency_key means someone else
             # already wrote this exact event — return their row, don't
-            # 500. The UPDATE on ap_items is also retried by the conflict
-            # path because both writes share the transaction; the second
-            # caller's UPDATE just no-ops (same values).
+            # 500. The UPDATE on ap_items inside this transaction is
+            # rolled back together with the failed INSERT (the
+            # connection's transaction unwinds on context exit via
+            # psycopg_pool.putconn), so caller A's writes remain the
+            # canonical pair; caller B's UPDATE is reverted, not
+            # preserved. Semantically correct — A and B agreed on
+            # owner_email by virtue of the same idempotency_key —
+            # but the mechanism is rollback, not "no-op UPDATE."
             if idempotency_key and _is_unique_violation(exc):
                 winner = self.get_ap_audit_event_by_key(idempotency_key)
                 if winner:

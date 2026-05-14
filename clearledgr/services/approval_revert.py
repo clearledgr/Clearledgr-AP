@@ -208,6 +208,13 @@ def attempt_approval_revert(
     # but be defensive — a future state-machine edit could remove it.
     transition_or_raise(current_state, APState.NEEDS_APPROVAL.value, ap_item_id=ap_item_id)
 
+    db.update_ap_item(
+        ap_item_id,
+        state=APState.NEEDS_APPROVAL.value,
+        approved_at=None,
+        approved_by=None,
+    )
+
     # Defensive cleanup of state that downstream observers of
     # READY_TO_POST might rely on. As of 2026-05-14 the only such
     # state is the metadata.payment_scheduled flag set by
@@ -216,26 +223,27 @@ def attempt_approval_revert(
     # so in practice the flag is never set when this revert runs.
     # Clearing it anyway is belt-and-braces against a future state-
     # machine refactor that moves the flag earlier in the sequence.
-    # The webhook layer (services/webhook_delivery.py) does NOT
-    # need a counter-signal — every audit row fans out via
+    # Routed through ``update_ap_item_metadata_remove_keys`` rather
+    # than a read-modify-write because the latter would clobber any
+    # concurrent metadata write that landed between our read at the
+    # top of the function and the write here. The helper does
+    # SELECT ... FOR UPDATE so concurrent merges serialize.
+    # The webhook layer (services/webhook_delivery.py) does NOT need
+    # a counter-signal — every audit row fans out via
     # dispatch_audit_webhooks, so subscribers receive an
     # approval_reverted event with from_state=READY_TO_POST,
     # to_state=NEEDS_APPROVAL automatically.
-    existing_meta = dict(item.get("metadata") or {})
-    meta_changed = False
-    for stale_key in ("payment_scheduled", "payment_scheduled_at"):
-        if stale_key in existing_meta:
-            existing_meta.pop(stale_key, None)
-            meta_changed = True
-
-    update_kwargs: Dict[str, Any] = {
-        "state": APState.NEEDS_APPROVAL.value,
-        "approved_at": None,
-        "approved_by": None,
-    }
-    if meta_changed:
-        update_kwargs["metadata"] = existing_meta
-    db.update_ap_item(ap_item_id, **update_kwargs)
+    if hasattr(db, "update_ap_item_metadata_remove_keys"):
+        try:
+            db.update_ap_item_metadata_remove_keys(
+                ap_item_id,
+                keys=["payment_scheduled", "payment_scheduled_at"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "[approval_revert] metadata cleanup failed for %s: %s",
+                ap_item_id, exc,
+            )
     db.append_audit_event({
         "box_id": ap_item_id,
         "box_type": "ap_item",
