@@ -950,3 +950,380 @@ body.theme-subpage-light .footer .footer__bottom {
   border-top: 1px solid rgba(31, 27, 22, 0.1);
   color: rgba(31, 27, 22, 0.5);
 }
+
+/* ═════════════════════════════════════════════════════════════
+   LANDING LIGHT THEME — index.html overrides
+   Reuses all existing landing markup (hero, ribbon, flow, rules,
+   audit, surfaces, outcomes, time-to-value, etc.) but overrides
+   the dark palette + sans bold treatment with the editorial
+   cream + serif typography from the manifesto.
+   ───────────────────────────────────────────────────────────── */
+
+body.theme-light-landing {
+  background: #F4EDDC;
+  color: #1F1B16;
+}
+body.theme-light-landing .topbar {
+  background: #F4EDDC;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-light-landing .nav__link {
+  color: rgba(31, 27, 22, 0.6);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+body.theme-light-landing .nav__link:hover { color: #1F1B16; }
+body.theme-light-landing .nav__link--manifesto {
+  color: #1F1B16;
+  font-weight: 600;
+}
+body.theme-light-landing .nav__link--manifesto::after {
+  background: #1F1B16; opacity: 1; transform: scaleX(1);
+}
+body.theme-light-landing .btn--primary {
+  background: #1F1B16; color: #F4EDDC; border-color: #1F1B16;
+}
+body.theme-light-landing .btn--primary:hover { background: #0a0907; }
+body.theme-light-landing .btn--secondary {
+  background: transparent; color: #1F1B16; border: 1px solid rgba(31, 27, 22, 0.3);
+}
+body.theme-light-landing .btn--secondary:hover { border-color: #1F1B16; }
+body.theme-light-landing .btn--teal {
+  background: #1F1B16; color: #F4EDDC; border-color: #1F1B16;
+}
+body.theme-light-landing .btn--teal:hover { background: #0a0907; }
+body.theme-light-landing .btn--ghost {
+  background: transparent; color: #1F1B16; border: 1px solid rgba(31, 27, 22, 0.3);
+}
+body.theme-light-landing .btn--ghost:hover { border-color: #1F1B16; }
+
+/* HERO */
+body.theme-light-landing .hero {
+  background: transparent;
+  padding: 88px 0 56px;
+}
+body.theme-light-landing .hero__glow,
+body.theme-light-landing .hero__grid { display: none; }
+body.theme-light-landing .hero__inner {
+  text-align: left;
+  max-width: 980px;
+  padding: 0 32px;
+}
+body.theme-light-landing .hero__headline {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(46px, 7vw, 86px);
+  line-height: 1.0;
+  letter-spacing: -0.028em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 36px;
+}
+body.theme-light-landing .hero__accent {
+  background: none !important;
+  -webkit-text-fill-color: #1F1B16 !important;
+  color: #1F1B16 !important;
+  font-style: italic;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 10px;
+  text-decoration-color: rgba(31, 27, 22, 0.3);
+}
+body.theme-light-landing .hero__sub {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(20px, 2.4vw, 26px);
+  font-weight: 400;
+  line-height: 1.4;
+  color: rgba(31, 27, 22, 0.78);
+  letter-spacing: -0.012em;
+  max-width: 680px;
+}
+body.theme-light-landing .hero__sub strong { color: #1F1B16; font-weight: 600; }
+body.theme-light-landing .hero__stanza-line { color: rgba(31, 27, 22, 0.7); }
+body.theme-light-landing .hero__stanza-line:last-child { color: #1F1B16; }
+body.theme-light-landing .hero__ctas { justify-content: flex-start; }
+
+/* RIBBON — light card with subtle borders */
+body.theme-light-landing .ribbon {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 24px 60px -20px rgba(31,27,22,0.18);
+}
+body.theme-light-landing .ribbon__head {
+  background: rgba(31, 27, 22, 0.04);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-light-landing .ribbon__title { color: #1F1B16; }
+body.theme-light-landing .ribbon__head-meta { color: rgba(31, 27, 22, 0.55); }
+body.theme-light-landing .ribbon__row {
+  border-bottom: 1px solid rgba(31, 27, 22, 0.08);
+}
+body.theme-light-landing .ribbon__row:last-child { border-bottom: 0; }
+body.theme-light-landing .ribbon__verb { color: #1F1B16; font-weight: 600; }
+body.theme-light-landing .ribbon__subject { color: rgba(31, 27, 22, 0.85); }
+body.theme-light-landing .ribbon__meta { color: rgba(31, 27, 22, 0.5); }
+body.theme-light-landing .ribbon__time,
+body.theme-light-landing .ribbon__actor,
+body.theme-light-landing .ribbon__surface { color: rgba(31, 27, 22, 0.55); }
+body.theme-light-landing .ribbon__sep { color: rgba(31, 27, 22, 0.25); }
+
+/* STRIP (built by) */
+body.theme-light-landing .strip {
+  background: transparent;
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-light-landing .strip__text {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 18px;
+  color: rgba(31, 27, 22, 0.75);
+}
+body.theme-light-landing .strip__text strong { color: #1F1B16; font-weight: 600; }
+
+/* SECTION TITLES — replace bold sans with serif medium */
+body.theme-light-landing .section-title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(32px, 4.4vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  color: #1F1B16;
+}
+body.theme-light-landing .section-sub {
+  font-family: var(--font);
+  font-size: 18px;
+  line-height: 1.6;
+  color: rgba(31, 27, 22, 0.75);
+}
+body.theme-light-landing .section--alt {
+  background: rgba(31, 27, 22, 0.025);
+}
+
+/* PROBLEM / WHY */
+body.theme-light-landing .why {
+  background: transparent;
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-light-landing .why__h,
+body.theme-light-landing .problem-h,
+body.theme-light-landing .problem h2 {
+  color: #1F1B16;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500;
+}
+body.theme-light-landing .problem-coda,
+body.theme-light-landing .why__close,
+body.theme-light-landing .why p {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: rgba(31, 27, 22, 0.85);
+  font-size: 19px;
+  line-height: 1.5;
+}
+body.theme-light-landing .problem-coda strong,
+body.theme-light-landing .why__close strong { color: #1F1B16; }
+body.theme-light-landing .problem-coda__em {
+  font-style: italic; color: #1F1B16;
+}
+
+/* SOLUTION + product-intro */
+body.theme-light-landing .solution,
+body.theme-light-landing .product-intro,
+body.theme-light-landing .product {
+  background: transparent;
+}
+body.theme-light-landing .solution__sub-stanza {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: rgba(31, 27, 22, 0.75);
+}
+body.theme-light-landing .solution__sub-stanza span:last-child { color: #1F1B16; }
+
+/* PRIMITIVE / FEATURE / VALUE / FLOW CARDS — generic light-card treatment */
+body.theme-light-landing .primitive-card,
+body.theme-light-landing .feature-card,
+body.theme-light-landing .value-card,
+body.theme-light-landing .stage-card,
+body.theme-light-landing .surface-card,
+body.theme-light-landing .ttv__step,
+body.theme-light-landing .outcomes__item,
+body.theme-light-landing .stat,
+body.theme-light-landing .fit-card,
+body.theme-light-landing .why__card {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(31, 27, 22, 0.14);
+  color: #1F1B16;
+}
+body.theme-light-landing .primitive-card:hover,
+body.theme-light-landing .feature-card:hover,
+body.theme-light-landing .stage-card:hover,
+body.theme-light-landing .surface-card:hover,
+body.theme-light-landing .ttv__step:hover,
+body.theme-light-landing .fit-card:hover {
+  border-color: rgba(31, 27, 22, 0.3);
+  transform: translateY(-2px);
+}
+
+/* TTV (time-to-value) */
+body.theme-light-landing .ttv { background: transparent; }
+body.theme-light-landing .ttv__week {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.55);
+}
+body.theme-light-landing .ttv__step-title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 600; font-style: italic; color: #1F1B16; font-size: 22px;
+}
+body.theme-light-landing .ttv__step-body { color: rgba(31, 27, 22, 0.78); font-size: 15px; line-height: 1.6; }
+body.theme-light-landing .ttv__close {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; color: rgba(31, 27, 22, 0.65);
+}
+
+/* SPOTLIGHT (worked example) */
+body.theme-light-landing .spotlight { background: transparent; }
+body.theme-light-landing .spotlight__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-light-landing .spotlight__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500; color: #1F1B16;
+}
+body.theme-light-landing .spotlight__body p {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: rgba(31, 27, 22, 0.85); font-size: 19px; line-height: 1.6;
+}
+body.theme-light-landing .spotlight__body p strong { color: #1F1B16; }
+body.theme-light-landing .spotlight__body p em { font-style: italic; color: #1F1B16; }
+body.theme-light-landing .spotlight__close {
+  border-top-color: rgba(31, 27, 22, 0.12);
+  color: rgba(31, 27, 22, 0.7);
+  font-family: "Iowan Old Style", "Georgia", serif; font-style: italic;
+}
+body.theme-light-landing .spotlight__close-em { color: #1F1B16; font-style: italic; }
+
+/* FLOW (5 stages with code) — keep code blocks dark like specimens
+   in a print book; everything else light. */
+body.theme-light-landing .flow { background: transparent; }
+body.theme-light-landing .flow__intro p { color: rgba(31, 27, 22, 0.75); }
+body.theme-light-landing .stage-card {
+  background: rgba(255, 255, 255, 0.55);
+}
+body.theme-light-landing .stage-card__num {
+  color: rgba(31, 27, 22, 0.4);
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+}
+body.theme-light-landing .stage-card__h,
+body.theme-light-landing .stage__h {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 600; font-style: italic; color: #1F1B16;
+}
+body.theme-light-landing .stage-card__body,
+body.theme-light-landing .stage__body { color: rgba(31, 27, 22, 0.78); }
+/* Code blocks stay dark (like a printed specimen) */
+body.theme-light-landing pre,
+body.theme-light-landing .code,
+body.theme-light-landing .code-block,
+body.theme-light-landing .audit__code {
+  background: #1A1612;
+  color: #E8E1D0;
+  border: 1px solid rgba(31, 27, 22, 0.18);
+}
+
+/* RULES section */
+body.theme-light-landing .rules { background: transparent; }
+
+/* AUDIT chain visualization — keep the dark "specimen" box */
+body.theme-light-landing .audit { background: transparent; }
+
+/* FITS / surfaces */
+body.theme-light-landing .fits { background: transparent; }
+body.theme-light-landing .fit-card__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; font-weight: 600; color: #1F1B16;
+}
+body.theme-light-landing .fit-card__body { color: rgba(31, 27, 22, 0.78); }
+
+/* OUTCOMES */
+body.theme-light-landing .outcomes { background: transparent; }
+body.theme-light-landing .outcomes__list { color: #1F1B16; }
+body.theme-light-landing .outcomes__item {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 21px;
+  line-height: 1.32;
+  color: rgba(31, 27, 22, 0.85);
+  background: transparent;
+  border: 0;
+}
+body.theme-light-landing .outcomes__close {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; color: #1F1B16;
+}
+
+/* TRUST ROW / stats */
+body.theme-light-landing .trust-row,
+body.theme-light-landing .trust { background: transparent; }
+body.theme-light-landing .stat__value {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: #1F1B16;
+}
+body.theme-light-landing .stat__label,
+body.theme-light-landing .stat__caption { color: rgba(31, 27, 22, 0.65); }
+
+/* WHY section */
+body.theme-light-landing .why .why__intro p,
+body.theme-light-landing .why__h3 { color: rgba(31, 27, 22, 0.85); }
+body.theme-light-landing .why__h3 {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; font-weight: 600; color: #1F1B16;
+}
+
+/* CATEGORY PAIR / footer-CTA */
+body.theme-light-landing .category-pair,
+body.theme-light-landing .footer-cta {
+  background: rgba(31, 27, 22, 0.03);
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-light-landing .category-pair__before,
+body.theme-light-landing .category-pair__after {
+  font-family: "Iowan Old Style", "Georgia", serif; color: #1F1B16;
+}
+body.theme-light-landing .footer-cta__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500; color: #1F1B16;
+}
+body.theme-light-landing .footer-cta__sub {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; color: rgba(31, 27, 22, 0.7);
+}
+
+/* FOOTER */
+body.theme-light-landing .footer {
+  background: #EDE3CC;
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-light-landing .footer .footer__col-title { color: rgba(31, 27, 22, 0.5); }
+body.theme-light-landing .footer .footer__col-list a { color: rgba(31, 27, 22, 0.7); }
+body.theme-light-landing .footer .footer__col-list a:hover { color: #1F1B16; }
+body.theme-light-landing .footer .footer__tagline {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic; color: rgba(31, 27, 22, 0.7);
+}
+body.theme-light-landing .footer .footer__bottom {
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  color: rgba(31, 27, 22, 0.5);
+}
+
+/* Generic text-color overrides — catch anything not explicitly themed */
+body.theme-light-landing { color: #1F1B16; }
+body.theme-light-landing p { color: rgba(31, 27, 22, 0.85); }
+body.theme-light-landing strong { color: #1F1B16; }
