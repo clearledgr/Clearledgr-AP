@@ -37,7 +37,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -456,6 +456,18 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/health",
     "/metrics",
     "/workspace",
+    # Root banner — soldenai.com and clearledgr.com both terminate
+    # at the API on different Railway envs. Without a handler at /,
+    # the strict-profile middleware returned a confusing
+    # endpoint_disabled_in_ap_v1_profile JSON to anyone probing the
+    # root. The handler at main.py returns a small JSON banner with
+    # entry points (/health, /docs when public, /api/*).
+    "/",
+    # Browsers request favicon.ico unconditionally on every page
+    # load. Without a handler this generated a 404 on every request
+    # — noisy logs and a real user-visible error. Served as 204 No
+    # Content (smallest valid response).
+    "/favicon.ico",
     # Inbound demo-request leads from the marketing site (clearledgr.com).
     "/leads",
     # OAuth callbacks required for ERP admin connect flows.
@@ -1733,6 +1745,47 @@ async def workspace_page():
     if os.path.exists(workspace_file):
         return FileResponse(workspace_file)
     raise HTTPException(status_code=404, detail="Workspace page not found")
+
+
+@app.get("/", tags=["System"], include_in_schema=False)
+async def root_banner():
+    """Service identification banner.
+
+    Both ``soldenai.com`` and ``clearledgr.com`` terminate at this
+    API on different Railway environments. Anyone hitting the root
+    used to receive ``endpoint_disabled_in_ap_v1_profile`` from the
+    strict-profile middleware — a confusing 404-shaped JSON that
+    leaked internal vocabulary at the front door. This handler
+    returns a small banner identifying the service and pointing at
+    the real entry points instead. It deliberately does NOT redirect
+    to a marketing site — neither host is wired for that today, and
+    a redirect that points somewhere stale would be worse than a
+    plain banner.
+    """
+    return {
+        "service": "Solden API",
+        "status": "ok",
+        "entry_points": {
+            "health": "/health",
+            "docs": "/docs",
+            "workspace": "/workspace",
+        },
+    }
+
+
+@app.get("/favicon.ico", tags=["System"], include_in_schema=False)
+async def favicon():
+    """Return 204 No Content for favicon requests.
+
+    Browsers fetch ``/favicon.ico`` on every page load. Without a
+    handler, the request 404'd and the strict-profile middleware
+    surfaced the disabled-endpoint JSON — noisy logs and a
+    user-visible error in the browser console. 204 is the smallest
+    valid response that satisfies the browser without serving an
+    actual icon. Replace with a FileResponse if/when a brand favicon
+    is shipped to ``static/``.
+    """
+    return Response(status_code=204)
 
 
 @app.get(
