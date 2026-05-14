@@ -358,54 +358,94 @@ body.theme-manifesto-light .btn--primary:hover {
   letter-spacing: 0.4em;
 }
 
-/* Lineage list — editorial, numbered, no card chrome */
+/* Lineage list — museum-placard rows with B&W square portraits.
+   Each entry: portrait + caption on the left, italic numeral + serif
+   text block on the right. Same treatment as the cuneiform tablet on
+   the cover, so the gallery reads as a continuation of the exhibit. */
 .lineage-list {
   list-style: none;
   padding: 0;
-  margin: 48px 0 0;
+  margin: 56px 0 0;
   display: flex;
   flex-direction: column;
-  gap: 40px;
+  gap: 56px;
 }
 
 .lineage-entry {
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 24px;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 36px;
   align-items: start;
-  padding-bottom: 36px;
+  padding-bottom: 56px;
   border-bottom: 1px solid rgba(31, 27, 22, 0.12);
 }
 .lineage-entry:last-child { border-bottom: 0; padding-bottom: 0; }
 
-@media (max-width: 560px) {
-  .lineage-entry { grid-template-columns: 1fr; gap: 8px; }
+@media (max-width: 720px) {
+  .lineage-entry { grid-template-columns: 1fr; gap: 20px; }
+}
+
+/* Portrait figure — B&W square framed in the same museum style as
+   the cover tablet, with an italic serif caption beneath. */
+.lineage-entry__portrait { margin: 0; }
+
+.lineage-entry__portrait img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border: 1px solid rgba(31, 27, 22, 0.18);
+  background: #EDE3CC;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6),
+    0 12px 28px -16px rgba(31, 27, 22, 0.22),
+    0 4px 12px -8px rgba(31, 27, 22, 0.14);
+}
+
+.lineage-entry__portrait figcaption {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(31, 27, 22, 0.14);
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: rgba(31, 27, 22, 0.5);
+}
+.lineage-entry__portrait figcaption em {
+  font-style: italic;
+  color: rgba(31, 27, 22, 0.7);
+}
+
+/* Right-hand text block: italic numeral, then name, dates,
+   one-line contribution, body text. */
+.lineage-entry__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
 }
 
 .lineage-entry__numeral {
   font-family: "Iowan Old Style", "Georgia", serif;
   font-style: italic;
-  font-size: 48px;
+  font-size: 36px;
   line-height: 0.9;
-  color: rgba(31, 27, 22, 0.3);
+  color: rgba(31, 27, 22, 0.32);
   letter-spacing: -0.02em;
   font-weight: 400;
-}
-
-.lineage-entry__body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .lineage-entry__name {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.18;
   color: #1F1B16;
   margin: 0;
-  letter-spacing: -0.012em;
+  letter-spacing: -0.018em;
 }
 
 .lineage-entry__dates {
@@ -414,22 +454,22 @@ body.theme-manifesto-light .btn--primary:hover {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: rgba(31, 27, 22, 0.5);
-  margin: 0;
+  margin: 4px 0 0;
 }
 
 .lineage-entry__contribution {
   font-family: "Iowan Old Style", "Georgia", serif;
   font-style: italic;
-  font-size: 16px;
-  color: rgba(31, 27, 22, 0.7);
-  margin: 6px 0 0;
+  font-size: 17px;
+  color: rgba(31, 27, 22, 0.72);
+  margin: 10px 0 0;
 }
 
 .lineage-entry__body-text {
-  margin: 10px 0 0 !important;
-  font-size: 15px !important;
-  line-height: 1.62 !important;
-  color: rgba(31, 27, 22, 0.78) !important;
+  margin: 12px 0 0 !important;
+  font-size: 15.5px !important;
+  line-height: 1.65 !important;
+  color: rgba(31, 27, 22, 0.8) !important;
 }
 
 /* Closing CTA */
