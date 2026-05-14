@@ -4926,3 +4926,80 @@ def _v84_ap_items_owner(cur, db):
         "ON ap_items (organization_id, state, owner_id) "
         "WHERE owner_id IS NOT NULL"
     )
+
+
+@migration(
+    85,
+    "bank_match_boxes: second BoxType, proves the architecture generalizes "
+    "(manifesto §Finance is the wedge. The pattern generalizes.)",
+)
+def _v85_bank_match_boxes(cur, db):
+    """Create the ``bank_match_boxes`` table — Solden's second BoxType.
+
+    Each row is a Box: one proposed bank-reconciliation match between a
+    payment_confirmation and a bank_statement_line, scoped to a single
+    parent AP item.
+
+    Why a new table instead of a view over the existing
+    payment_confirmations + bank_statement_lines tables: a Box needs
+    independent lifecycle state, audit trail keyed on (box_type, box_id),
+    and the ability to enumerate multiple PROPOSED candidates per AP item
+    until one is ACCEPTED. A view of the implicit join can't carry the
+    lifecycle.
+
+    AP-subordinate by design: ``parent_ap_item_id`` is NOT NULL. The
+    audit trail for a bank_match lives at
+    ``audit_events.box_type='bank_match'`` and is exportable via the
+    Box export endpoint (manifesto §"The substrate is yours").
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bank_match_boxes (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            parent_ap_item_id TEXT NOT NULL,
+            payment_confirmation_id TEXT,
+            bank_statement_line_id TEXT,
+            state TEXT NOT NULL DEFAULT 'proposed',
+            confidence REAL,
+            proposed_by TEXT,
+            proposed_at TEXT,
+            decided_by TEXT,
+            decided_at TEXT,
+            rejection_reason TEXT,
+            metadata_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bank_match_org_parent "
+        "ON bank_match_boxes (organization_id, parent_ap_item_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bank_match_org_state "
+        "ON bank_match_boxes (organization_id, state)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bank_match_payment_conf "
+        "ON bank_match_boxes (payment_confirmation_id) "
+        "WHERE payment_confirmation_id IS NOT NULL"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bank_match_statement_line "
+        "ON bank_match_boxes (bank_statement_line_id) "
+        "WHERE bank_statement_line_id IS NOT NULL"
+    )
+    # Enforce the small, closed set of valid states at the DB level.
+    # Same defence-in-depth pattern as ap_items (see _install_ap_state_guard).
+    try:
+        cur.execute(
+            "ALTER TABLE bank_match_boxes "
+            "ADD CONSTRAINT bank_match_boxes_state_check "
+            "CHECK (state IN ('proposed', 'accepted', 'rejected'))"
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise

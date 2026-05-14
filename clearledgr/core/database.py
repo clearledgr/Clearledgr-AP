@@ -206,6 +206,9 @@ def _load_store_symbols() -> None:
     from clearledgr.core.stores.fx_rate_store import (
         FxRateStoreMixin as _FxRateStore,
     )
+    from clearledgr.core.stores.bank_match_store import (
+        BankMatchStore as _BankMatchStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -236,6 +239,7 @@ def _load_store_symbols() -> None:
     EscalationPolicyStore = _EscalationPolicyStore
     RulesStore = _RulesStore
     FxRateStore = _FxRateStore
+    BankMatchStore = _BankMatchStore
 
 
 class _ClearledgrDBBase:
@@ -961,6 +965,43 @@ class _ClearledgrDBBase:
                 )
             """)
 
+            # Manifesto §"Finance is the wedge. The pattern generalizes."
+            # The second BoxType. AP-subordinate by design: every
+            # bank_match Box references a parent ap_item via the
+            # parent_ap_item_id FK. Lifecycle: proposed → accepted |
+            # rejected (both terminal). State machine lives in
+            # ``clearledgr.core.bank_match_states``; CRUD in
+            # ``clearledgr.core.stores.bank_match_store``. See v85
+            # migration for the production schema; this inline CREATE
+            # mirrors it so new databases get the table at startup.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bank_match_boxes (
+                    id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    parent_ap_item_id TEXT NOT NULL,
+                    payment_confirmation_id TEXT,
+                    bank_statement_line_id TEXT,
+                    state TEXT NOT NULL DEFAULT 'proposed',
+                    confidence REAL,
+                    proposed_by TEXT,
+                    proposed_at TEXT,
+                    decided_by TEXT,
+                    decided_at TEXT,
+                    rejection_reason TEXT,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bank_match_org_parent "
+                "ON bank_match_boxes (organization_id, parent_ap_item_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bank_match_org_state "
+                "ON bank_match_boxes (organization_id, state)"
+            )
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ap_item_sources (
                     id TEXT PRIMARY KEY,
@@ -1679,6 +1720,7 @@ def _get_db_impl_class():
             EscalationPolicyStore,
             RulesStore,
             FxRateStore,
+            BankMatchStore,
             _ClearledgrDBBase,
         ):
             pass
