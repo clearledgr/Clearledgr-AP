@@ -7,7 +7,7 @@
 
     <title>The Back Office Runtime Manifesto · Solden</title>
     <meta name="description" content="We are building the bonding layer for back office work. Persistent, structured, governed, reversible workflow state across the tools your team already uses." />
-    <meta name="theme-color" content="#050B1E" />
+    <meta name="theme-color" content="#F4EDDC" />
 
     <meta property="og:type" content="article" />
     <meta property="og:title" content="The Back Office Runtime Manifesto" />
@@ -16,21 +16,21 @@
     <meta property="og:image" content="https://soldenai.com/assets/solden-lockup-dark.png" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=4" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=4" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=4" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=5" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=5" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=5" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body class="theme-dark theme-manifesto">
+  <body class="theme-manifesto-light">
 
-    <header class="topbar">
+    <header class="topbar topbar--light">
       <div class="shell topbar__row">
         <a class="brand" href="/" aria-label="Solden home">
-          <img class="brand__lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
+          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
         </a>
         <nav class="nav" aria-label="Primary">
           <a class="nav__link nav__link--manifesto nav__link--active" href="/manifesto.html" aria-current="page">Manifesto</a>
@@ -45,110 +45,146 @@
       </div>
     </header>
 
-    <article class="manifesto">
+    <article class="essay">
 
-      <header class="manifesto__cover">
-        <div class="shell shell--narrow">
-          <p class="manifesto__eyebrow">v1.0 · The Back Office Runtime Manifesto</p>
-          <h1 class="manifesto__title">
-            The bonding layer<br />
-            for <span class="manifesto__title-accent">back office work</span>.
+      <header class="essay__cover">
+        <div class="essay__shell">
+          <p class="essay__eyebrow">
+            <span class="essay__ornament" aria-hidden="true">§</span>
+            The Back Office Runtime Manifesto · v1.0
+          </p>
+          <h1 class="essay__title">
+            We are building<br />
+            the bonding layer<br />
+            for back office work.
           </h1>
-          <blockquote class="manifesto__epigraph">
-            <p>&ldquo;The map is not the territory.&rdquo;</p>
-            <footer>&mdash; Alfred Korzybski, <cite>Science and Sanity</cite> (1933)</footer>
+          <blockquote class="essay__epigraph">
+            <p>The map is not the territory.</p>
+            <footer>Alfred Korzybski · <cite>Science and Sanity</cite>, 1933</footer>
           </blockquote>
         </div>
       </header>
 
-      <section class="manifesto__section" aria-labelledby="bonding-layer">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="bonding-layer">The bonding layer</h2>
-          <p>Solder is the metal alloy that bonds electrical components into circuits. Without solder, components sit next to each other. Current does not flow. The system has every part it needs and still goes dark.</p>
+      <div class="essay__rule" aria-hidden="true"></div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">The bonding layer</h2>
+          <p class="essay__lede"><span class="dropcap">S</span>older is the metal alloy that bonds electrical components into circuits. Without solder, components sit next to each other. Current does not flow. The system has every part it needs and still goes dark.</p>
           <p>Solder doesn&rsquo;t replace the components. It joins them. It is invisible when it works and catastrophic when it fails. The most common cause of electronic failure is a broken solder joint &mdash; every part still functions, but the signal can&rsquo;t get across the seam. The bond is the system.</p>
-          <p>The shift from mechanical connections (twisted wires, screw terminals) to soldered joints is what allowed circuits to scale from dozens of connections to billions. The components were always capable. What changed was the substrate that held them together.</p>
+          <p>The shift from mechanical connections, twisted wires and screw terminals, to soldered joints is what allowed circuits to scale from dozens of connections to billions. The components were always capable. What changed was the substrate that held them together.</p>
           <p>We believe back office operations are at the same point. The systems work. The components are capable. What&rsquo;s missing is the bonding layer between them &mdash; the substrate that holds workflows together while they cross the seams between tools, between humans, between time. Right now humans are the solder. They hold the workflow open through PTO, escalations, retries, reversals, and audits. Your best people are the solder. And they are the most fragile component in the circuit. When they break, the work goes silent.</p>
           <p>Solden is the substrate built to hold what humans cannot hold reliably: the workflow itself. The state, the ownership, the dependencies, the exceptions, the audit trail. Persistent, structured, governed, reversible.</p>
-          <p class="manifesto__pull">We are building the bonding layer for back office work.</p>
+          <p class="essay__pull">We are building the bonding layer for back office work.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="what-we-believe">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="what-we-believe">What we believe</h2>
-          <ul class="manifesto__creed">
-            <li>We believe back office work needs a runtime, not another tool.</li>
-            <li>We believe workflow state belongs to the operator, not the vendor.</li>
-            <li>We believe coordination through shared state beats orchestration through a chokepoint.</li>
-            <li>We believe the bond between systems is the system.</li>
-            <li>We believe automation executes steps, but only a runtime maintains workflows over time.</li>
-          </ul>
-          <p class="manifesto__note">This is not a new problem. It is a structural one that has survived four generations of back office technology.</p>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">What we believe</h2>
+          <ol class="essay__creed">
+            <li>Back office work needs a runtime, not another tool.</li>
+            <li>Workflow state belongs to the operator, not the vendor.</li>
+            <li>Coordination through shared state beats orchestration through a chokepoint.</li>
+            <li>The bond between systems is the system.</li>
+            <li>Automation executes steps. Only a runtime maintains workflows over time.</li>
+          </ol>
+          <p class="essay__note">This is not a new problem. It is a structural one that has survived four generations of back office technology.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="seams">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="seams">The seams between systems do not hold.</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">The seams between systems do not hold.</h2>
           <p>Back office work has moved through four eras. None of them strengthened the joints between components.</p>
-          <p><strong>Paper</strong> solved record-keeping. Ledgers, requisitions, contracts, attestations. The bottleneck was physical: you couldn&rsquo;t act on what you couldn&rsquo;t reach. A purchase order sat on someone&rsquo;s desk until they walked it down the hall.</p>
-          <p><strong>Systems of record</strong> solved transactional state. A canonical system for every domain &mdash; finance, procurement, HR, IT operations. Each one held the record of what <em>happened</em> in its slice. The bottleneck moved up the stack: every system knew the outcome, but none knew the work in flight. Approvals lived in email. Exceptions lived in chat. Decisions lived in human memory. The space <em>between</em> systems was where the work actually happened.</p>
-          <p><strong>SaaS sprawl</strong> solved specialized workflow. A purpose-built tool for every workflow &mdash; AP, contracts, compliance, spend, close, vendor management. Each tool optimized one slice of one process. The bottleneck moved sideways: every tool got better at its slice while the seams between tools got worse. Operations teams now use four to ten tools per workflow. The state lives nowhere in particular. The connections between tools are held together by people.</p>
-          <p><strong>AI copilots</strong> solved point intelligence. Drafting, extracting, summarizing, recommending. The bottleneck moved deeper: the AI is brilliant for thirty seconds and amnesiac after. It can extract an invoice but it can&rsquo;t <em>finish</em> the workflow. It drafts a response but can&rsquo;t remember if it was sent. It generates outputs but doesn&rsquo;t bind them into a workflow that holds.</p>
-          <p>We believe back office work is now entering its fifth era. Autonomous agents operating continuously against persistent workflow state. Agents that remember where the work is. Agents that know who acts next. Agents that hold the workflow open until it actually closes. This is the era of the workflow runtime.</p>
+
+          <h3 class="essay__h3">Paper.</h3>
+          <p>Solved record-keeping. Ledgers, requisitions, contracts, attestations. The bottleneck was physical: you couldn&rsquo;t act on what you couldn&rsquo;t reach. A purchase order sat on someone&rsquo;s desk until they walked it down the hall.</p>
+
+          <h3 class="essay__h3">Systems of record.</h3>
+          <p>Solved transactional state. A canonical system for every domain &mdash; finance, procurement, HR, IT operations. Each one held the record of what <em>happened</em> in its slice. The bottleneck moved up the stack: every system knew the outcome, but none knew the work in flight. Approvals lived in email. Exceptions lived in chat. Decisions lived in human memory. The space <em>between</em> systems was where the work actually happened.</p>
+
+          <h3 class="essay__h3">SaaS sprawl.</h3>
+          <p>Solved specialized workflow. A purpose-built tool for every workflow &mdash; AP, contracts, compliance, spend, close, vendor management. Each tool optimized one slice of one process. The bottleneck moved sideways: every tool got better at its slice while the seams between tools got worse. Operations teams now use four to ten tools per workflow. The state lives nowhere in particular. The connections between tools are held together by people.</p>
+
+          <h3 class="essay__h3">AI copilots.</h3>
+          <p>Solved point intelligence. Drafting, extracting, summarizing, recommending. The bottleneck moved deeper: the AI is brilliant for thirty seconds and amnesiac after. It can extract an invoice but it can&rsquo;t <em>finish</em> the workflow. It drafts a response but can&rsquo;t remember if it was sent. It generates outputs but doesn&rsquo;t bind them into a workflow that holds.</p>
+
+          <p class="essay__pull-soft">Back office work is now entering its fifth era. Autonomous agents operating continuously against persistent workflow state. Agents that remember where the work is. Agents that know who acts next. Agents that hold the workflow open until it actually closes. This is the era of the workflow runtime.</p>
+
           <p>Each era added more capable components. None of them was a bonding layer. The work moved through systems. The workflow lived in human memory.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="automation-cannot">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="automation-cannot">What automation cannot hold</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">What automation cannot hold</h2>
           <p>The default response to back office work has been automation. Trigger an action. Send an approval. Post to a system of record. Notify the team.</p>
           <p>We believe automation is the wrong layer. Automation executes steps. It does not bind workflows over time.</p>
           <p>A back office workflow is not a sequence of tasks. It is a long-lived process with waiting conditions, exceptions, dependencies, reversals, retries, and override windows. The work spans days, weeks, sometimes months.</p>
           <p>A vendor invoice waits for a controller&rsquo;s review, then the controller goes on PTO, then a delegate picks up half, then the rest sits in a thread nobody opens. A purchase order pauses in negotiation while procurement waits on legal redlines, then resumes weeks later when the counterparty comes back. A compliance attestation gets assigned to an engineer, the engineer leaves, the attestation sits unowned until the audit window closes. A new vendor application advances through finance review, security review, and contracts in parallel, with each function blind to the others&rsquo; status.</p>
           <p>Automation tools cannot hold this. They fire and forget. They see the trigger, execute the action, log the result. The work continues to live in the heads of the humans coordinating it.</p>
-          <p>We believe the layer that holds workflows together is missing from every modern back office stack. Systems of record store outcomes. Specialized tools automate slices. Integration platforms trigger actions. Communication tools hold decisions. But no system holds the workflow itself: the state, the ownership, the waiting conditions, the retries, the reversals, the operational memory across systems.</p>
+          <p>We believe the layer that holds workflows together is missing from every modern back office stack. Systems of record store outcomes. Specialized tools automate slices. Integration platforms trigger actions. Communication tools hold decisions. <strong>But no system holds the workflow itself</strong>: the state, the ownership, the waiting conditions, the retries, the reversals, the operational memory across systems.</p>
           <p>We believe this is the defining infrastructure problem of operational AI.</p>
           <p>We believe agents need what software developers got two decades ago: a substrate that holds long-lived state, enforces structured transitions, makes exceptions visible, and keeps a complete audit trail. Not a chat interface. Not a copilot. A runtime.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="joint-breaks">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="joint-breaks">When the joint breaks, the system goes silent</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">When the joint breaks, the system goes silent</h2>
           <p>Friedrich Hayek argued in 1945 that knowledge in the economy is irreducibly distributed. No central planner can know what every local actor knows. The price system works because it compresses dispersed information into signals that local actors can read and act on.</p>
           <p>Back office workflows have the same shape. The AP clerk knows the vendor. The procurement lead knows the contract terms. The security reviewer knows the access risk. The compliance officer knows the policy boundary. The controller knows the financial impact. Each holds a slice. None holds the whole.</p>
-          <p>We believe the response to operational coordination is the same as Hayek&rsquo;s response to economic coordination: don&rsquo;t try to centralize what is inherently distributed. Build a substrate where local actors (humans and agents) read structured state, take locally correct actions, and write back transitions that other actors can see.</p>
+          <p>We believe the response to operational coordination is the same as Hayek&rsquo;s response to economic coordination: don&rsquo;t try to centralize what is inherently distributed. Build a substrate where local actors, humans and agents, read structured state, take locally correct actions, and write back transitions that other actors can see.</p>
           <p>We believe the workflow runtime is the price system for back office operations. State, ownership, dependencies, exceptions, audit history. Compressed into a structure every actor can read, trust, and act on. When the workflow state is clear, agents and humans make locally correct decisions. When it isn&rsquo;t, the work stops moving &mdash; even when every component still works.</p>
-          <p>We believe in coordination through shared state, not through orchestration. No master orchestrator. No giant prompt. No workflow engine routing everything through a chokepoint. Persistent state, reactive agents, structured transitions, deterministic outcomes.</p>
+          <p class="essay__pull-soft">We believe in coordination through shared state, not through orchestration. No master orchestrator. No giant prompt. No workflow engine routing everything through a chokepoint. Persistent state, reactive agents, structured transitions, deterministic outcomes.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="runtime-holds">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="runtime-holds">What the runtime holds</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">What the runtime holds</h2>
           <p>Every workflow Solden runs is a record. Live, observable, reversible.</p>
 
-          <dl class="manifesto__defs">
-            <div class="manifesto__def">
-              <dt>State.</dt>
+          <dl class="essay__defs">
+            <div class="essay__def">
+              <dt>State</dt>
               <dd>The workflow&rsquo;s current position in its lifecycle. Not &ldquo;approved&rdquo; or &ldquo;pending&rdquo; as a string in a database. A typed transition validated centrally, with the policy version that authorized it. A purchase order in <em>awaiting legal review</em>. An invoice in <em>posted, payment in flight</em>. A vendor application in <em>security review complete, awaiting contract execution</em>. A compliance attestation in <em>assigned, awaiting attestor sign-off</em>.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>Ownership.</dt>
+            <div class="essay__def">
+              <dt>Ownership</dt>
               <dd>Who acts next. Not implicit through forwarding rules and PTO calendars. When an attestor goes on leave, the workflow knows. When a delegate picks up half, the workflow tracks the split. Ownership is explicit, enforceable, auditable.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>Dependencies.</dt>
+            <div class="essay__def">
+              <dt>Dependencies</dt>
               <dd>What this workflow is waiting on. Vendor information. Second approval. Counterparty redlines. Security review sign-off. Contract execution. Made visible so blockers stop being invisible.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>Exceptions.</dt>
+            <div class="essay__def">
+              <dt>Exceptions</dt>
               <dd>What&rsquo;s stuck and why. A duplicate invoice. A failed payment retry. A vendor that didn&rsquo;t pass security. A counterparty that hasn&rsquo;t responded. Not buried in an email thread. Surfaced as structured state with the context needed to resolve it.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>History.</dt>
+            <div class="essay__def">
+              <dt>History</dt>
               <dd>Every transition. Every override. Every reversal. Every retry. Reconstructable. Auditable. Reversible.</dd>
             </div>
           </dl>
@@ -157,21 +193,29 @@
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="substrate-yours">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="substrate-yours">The substrate is yours</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">The substrate is yours</h2>
           <p>We believe the workflow state belongs to the operator, not to the tool that processes a slice of it.</p>
           <p>The current back office stack fragments operational state across vendors. Each tool holds its slice and walls it off behind a UI. Want to know where work is across functions? Open ten tabs. Want to audit a cross-functional decision? Reconstruct it from email threads. Want to migrate? Lose six months of operational memory.</p>
           <p>We believe operational state should live on a substrate the operator controls. A typed, versioned record of every workflow the organization runs. Independent of the surfaces that render it. Independent of the agents that advance it.</p>
           <p>We believe the durable advantage of the next decade is ownership of operational state. Surfaces will commoditize. Agents will commoditize. The layer that compounds is the one that holds the workflow record: the state, the ownership graph, the audit trail, the institutional memory.</p>
           <p>We believe the runtime should be removable. Components should remain whole if you ever take it out. The bond should be strong but not destructive. Lock-in is an architectural choice, and we have chosen against it.</p>
-          <p>The thesis is general. The runtime, the substrate, the bonding layer &mdash; all of it applies wherever back office work moves through fragmented systems. But a thesis must be proven where the cost of failure is highest before it can be claimed where the cost is broader. That is why we start in finance.</p>
+          <p class="essay__pull-soft">The thesis is general. The runtime, the substrate, the bonding layer &mdash; all of it applies wherever back office work moves through fragmented systems. But a thesis must be proven where the cost of failure is highest before it can be claimed where the cost is broader. That is why we start in finance.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="wedge">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="wedge">Finance is the wedge. The pattern generalizes.</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">Finance is the wedge. The pattern generalizes.</h2>
           <p>We start in finance because finance cannot tolerate workflow ambiguity.</p>
           <p>A delayed invoice means a missed early-pay discount. A duplicate payment means audit exposure. A stalled close means a delayed earnings report. The cost of operational opacity is measurable, and finance teams measure it. Finance has the acute pain. Finance has the budget. Finance is buying.</p>
           <p>But the architecture is not finance-specific. The state machine doesn&rsquo;t care about the domain. It cares about the primitives: long-lived state, deterministic transitions, structured exceptions, reversibility, audit trail.</p>
@@ -179,143 +223,141 @@
           <p>The architecture that runs procurement runs compliance. An attestation moves from assigned to drafted to reviewed to approved to submitted to audited. Same shape.</p>
           <p>The architecture that runs compliance runs vendor onboarding. A new vendor application moves from applied to diligence to security review to contracts to approved to live. Same shape.</p>
           <p>The architecture that runs vendor onboarding runs every back office workflow with hand-offs, exceptions, and dependencies. Customer success operations. Internal audit. Legal review. IT provisioning. Risk assessment.</p>
-          <p>We believe the back office is one category, not many. Point tools serve one slice each. The runtime serves the workflow itself.</p>
+          <p class="essay__pull">The back office is one category, not many. Point tools serve one slice each. The runtime serves the workflow itself.</p>
         </div>
       </section>
 
-      <section class="manifesto__section" aria-labelledby="building">
-        <div class="shell shell--narrow">
-          <h2 class="manifesto__h" id="building">What we&rsquo;re building</h2>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__section">
+        <div class="essay__shell">
+          <h2 class="essay__h">What we&rsquo;re building</h2>
           <p>We&rsquo;re building Solden to be the layer that holds back office workflows together.</p>
 
-          <dl class="manifesto__defs">
-            <div class="manifesto__def">
-              <dt>A workflow runtime.</dt>
+          <dl class="essay__defs">
+            <div class="essay__def">
+              <dt>A workflow runtime</dt>
               <dd>Long-lived state, deterministic transitions, structured exceptions, complete audit history. The same primitives that made software systems reliable at scale, applied to operational work across the back office.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>An agent substrate.</dt>
+            <div class="essay__def">
+              <dt>An agent substrate</dt>
               <dd>Agents read structured state, propose transitions, advance work where policy allows. Humans intervene on exceptions. Every agent action is bounded, audited, reversible.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>A bonding layer across surfaces.</dt>
+            <div class="essay__def">
+              <dt>A bonding layer across surfaces</dt>
               <dd>Workflow state rendered inside the tools operators already use &mdash; inboxes, chat, ERPs, the systems your team already lives in. The state lives once. The surfaces are how operators interact with it.</dd>
             </div>
-            <div class="manifesto__def">
-              <dt>Sovereign by design.</dt>
+            <div class="essay__def">
+              <dt>Sovereign by design</dt>
               <dd>The workflow record is the operator&rsquo;s. Not ours. Not the point tool&rsquo;s. Yours.</dd>
             </div>
           </dl>
 
-          <p>We believe in protocols, not platforms. In the long run, workflow runtimes will look like Git: a substrate every back office function builds on. We&rsquo;re starting with finance because finance is bleeding now. The pattern generalizes.</p>
+          <p>We believe in protocols, not platforms. In the long run, workflow runtimes will look like Git: a substrate every back office function builds on. We&rsquo;re starting with finance because finance is bleeding now. <strong>The pattern generalizes.</strong></p>
         </div>
       </section>
 
-      <section class="manifesto__section manifesto__section--lineage" aria-labelledby="lineage">
-        <div class="shell">
-          <header class="manifesto__lineage-head">
-            <h2 class="manifesto__h" id="lineage">Those who saw it first</h2>
-            <p class="manifesto__lineage-sub">The intellectual lineage we build on. Each one named a primitive that the workflow runtime inherits.</p>
-          </header>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
 
-          <ol class="lineage">
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark lineage__plate-mark--glyph">⚒</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">c. 3000 BCE</p>
-                <h3 class="lineage__name">The unknown smiths of Mesopotamia</h3>
-                <p class="lineage__contribution">Bronze &mdash; the first deliberate bonding metal</p>
-                <p class="lineage__body">Alloyed tin and copper into bronze around 3000 BCE. Before them, civilizations were limited to what could be hammered or tied. After them, every tool got stronger.</p>
+      <section class="essay__section essay__section--lineage">
+        <div class="essay__shell">
+          <h2 class="essay__h">Those who saw it first</h2>
+          <p class="essay__lede">The intellectual lineage we build on. Each named a primitive the workflow runtime inherits.</p>
+
+          <ol class="lineage-list">
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">I</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">The unknown smiths of Mesopotamia</p>
+                <p class="lineage-entry__dates">c. 3000 BCE</p>
+                <p class="lineage-entry__contribution">Bronze, the first deliberate bonding metal.</p>
+                <p class="lineage-entry__body-text">Alloyed tin and copper into bronze around 3000 BCE. Before them, civilizations were limited to what could be hammered or tied. After them, every tool got stronger.</p>
               </div>
             </li>
 
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark">H</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">1899 — 1992</p>
-                <h3 class="lineage__name">Friedrich Hayek</h3>
-                <p class="lineage__contribution">Distributed knowledge</p>
-                <p class="lineage__body">Proved that coordination through distributed local knowledge outperforms central planning. The price system, applied to operations, is the workflow runtime.</p>
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">II</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">Friedrich Hayek</p>
+                <p class="lineage-entry__dates">1899 — 1992</p>
+                <p class="lineage-entry__contribution">Distributed knowledge.</p>
+                <p class="lineage-entry__body-text">Proved that coordination through distributed local knowledge outperforms central planning. The price system, applied to operations, is the workflow runtime.</p>
               </div>
             </li>
 
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark">P</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">1942 — 2023</p>
-                <h3 class="lineage__name">Henry Petroski</h3>
-                <p class="lineage__contribution">Failure at the joint</p>
-                <p class="lineage__body">Showed that structures fail at the joints, not at the components. Every collapsed bridge, every cracked weld, every broken solder joint comes from the same failure mode. Operational systems fail the same way.</p>
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">III</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">Henry Petroski</p>
+                <p class="lineage-entry__dates">1942 — 2023</p>
+                <p class="lineage-entry__contribution">Failure at the joint.</p>
+                <p class="lineage-entry__body-text">Showed that structures fail at the joints, not at the components. Every collapsed bridge, every cracked weld, every broken solder joint comes from the same failure mode. Operational systems fail the same way.</p>
               </div>
             </li>
 
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark">T</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">b. 1969</p>
-                <h3 class="lineage__name">Linus Torvalds</h3>
-                <p class="lineage__contribution">Change as the primitive</p>
-                <p class="lineage__body">Built Git by treating change as the primitive, not the artifact. Every operational transition should be audited and reversible.</p>
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">IV</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">Linus Torvalds</p>
+                <p class="lineage-entry__dates">b. 1969</p>
+                <p class="lineage-entry__contribution">Change as the primitive.</p>
+                <p class="lineage-entry__body-text">Built Git by treating change as the primitive, not the artifact. Every operational transition should be audited and reversible.</p>
               </div>
             </li>
 
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark">B</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">b. 1967</p>
-                <h3 class="lineage__name">Eric Brewer</h3>
-                <p class="lineage__contribution">CAP</p>
-                <p class="lineage__body">Articulated the CAP theorem and forced an honest reckoning with consistency, availability, and partition tolerance in distributed systems. Back office workflows are distributed systems and have the same constraints.</p>
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">V</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">Eric Brewer</p>
+                <p class="lineage-entry__dates">b. 1967</p>
+                <p class="lineage-entry__contribution">The CAP theorem.</p>
+                <p class="lineage-entry__body-text">Articulated the CAP theorem and forced an honest reckoning with consistency, availability, and partition tolerance in distributed systems. Back office workflows are distributed systems and have the same constraints.</p>
               </div>
             </li>
 
-            <li class="lineage__card">
-              <div class="lineage__plate" aria-hidden="true">
-                <span class="lineage__plate-mark">K</span>
-              </div>
-              <div class="lineage__caption">
-                <p class="lineage__dates">b. 1938</p>
-                <h3 class="lineage__name">Donald Knuth</h3>
-                <p class="lineage__contribution">Correctness as precondition</p>
-                <p class="lineage__body">Treated correctness as a precondition, not a feature. Operational state needs the same standard.</p>
+            <li class="lineage-entry">
+              <span class="lineage-entry__numeral">VI</span>
+              <div class="lineage-entry__body">
+                <p class="lineage-entry__name">Donald Knuth</p>
+                <p class="lineage-entry__dates">b. 1938</p>
+                <p class="lineage-entry__contribution">Correctness as precondition.</p>
+                <p class="lineage-entry__body-text">Treated correctness as a precondition, not a feature. Operational state needs the same standard.</p>
               </div>
             </li>
           </ol>
-
-          <p class="manifesto__lineage-close">
-            We are building the bonding layer for the back office.
-            Open where it matters. Sovereign by default. Built to hold for decades.
-          </p>
         </div>
       </section>
 
-      <section class="manifesto__cta">
-        <div class="shell shell--tight">
-          <p class="manifesto__cta-headline">If you see the same future, build with us.</p>
-          <div class="manifesto__cta-row">
-            <a class="btn btn--teal btn--lg" href="/contact.html">Talk to us</a>
-            <a class="btn btn--ghost btn--lg" href="/">See it working</a>
+      <div class="essay__divider" aria-hidden="true">
+        <span class="essay__divider-mark">·   ·   ·</span>
+      </div>
+
+      <section class="essay__cta">
+        <div class="essay__shell">
+          <p class="essay__cta-headline">
+            We are building the bonding layer for the back office. Open where it matters. Sovereign by default. Built to hold for decades.
+          </p>
+          <p class="essay__cta-call">
+            If you see the same future, build with us.
+          </p>
+          <div class="essay__cta-actions">
+            <a class="btn btn--dark btn--lg" href="/contact.html">Talk to us</a>
+            <a class="btn btn--text btn--lg" href="/">See it working &rarr;</a>
           </div>
         </div>
       </section>
 
     </article>
 
-    <footer class="footer">
+    <footer class="footer footer--light">
       <div class="shell">
         <div class="footer__row">
           <div class="footer__brand-block">
-            <img class="footer__brand-lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
+            <img class="footer__brand-lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
             <p class="footer__tagline">The bonding layer for back office work. Workflows that hold.</p>
           </div>
           <div>
@@ -338,9 +380,9 @@
           <div>
             <span class="footer__col-title">company</span>
             <ul class="footer__col-list">
+              <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/about.html">About</a></li>
               <li><a href="/contact.html">Contact</a></li>
-              <li><a href="/manifesto.html">Manifesto</a></li>
             </ul>
           </div>
         </div>

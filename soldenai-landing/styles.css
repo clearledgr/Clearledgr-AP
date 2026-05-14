@@ -3185,3 +3185,427 @@ body.theme-dark .footer-cta__sub {
 /* Hide the old monogram styles so the cleanup is complete in case
    any other surface re-uses the same class names. */
 .manifesto__portrait { display: none !important; }
+
+/* ═════════════════════════════════════════════════════════════
+   MANIFESTO — light editorial mode (ModernRelay-grade)
+   ───────────────────────────────────────────────────────────── */
+
+body.theme-manifesto-light {
+  /* Warm off-white, like a book page — not pure white */
+  background: #F4EDDC;
+  color: #1F1B16;
+  font-family: var(--font);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Light topbar override */
+.topbar--light {
+  background: #F4EDDC;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-manifesto-light .nav__link {
+  color: rgba(31, 27, 22, 0.6);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+body.theme-manifesto-light .nav__link:hover { color: #1F1B16; }
+body.theme-manifesto-light .nav__link--manifesto {
+  color: #1F1B16;
+  font-weight: 600;
+}
+body.theme-manifesto-light .nav__link--manifesto::after {
+  background: #1F1B16;
+  opacity: 1;
+  transform: scaleX(1);
+}
+body.theme-manifesto-light .btn--primary {
+  background: #1F1B16;
+  color: #F4EDDC;
+  border-color: #1F1B16;
+}
+body.theme-manifesto-light .btn--primary:hover {
+  background: #0a0907;
+  border-color: #0a0907;
+}
+
+/* Article shell — narrow editorial column, generous breathing */
+.essay {
+  position: relative;
+  padding: 0 0 96px;
+}
+
+.essay__shell {
+  max-width: 660px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+@media (max-width: 600px) {
+  .essay__shell { padding: 0 24px; }
+}
+
+/* Cover — restrained, lots of whitespace, no chunky gradient */
+.essay__cover {
+  padding: 88px 0 56px;
+}
+
+.essay__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.55);
+  margin: 0 0 32px;
+}
+.essay__ornament {
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 18px;
+  color: #1F1B16;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.essay__title {
+  font-family: "Iowan Old Style", "Georgia", "Times New Roman", serif;
+  font-size: clamp(38px, 5.6vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  margin: 0 0 56px;
+  color: #1F1B16;
+}
+
+.essay__epigraph {
+  margin: 0;
+  padding: 28px 0 0;
+  border-top: 1px solid rgba(31, 27, 22, 0.18);
+  max-width: 480px;
+}
+.essay__epigraph p {
+  margin: 0 0 12px;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1.4;
+  color: #1F1B16;
+}
+.essay__epigraph footer {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: rgba(31, 27, 22, 0.55);
+}
+.essay__epigraph cite {
+  font-style: italic;
+}
+
+/* Full-width rule between cover and first section */
+.essay__rule {
+  height: 1px;
+  background: rgba(31, 27, 22, 0.12);
+  margin: 0 auto;
+  max-width: 1080px;
+}
+
+/* Section rhythm */
+.essay__section {
+  padding: 64px 0;
+}
+.essay__section--lineage { padding-top: 56px; }
+
+.essay__h {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(26px, 3.2vw, 36px);
+  line-height: 1.18;
+  letter-spacing: -0.012em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 32px;
+}
+
+.essay__h3 {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: 600;
+  font-style: italic;
+  color: #1F1B16;
+  margin: 36px 0 10px;
+}
+
+.essay p {
+  font-size: 18px;
+  line-height: 1.72;
+  color: rgba(31, 27, 22, 0.85);
+  margin: 0 0 22px;
+  font-weight: 400;
+  letter-spacing: -0.003em;
+}
+.essay p strong { color: #1F1B16; font-weight: 600; }
+.essay p em { color: #1F1B16; font-style: italic; }
+
+.essay__lede {
+  font-size: 19px !important;
+  line-height: 1.7 !important;
+  color: rgba(31, 27, 22, 0.92) !important;
+}
+
+/* Drop cap — first letter of opening paragraph */
+.dropcap {
+  float: left;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 64px;
+  line-height: 0.85;
+  font-weight: 500;
+  padding: 6px 10px 0 0;
+  color: #1F1B16;
+}
+
+/* Pull quotes — italic, indented, with a vertical rule */
+.essay__pull {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(22px, 2.6vw, 28px) !important;
+  line-height: 1.32 !important;
+  letter-spacing: -0.012em;
+  font-style: italic;
+  color: #1F1B16 !important;
+  margin: 40px 0 0 !important;
+  padding: 12px 0 12px 24px;
+  border-left: 2px solid #1F1B16;
+}
+
+.essay__pull-soft {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px !important;
+  line-height: 1.5 !important;
+  font-style: italic;
+  color: rgba(31, 27, 22, 0.92) !important;
+  margin: 32px 0 !important;
+}
+
+.essay__note {
+  font-size: 15px !important;
+  color: rgba(31, 27, 22, 0.55) !important;
+  font-style: italic;
+}
+
+/* Creed — numbered list with italic flourish */
+.essay__creed {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 32px;
+  counter-reset: creed;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.essay__creed li {
+  counter-increment: creed;
+  display: flex;
+  gap: 18px;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 20px;
+  line-height: 1.42;
+  letter-spacing: -0.008em;
+  color: #1F1B16;
+  padding-left: 0;
+  position: relative;
+}
+.essay__creed li::before {
+  content: counter(creed, upper-roman) ".";
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 18px;
+  color: rgba(31, 27, 22, 0.45);
+  min-width: 32px;
+  font-weight: 400;
+}
+
+/* Definition list — what the runtime holds */
+.essay__defs {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin: 16px 0 32px;
+}
+.essay__def dt {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.008em;
+  color: #1F1B16;
+  margin: 0 0 8px;
+}
+.essay__def dd {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.65;
+  color: rgba(31, 27, 22, 0.82);
+}
+.essay__def dd em { color: #1F1B16; }
+
+/* Centered classical divider between sections */
+.essay__divider {
+  text-align: center;
+  padding: 8px 0;
+}
+.essay__divider-mark {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 18px;
+  color: rgba(31, 27, 22, 0.35);
+  letter-spacing: 0.4em;
+}
+
+/* Lineage list — editorial, numbered, no card chrome */
+.lineage-list {
+  list-style: none;
+  padding: 0;
+  margin: 48px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.lineage-entry {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 24px;
+  align-items: start;
+  padding-bottom: 36px;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.12);
+}
+.lineage-entry:last-child { border-bottom: 0; padding-bottom: 0; }
+
+@media (max-width: 560px) {
+  .lineage-entry { grid-template-columns: 1fr; gap: 8px; }
+}
+
+.lineage-entry__numeral {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 48px;
+  line-height: 0.9;
+  color: rgba(31, 27, 22, 0.3);
+  letter-spacing: -0.02em;
+  font-weight: 400;
+}
+
+.lineage-entry__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lineage-entry__name {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #1F1B16;
+  margin: 0;
+  letter-spacing: -0.012em;
+}
+
+.lineage-entry__dates {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.5);
+  margin: 0;
+}
+
+.lineage-entry__contribution {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 16px;
+  color: rgba(31, 27, 22, 0.7);
+  margin: 6px 0 0;
+}
+
+.lineage-entry__body-text {
+  margin: 10px 0 0 !important;
+  font-size: 15px !important;
+  line-height: 1.62 !important;
+  color: rgba(31, 27, 22, 0.78) !important;
+}
+
+/* Closing CTA */
+.essay__cta {
+  padding: 56px 0 0;
+}
+.essay__cta-headline {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(22px, 2.6vw, 28px) !important;
+  line-height: 1.4 !important;
+  color: #1F1B16 !important;
+  margin: 0 0 24px !important;
+}
+.essay__cta-call {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 22px !important;
+  line-height: 1.4 !important;
+  color: #1F1B16 !important;
+  margin: 0 0 32px !important;
+}
+.essay__cta-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Buttons — dark on light */
+.btn--dark {
+  background: #1F1B16;
+  color: #F4EDDC;
+  border: 1px solid #1F1B16;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.btn--dark:hover {
+  background: #0a0907;
+  border-color: #0a0907;
+}
+.btn--text {
+  background: transparent;
+  color: #1F1B16;
+  border: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+  font-style: italic;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500;
+}
+.btn--text:hover { color: #4a3f30; }
+
+/* Light footer override */
+.footer--light {
+  background: #EDE3CC;
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+}
+body.theme-manifesto-light .footer--light {
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-manifesto-light .footer--light .footer__col-title {
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-manifesto-light .footer--light .footer__col-list a {
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-manifesto-light .footer--light .footer__col-list a:hover {
+  color: #1F1B16;
+}
+body.theme-manifesto-light .footer--light .footer__tagline {
+  color: rgba(31, 27, 22, 0.7);
+}
+body.theme-manifesto-light .footer--light .footer__bottom {
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  color: rgba(31, 27, 22, 0.5);
+}
