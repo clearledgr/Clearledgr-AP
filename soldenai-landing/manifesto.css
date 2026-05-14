@@ -1474,3 +1474,18 @@ body.theme-light-landing .audit-chain__panel .audit-chain__actor {
 body.theme-light-landing .audit-chain__panel .audit-chain__entry {
   color: rgba(255, 255, 255, 0.85);
 }
+
+/* Footer-CTA category-pair lines — large heading pair at the
+   bottom of the landing. Was missed because they're not <h*>
+   elements but <div class="category-pair__line">. */
+body.theme-light-landing .category-pair__line {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 500;
+  font-size: clamp(34px, 4.6vw, 56px);
+  line-height: 1.1;
+  letter-spacing: -0.022em;
+  color: rgba(31, 27, 22, 0.42);
+}
+body.theme-light-landing .category-pair__line--accent {
+  color: #1F1B16;
+}
