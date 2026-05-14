@@ -24,9 +24,16 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/manifesto.css?v=10" />
+    <link rel="stylesheet" href="/manifesto.css?v=11" />
   </head>
   <body class="theme-light-landing">
+
+    <!-- Announcement bar ───────────────────────────────────── -->
+    <a class="announcement-bar" href="/manifesto.html">
+      <span class="announcement-bar__label">Manifesto</span>
+      <span class="announcement-bar__text">The bonding layer for back office work.</span>
+      <span class="announcement-bar__arrow" aria-hidden="true">&rarr;</span>
+    </a>
 
     <!-- Topbar ─────────────────────────────────────────────── -->
     <header class="topbar">
@@ -44,27 +51,27 @@
     </header>
 
     <!-- Hero ────────────────────────────────────────────────── -->
-    <section class="hero">
+    <section class="hero hero--split">
       <div class="hero__glow" aria-hidden="true"></div>
       <div class="hero__grid" aria-hidden="true"></div>
 
-      <div class="shell hero__inner">
-        <h1 class="hero__headline">
-          The coordinating layer<br />
-          for <span class="hero__accent">back office work</span>.
-        </h1>
-        <p class="hero__sub hero__sub--stanza">
-          <span class="hero__stanza-line">Workflows that hold.</span>
-          <span class="hero__stanza-line">Agents that propose.</span>
-          <span class="hero__stanza-line">State you own.</span>
-        </p>
-        <div class="hero__ctas">
-          <a class="btn btn--primary btn--lg" href="/contact.html">Talk to us</a>
+      <div class="shell hero__split-grid">
+        <div class="hero__split-text">
+          <h1 class="hero__headline">
+            The coordinating layer<br />
+            for <span class="hero__accent">back office work</span>.
+          </h1>
+          <p class="hero__sub hero__sub--stanza">
+            <span class="hero__stanza-line">Workflows that hold.</span>
+            <span class="hero__stanza-line">Agents that propose.</span>
+            <span class="hero__stanza-line">State you own.</span>
+          </p>
+          <div class="hero__ctas">
+            <a class="btn btn--primary btn--lg" href="/contact.html">Talk to us</a>
+          </div>
         </div>
-      </div>
 
-      <div class="shell hero__below">
-        <aside class="ribbon" aria-label="Sample agent activity">
+        <aside class="ribbon ribbon--in-hero" aria-label="Sample agent activity">
           <header class="ribbon__head">
             <h2 class="ribbon__title">Agent activity</h2>
             <span class="ribbon__head-meta">
@@ -150,6 +157,7 @@
     </section>
 
     <!-- Built by strip ─────────────────────────────────────── -->
+    <!-- (hero__split-grid now wraps both columns; old hero__below removed) -->
     <section class="strip" aria-label="Builders">
       <div class="shell">
         <p class="strip__text" data-reveal>

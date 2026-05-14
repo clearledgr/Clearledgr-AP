@@ -1489,3 +1489,167 @@ body.theme-light-landing .category-pair__line {
 body.theme-light-landing .category-pair__line--accent {
   color: #1F1B16;
 }
+
+/* ─── Announcement bar (Basis-pattern) ─────────────────────────
+   Thin promo strip above the nav. Surfaces the Manifesto as a
+   first-class destination, not just a nav link. Matches the
+   Basis "Series B announcement" treatment but for our content. */
+
+.announcement-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 24px;
+  text-decoration: none;
+  background: #1F1B16;
+  color: #F4EDDC;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(244, 237, 220, 0.08);
+  transition: background-color .15s var(--ease-out);
+}
+.announcement-bar:hover { background: #2c2620; }
+
+.announcement-bar__label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(244, 237, 220, 0.55);
+  padding-right: 14px;
+  border-right: 1px solid rgba(244, 237, 220, 0.18);
+}
+
+.announcement-bar__text {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 15px;
+  color: #F4EDDC;
+}
+
+.announcement-bar__arrow {
+  font-size: 14px;
+  color: rgba(244, 237, 220, 0.7);
+  transition: transform .2s var(--ease-out), color .2s var(--ease-out);
+}
+.announcement-bar:hover .announcement-bar__arrow {
+  transform: translateX(3px);
+  color: #F4EDDC;
+}
+
+@media (max-width: 640px) {
+  .announcement-bar { padding: 8px 16px; gap: 10px; }
+  .announcement-bar__label { font-size: 9px; padding-right: 10px; }
+  .announcement-bar__text { font-size: 13px; }
+}
+
+/* ─── Split hero (Linear-pattern) ─────────────────────────────
+   Hero becomes two columns on desktop: text + CTA left, activity
+   ribbon right. The ribbon was previously rendered below the
+   hero — relocating it INTO the hero zone is the move that says
+   "this is a product working now," not "marketing page with
+   proof below." Linear does this with their dark Workspace UI. */
+
+.hero--split {
+  /* Override default centered hero text-align */
+  padding: 56px 0 64px;
+}
+
+.hero__split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+@media (max-width: 980px) {
+  .hero__split-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+    text-align: left;
+  }
+}
+
+.hero__split-text {
+  text-align: left;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  align-items: flex-start;
+}
+.hero--split .hero__headline {
+  text-align: left;
+  margin: 0;
+}
+.hero--split .hero__sub {
+  margin: 0;
+  text-align: left;
+}
+.hero--split .hero__ctas {
+  margin: 0;
+  text-align: left;
+}
+
+/* Ribbon now lives inside the hero — adjust styling so it
+   reads as a hero-level specimen, not a footer card. */
+.ribbon--in-hero {
+  margin: 0;
+  width: 100%;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7),
+    0 30px 60px -20px rgba(31, 27, 22, 0.18),
+    0 12px 24px -12px rgba(31, 27, 22, 0.12);
+}
+
+body.theme-light-landing .ribbon--in-hero .ribbon__head {
+  background: rgba(31, 27, 22, 0.02);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.06);
+  padding: 14px 20px;
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__title {
+  color: #1F1B16;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__head-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.5);
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__pulse {
+  background: #18BFB0;
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__row {
+  border-bottom: 1px solid rgba(31, 27, 22, 0.05);
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__row:last-child {
+  border-bottom: 0;
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__verb {
+  color: #1F1B16;
+  font-weight: 600;
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__subject {
+  color: rgba(31, 27, 22, 0.78);
+}
+body.theme-light-landing .ribbon--in-hero .ribbon__meta {
+  color: rgba(31, 27, 22, 0.5);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@media (max-width: 980px) {
+  .ribbon--in-hero { max-width: 620px; }
+}
