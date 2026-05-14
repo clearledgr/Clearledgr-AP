@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from clearledgr.core.http_client import get_http_client
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from clearledgr.core.ap_item_resolution import (
     resolve_ap_context as resolve_shared_ap_context,
@@ -214,7 +215,7 @@ def _audit_callback_event(
     *,
     event_type: str,
     source: str,
-    organization_id: str = "default",
+    organization_id: str = "_unauthenticated",
     ap_item_id: str | None = None,
     actor_id: str | None = None,
     idempotency_key: str | None = None,
@@ -340,7 +341,7 @@ async def _post_to_response_url(
     response_url: str,
     payload: Dict[str, Any],
     *,
-    organization_id: str = "default",
+    organization_id: str = "_unauthenticated",
     ap_item_id: str | None = None,
 ) -> bool:
     """Post a follow-up message to Slack's response_url with inline retry enqueue.
@@ -552,11 +553,16 @@ async def _handle_undo_post_action(
             "text": "This undo button no longer points to a valid override window.",
         }
 
-    organization_id = (
+    organization_id = str(
         action.organization_id
         or window.get("organization_id")
-        or "default"
-    )
+        or ""
+    ).strip()
+    if not organization_id:
+        return {
+            "response_type": "ephemeral",
+            "text": "Cannot identify the org for this undo. Please refresh and try again.",
+        }
     actor_label = (
         action.actor_display
         or action.actor_email
@@ -817,44 +823,76 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
         action_id = str(raw_action.get("action_id") or "")
         if "_" in action_id:
             gmail_candidate = action_id.rsplit("_", 1)[-1]
-    organization_id, ap_item_id = _resolve_ap_context(db, "default", gmail_candidate)
 
-    # Cross-tenant guard: bind the click to the workspace the verified
-    # payload claims to come from. Pre-fix the org came from the AP
-    # item alone, so an attacker whose Slack workspace was connected
-    # to one tenant could submit a click whose ``value`` JSON
-    # references another tenant's gmail_id and have the click execute
-    # against that other tenant. The Slack signing secret is
-    # workspace-shared but the team→org mapping is the authoritative
-    # tenant boundary — refuse the click when the team isn't bound
-    # to the resolved AP item's org.
+    # M18: derive org from the VERIFIED Slack team_id BEFORE resolving
+    # AP context. Pre-fix this called ``_resolve_ap_context(db,
+    # "default", gmail_candidate)`` — passing the literal "default"
+    # string as the requested org. ``_resolve_ap_context`` then
+    # adopted whatever tenant the gmail_id resolved to (the post-M16
+    # tightening rejects org swaps but the unscoped ``get_invoice_status``
+    # fallback still let "default"-tenant rows pass through). The
+    # downstream team→org guard caught some cases but not all —
+    # particularly when the Slack workspace had no per-org install,
+    # a tenant whose org id was the legacy "default" literal, or
+    # when the team→org guard's ``if install and bound_org`` short-
+    # circuit skipped the check on missing installation rows.
+    #
+    # Now: AAD-style binding. Team_id maps to a Solden org via
+    # ``get_slack_installation_by_team``. No install → refuse.
     _slack_team_id = str(((payload.get("team") or {}) if isinstance(payload.get("team"), dict) else {}).get("id") or "").strip()
-    if organization_id and _slack_team_id and hasattr(db, "get_slack_installation_by_team"):
+    bound_org = ""
+    if _slack_team_id and hasattr(db, "get_slack_installation_by_team"):
         try:
             install = db.get_slack_installation_by_team(_slack_team_id)
         except Exception as exc:
             install = None
             logger.warning(
-                "[slack/interactive] team→org lookup failed for team=%s ap_item=%s: %s",
-                _slack_team_id, ap_item_id, exc,
+                "[slack/interactive] team→org lookup failed for team=%s: %s",
+                _slack_team_id, exc,
             )
         bound_org = str((install or {}).get("organization_id") or "").strip()
-        if install and bound_org and bound_org != str(organization_id or "").strip():
-            _body_hash = hashlib.sha256(body or b"").hexdigest()[:16]
-            _audit_callback_event(
-                db,
-                event_type="channel_action_invalid",
-                source="slack",
-                idempotency_key=f"slack:tenant_mismatch:{_body_hash}",
-                reason="tenant_mismatch",
-                metadata={
-                    "slack_team_id": _slack_team_id,
-                    "team_bound_org": bound_org,
-                    "ap_item_org": organization_id,
-                    "ap_item_id": ap_item_id,
-                },
-            )
-            raise HTTPException(status_code=403, detail="tenant_mismatch")
+
+    if not bound_org:
+        # No team→org binding — refuse. The Slack signing secret is
+        # workspace-shared so a verified signature alone doesn't
+        # establish tenancy. Fail closed.
+        _body_hash = hashlib.sha256(body or b"").hexdigest()[:16]
+        _audit_callback_event(
+            db,
+            event_type="channel_callback_unauthorized",
+            source="slack",
+            organization_id="_unauthenticated",
+            idempotency_key=f"slack:no_installation:{_body_hash}",
+            reason="slack_team_not_provisioned",
+            metadata={"slack_team_id": _slack_team_id or None},
+        )
+        return JSONResponse(
+            status_code=403,
+            content={"response_type": "ephemeral", "text": "This Slack workspace isn't connected to any Solden tenant."},
+        )
+
+    organization_id, ap_item_id = _resolve_ap_context(db, bound_org, gmail_candidate)
+
+    # Defense in depth: if AP-item resolution returned a different
+    # tenant's org (it shouldn't, post-M16 — but pin the invariant),
+    # refuse.
+    if str(organization_id or "").strip() and str(organization_id) != bound_org:
+        _body_hash = hashlib.sha256(body or b"").hexdigest()[:16]
+        _audit_callback_event(
+            db,
+            event_type="channel_action_invalid",
+            source="slack",
+            organization_id=bound_org,
+            idempotency_key=f"slack:tenant_mismatch:{_body_hash}",
+            reason="tenant_mismatch",
+            metadata={
+                "slack_team_id": _slack_team_id,
+                "team_bound_org": bound_org,
+                "ap_item_org": organization_id,
+                "ap_item_id": ap_item_id,
+            },
+        )
+        raise HTTPException(status_code=403, detail="tenant_mismatch")
 
     ApprovalActionContractError = _approval_action_error_type()
     try:
@@ -1151,19 +1189,31 @@ async def _handle_mention_reply_sync(
     try:
         from clearledgr.services.slack_api import resolve_slack_runtime
 
-        # Find the parent message to get the ap_item_id from metadata
+        # Find the parent message to get the ap_item_id from metadata.
+        # M21 tenant-rename: previously fell back to ``resolve_slack_
+        # runtime("default")`` when no org's team_id matched — silently
+        # routing the reply to the legacy bucket. Fail closed instead:
+        # if we can't resolve the team_id to a real tenant, drop the
+        # reply on the floor (logged for ops follow-up).
         runtime = None
         db = get_db()
         orgs = db.list_organizations() if hasattr(db, "list_organizations") else []
         for org in orgs:
-            rt = resolve_slack_runtime(org.get("id", "default"))
+            org_id = str(org.get("id") or "").strip()
+            if not org_id:
+                continue
+            rt = resolve_slack_runtime(org_id)
             if rt and rt.get("team_id") == team_id:
                 runtime = rt
                 break
-        if not runtime:
-            runtime = resolve_slack_runtime("default")
 
         if not runtime or not runtime.get("token"):
+            logger.warning(
+                "[slack_thread_reply] no Solden tenant bound to "
+                "team_id=%s — dropping reply (no fallback to legacy "
+                "default bucket post-M20)",
+                team_id,
+            )
             return
 
         # Fetch the parent message to find the ap_item_id
@@ -1229,24 +1279,35 @@ async def _handle_conversational_query(
     try:
         from clearledgr.services.slack_api import resolve_slack_runtime
 
-        # Find the org for this Slack team
+        # Find the org for this Slack team. Pre-fix this iterated all
+        # orgs, then fell back to the legacy "default" org if no
+        # team→org match. M19 sweep: prefer the canonical
+        # ``slack_installations`` index (single SQL lookup keyed by
+        # team_id) and refuse — not fall back — when no install
+        # exists. The fallback was a cross-tenant landmine: a Slack
+        # workspace probing the bot would silently bind to the
+        # platform tenant's runtime.
         runtime = None
+        org_id = ""
         db = get_db()
-        orgs = db.list_organizations() if hasattr(db, "list_organizations") else []
-        for org in orgs:
-            rt = resolve_slack_runtime(org.get("id", "default"))
-            if rt and rt.get("team_id") == team_id:
-                runtime = rt
-                org_id = org.get("id", "default")
-                break
+        if hasattr(db, "get_slack_installation_by_team"):
+            try:
+                install = db.get_slack_installation_by_team(team_id)
+                if install:
+                    candidate_org = str(install.get("organization_id") or "").strip()
+                    if candidate_org:
+                        rt = resolve_slack_runtime(candidate_org)
+                        if rt and rt.get("token"):
+                            runtime = rt
+                            org_id = candidate_org
+            except Exception as exc:
+                logger.warning("[conversational] team→org lookup failed for team=%s: %s", team_id, exc)
 
-        if not runtime:
-            # Fallback: try default org
-            runtime = resolve_slack_runtime("default")
-            org_id = "default"
-
-        if not runtime or not runtime.get("token"):
-            logger.warning("[conversational] no Slack runtime for team=%s", team_id)
+        if not runtime or not runtime.get("token") or not org_id:
+            logger.warning(
+                "[conversational] no Slack runtime / installation for team=%s; refusing query",
+                team_id,
+            )
             return
 
         # Build context from AP data + onboarding + audit trail

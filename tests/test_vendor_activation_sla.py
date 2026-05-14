@@ -108,7 +108,7 @@ class TestComputeVendorActivationSLA:
     def test_empty_window_stable_shape(self):
         store = self._store([])
         result = store._compute_vendor_activation_sla(
-            organization_id="default",
+            organization_id="org-test",
             now=datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc),
         )
         assert result["activation_count"] == 0
@@ -136,7 +136,7 @@ class TestComputeVendorActivationSLA:
         ]
         store = self._store(sessions)
         result = store._compute_vendor_activation_sla(
-            organization_id="default",
+            organization_id="org-test",
             now=datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc),
         )
         assert result["activation_count"] == 3
@@ -158,7 +158,7 @@ class TestComputeVendorActivationSLA:
         ]
         store = self._store(sessions)
         result = store._compute_vendor_activation_sla(
-            organization_id="default",
+            organization_id="org-test",
             now=datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc),
         )
         assert result["activation_count"] == 2
@@ -177,7 +177,7 @@ class TestComputeVendorActivationSLA:
         ]
         store = self._store(sessions)
         result = store._compute_vendor_activation_sla(
-            organization_id="default",
+            organization_id="org-test",
             now=datetime(2026, 4, 17, 12, 0, tzinfo=timezone.utc),
         )
         # Only the one with both timestamps counts.
@@ -201,7 +201,7 @@ class TestSlackDigestOnboardingBlock:
                 "sla_business_days": 5,
             },
         }
-        blocks = SlackAPIClient.build_ap_kpi_digest_blocks(kpis, "default")
+        blocks = SlackAPIClient.build_ap_kpi_digest_blocks(kpis, "org-test")
         onboarding_block = next(
             (b for b in blocks if b.get("type") == "section"
              and "Vendor onboarding" in str((b.get("text") or {}).get("text", ""))),
@@ -229,7 +229,7 @@ class TestSlackDigestOnboardingBlock:
                 "sla_business_days": 5,
             },
         }
-        blocks = SlackAPIClient.build_ap_kpi_digest_blocks(kpis, "default")
+        blocks = SlackAPIClient.build_ap_kpi_digest_blocks(kpis, "org-test")
         onboarding_block = next(
             (b for b in blocks if b.get("type") == "section"
              and "Vendor onboarding" in str((b.get("text") or {}).get("text", ""))),
@@ -253,7 +253,7 @@ class TestSlackDigestOnboardingBlock:
                 "sla_business_days": 5,
             },
         }
-        text = SlackAPIClient.build_ap_kpi_digest_text(kpis, "default")
+        text = SlackAPIClient.build_ap_kpi_digest_text(kpis, "org-test")
         assert "onboarding 2 activated" in text
         assert "100% on SLA" in text
 
@@ -264,13 +264,13 @@ class TestSlackDigestOnboardingBlock:
             "agentic_telemetry": {},
             "vendor_activation_sla": {"activation_count": 0},
         }
-        text = SlackAPIClient.build_ap_kpi_digest_text(kpis, "default")
+        text = SlackAPIClient.build_ap_kpi_digest_text(kpis, "org-test")
         assert "onboarding" not in text
 
 
 class TestTeamsDigestOnboardingBlock:
     def _card_body(self, kpis):
-        card = TeamsAPIClient.build_ap_kpi_digest_card(kpis, "default")
+        card = TeamsAPIClient.build_ap_kpi_digest_card(kpis, "org-test")
         return card["attachments"][0]["content"]["body"]
 
     def test_card_includes_onboarding_factset_with_activations(self):

@@ -211,10 +211,15 @@ def test_approval_reminder_no_duplicate(db, monkeypatch):
     item_id = "dup-remind-1"
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # M20 tenant-rename: ``"org-test"`` is no longer a valid org id —
+    # migration v79's CHECK constraint blocks it. Use a real-shaped
+    # tenant id; the test's behavior (milestone dedup) is org-id-
+    # agnostic.
+    org_id = "org-reminder-dedup"
     db.create_ap_item(
         _item_payload(
             item_id=item_id,
-            org_id="default",
+            org_id=org_id,
             state="needs_approval",
             amount=2000.0,
         )
@@ -244,7 +249,7 @@ def test_approval_reminder_no_duplicate(db, monkeypatch):
 
     import asyncio
 
-    asyncio.run(agent_background._check_approval_timeouts("default"))
+    asyncio.run(agent_background._check_approval_timeouts(org_id))
 
     assert len(reminder_calls) == 0, (
         f"Expected 0 reminder calls after milestones stored, got {len(reminder_calls)}"

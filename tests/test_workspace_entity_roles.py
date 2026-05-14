@@ -57,7 +57,7 @@ from clearledgr.services.role_resolver import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
@@ -66,19 +66,19 @@ def db():
 def two_entities(db):
     """Two entities in the default org."""
     e1 = db.create_entity(
-        organization_id="default",
+        organization_id="org-test",
         code="EU",
         name="EU subsidiary",
     )
     e2 = db.create_entity(
-        organization_id="default",
+        organization_id="org-test",
         code="US",
         name="US subsidiary",
     )
     return e1["id"], e2["id"]
 
 
-def _user(org_id: str = "default", role: str = "owner", uid: str = "owner-user"):
+def _user(org_id: str = "org-test", role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=uid,
@@ -104,7 +104,7 @@ def client_factory():
 
 def test_resolver_falls_back_to_org_role_when_no_row(db, two_entities):
     eu, _us = two_entities
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="org-test", entity_id=eu)
     assert rr.scope == "org"
     assert rr.role == ROLE_AP_MANAGER
     assert PERMISSION_APPROVE_INVOICES in rr.permissions
@@ -114,12 +114,12 @@ def test_resolver_falls_back_to_org_role_when_no_row(db, two_entities):
 def test_resolver_uses_entity_row_when_present(db, two_entities):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_READ_ONLY, approval_ceiling=None,
     )
     # Org role would normally let her approve; the entity row downgrades
     # her in EU.
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="org-test", entity_id=eu)
     assert rr.scope == "entity"
     assert rr.role == ROLE_READ_ONLY
     assert PERMISSION_APPROVE_INVOICES not in rr.permissions
@@ -129,10 +129,10 @@ def test_resolver_uses_entity_row_when_present(db, two_entities):
 def test_resolver_applies_approval_ceiling(db, two_entities):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_CLERK, approval_ceiling=Decimal("50000.00"),
     )
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_CLERK, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_CLERK, organization_id="org-test", entity_id=eu)
     assert rr.approval_ceiling == Decimal("50000.00")
     assert rr.can_approve(Decimal("49999.99")) is True
     assert rr.can_approve(Decimal("50000.00")) is True
@@ -142,20 +142,20 @@ def test_resolver_applies_approval_ceiling(db, two_entities):
 def test_resolver_no_ceiling_means_unbounded(db, two_entities):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER, approval_ceiling=None,
     )
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="org-test", entity_id=eu)
     assert rr.can_approve(Decimal("999999.99")) is True
 
 
 def test_resolver_no_approve_permission_blocks_regardless_of_ceiling(db, two_entities):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_READ_ONLY, approval_ceiling=Decimal("999999.00"),
     )
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="org-test", entity_id=eu)
     # Read-only can't approve regardless of the ceiling
     assert rr.can_approve(Decimal("100.00")) is False
 
@@ -163,32 +163,32 @@ def test_resolver_no_approve_permission_blocks_regardless_of_ceiling(db, two_ent
 def test_can_approve_helper_short_form(db, two_entities):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_CLERK, approval_ceiling=Decimal("1000"),
     )
     assert can_approve(
         db, user_id="alice", org_role=ROLE_AP_CLERK,
-        organization_id="default", entity_id=eu, amount=Decimal("999"),
+        organization_id="org-test", entity_id=eu, amount=Decimal("999"),
     ) is True
     assert can_approve(
         db, user_id="alice", org_role=ROLE_AP_CLERK,
-        organization_id="default", entity_id=eu, amount=Decimal("1001"),
+        organization_id="org-test", entity_id=eu, amount=Decimal("1001"),
     ) is False
 
 
 def test_resolver_handles_custom_role(db, two_entities):
     eu, _us = two_entities
     custom = db.create_custom_role(
-        organization_id="default", name="Reviewer",
+        organization_id="org-test", name="Reviewer",
         permissions=[PERMISSION_VIEW_AUDIT_LOG, PERMISSION_APPROVE_INVOICES],
     )
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=custom["id"],
     )
     rr = resolve_role(
         db, user_id="alice", org_role=ROLE_READ_ONLY,
-        organization_id="default", entity_id=eu,
+        organization_id="org-test", entity_id=eu,
     )
     assert rr.role == custom["id"]
     assert rr.permissions == frozenset({
@@ -202,7 +202,7 @@ def test_resolver_handles_custom_role(db, two_entities):
     assert rr_other.role == custom["id"]
     assert rr_other.permissions == frozenset(), (
         "Resolving a custom role from a different tenant must collapse "
-        "to empty perms — the role row lives in 'default', not 'other-tenant'."
+        "to empty perms — the role row lives in 'org-test', not 'other-tenant'."
     )
 
 
@@ -211,10 +211,10 @@ def test_resolver_unknown_custom_id_collapses_to_empty(db, two_entities):
     user) returns the empty permission set — fail-closed."""
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role="cr_nonexistent_id",
     )
-    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="default", entity_id=eu)
+    rr = resolve_role(db, user_id="alice", org_role=ROLE_AP_MANAGER, organization_id="org-test", entity_id=eu)
     assert rr.role == "cr_nonexistent_id"
     assert rr.permissions == frozenset()
 
@@ -227,12 +227,12 @@ def test_resolver_unknown_custom_id_collapses_to_empty(db, two_entities):
 def test_replace_user_entity_roles_inserts_and_deletes(db, two_entities):
     eu, us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     # Replace with a different shape: keep eu (different role), drop us
     out = db.replace_user_entity_roles(
-        user_id="alice", organization_id="default",
+        user_id="alice", organization_id="org-test",
         assignments=[
             {"entity_id": eu, "role": ROLE_AP_CLERK,
              "approval_ceiling": Decimal("10000")},
@@ -247,15 +247,15 @@ def test_replace_user_entity_roles_inserts_and_deletes(db, two_entities):
 def test_replace_with_empty_clears_all(db, two_entities):
     eu, us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     db.set_user_entity_role(
-        user_id="alice", entity_id=us, organization_id="default",
+        user_id="alice", entity_id=us, organization_id="org-test",
         role=ROLE_READ_ONLY,
     )
     out = db.replace_user_entity_roles(
-        user_id="alice", organization_id="default", assignments=[],
+        user_id="alice", organization_id="org-test", assignments=[],
     )
     assert out == []
 
@@ -264,7 +264,7 @@ def test_set_user_entity_role_rejects_negative_ceiling(db, two_entities):
     eu, _us = two_entities
     with pytest.raises(ValueError):
         db.set_user_entity_role(
-            user_id="alice", entity_id=eu, organization_id="default",
+            user_id="alice", entity_id=eu, organization_id="org-test",
             role=ROLE_AP_CLERK, approval_ceiling=Decimal("-1"),
         )
 
@@ -277,12 +277,12 @@ def test_set_user_entity_role_rejects_negative_ceiling(db, two_entities):
 def test_put_entity_roles_replaces_idempotently(db, two_entities, client_factory):
     eu, us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     client = client_factory(_user)
     resp = client.put(
-        "/api/workspace/users/alice/entity-roles?organization_id=default",
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test",
         json={
             "assignments": [
                 {"entity_id": eu, "role": ROLE_AP_CLERK,
@@ -305,7 +305,7 @@ def test_put_entity_roles_rejects_unknown_role(db, two_entities, client_factory)
     eu, _us = two_entities
     client = client_factory(_user)
     resp = client.put(
-        "/api/workspace/users/alice/entity-roles?organization_id=default",
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test",
         json={
             "assignments": [
                 {"entity_id": eu, "role": "made_up_role"},
@@ -319,12 +319,12 @@ def test_put_entity_roles_rejects_unknown_role(db, two_entities, client_factory)
 def test_put_entity_roles_accepts_custom_role_id(db, two_entities, client_factory):
     eu, _us = two_entities
     custom = db.create_custom_role(
-        organization_id="default", name="Reviewer",
+        organization_id="org-test", name="Reviewer",
         permissions=[PERMISSION_VIEW_AUDIT_LOG],
     )
     client = client_factory(_user)
     resp = client.put(
-        "/api/workspace/users/alice/entity-roles?organization_id=default",
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test",
         json={
             "assignments": [
                 {"entity_id": eu, "role": custom["id"]},
@@ -339,7 +339,7 @@ def test_put_entity_roles_blocked_for_non_admin(db, two_entities, client_factory
     eu, _us = two_entities
     client = client_factory(lambda: _user(role=ROLE_AP_CLERK, uid="clerk-user"))
     resp = client.put(
-        "/api/workspace/users/alice/entity-roles?organization_id=default",
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test",
         json={"assignments": [{"entity_id": eu, "role": ROLE_AP_CLERK}]},
     )
     assert resp.status_code == 403
@@ -349,7 +349,7 @@ def test_put_entity_roles_emits_audit(db, two_entities, client_factory):
     eu, _us = two_entities
     client = client_factory(_user)
     resp = client.put(
-        "/api/workspace/users/alice/entity-roles?organization_id=default",
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test",
         json={
             "assignments": [
                 {"entity_id": eu, "role": ROLE_AP_CLERK,
@@ -359,7 +359,7 @@ def test_put_entity_roles_emits_audit(db, two_entities, client_factory):
     )
     assert resp.status_code == 200
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["user_entity_role_replaced"],
     )
     assert any(e.get("box_id") == "alice" for e in events.get("events", []))
@@ -368,12 +368,12 @@ def test_put_entity_roles_emits_audit(db, two_entities, client_factory):
 def test_get_entity_roles_lists_for_user(db, two_entities, client_factory):
     eu, _us = two_entities
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     client = client_factory(_user)
     resp = client.get(
-        "/api/workspace/users/alice/entity-roles?organization_id=default"
+        "/api/workspace/users/alice/entity-roles?organization_id=org-test"
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -393,19 +393,19 @@ def test_get_effective_permissions_reflects_entity_override(
     user_row = db.create_user(
         email="alice@acme.test",
         name="Alice",
-        organization_id="default",
+        organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     alice_id = user_row.get("id") or user_row.get("user_id")
     db.set_user_entity_role(
-        user_id=alice_id, entity_id=eu, organization_id="default",
+        user_id=alice_id, entity_id=eu, organization_id="org-test",
         role=ROLE_READ_ONLY,
     )
     client = client_factory(_user)
     # In EU, she's read-only.
     resp = client.get(
         f"/api/workspace/users/{alice_id}/effective-permissions"
-        f"?organization_id=default&entity_id={eu}",
+        f"?organization_id=org-test&entity_id={eu}",
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -415,7 +415,7 @@ def test_get_effective_permissions_reflects_entity_override(
     # In US, no override, falls back to org role.
     resp2 = client.get(
         f"/api/workspace/users/{alice_id}/effective-permissions"
-        f"?organization_id=default&entity_id={us}",
+        f"?organization_id=org-test&entity_id={us}",
     )
     assert resp2.status_code == 200
     body2 = resp2.json()
@@ -436,12 +436,12 @@ def test_get_entity_roles_cross_tenant_filters_rows(
         role=ROLE_READ_ONLY,
     )
     db.set_user_entity_role(
-        user_id="alice", entity_id=eu, organization_id="default",
+        user_id="alice", entity_id=eu, organization_id="org-test",
         role=ROLE_AP_MANAGER,
     )
     client = client_factory(_user)
-    resp = client.get("/api/workspace/users/alice/entity-roles?organization_id=default")
+    resp = client.get("/api/workspace/users/alice/entity-roles?organization_id=org-test")
     assert resp.status_code == 200
     rows = resp.json()["assignments"]
     assert len(rows) == 1
-    assert rows[0]["organization_id"] == "default"
+    assert rows[0]["organization_id"] == "org-test"

@@ -177,7 +177,7 @@ def keypair():
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -189,8 +189,8 @@ def saml_config(db, keypair):
         idp_entity_id="https://idp.example.test",
         idp_sso_url="https://idp.example.test/sso",
         idp_certificate_pem=cert_pem,
-        sp_entity_id="https://workspace.clearledgr.test/saml/default",
-        sp_acs_url="https://workspace.clearledgr.test/saml/default/acs",
+        sp_entity_id="https://workspace.clearledgr.test/saml/org-test",
+        sp_acs_url="https://workspace.clearledgr.test/saml/org-test/acs",
         attribute_email="email",
         attribute_role="role",
         attribute_entity=None,
@@ -198,7 +198,7 @@ def saml_config(db, keypair):
         default_entity_id=None,
         jit_provisioning=True,
     )
-    saml_sso.save_saml_config(db, "default", cfg)
+    saml_sso.save_saml_config(db, "org-test", cfg)
     return cfg
 
 
@@ -206,7 +206,7 @@ def _user(role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=uid,
-        organization_id="default",
+        organization_id="org-test",
         role=role,
     )
 
@@ -379,7 +379,7 @@ def test_handle_assertion_provisions_user(db, saml_config, keypair):
         role="ap_manager",
     )
     out = saml_sso.handle_assertion(
-        db=db, organization_id="default", response_b64=response_b64,
+        db=db, organization_id="org-test", response_b64=response_b64,
     )
     assert out.user_email == "bob@acme.test"
     assert out.user_role == "ap_manager"
@@ -398,11 +398,11 @@ def test_handle_assertion_replay_detected(db, saml_config, keypair):
         email="charlie@acme.test",
     )
     saml_sso.handle_assertion(
-        db=db, organization_id="default", response_b64=response_b64,
+        db=db, organization_id="org-test", response_b64=response_b64,
     )
     with pytest.raises(SAMLValidationError) as excinfo:
         saml_sso.handle_assertion(
-            db=db, organization_id="default", response_b64=response_b64,
+            db=db, organization_id="org-test", response_b64=response_b64,
         )
     assert str(excinfo.value) == "replay_detected"
 
@@ -425,7 +425,7 @@ def test_handle_assertion_blocks_when_jit_disabled_and_user_unknown(db, keypair)
         default_entity_id=None,
         jit_provisioning=False,
     )
-    saml_sso.save_saml_config(db, "default", cfg)
+    saml_sso.save_saml_config(db, "org-test", cfg)
     response_b64, _aid = _build_signed_response_b64(
         key=key, cert=cert,
         issuer="https://idp.example.test",
@@ -436,7 +436,7 @@ def test_handle_assertion_blocks_when_jit_disabled_and_user_unknown(db, keypair)
     )
     with pytest.raises(SAMLValidationError) as excinfo:
         saml_sso.handle_assertion(
-            db=db, organization_id="default", response_b64=response_b64,
+            db=db, organization_id="org-test", response_b64=response_b64,
         )
     assert str(excinfo.value) == "jit_disabled_user_unknown"
 
@@ -446,8 +446,8 @@ def test_handle_assertion_blocks_when_jit_disabled_and_user_unknown(db, keypair)
 
 def test_admin_get_returns_unconfigured(db, admin_client):
     # Wipe any saved config first.
-    saml_sso.delete_saml_config(db, "default")
-    resp = admin_client.get("/api/workspace/saml/config?organization_id=default")
+    saml_sso.delete_saml_config(db, "org-test")
+    resp = admin_client.get("/api/workspace/saml/config?organization_id=org-test")
     assert resp.status_code == 200
     assert resp.json()["configured"] is False
 
@@ -465,7 +465,7 @@ def test_admin_put_persists_redacted_cert(db, admin_client, keypair):
         "default_role": "ap_clerk",
     }
     resp = admin_client.put(
-        "/api/workspace/saml/config?organization_id=default",
+        "/api/workspace/saml/config?organization_id=org-test",
         json=body,
     )
     assert resp.status_code == 200, resp.text
@@ -477,10 +477,10 @@ def test_admin_put_persists_redacted_cert(db, admin_client, keypair):
 
     # Audit row recorded
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["saml_config_updated"],
     )
-    assert any(e.get("box_id") == "default" for e in events.get("events", []))
+    assert any(e.get("box_id") == "org-test" for e in events.get("events", []))
 
 
 def test_admin_put_rejects_bad_cert(db, admin_client):
@@ -499,7 +499,7 @@ def test_admin_put_rejects_bad_cert(db, admin_client):
         "default_role": "ap_clerk",
     }
     resp = admin_client.put(
-        "/api/workspace/saml/config?organization_id=default",
+        "/api/workspace/saml/config?organization_id=org-test",
         json=body,
     )
     assert resp.status_code == 422
@@ -519,7 +519,7 @@ def test_admin_put_rejects_http_sso_url(db, admin_client, keypair):
         "default_role": "ap_clerk",
     }
     resp = admin_client.put(
-        "/api/workspace/saml/config?organization_id=default",
+        "/api/workspace/saml/config?organization_id=org-test",
         json=body,
     )
     assert resp.status_code == 422
@@ -529,7 +529,7 @@ def test_admin_put_rejects_http_sso_url(db, admin_client, keypair):
 
 
 def test_metadata_endpoint_returns_xml(db, public_client, saml_config):
-    resp = public_client.get("/saml/default/sp-metadata")
+    resp = public_client.get("/saml/org-test/sp-metadata")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/samlmetadata+xml")
     assert "EntityDescriptor" in resp.text
@@ -537,14 +537,14 @@ def test_metadata_endpoint_returns_xml(db, public_client, saml_config):
 
 
 def test_metadata_404_when_unconfigured(db, public_client):
-    saml_sso.delete_saml_config(db, "default")
-    resp = public_client.get("/saml/default/sp-metadata")
+    saml_sso.delete_saml_config(db, "org-test")
+    resp = public_client.get("/saml/org-test/sp-metadata")
     assert resp.status_code == 404
 
 
 def test_login_endpoint_redirects_to_idp(db, public_client, saml_config):
     resp = public_client.get(
-        "/saml/default/login", follow_redirects=False,
+        "/saml/org-test/login", follow_redirects=False,
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith(saml_config.idp_sso_url)
@@ -566,14 +566,14 @@ def test_acs_invalid_signature_emits_failure_audit(
         email="attacker@evil.test",
     )
     resp = public_client.post(
-        "/saml/default/acs",
+        "/saml/org-test/acs",
         data={"SAMLResponse": response_b64},
         follow_redirects=False,
     )
     assert resp.status_code == 401
     assert resp.json()["detail"]["reason"] == "signature_invalid"
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["saml_login_failed"],
     )
     assert events.get("events"), "expected saml_login_failed audit event"

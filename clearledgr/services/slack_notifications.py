@@ -398,7 +398,9 @@ async def _post_slack_blocks(
 
     logger.warning(
         "No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN, or connect via onboarding). org=%s mode=%s",
-        organization_id or "default",
+        # Log-only context; raise-on-missing is wrong here since the
+        # function legitimately runs in env-only mode without an org.
+        organization_id or "<unscoped>",
         runtime.get("mode"),
     )
     return False

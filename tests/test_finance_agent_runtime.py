@@ -11,9 +11,9 @@ from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
 class _FakeDB:
     def __init__(self) -> None:
-        self.organization = {"id": "default", "settings": {"auto_approve_threshold": 0.91}}
+        self.organization = {"id": "org-test", "settings": {"auto_approve_threshold": 0.91}}
         self.ap_kpis = {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "agentic_telemetry": {
                 "agent_suggestion_acceptance": {
                     "prompted_count": 10,
@@ -62,7 +62,7 @@ class _FakeDB:
         self.items = {
             "ap-route-1": {
                 "id": "ap-route-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-route-1",
                 "state": "validated",
                 "vendor_name": "Runtime Co",
@@ -73,7 +73,7 @@ class _FakeDB:
             },
             "ap-followup-1": {
                 "id": "ap-followup-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-followup-1",
                 "state": "needs_info",
                 "vendor_name": "Northwind",
@@ -90,7 +90,7 @@ class _FakeDB:
             },
             "ap-retry-1": {
                 "id": "ap-retry-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-retry-1",
                 "state": "failed_post",
                 "vendor_name": "Retry Co",
@@ -151,7 +151,7 @@ class _FakeDB:
         return None
 
     def get_organization(self, organization_id):
-        if str(organization_id or "") != "default":
+        if str(organization_id or "") != "org-test":
             return None
         return dict(self.organization)
 
@@ -178,7 +178,7 @@ class _FakeDB:
         item_id = str((payload or {}).get("id") or f"ap-created-{len(self.items) + 1}")
         item = {
             "id": item_id,
-            "organization_id": (payload or {}).get("organization_id", "default"),
+            "organization_id": (payload or {}).get("organization_id", "org-test"),
             "thread_id": (payload or {}).get("thread_id"),
             "message_id": (payload or {}).get("message_id"),
             "state": (payload or {}).get("state", "received"),
@@ -277,7 +277,7 @@ class _FakeDB:
 
 def _runtime(db: _FakeDB) -> FinanceAgentRuntime:
     return FinanceAgentRuntime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="user-1",
         actor_email="agent@example.com",
         db=db,
@@ -354,7 +354,7 @@ def test_ap_autonomy_policy_manual_when_readiness_gates_fail():
             {"gate": "audit_coverage", "status": "fail"},
             {"gate": "operator_acceptance", "status": "pass"},
         ],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -376,7 +376,7 @@ def test_ap_autonomy_policy_assisted_when_vendor_is_unscored():
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -421,7 +421,7 @@ def test_ap_autonomy_policy_assisted_when_vendor_has_only_earned_autonomous_rout
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -477,7 +477,7 @@ def test_ap_autonomy_policy_auto_when_vendor_has_earned_approval_and_post():
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -551,7 +551,7 @@ def test_ap_autonomy_policy_blocks_item_when_linked_finance_effect_review_is_req
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -599,7 +599,7 @@ def test_ap_autonomy_policy_manual_when_vendor_shadow_quality_is_low():
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -644,7 +644,7 @@ def test_ap_autonomy_policy_manual_when_vendor_post_verification_is_low():
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -689,7 +689,7 @@ def test_ap_autonomy_summary_surfaces_vendor_block_reasons_by_action():
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
@@ -1104,7 +1104,7 @@ def test_execute_nudge_approval_falls_back_without_slack_thread():
     assert result["fallback"]["slack_connected"] is True
     send_reminder.assert_awaited_once()
     kwargs = send_reminder.await_args.kwargs
-    assert kwargs["organization_id"] == "default"
+    assert kwargs["organization_id"] == "org-test"
     assert kwargs["approver_ids"] == ["approver-1"]
     assert kwargs["stage"] == "reminder"
     assert kwargs["escalation_channel"] == "cl-finance-ap"
@@ -1233,7 +1233,7 @@ def test_execute_route_low_risk_for_approval_blocks_autonomous_mode_when_vendor_
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
     with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
@@ -1484,7 +1484,7 @@ def test_runtime_audit_rows_include_canonical_audit_event_schema():
     assert db.audit_rows
     metadata = db.audit_rows[0].get("metadata") or {}
     canonical = metadata.get("canonical_audit_event") or {}
-    assert canonical.get("org_id") == "default"
+    assert canonical.get("org_id") == "org-test"
     assert canonical.get("entity_id") == "ap-route-1"
     assert canonical.get("action")
     assert canonical.get("timestamp")
@@ -1500,7 +1500,7 @@ def test_execute_ap_invoice_processing_fails_closed_when_workflow_unavailable():
         "gmail_id": "gmail-fail-closed-1",
         "thread_id": "gmail-thread-fail-closed-1",
         "message_id": "gmail-message-fail-closed-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "sender": "billing@example.com",
         "subject": "Invoice INV-FAIL-1",
         "vendor_name": "Planner Down Co",
@@ -1523,7 +1523,7 @@ def test_execute_ap_invoice_processing_fails_closed_when_workflow_unavailable():
     assert result["agent_status"] == "failed"
     assert result["idempotency_key"] == "idem-fail-closed-1"
     assert result["correlation_id"] == "corr-fail-closed-1"
-    seeded = db.get_ap_item_by_thread("default", "gmail-thread-fail-closed-1")
+    seeded = db.get_ap_item_by_thread("org-test", "gmail-thread-fail-closed-1")
     assert seeded is not None
     assert seeded["thread_id"] == "gmail-thread-fail-closed-1"
     assert seeded["message_id"] == "gmail-message-fail-closed-1"
@@ -1536,7 +1536,7 @@ def test_seed_ap_item_replaces_placeholder_vendor_and_zero_amount():
     db = _FakeDB()
     db.items["ap-placeholder-1"] = {
         "id": "ap-placeholder-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "thread_id": "gmail-thread-placeholder-1",
         "message_id": "gmail-message-placeholder-1",
         "state": "received",
@@ -1553,7 +1553,7 @@ def test_seed_ap_item_replaces_placeholder_vendor_and_zero_amount():
 
     item = runtime._seed_ap_item_for_invoice_processing(
         {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-placeholder-1",
             "message_id": "gmail-message-placeholder-1",
             "sender": "Google Payments <payments-noreply@google.com>",
@@ -1579,7 +1579,7 @@ def test_refresh_invoice_record_from_extraction_updates_ap_item_without_planner(
 
     result = runtime.refresh_invoice_record_from_extraction(
         {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-refresh-1",
             "message_id": "gmail-message-refresh-1",
             "sender": "billing@vendor.test",
@@ -1596,7 +1596,7 @@ def test_refresh_invoice_record_from_extraction_updates_ap_item_without_planner(
     )
 
     assert result["status"] == "refreshed"
-    seeded = db.get_ap_item_by_thread("default", "gmail-thread-refresh-1")
+    seeded = db.get_ap_item_by_thread("org-test", "gmail-thread-refresh-1")
     assert seeded is not None
     assert seeded["vendor_name"] == "Vendor Refresh Co"
     assert seeded["amount"] == 451.23
@@ -1609,7 +1609,7 @@ def test_refresh_invoice_record_from_extraction_clears_stale_runtime_failure():
     db = _FakeDB()
     db.items["ap-stale-planner-1"] = {
         "id": "ap-stale-planner-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "thread_id": "gmail-thread-stale-planner-1",
         "message_id": "gmail-message-stale-planner-1",
         "state": "received",
@@ -1632,7 +1632,7 @@ def test_refresh_invoice_record_from_extraction_clears_stale_runtime_failure():
 
     result = runtime.refresh_invoice_record_from_extraction(
         {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-stale-planner-1",
             "message_id": "gmail-message-stale-planner-1",
             "sender": "billing@vendor.test",
@@ -1659,7 +1659,7 @@ def test_refresh_invoice_record_from_extraction_overwrites_stale_existing_fields
     db = _FakeDB()
     db.items["ap-stale-refresh-1"] = {
         "id": "ap-stale-refresh-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "thread_id": "gmail-thread-stale-refresh-1",
         "message_id": "gmail-message-stale-refresh-1",
         "state": "received",
@@ -1676,7 +1676,7 @@ def test_refresh_invoice_record_from_extraction_overwrites_stale_existing_fields
 
     result = runtime.refresh_invoice_record_from_extraction(
         {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "thread_id": "gmail-thread-stale-refresh-1",
             "message_id": "gmail-message-stale-refresh-1",
             "sender": "Mo Mbalam <israelmbalam@gmail.com>",
@@ -1717,7 +1717,7 @@ def test_execute_ap_invoice_processing_invokes_invoice_workflow_directly():
         "gmail_id": "gmail-skill-register-1",
         "thread_id": "gmail-thread-skill-register-1",
         "message_id": "gmail-message-skill-register-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "sender": "billing@example.com",
         "subject": "Invoice INV-SKILL-1",
         "vendor_name": "Planner Registration Co",
@@ -1765,7 +1765,7 @@ def test_execute_ap_invoice_processing_records_finance_learning_outcome():
         "gmail_id": "gmail-learning-1",
         "thread_id": "gmail-thread-learning-1",
         "message_id": "gmail-message-learning-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "sender": "billing@example.com",
         "subject": "Invoice INV-LEARN-1",
         "vendor_name": "Learning Co",
@@ -1807,13 +1807,13 @@ def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_ea
     readiness = {
         "status": "ready",
         "gates": [],
-        "metrics": {"ap_kpis": db.get_ap_kpis("default")},
+        "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
     invoice_payload = {
         "gmail_id": "gmail-autonomy-downgrade-1",
         "thread_id": "gmail-thread-autonomy-downgrade-1",
         "message_id": "gmail-message-autonomy-downgrade-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "sender": "billing@example.com",
         "subject": "Invoice INV-AUTO-1",
         "vendor_name": "Unscored Vendor Co",
@@ -1838,7 +1838,7 @@ def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_ea
     assert result["status"] == "pending_approval"
     assert result["autonomy_policy"]["mode"] == "assisted"
     assert result["autonomy_auto_post_downgraded"] is True
-    seeded = db.get_ap_item_by_thread("default", "gmail-thread-autonomy-downgrade-1")
+    seeded = db.get_ap_item_by_thread("org-test", "gmail-thread-autonomy-downgrade-1")
     assert seeded is not None
     assert seeded["metadata"]["autonomy_mode"] == "assisted"
 
@@ -1853,7 +1853,7 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
         "gmail_id": "gmail-blocked-1",
         "thread_id": "gmail-thread-blocked-1",
         "message_id": "gmail-message-blocked-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "sender": "billing@example.com",
         "subject": "Invoice INV-BLOCK-1",
         "vendor_name": "Conflict Co",
@@ -1887,7 +1887,7 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
     assert result["status"] == "blocked"
     assert result["reason"] == "field_review_required"
     workflow.process_new_invoice.assert_not_awaited()
-    seeded = db.get_ap_item_by_thread("default", "gmail-thread-blocked-1")
+    seeded = db.get_ap_item_by_thread("org-test", "gmail-thread-blocked-1")
     assert seeded is not None
     assert seeded["exception_code"] == "field_conflict"
     assert seeded["metadata"]["requires_field_review"] is True

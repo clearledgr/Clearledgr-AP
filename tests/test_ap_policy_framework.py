@@ -22,7 +22,7 @@ def _make_db(tmp_path: Path) -> ClearledgrDB:
     return db
 
 
-def _fake_user(role: str = "admin", organization_id: str = "default") -> TokenData:
+def _fake_user(role: str = "admin", organization_id: str = "org-test") -> TokenData:
     return TokenData(
         user_id="ap-policy-user",
         email="policy-admin@example.com",
@@ -65,7 +65,7 @@ def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     put_payload = {
-        "organization_id": "default",
+        "organization_id": "org-test",
         "updated_by": "finance-admin@example.com",
         "enabled": True,
         "config": {
@@ -118,7 +118,7 @@ def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
     get_response = client.get(
         "/api/ap/policies",
         params={
-            "organization_id": "default",
+            "organization_id": "org-test",
             "policy_name": "ap_business_v1",
             "include_versions": "true",
         },
@@ -132,14 +132,14 @@ def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
 
     versions_response = client.get(
         "/api/ap/policies/ap_business_v1/versions",
-        params={"organization_id": "default"},
+        params={"organization_id": "org-test"},
     )
     assert versions_response.status_code == 200
     assert versions_response.json()["versions"][0]["version"] == 1
 
     audit_response = client.get(
         "/api/ap/policies/ap_business_v1/audit",
-        params={"organization_id": "default"},
+        params={"organization_id": "org-test"},
     )
     assert audit_response.status_code == 200
     events = audit_response.json()["events"]
@@ -158,7 +158,7 @@ def test_ap_policy_api_rejects_invalid_vendor_rule(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     invalid_payload = {
-        "organization_id": "default",
+        "organization_id": "org-test",
         "updated_by": "finance-admin@example.com",
         "enabled": True,
         "config": {
@@ -185,7 +185,7 @@ def test_ap_policy_api_rejects_invalid_approval_automation(tmp_path: Path, monke
     client = TestClient(app)
 
     invalid_payload = {
-        "organization_id": "default",
+        "organization_id": "org-test",
         "updated_by": "finance-admin@example.com",
         "enabled": True,
         "config": {
@@ -204,7 +204,7 @@ def test_ap_policy_api_rejects_invalid_approval_automation(tmp_path: Path, monke
 def test_runtime_policy_changes_drive_workflow_routing(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
     db.upsert_ap_policy_version(
-        organization_id="default",
+        organization_id="org-test",
         policy_name="ap_business_v1",
         updated_by="finance-admin@example.com",
         enabled=True,
@@ -224,10 +224,10 @@ def test_runtime_policy_changes_drive_workflow_routing(tmp_path: Path, monkeypat
     monkeypatch.setattr(policy_compliance_module, "get_db", lambda: db)
     monkeypatch.setattr(
         "clearledgr.services.invoice_workflow.get_policy_compliance",
-        lambda _org: policy_compliance_module.PolicyComplianceService("default"),
+        lambda _org: policy_compliance_module.PolicyComplianceService("org-test"),
     )
 
-    service = InvoiceWorkflowService(organization_id="default", auto_approve_threshold=0.95)
+    service = InvoiceWorkflowService(organization_id="org-test", auto_approve_threshold=0.95)
     service.db = _FakeWorkflowDB()
 
     calls = {"auto": 0, "send": 0}
@@ -266,7 +266,7 @@ def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
     logged = []
     sent_keys = set()
 
-    monkeypatch.setattr(agent_background_module, "_active_org_ids", lambda: ["default"])
+    monkeypatch.setattr(agent_background_module, "_active_org_ids", lambda: ["org-test"])
     monkeypatch.setattr(
         agent_background_module,
         "_collect_org_overdue_and_stale_tasks",
@@ -331,7 +331,7 @@ def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
 
     assert sent == [
         {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "overdue_count": 1,
             "stale_count": 0,
             "preferred_channel": None,
@@ -339,7 +339,7 @@ def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
     ]
     assert logged == [
         {
-            "task_id": "default:daily_summary",
+            "task_id": "org-test:daily_summary",
             "reminder_type": "overdue_summary",
             "next_reminder": None,
         }
@@ -352,7 +352,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
     monkeypatch.setattr("clearledgr.services.policy_compliance.get_db", lambda: db)
 
     db.upsert_ap_policy_version(
-        organization_id="default",
+        organization_id="org-test",
         policy_name="ap_business_v1",
         updated_by="finance-admin@example.com",
         enabled=True,
@@ -379,7 +379,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
             "currency": "USD",
             "invoice_number": "INV-POLICY-TIMEOUT-1",
             "state": "needs_approval",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "updated_at": requested_at,
             "metadata": {
                 "approval_sent_to": ["U_APPROVER_1"],
@@ -421,14 +421,14 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
         _fake_send_approval_reminder,
     )
 
-    asyncio.run(agent_background_module._check_approval_timeouts("default"))
+    asyncio.run(agent_background_module._check_approval_timeouts("org-test"))
 
     assert calls == [
         {
             "ap_item_id": "policy-timeout-1",
             "approver_ids": ["U_APPROVER_1"],
             "hours_pending": 2.0,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "stage": "reminder",
             "escalation_channel": "#finance-escalations",
         },
@@ -436,7 +436,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
             "ap_item_id": "policy-timeout-1",
             "approver_ids": ["U_APPROVER_1"],
             "hours_pending": 6.0,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "stage": "escalation",
             "escalation_channel": "#finance-escalations",
         },

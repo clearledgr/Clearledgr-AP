@@ -36,7 +36,7 @@ def client(db):
         return TokenData(
             user_id="analyst-1",
             email="analyst@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -65,7 +65,7 @@ def _create_posted_item(db, item_id, vendor, amount, days_ago=5, gl_code=None):
         "currency": "USD",
         "invoice_number": f"INV-{item_id}",
         "state": "posted_to_erp",
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
     # Backdate via raw SQL so it appears in the right period
     sql = (
@@ -78,7 +78,7 @@ def _create_posted_item(db, item_id, vendor, amount, days_ago=5, gl_code=None):
     # Optionally set vendor GL code
     if gl_code:
         db.upsert_vendor_profile(
-            "default", vendor, typical_gl_code=gl_code,
+            "org-test", vendor, typical_gl_code=gl_code,
         )
     return item
 
@@ -91,9 +91,9 @@ class TestSpendAnalysisService:
 
     def test_analyze_returns_all_keys(self, db):
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         result = svc.analyze(period_days=30)
-        assert result["organization_id"] == "default"
+        assert result["organization_id"] == "org-test"
         assert result["period_days"] == 30
         assert "summary" in result
         assert "top_vendors" in result
@@ -105,7 +105,7 @@ class TestSpendAnalysisService:
     def test_analyze_empty_org(self, db):
         """No AP items -> empty lists and zero totals."""
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         result = svc.analyze(30)
         assert result["summary"]["total_spend"] == 0.0
         assert result["summary"]["invoice_count"] == 0
@@ -117,7 +117,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-3", "Globex Inc", 2000.0, days_ago=4)
 
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         top = svc._top_vendors_by_spend(30)
         assert len(top) == 2
         assert top[0]["vendor_name"] == "Acme Corp"
@@ -139,10 +139,10 @@ class TestSpendAnalysisService:
             "vendor_name": "Pending Vendor",
             "amount": 9999.0,
             "state": "needs_approval",
-            "organization_id": "default",
+            "organization_id": "org-test",
         })
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         top = svc._top_vendors_by_spend(30)
         vendor_names = [v["vendor_name"] for v in top]
         assert "Posted Vendor" in vendor_names
@@ -155,7 +155,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-GL-4", "Vendor D", 300.0)  # no GL
 
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         gl = svc._spend_by_gl_category(30)
         gl_map = {item["gl_code"]: item["total_spend"] for item in gl}
         assert gl_map["5000"] == 3000.0
@@ -164,7 +164,7 @@ class TestSpendAnalysisService:
 
     def test_monthly_trends_returns_six_months(self, db):
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         trends = svc._monthly_trends(months=6)
         assert len(trends) == 6
         # Each entry has the right keys
@@ -179,7 +179,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-SUM-2", "Vendor Y", 2500.0, days_ago=3)
 
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         summary = svc._build_summary(30)
         assert summary["total_spend"] == 3500.0
         assert summary["invoice_count"] == 2
@@ -190,7 +190,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-ANOM-1", "Brand New Corp", 5000.0, days_ago=3)
 
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         anomalies = svc._detect_portfolio_anomalies(15)
         new_vendor_anomalies = [a for a in anomalies if a["type"] == "new_vendor"]
         vendors = [a["vendor"] for a in new_vendor_anomalies]
@@ -199,12 +199,12 @@ class TestSpendAnalysisService:
     def test_analyze_never_raises(self, db):
         """Even with a broken DB, analyze returns a dict, not an exception."""
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         # Force the whole _build_summary to raise (simulates catastrophic failure)
         with patch.object(svc, "_build_summary", side_effect=RuntimeError("DB gone")):
             result = svc.analyze(30)
         assert "error" in result
-        assert result["organization_id"] == "default"
+        assert result["organization_id"] == "org-test"
 
     def test_budget_utilization_delegates(self, db):
         """_budget_utilization delegates to BudgetAwarenessService.get_report()."""
@@ -215,7 +215,7 @@ class TestSpendAnalysisService:
         mock_service.get_report.return_value = mock_report
 
         from clearledgr.services.spend_analysis import SpendAnalysisService
-        svc = SpendAnalysisService("default")
+        svc = SpendAnalysisService("org-test")
         with patch(
             "clearledgr.services.budget_awareness.get_budget_awareness",
             return_value=mock_service,
@@ -235,7 +235,7 @@ class TestSpendAnalysisAPI:
         resp = client.get("/api/workspace/spend-analysis")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["organization_id"] == "default"
+        assert data["organization_id"] == "org-test"
         assert "summary" in data
         assert "top_vendors" in data
 

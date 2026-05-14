@@ -335,7 +335,7 @@ def test_strict_profile_allows_canonical_ap_item_detail_route(monkeypatch):
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     with TestClient(_app()) as client:
-        response = client.get("/api/ap/items/AP-SURFACE-PROBE?organization_id=default")
+        response = client.get("/api/ap/items/AP-SURFACE-PROBE?organization_id=org-test")
         assert response.status_code in {401, 404}
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
 
@@ -347,7 +347,7 @@ def test_strict_profile_allows_explicit_gmail_thread_recovery(monkeypatch):
     monkeypatch.delenv("AP_V1_ALLOW_LEGACY_SURFACES_IN_PRODUCTION", raising=False)
 
     with TestClient(_app()) as client:
-        response = client.post("/extension/by-thread/thread-surface-probe/recover?organization_id=default")
+        response = client.post("/extension/by-thread/thread-surface-probe/recover?organization_id=org-test")
         assert response.status_code in {401, 404}
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
 
@@ -362,7 +362,7 @@ def test_strict_profile_allows_workspace_user_preferences_route(monkeypatch):
         # /api/user/preferences (split from /api/workspace/user/preferences)
         response = client.patch(
             "/api/user/preferences",
-            json={"organization_id": "default", "patch": {"gmail_extension": {"probe": True}}},
+            json={"organization_id": "org-test", "patch": {"gmail_extension": {"probe": True}}},
         )
         assert response.status_code in {401, 403, 404}
         assert response.json().get("detail") != "endpoint_disabled_in_ap_v1_profile"
@@ -370,7 +370,7 @@ def test_strict_profile_allows_workspace_user_preferences_route(monkeypatch):
 
 def test_ap_runtime_registers_sidebar_core_intents():
     runtime = FinanceAgentRuntime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="operator-1",
         actor_email="operator@example.com",
         db=MagicMock(),

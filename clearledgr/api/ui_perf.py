@@ -72,7 +72,19 @@ async def record_ui_perf(beacon: PerfBeacon, request: Request) -> Dict[str, Any]
 
     step_name = f"ui.{beacon.surface}"
     context = beacon.context or {}
-    org_id = str(context.get("org_id") or context.get("organization_id") or "default").strip() or "default"
+    # M19+: ui_perf is a fire-and-forget telemetry beacon, the body is
+    # fully attacker-controlled. Pre-fix coerced missing org to
+    # "default", which polluted that tenant's metrics; M19b's
+    # assert_org_id (raise on empty) broke the documented "always
+    # returns 200" contract because malformed beacons now 500. Right
+    # shape: drop unscoped beacons silently with a structured no_org
+    # reason instead of raising.
+    raw_org = str(
+        context.get("org_id") or context.get("organization_id") or ""
+    ).strip()
+    if not raw_org:
+        return {"recorded": False, "reason": "no_org"}
+    org_id = raw_org
     ap_item_id = str(context.get("ap_item_id") or "").strip() or None
 
     metric_id = f"UIP-{uuid.uuid4().hex[:12]}"

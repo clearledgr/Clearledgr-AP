@@ -144,6 +144,13 @@ class FinanceAgentRuntime:
         self._skills: Dict[str, FinanceSkill] = {}
         self._intent_skill_map: Dict[str, FinanceSkill] = {}
         self._agent_loop: Optional[FinanceAgentLoopService] = None
+        # Sprint 4 Phase 1: specialist agents wrap skills with per-
+        # specialist actor_id + error isolation. Built side-by-side
+        # with the legacy intent map; opt-in callers can use
+        # ``dispatch_via_specialists`` to get a ``SpecialistResult``
+        # back instead of the legacy execute_intent contract.
+        from clearledgr.services.specialist_router import SpecialistRouter
+        self._specialist_router: SpecialistRouter = SpecialistRouter()
         self._register_default_skills()
 
     def _register_default_skills(self) -> None:
@@ -161,7 +168,14 @@ class FinanceAgentRuntime:
         self.register_skill(ReconciliationFinanceSkill())
 
     def register_skill(self, skill: FinanceSkill) -> None:
-        """Register a skill and map all of its intents."""
+        """Register a skill and map all of its intents.
+
+        Sprint 4 Phase 1: also registers a ``SpecialistAgent`` wrapper
+        on the runtime's router. The wrapper carries a stable
+        ``actor_id`` derived from the skill_id (``agent:<skill_id>``
+        with hyphens) so audit rows can attribute actions to the
+        right specialist instead of the aggregate "finance-agent".
+        """
         skill_id = str(skill.skill_id or "").strip().lower()
         if not skill_id:
             raise ValueError("missing_skill_id")
@@ -172,9 +186,67 @@ class FinanceAgentRuntime:
                 continue
             self._intent_skill_map[intent] = skill
 
+        # Sprint 4 Phase 1: build + register the specialist wrapper.
+        from clearledgr.services.specialist_agent import SpecialistAgent
+        specialist_name = skill_id.replace("_", "-")
+        if not specialist_name.endswith("-agent"):
+            specialist_name = f"{specialist_name}-agent"
+        actor_id = f"agent:{skill_id.replace('_', '-')}"
+        specialist = SpecialistAgent(
+            name=specialist_name,
+            actor_id=actor_id,
+            skill=skill,
+            description=str(getattr(skill, "description", "") or ""),
+        )
+        self._specialist_router.register(specialist)
+
     @property
     def supported_intents(self) -> frozenset[str]:
         return frozenset(self._intent_skill_map.keys())
+
+    @property
+    def specialists(self):
+        """All registered ``SpecialistAgent`` instances on this
+        runtime, in registration order. Sprint 4 Phase 1 read-only
+        introspection surface for ops dashboards.
+        """
+        return list(self._specialist_router.list_specialists())
+
+    def specialist_for_intent(self, intent: str):
+        """Lookup helper for the ``SpecialistAgent`` registered for
+        an intent, or ``None`` if no specialist handles it. Mirrors
+        the legacy ``_resolve_skill`` lookup but returns the
+        wrapper, not the bare skill.
+        """
+        return self._specialist_router.specialist_for_intent(intent)
+
+    async def dispatch_via_specialists(
+        self,
+        intent: str,
+        input_payload: Optional[Dict[str, Any]] = None,
+        *,
+        idempotency_key: Optional[str] = None,
+    ):
+        """Opt-in dispatch path that routes through the specialist
+        router (Sprint 4 Phase 1).
+
+        Returns a ``SpecialistResult`` regardless of outcome — skill
+        exceptions become structured ``status="error"`` returns with
+        a trace_id for log correlation; missing intents return
+        ``status="unrouted"``. Compare with the legacy
+        ``execute_intent`` which raises on errors and propagates
+        skill exceptions.
+
+        Phase 2 (later sprints) migrates production callers off
+        ``execute_intent`` onto this surface; the runtime currently
+        keeps both paths so the audit can run side-by-side.
+        """
+        return await self._specialist_router.dispatch(
+            self,
+            intent,
+            input_payload,
+            idempotency_key=idempotency_key,
+        )
 
     def _resolve_payload_org(self, payload: Dict[str, Any], context: str) -> str:
         """Resolve the org_id for an AP write from an invoice payload.

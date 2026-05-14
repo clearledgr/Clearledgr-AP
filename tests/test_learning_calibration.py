@@ -15,7 +15,7 @@ def test_learning_calibration_snapshot_recompute_and_latest_roundtrip(tmp_path, 
 
     for idx in range(12):
         db.record_vendor_decision_feedback(
-            "default",
+            "org-test",
             "Acme Supplies",
             ap_item_id=f"ap-{idx}",
             human_decision="approve" if idx < 7 else "reject",
@@ -27,11 +27,11 @@ def test_learning_calibration_snapshot_recompute_and_latest_roundtrip(tmp_path, 
             action_outcome="completed",
         )
 
-    service = get_learning_calibration_service("default", db=db)
+    service = get_learning_calibration_service("org-test", db=db)
     snapshot = service.recompute_snapshot(window_days=180, min_feedback=5)
     latest = service.get_latest_snapshot()
 
-    assert snapshot["organization_id"] == "default"
+    assert snapshot["organization_id"] == "org-test"
     assert snapshot["calibration_version"]
     assert snapshot["summary"]["total_feedback"] == 12
     assert snapshot["summary"]["override_count"] == 5
@@ -43,7 +43,7 @@ def test_learning_calibration_snapshot_recompute_and_latest_roundtrip(tmp_path, 
 
 def test_learning_calibration_snapshot_handles_no_feedback(tmp_path, monkeypatch):
     db = _db(tmp_path, monkeypatch)
-    service = get_learning_calibration_service("default", db=db)
+    service = get_learning_calibration_service("org-test", db=db)
 
     snapshot = service.recompute_snapshot(window_days=30, min_feedback=10)
 

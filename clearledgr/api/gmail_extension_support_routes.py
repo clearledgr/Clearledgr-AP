@@ -394,7 +394,7 @@ async def stream_sidebar_query(
 @router.get("/sidebar/query/suggestions")
 async def sidebar_query_suggestions(
     ap_item_id: Optional[str] = Query(None),
-    organization_id: Optional[str] = Query("default"),
+    organization_id: Optional[str] = Query(default=None),
     _user=Depends(get_current_user),
 ):
     """Seed starter questions based on invoice state so users aren't

@@ -35,7 +35,7 @@ from clearledgr.integrations.erp_router import pre_post_validate  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -43,7 +43,7 @@ def _seed_ap_item_ready_to_post(db, *, item_id: str, metadata: dict):
     """Create an AP item in ready_to_post with the metadata blob set."""
     item = db.create_ap_item({
         "id": item_id,
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "currency": "USD",
@@ -62,7 +62,7 @@ def test_no_gl_anywhere_fails_with_mandatory_gl_reason(db):
         db, item_id="ap-no-gl-1",
         metadata={"line_items": None},
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     assert out["valid"] is False
     assert any(f["check"] == "mandatory_gl" for f in out["failures"]), out["failures"]
 
@@ -72,7 +72,7 @@ def test_top_level_gl_code_passes_single_line_invoice(db):
         db, item_id="ap-toplevel-gl-1",
         metadata={"gl_code": "6210"},  # no line_items, single-line case
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     # The mandatory_gl check passes; other checks may add their own
     # failures (e.g. duplicate scan), so we only assert the GL gate
     # didn't fire.
@@ -87,7 +87,7 @@ def test_suggested_gl_code_accepted_as_fallback(db):
         db, item_id="ap-suggested-gl-1",
         metadata={"suggested_gl_code": "6100"},
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert gl_failures == []
 
@@ -105,7 +105,7 @@ def test_all_lines_with_gl_code_pass(db):
             ],
         },
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert gl_failures == []
 
@@ -121,7 +121,7 @@ def test_one_missing_line_gl_fails_with_indexes(db):
             ],
         },
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert len(gl_failures) == 1
     assert "1" in gl_failures[0]["missing_line_indexes"]
@@ -140,7 +140,7 @@ def test_non_dict_line_entries_treated_as_missing(db):
             ],
         },
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert len(gl_failures) == 1
     assert "1" in gl_failures[0]["missing_line_indexes"]
@@ -160,7 +160,7 @@ def test_alias_field_names_accepted(db):
             ],
         },
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert gl_failures == []
 
@@ -172,14 +172,14 @@ def test_per_tenant_disable_lets_failing_items_pass(db):
     """Tenants that opt out of mandatory_gl get the legacy default-
     account fallback. Setting key: ``mandatory_gl_at_posting=False``."""
     db.update_organization(
-        "default",
+        "org-test",
         settings_json={"mandatory_gl_at_posting": False},
     )
     item = _seed_ap_item_ready_to_post(
         db, item_id="ap-disabled-1",
         metadata={"line_items": None},  # no GL anywhere
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert gl_failures == []
 
@@ -188,14 +188,14 @@ def test_per_tenant_disable_via_string_value(db):
     """Settings JSON sometimes round-trips booleans as strings ('false',
     '0'). The gate handles both."""
     db.update_organization(
-        "default",
+        "org-test",
         settings_json={"mandatory_gl_at_posting": "false"},
     )
     item = _seed_ap_item_ready_to_post(
         db, item_id="ap-disabled-str-1",
         metadata={"line_items": None},
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     gl_failures = [f for f in out["failures"] if f["check"] == "mandatory_gl"]
     assert gl_failures == []
 
@@ -208,5 +208,5 @@ def test_default_when_settings_missing_is_enforced(db):
         db, item_id="ap-default-on-1",
         metadata={},
     )
-    out = pre_post_validate(item["id"], "default", db=db)
+    out = pre_post_validate(item["id"], "org-test", db=db)
     assert any(f["check"] == "mandatory_gl" for f in out["failures"])

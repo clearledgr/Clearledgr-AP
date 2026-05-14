@@ -57,7 +57,7 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def service(db, monkeypatch):
-    svc = InvoiceWorkflowService(organization_id="default", auto_approve_threshold=0.95)
+    svc = InvoiceWorkflowService(organization_id="org-test", auto_approve_threshold=0.95)
     svc.db = db
 
     monkeypatch.setattr("clearledgr.services.invoice_workflow.get_learning_service", lambda _org: _LearningStub())
@@ -96,7 +96,7 @@ def _create_ap_item(
             "state": state,
             "confidence": confidence,
             "approval_required": True,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "user_id": "user-test",
             "metadata": metadata or {},
         }
@@ -154,7 +154,7 @@ def test_process_new_invoice_advances_to_validated_before_routing(service, db, m
     assert row is not None
     assert row["state"] == "validated"
 
-    ap_item = db.get_ap_item_by_thread("default", invoice.gmail_id)
+    ap_item = db.get_ap_item_by_thread("org-test", invoice.gmail_id)
     assert ap_item is not None
     transitions = _transition_pairs(db, ap_item["id"])
     assert ("received", "validated") in transitions
@@ -219,7 +219,7 @@ def test_workflow_state_transition_audits_share_single_correlation_id_across_int
     )
     assert approve_result["status"] == "approved"
 
-    ap_item = db.get_ap_item_by_thread("default", invoice.gmail_id)
+    ap_item = db.get_ap_item_by_thread("org-test", invoice.gmail_id)
     assert ap_item is not None
     metadata_raw = ap_item.get("metadata")
     metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else dict(metadata_raw or {})
@@ -278,7 +278,7 @@ def test_process_new_invoice_routes_to_review_on_low_confidence_critical_field(s
     assert any(b["field"] == "vendor" for b in (confidence_gate.get("confidence_blockers") or []))
     assert "validation_gate" in captured_context
 
-    ap_item = db.get_ap_item_by_thread("default", invoice.gmail_id)
+    ap_item = db.get_ap_item_by_thread("org-test", invoice.gmail_id)
     assert ap_item is not None
     metadata_raw = ap_item.get("metadata")
     metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else dict(metadata_raw or {})
@@ -423,7 +423,7 @@ def test_reject_invoice_records_vendor_feedback_summary(service, db, monkeypatch
     )
     assert result["status"] == "rejected"
 
-    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    summary = db.get_vendor_decision_feedback_summary("org-test", "Vendor Test")
     assert summary["total_feedback"] >= 1
     assert summary["reject_count"] >= 1
     assert summary["override_count"] >= 1  # human rejected when agent rec was approve
@@ -459,7 +459,7 @@ def test_request_budget_adjustment_records_vendor_feedback_summary(service, db, 
     assert row is not None
     assert row["state"] == "needs_info"
 
-    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    summary = db.get_vendor_decision_feedback_summary("org-test", "Vendor Test")
     assert summary["total_feedback"] >= 1
     assert summary["request_info_count"] >= 1
     assert summary["request_info_after_approve_count"] >= 1
@@ -501,12 +501,12 @@ def test_approve_invoice_records_vendor_outcome_and_feedback(service, db, monkey
     )
     assert result["status"] == "approved"
 
-    summary = db.get_vendor_decision_feedback_summary("default", "Vendor Test")
+    summary = db.get_vendor_decision_feedback_summary("org-test", "Vendor Test")
     assert summary["total_feedback"] >= 1
     assert summary["approve_count"] >= 1
     assert summary["override_count"] >= 1  # human approved while recommendation was escalate
 
-    profile = db.get_vendor_profile("default", "Vendor Test")
+    profile = db.get_vendor_profile("org-test", "Vendor Test")
     assert profile is not None
     assert profile["invoice_count"] >= 1
 
@@ -1063,7 +1063,7 @@ def test_approve_invoice_failure_enqueues_retry_job(service, db, monkeypatch):
     assert row["state"] == "failed_post"
 
     # The retry job must be enqueued (connector_timeout is a recoverable token)
-    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"], status="pending")
+    jobs = db.list_agent_retry_jobs("org-test", ap_item_id=item["id"], status="pending")
     assert jobs, "Expected a pending erp_post_retry job after failed_post"
     assert jobs[0]["job_type"] == "erp_post_retry"
     assert jobs[0]["ap_item_id"] == item["id"]
@@ -1098,7 +1098,7 @@ def test_approve_invoice_connector_failure_preserves_exception_code_and_skips_re
     assert row["exception_code"] == "erp_not_connected"
     assert row["last_error"] == "No ERP connected for organization"
 
-    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"], status="pending")
+    jobs = db.list_agent_retry_jobs("org-test", ap_item_id=item["id"], status="pending")
     assert jobs == []
 
 
@@ -1115,7 +1115,7 @@ def test_enqueue_erp_post_retry_is_idempotent(service, db, monkeypatch):
         gmail_id="gmail-retry-idem",
     )
 
-    jobs = db.list_agent_retry_jobs("default", ap_item_id=item["id"])
+    jobs = db.list_agent_retry_jobs("org-test", ap_item_id=item["id"])
     assert len(jobs) == 1, "Idempotency key must prevent duplicate retry jobs"
 
 

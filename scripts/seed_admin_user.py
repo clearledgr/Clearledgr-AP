@@ -19,12 +19,23 @@ from clearledgr.core.database import get_db
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print("usage: seed_admin_user.py EMAIL PASSWORD [ORG_ID]")
+    if len(sys.argv) < 4:
+        print("usage: seed_admin_user.py EMAIL PASSWORD ORG_ID")
+        print(
+            "  ORG_ID is required (post-M20 tenant-rename — "
+            "the legacy 'default' literal is no longer valid)."
+        )
         return 2
     email = sys.argv[1].strip().lower()
     password = sys.argv[2]
-    org_id = (sys.argv[3].strip() if len(sys.argv) > 3 else "default") or "default"
+    org_id = sys.argv[3].strip()
+    if not org_id or org_id in ("default", "_unprovisioned"):
+        print(
+            f"ERROR: org_id={org_id!r} is reserved. Pass a real "
+            "organization id (post-M20 the literal 'default' tenant "
+            "was retired and '_unprovisioned' is a sentinel)."
+        )
+        return 2
 
     db = get_db()
     db.initialize()

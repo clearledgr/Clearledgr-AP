@@ -41,7 +41,7 @@ def client(db):
         return TokenData(
             user_id="reporter-1",
             email="reporter@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -67,7 +67,7 @@ def _create_ap_item(db, item_id, vendor, amount, state="approved", due_date=None
         "invoice_number": f"INV-{item_id}",
         "due_date": due_date,
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
     if erp_posted_at:
         db.update_ap_item(item_id, erp_posted_at=erp_posted_at)
@@ -84,7 +84,7 @@ class TestAPAgingExport:
         _create_ap_item(db, "age-1", "Acme Corp", 1000.0, due_date=future)
         _create_ap_item(db, "age-2", "Beta LLC", 2000.0, due_date=past)
 
-        rows, columns = generate_report("ap_aging", "default")
+        rows, columns = generate_report("ap_aging", "org-test")
 
         assert len(rows) == 2
         assert "vendor_name" in columns
@@ -114,7 +114,7 @@ class TestVendorSpendExport:
             )
             conn.commit()
 
-        rows, columns = generate_report("vendor_spend", "default", period_days=30)
+        rows, columns = generate_report("vendor_spend", "org-test", period_days=30)
 
         assert "section" in columns
         sections = {r["section"] for r in rows}
@@ -133,7 +133,7 @@ class TestPostingStatusExport:
         posted = (now - timedelta(days=1)).isoformat()
         _create_ap_item(db, "ps-1", "Vendor X", 3000.0, state="posted_to_erp", erp_posted_at=posted)
 
-        rows, columns = generate_report("posting_status", "default")
+        rows, columns = generate_report("posting_status", "org-test")
 
         assert len(rows) >= 1
         assert "days_to_post" in columns
@@ -146,7 +146,7 @@ class TestPostingStatusExport:
         _create_ap_item(db, "pf-1", "Acme Corp", 1000.0)
         _create_ap_item(db, "pf-2", "Beta LLC", 2000.0)
 
-        rows, _ = generate_report("posting_status", "default", vendor="Acme")
+        rows, _ = generate_report("posting_status", "org-test", vendor="Acme")
 
         assert len(rows) == 1
         assert rows[0]["vendor_name"] == "Acme Corp"
@@ -156,14 +156,14 @@ class TestPostingStatusExport:
 
         # Filter to future dates — should get nothing
         future = (date.today() + timedelta(days=30)).isoformat()
-        rows, _ = generate_report("posting_status", "default", start_date=future)
+        rows, _ = generate_report("posting_status", "org-test", start_date=future)
 
         assert len(rows) == 0
 
 
 class TestUnknownReportType:
     def test_returns_empty(self, db):
-        rows, columns = generate_report("nonexistent", "default")
+        rows, columns = generate_report("nonexistent", "org-test")
         assert rows == []
         assert columns == []
 

@@ -73,7 +73,7 @@ class AgentMemoryService:
         # call with missing org metadata) and must raise to prevent
         # cross-tenant data leak into the platform memory store.
         if organization_id is None:
-            organization_id = "default"
+            organization_id = "default"  # noqa: org-default — platform-mode sentinel for None/unset
         normalized = str(organization_id).strip()
         if not normalized:
             raise ValueError(

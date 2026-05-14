@@ -44,7 +44,7 @@ from clearledgr.services import ap_vendor_analysis  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -52,7 +52,7 @@ def _user(role: str = "owner", uid: str = "owner-user"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=uid,
-        organization_id="default",
+        organization_id="org-test",
         role=role,
     )
 
@@ -72,10 +72,10 @@ def client_factory():
 
 def test_set_vendor_status_persists_with_attribution(db):
     db.upsert_vendor_profile(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
     )
     out = db.set_vendor_status(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         status="blocked", reason="payment fraud investigation",
         actor="owner@example.test",
     )
@@ -86,55 +86,55 @@ def test_set_vendor_status_persists_with_attribution(db):
 
 
 def test_set_vendor_status_rejects_unknown_token(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     with pytest.raises(ValueError):
         db.set_vendor_status(
-            organization_id="default", vendor_name="Acme",
+            organization_id="org-test", vendor_name="Acme",
             status="dancing",
         )
 
 
 def test_set_vendor_status_returns_none_for_missing_vendor(db):
     out = db.set_vendor_status(
-        organization_id="default", vendor_name="NotInDB",
+        organization_id="org-test", vendor_name="NotInDB",
         status="blocked",
     )
     assert out is None
 
 
 def test_is_vendor_blocked_predicate(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
-    assert db.is_vendor_blocked("default", "Acme") is False
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
+    assert db.is_vendor_blocked("org-test", "Acme") is False
     db.set_vendor_status(
-        organization_id="default", vendor_name="Acme", status="blocked",
+        organization_id="org-test", vendor_name="Acme", status="blocked",
     )
-    assert db.is_vendor_blocked("default", "Acme") is True
+    assert db.is_vendor_blocked("org-test", "Acme") is True
     db.set_vendor_status(
-        organization_id="default", vendor_name="Acme", status="active",
+        organization_id="org-test", vendor_name="Acme", status="active",
     )
-    assert db.is_vendor_blocked("default", "Acme") is False
+    assert db.is_vendor_blocked("org-test", "Acme") is False
     # Vendors that don't exist aren't blocked (they're new).
-    assert db.is_vendor_blocked("default", "Phantom") is False
+    assert db.is_vendor_blocked("org-test", "Phantom") is False
 
 
 # ─── HTTP layer ─────────────────────────────────────────────────────
 
 
 def test_patch_status_admin_only(db, client_factory):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     client = client_factory(lambda: _user(role=ROLE_AP_CLERK, uid="clerk"))
     resp = client.patch(
-        "/api/vendors/Acme/status?organization_id=default",
+        "/api/vendors/Acme/status?organization_id=org-test",
         json={"status": "blocked"},
     )
     assert resp.status_code == 403
 
 
 def test_patch_status_emits_audit_with_diff(db, client_factory):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     client = client_factory(_user)
     resp = client.patch(
-        "/api/vendors/Acme/status?organization_id=default",
+        "/api/vendors/Acme/status?organization_id=org-test",
         json={"status": "blocked", "reason": "AML hit"},
     )
     assert resp.status_code == 200, resp.text
@@ -143,7 +143,7 @@ def test_patch_status_emits_audit_with_diff(db, client_factory):
     assert body["status_reason"] == "AML hit"
 
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_status_changed"],
     )
     matching = [e for e in events.get("events", []) if e.get("box_id") == "Acme"]
@@ -159,19 +159,19 @@ def test_patch_status_emits_audit_with_diff(db, client_factory):
 def test_patch_status_no_op_skips_audit(db, client_factory):
     """Re-saving the same status must not produce a second audit row —
     we only emit on real change."""
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     db.set_vendor_status(
-        organization_id="default", vendor_name="Acme", status="blocked",
+        organization_id="org-test", vendor_name="Acme", status="blocked",
     )
     client = client_factory(_user)
     # Now PATCH with same status
     resp = client.patch(
-        "/api/vendors/Acme/status?organization_id=default",
+        "/api/vendors/Acme/status?organization_id=org-test",
         json={"status": "blocked"},
     )
     assert resp.status_code == 200
     events = db.search_audit_events(
-        organization_id="default",
+        organization_id="org-test",
         event_types=["vendor_status_changed"],
     )
     matching = [e for e in events.get("events", []) if e.get("box_id") == "Acme"]
@@ -181,10 +181,10 @@ def test_patch_status_no_op_skips_audit(db, client_factory):
 
 
 def test_patch_invalid_status_returns_422(db, client_factory):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     client = client_factory(_user)
     resp = client.patch(
-        "/api/vendors/Acme/status?organization_id=default",
+        "/api/vendors/Acme/status?organization_id=org-test",
         json={"status": "shenanigans"},
     )
     assert resp.status_code == 422
@@ -194,7 +194,7 @@ def test_patch_invalid_status_returns_422(db, client_factory):
 def test_get_status_returns_404_for_missing_vendor(db, client_factory):
     client = client_factory(_user)
     resp = client.get(
-        "/api/vendors/Phantom/status?organization_id=default"
+        "/api/vendors/Phantom/status?organization_id=org-test"
     )
     assert resp.status_code == 404
 
@@ -203,20 +203,20 @@ def test_get_status_returns_404_for_missing_vendor(db, client_factory):
 
 
 def test_pre_post_validate_rejects_blocked_vendor(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     db.set_vendor_status(
-        organization_id="default", vendor_name="Acme", status="blocked",
+        organization_id="org-test", vendor_name="Acme", status="blocked",
     )
     created = db.create_ap_item({
         "id": "AP-blocked-test-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "state": "ready_to_post",
         "invoice_number": "INV-1",
     })
     ap_id = created.get("id") or "AP-blocked-test-1"
-    out = pre_post_validate(ap_id, "default", db=db)
+    out = pre_post_validate(ap_id, "org-test", db=db)
     assert out["valid"] is False
     failures = out["failures"]
     assert any(f["check"] == "vendor_active" for f in failures), (
@@ -228,19 +228,19 @@ def test_pre_post_validate_rejects_blocked_vendor(db):
 
 
 def test_summary_rows_carry_status(db):
-    db.upsert_vendor_profile(organization_id="default", vendor_name="Acme")
+    db.upsert_vendor_profile(organization_id="org-test", vendor_name="Acme")
     db.set_vendor_status(
-        organization_id="default", vendor_name="Acme",
+        organization_id="org-test", vendor_name="Acme",
         status="blocked", reason="oversight",
     )
     db.create_ap_item({
         "ap_item_id": "ap-acme-status",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 250.0,
         "state": "received",
     })
-    rows = ap_vendor_analysis._build_vendor_summary_rows(db, "default", limit=50)
+    rows = ap_vendor_analysis._build_vendor_summary_rows(db, "org-test", limit=50)
     matching = next((r for r in rows if r["vendor_name"] == "Acme"), None)
     assert matching is not None
     assert matching["profile"]["status"] == "blocked"

@@ -84,7 +84,7 @@ def _seed_ap_item(db, *, ap_item_id: str, thread_id: str, state: str = "needs_ap
         "currency": "USD",
         "invoice_number": f"INV-{ap_item_id}",
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -115,7 +115,7 @@ class TestLabelsBidirectionalSync:
         await _process_label_changes(
             client=client,
             token=token,
-            organization_id="default",
+            organization_id="org-test",
             db=db,
             queue=queue,
             records=records,
@@ -124,7 +124,7 @@ class TestLabelsBidirectionalSync:
         assert len(queue.events) == 1
         ev = queue.events[0]
         assert ev.type == AgentEventType.LABEL_CHANGED
-        assert ev.organization_id == "default"
+        assert ev.organization_id == "org-test"
         assert ev.source == "gmail_label_sync"
         assert ev.idempotency_key == "label:Clearledgr/Invoice/Approved:msg-gmail-42"
         assert ev.payload["box_id"] == item["id"]
@@ -144,7 +144,7 @@ class TestLabelsBidirectionalSync:
 
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=[{
                 "message_id": "m2", "thread_id": "thread-2",
                 "label_ids": ["LABEL_EXC"],
@@ -163,7 +163,7 @@ class TestLabelsBidirectionalSync:
 
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=[{
                 "message_id": "m3", "thread_id": "thread-3",
                 "label_ids": ["LABEL_NF"],
@@ -184,7 +184,7 @@ class TestLabelsBidirectionalSync:
 
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=[{
                 "message_id": "m4", "thread_id": "thread-4",
                 "label_ids": ["LABEL_MATCHED", "LABEL_PAID", "LABEL_RCVD"],
@@ -206,7 +206,7 @@ class TestLabelsBidirectionalSync:
 
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=[{
                 "message_id": "m5", "thread_id": "thread-ghost",
                 "label_ids": ["LABEL_APPROVED"],
@@ -230,13 +230,13 @@ class TestLabelsBidirectionalSync:
         # First delivery
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=records,
         )
         # Replay (Gmail Pub/Sub redeliveries are common)
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=records,
         )
 
@@ -261,7 +261,7 @@ class TestLabelsBidirectionalSync:
         ]
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue,
+            organization_id="org-test", db=db, queue=queue,
             records=records,
         )
         assert client.list_labels_calls == 1
@@ -273,7 +273,7 @@ class TestLabelsBidirectionalSync:
         queue = _MockQueue()
         await _process_label_changes(
             client=client, token=SimpleNamespace(email="x@default.com"),
-            organization_id="default", db=db, queue=queue, records=[],
+            organization_id="org-test", db=db, queue=queue, records=[],
         )
         assert client.list_labels_calls == 0
         assert queue.events == []

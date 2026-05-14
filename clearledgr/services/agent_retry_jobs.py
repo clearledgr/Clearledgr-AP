@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.services.invoice_workflow import get_invoice_workflow
-
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,22 @@ async def drain_agent_retry_jobs(
         job_id = str(job.get("id") or "").strip()
         if not job_id:
             continue
-        job_org_id = str(job.get("organization_id") or organization_id or "default").strip() or "default"
+        # M19+: assert_org_id raises on empty. Pre-M19 a poison row
+        # silently coerced to "default" and ran (cross-tenant);
+        # post-M19 we don't want a single bad row to kill the entire
+        # drain loop. Skip the row, log, continue.
+        try:
+            job_org_id = assert_org_id(
+                job.get("organization_id") or organization_id,
+                context="agent_retry_jobs",
+            )
+        except ValueError:
+            logger.warning(
+                "[agent_retry_jobs] dropping job %s with no organization_id "
+                "(neither row nor sweep-context supplied)",
+                job_id,
+            )
+            continue
         claimed = db.claim_agent_retry_job(
             job_id,
             worker_id=f"{worker_id_prefix}:{job_org_id}",

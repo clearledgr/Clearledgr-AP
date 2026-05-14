@@ -9,7 +9,7 @@ Provides intelligent matching beyond exact/tolerance comparisons:
 """
 import logging
 import unicodedata
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import re
 from difflib import SequenceMatcher
 
@@ -85,48 +85,350 @@ def normalize_vendor(vendor: str) -> str:
 
 
 def vendor_similarity(vendor1: str, vendor2: str) -> float:
-    """
-    Calculate similarity between two vendor names.
-    
+    """Calculate similarity between two vendor names (0.0 to 1.0).
+
+    Sprint 3 upgrade: now hybrid-fused over five signals — exact /
+    containment / Jaccard / SequenceMatcher / Levenshtein / trigram
+    Jaccard — via :func:`vendor_similarity_hybrid`. The legacy API
+    returns just the fused float; callers that want the per-mode
+    breakdown (audit / debug / dashboards) should use
+    :func:`vendor_similarity_modes`.
+
     Returns:
         float: Similarity score 0.0 to 1.0
     """
-    if not vendor1 or not vendor2:
+    fused, _ = vendor_similarity_hybrid(vendor1, vendor2)
+    return fused
+
+
+# ─── Sprint 3 multi-modal upgrade ──────────────────────────────────
+
+
+def levenshtein_distance(a: str, b: str) -> int:
+    """Iterative Levenshtein edit distance.
+
+    Pure Python — no new dependencies. Used for typo-shaped variants
+    like ``"ABC Logistic"`` vs ``"ABC Logistics"`` (1 edit) where
+    Jaccard / SequenceMatcher under-score because the strings are
+    near-identical at character level but Jaccard is token-shaped
+    and SequenceMatcher is matching-block shaped.
+    """
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    # Wagner-Fischer with a single rolling row.
+    prev = list(range(len(b) + 1))
+    curr = [0] * (len(b) + 1)
+    for i, ch_a in enumerate(a, start=1):
+        curr[0] = i
+        for j, ch_b in enumerate(b, start=1):
+            cost = 0 if ch_a == ch_b else 1
+            curr[j] = min(
+                prev[j] + 1,        # deletion
+                curr[j - 1] + 1,    # insertion
+                prev[j - 1] + cost,  # substitution
+            )
+        prev, curr = curr, prev
+    return prev[len(b)]
+
+
+def levenshtein_ratio(a: str, b: str) -> float:
+    """Levenshtein-based similarity in [0, 1].
+
+    ``1 - distance / max(len)`` — 1.0 means identical, 0.0 means
+    every character differs. Sensitive to length disparities (long
+    vs short names always score low even if the short is fully
+    contained), which is desirable for typo detection but not for
+    abbreviation expansion. Containment and trigram cover the
+    expansion cases.
+    """
+    if not a and not b:
+        return 1.0
+    if not a or not b:
         return 0.0
-    
+    dist = levenshtein_distance(a, b)
+    longest = max(len(a), len(b))
+    return 1.0 - (dist / longest)
+
+
+def _trigrams(s: str) -> set:
+    """Character-level 3-grams with ``$`` boundary markers.
+
+    Boundary markers make ``"abc"`` and ``"xabc"`` share more
+    structure than the raw substring would suggest, and keep short
+    strings (< 3 chars) from collapsing to the empty set.
+    """
+    if not s:
+        return set()
+    padded = f"$${s}$$"
+    return {padded[i : i + 3] for i in range(len(padded) - 2)}
+
+
+def trigram_jaccard(a: str, b: str) -> float:
+    """Character n-gram Jaccard similarity in [0, 1].
+
+    Robust to single-character typos (``"Logistics"`` vs
+    ``"Logisitcs"`` shares most trigrams), partial abbreviation
+    (``"International"`` vs ``"Intl"`` shares the leading boundary
+    trigrams), and word-order shuffles. Complements Levenshtein
+    (which over-penalizes word-order changes).
+    """
+    if not a and not b:
+        return 1.0
+    tg_a, tg_b = _trigrams(a), _trigrams(b)
+    if not tg_a or not tg_b:
+        return 0.0
+    inter = len(tg_a & tg_b)
+    union = len(tg_a | tg_b)
+    return inter / union if union else 0.0
+
+
+def vendor_similarity_modes(vendor1: str, vendor2: str) -> Dict[str, float]:
+    """Compute every individual similarity signal between two vendor
+    names. Returns a dict so callers can inspect components for
+    audit (``why did the matcher fire?``) or feed individual signals
+    into downstream ranking.
+
+    Signals:
+
+    * ``exact``        — 1.0 if normalized names match, else 0.0.
+    * ``containment``  — ``shorter / longer * 0.95`` if one normalized
+                         name contains the other, else 0.0.
+    * ``jaccard``      — token-set Jaccard (word overlap) with a +0.2
+                         boost when both first words match.
+    * ``sequence``     — Ratcliff / Obershelp ratio
+                         (``difflib.SequenceMatcher``) on normalized
+                         strings.
+    * ``levenshtein``  — edit-distance ratio. Strong for typos.
+    * ``trigram``      — character 3-gram Jaccard. Strong for partial
+                         abbreviations and small character drift.
+    """
+    if not vendor1 or not vendor2:
+        return {
+            "exact": 0.0, "containment": 0.0, "jaccard": 0.0,
+            "sequence": 0.0, "levenshtein": 0.0, "trigram": 0.0,
+        }
+
     norm1 = normalize_vendor(vendor1)
     norm2 = normalize_vendor(vendor2)
-    
-    # Exact match after normalization
+
     if norm1 == norm2:
-        return 1.0
-    
-    # One contains the other
+        return {
+            "exact": 1.0, "containment": 1.0, "jaccard": 1.0,
+            "sequence": 1.0, "levenshtein": 1.0, "trigram": 1.0,
+        }
+
+    # Containment.
     if norm1 in norm2 or norm2 in norm1:
         shorter = min(len(norm1), len(norm2))
         longer = max(len(norm1), len(norm2))
-        return shorter / longer * 0.95
-    
-    # Token-based similarity (word overlap)
-    tokens1 = set(norm1.split())
-    tokens2 = set(norm2.split())
-    
+        containment = (shorter / longer) * 0.95 if longer else 0.0
+    else:
+        containment = 0.0
+
+    # Token-set Jaccard with first-word boost.
+    tokens1 = norm1.split()
+    tokens2 = norm2.split()
     if tokens1 and tokens2:
-        intersection = tokens1 & tokens2
-        union = tokens1 | tokens2
-        jaccard = len(intersection) / len(union)
-        
-        # If first words match, boost score
-        if list(tokens1)[0] == list(tokens2)[0] if tokens1 and tokens2 else False:
+        set1, set2 = set(tokens1), set(tokens2)
+        intersection = set1 & set2
+        union = set1 | set2
+        jaccard = (len(intersection) / len(union)) if union else 0.0
+        if tokens1[0] == tokens2[0]:
             jaccard = min(1.0, jaccard + 0.2)
     else:
         jaccard = 0.0
-    
-    # Character-level similarity
-    sequence_ratio = SequenceMatcher(None, norm1, norm2).ratio()
-    
-    # Combined score (weighted average)
-    return max(jaccard, sequence_ratio)
+
+    sequence = SequenceMatcher(None, norm1, norm2).ratio()
+    lev = levenshtein_ratio(norm1, norm2)
+    tg = trigram_jaccard(norm1, norm2)
+
+    return {
+        "exact": 0.0,
+        "containment": containment,
+        "jaccard": jaccard,
+        "sequence": sequence,
+        "levenshtein": lev,
+        "trigram": tg,
+    }
+
+
+def vendor_similarity_hybrid(
+    vendor1: str,
+    vendor2: str,
+) -> Tuple[float, Dict[str, float]]:
+    """Pairwise multi-modal vendor similarity + per-mode breakdown.
+
+    Returns ``(fused_score, modes_dict)`` where ``fused_score`` is
+    the maximum signal across modes — a single strong signal is
+    enough to declare a candidate match for audit / debug purposes.
+
+    **Critical context — read before tuning the fusion**:
+
+    Pairwise multi-modal *fusion* at this layer is a structural
+    dead-end. For two names, mode scores are absolute numbers with
+    no reference frame: "containment 0.6 + lev 0.5 + trigram 0.5"
+    looks like multi-mode agreement but is also exactly what
+    unrelated-but-substring-overlapping pairs produce. Any
+    agreement-based boost (noisy-OR, top-K mean, count-of-firing-
+    modes) over-fires on the false-positive class. That isn't a
+    tuning problem; it's a fundamental information limit of pairwise
+    scoring.
+
+    The honest multi-modal benefit lives in the **ranking layer** —
+    see ``services/vendor_search.py:find_candidate_matches``, which
+    runs each mode as an independent ranking over a corpus and
+    fuses via Reciprocal Rank Fusion. RRF cancels false-positive
+    correlations because partial-substring matches that score high
+    pairwise also score high against unrelated queries (so they
+    never reach top-K consistently across modes).
+
+    What this function gives you:
+
+    * Max-of-modes back-compat for legacy callers.
+    * Per-mode breakdown for audit logging ("matched on trigram=
+      0.92, lev=0.85") so operators can sanity-check why the
+      matcher fired.
+
+    What this function does NOT give you:
+
+    * Production decision-making for the dedup pipeline. Use
+      :func:`vendor_search.find_candidate_matches` (RRF over a
+      candidate set) for that, or
+      :func:`detect_duplicates_via_rrf` for the corpus-wide
+      clustering pass.
+
+    A **calibrated** pairwise probability score is in
+    :func:`match_probability` — it's heuristically tuned (we don't
+    have labeled vendor-merge data yet) so should drive UI
+    confidence labels, not production gating. Refine with labeled
+    data from the ``vendor_invoice_history`` post-merge trail when
+    available.
+    """
+    modes = vendor_similarity_modes(vendor1, vendor2)
+    if modes["exact"] >= 1.0:
+        return 1.0, modes
+
+    # Max of every mode except ``exact`` (which is binary and
+    # already covered by the short-circuit above). See the docstring
+    # above — this is back-compat / audit, not the production fusion
+    # layer.
+    fused = max(score for mode, score in modes.items() if mode != "exact")
+    fused = max(0.0, min(1.0, fused))
+    return fused, modes
+
+
+# ─── Calibrated pairwise match probability ─────────────────────────
+
+
+# Per-mode log-likelihood-ratio coefficients + a base prior favoring
+# non-match (most pairs from a real corpus are NOT duplicates of each
+# other). Each mode is treated as evidence for/against a "true match"
+# hypothesis; modes only contribute when their score crosses a noise
+# floor so silent modes don't drag log-odds either way.
+#
+# Discriminative ordering (highest precision first):
+#
+# * ``exact`` — binary; if scores 1.0, overwhelming evidence.
+# * ``levenshtein`` — high gain. A 0.85+ lev requires near-identity
+#   at character level, which is the canonical typo signature. Low
+#   false-positive rate on length-matched strings.
+# * ``trigram`` — high gain. N-gram overlap requires substantial
+#   shared character structure; low false-positive rate.
+# * ``sequence`` — moderate gain. SequenceMatcher over-fires on
+#   common substring patterns ("Inc", "LLC", years).
+# * ``containment`` — moderate gain. Substring overlap is the
+#   classic partial-substring false-positive trap (``"Stripe"`` is
+#   in ``"Striperock"`` but they're unrelated).
+# * ``jaccard`` — lowest gain. One shared common word
+#   (``"Services"``, ``"Group"``) inflates the score on unrelated.
+#
+# Coefficients are first-principles estimates, NOT regression-fit on
+# labeled data. They produce stable RELATIVE ORDERING of match
+# strength (true match > partial substring > unrelated) but absolute
+# probabilities can drift ±0.15 from a calibrated truth depending on
+# the corpus distribution. Refine when ``vendor_invoice_history``
+# post-merge labels are available.
+_BASE_PRIOR_LOG_ODDS = -1.5  # ~0.18 base probability of match
+_NOISE_FLOOR = 0.1           # modes below this don't contribute
+_LOG_LR_COEFS = {
+    # (gain, intercept, max_pos)
+    "exact":       (4.0,  -2.0, 4.0),
+    "levenshtein": (5.5,  -3.0, 3.0),
+    "trigram":     (5.0,  -2.0, 3.0),
+    "sequence":    (2.5,  -1.5, 2.5),
+    "containment": (3.0,  -1.5, 2.5),
+    "jaccard":     (2.0,  -1.0, 2.0),
+}
+
+
+def _log_lr(mode: str, score: float) -> float:
+    """Per-mode log-likelihood-ratio. Linear in score above the noise
+    floor; modes that fire weakly contribute zero (NOT negative)
+    because weak evidence shouldn't actively argue *against* a match
+    — it just doesn't help. Strong evidence contributes positively
+    up to ``max_pos``.
+
+    The asymmetric clamping (zero floor, positive max) is the
+    principled choice in absence of labeled data: false-positive
+    rates and base rates would calibrate the negative side, but we
+    don't have them. Without that calibration, treating weak signals
+    as neutral rather than negative avoids over-penalizing genuinely
+    related pairs (e.g., entity siblings whose names share a common
+    token but otherwise differ).
+    """
+    if score < _NOISE_FLOOR:
+        return 0.0
+    if mode not in _LOG_LR_COEFS:
+        return 0.0
+    gain, intercept, max_pos = _LOG_LR_COEFS[mode]
+    raw = gain * score + intercept
+    return max(0.0, min(max_pos, raw))
+
+
+def match_probability(modes: Dict[str, float]) -> float:
+    """Heuristic pairwise match probability in [0, 1].
+
+    Sums per-mode log-LRs and converts to a probability via sigmoid.
+    Each mode's coefficient encodes its empirical false-positive
+    sensitivity (containment + trigram are higher-precision, jaccard
+    lower); the sum across modes is the log-odds.
+
+    **Uncalibrated** — coefficients are first-principles estimates,
+    not regression-fit on labeled data. Use for:
+
+    * UI confidence labels ("strong match", "needs review")
+    * Tie-breaking in top-K search results
+    * Audit trail ("agent decided based on a 0.83 confidence match")
+
+    Do NOT use for hard production gating — the absolute probability
+    can drift up to ±0.15 from a calibrated truth depending on the
+    name distribution. For gating, use the RRF rank from
+    :func:`vendor_search.find_candidate_matches` (relative ranking
+    is more robust than absolute probability).
+
+    Calibration path: when ``vendor_invoice_history`` accumulates
+    enough post-merge labels, fit a logistic regression on (modes ->
+    merged_yes_no) and replace the coefficients in
+    ``_LOG_LR_COEFS`` with the regression weights.
+    """
+    if not modes:
+        return 0.0
+    if modes.get("exact", 0.0) >= 1.0:
+        return 1.0
+    # Start from the base prior (most random pairs aren't duplicates).
+    # Modes contribute log-LR only when above the noise floor — silent
+    # modes leave the prior unchanged rather than dragging it down.
+    log_odds = _BASE_PRIOR_LOG_ODDS + sum(
+        _log_lr(mode, score) for mode, score in modes.items()
+    )
+    # Sigmoid; clip exponent to avoid overflow on extreme inputs.
+    import math
+    clipped = max(-30.0, min(30.0, log_odds))
+    return 1.0 / (1.0 + math.exp(-clipped))
 
 
 def fuzzy_match_vendors(

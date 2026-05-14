@@ -1,0 +1,317 @@
+[
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/box_exceptions_admin.py",
+    "ts": "2026-05-09T10:45:36.820Z",
+    "line": 50487,
+    "tool": "Edit",
+    "old_string": "def _assert_org_match(user: TokenData, organization_id: str) -> None:\n    if str(organization_id or \"default\") != str(user.organization_id):\n        raise HTTPException(status_code=403, detail=\"org_mismatch\")",
+    "new_string": "def _assert_org_match(user: TokenData, organization_id: str) -> None:\n    \"\"\"Assert the requested org matches the caller's session org.\n\n    Pre-fix this coerced ``organization_id or \"default\"`` before\n    comparing \u2014 the M4 landmine: a session whose\n    ``user.organization_id`` was the legacy ``\"default\"`` literal\n    could pass an empty body org and bypass the check. Same shape as\n    the audit's ops.py + gmail_extension_common fixes \u2014 both sides\n    must be non-empty and equal.\n    \"\"\"\n    requested = str(organization_id or \"\").strip()\n    user_org = str(getattr(user, \"organization_id\", \"\") or \"\").strip()\n    if not requested or not user_org or requested != user_org:\n        raise HTTPException(status_code=403, detail=\"org_mismatch\")",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_webhook_auth_hardening.py",
+    "ts": "2026-05-09T16:20:37.134Z",
+    "line": 51495,
+    "tool": "Edit",
+    "old_string": "    # Plain assignment ``organization_id = \"org-test\"`` / ``org_id = \"org-test\"``\n    # at end of expression. The variable name must look org-shaped to\n    # avoid catching unrelated assignments (e.g., a config field\n    # legitimately named ``\"default\"``). Match common shapes:\n    # ``org``, ``org_id``, ``organization_id``, ``tenant``, ``tenant_id``.\n    r'\\b(?:org(?:_id)?|organization_id|tenant(?:_id)?)\\s*=\\s*[\"\\']default[\"\\']\\s*$',",
+    "new_string": "    # Plain assignment ``organization_id = \"default\"`` / ``org_id = \"default\"``\n    # at end of expression. The variable name must look org-shaped to\n    # avoid catching unrelated assignments (e.g., a config field\n    # legitimately named ``\"default\"``). Match common shapes:\n    # ``org``, ``org_id``, ``organization_id``, ``tenant``, ``tenant_id``.\n    r'\\b(?:org(?:_id)?|organization_id|tenant(?:_id)?)\\s*=\\s*[\"\\']default[\"\\']\\s*$',",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_webhook_auth_hardening.py",
+    "ts": "2026-05-09T16:33:01.823Z",
+    "line": 51533,
+    "tool": "Edit",
+    "old_string": "    must_match = [\n        # Bare or\n        'foo = bar or \"default\"',\n        # if-not pattern\n        'if not org: org = \"default\"',\n        # ternary \"if not\"\n        'org_id = \"org-test\" if not session_org else session_org',\n        # dict.get default\n        'org = settings.get(\"organization_id\", \"default\")',\n        # getattr default\n        'org = getattr(user, \"organization_id\", \"default\")',\n        # setattr literal\n        'setattr(action, \"organization_id\", \"default\")',\n        # plain assignment\n        'org_id = \"org-test\"',\n        'organization_id = \"org-test\"',\n    ]",
+    "new_string": "    must_match = [\n        # Bare or\n        'foo = bar or \"default\"',\n        # if-not pattern\n        'if not org: org = \"default\"',\n        # ternary \"if not\"\n        'org_id = \"default\" if not session_org else session_org',\n        # dict.get default\n        'org = settings.get(\"organization_id\", \"default\")',\n        # getattr default\n        'org = getattr(user, \"organization_id\", \"default\")',\n        # setattr literal\n        'setattr(action, \"organization_id\", \"default\")',\n        # plain assignment\n        'org_id = \"default\"',\n        'organization_id = \"default\"',\n    ]",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_webhook_auth_hardening.py",
+    "ts": "2026-05-09T17:57:03.938Z",
+    "line": 51625,
+    "tool": "Edit",
+    "old_string": "    forbidden_patterns = [\n        \"organization_id: str = Query(...)\",\n        'organization_id: str = Query(default=\"org-test\")',\n        \"organization_id: str = Query(default=\\\"default\\\")\",\n    ]",
+    "new_string": "    forbidden_patterns = [\n        \"organization_id: str = Query(...)\",\n        'organization_id: str = Query(default=\"default\")',\n        \"organization_id: str = Query(default=\\\"default\\\")\",\n    ]",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_webhook_auth_hardening.py",
+    "ts": "2026-05-09T18:54:59.798Z",
+    "line": 51676,
+    "tool": "Edit",
+    "old_string": "def test_or_default_regex_catches_alternate_rewrite_shapes():\n    \"\"\"M16: the regression-test detector ``_OR_DEFAULT_RE`` previously\n    matched only a literal ``or \"org-test\"``. The sub-agent review\n    found 5 alternate shapes a future regression could use to\n    silently re-introduce the M4 landmine. Pin them all here so a\n    contributor can never sneak the bug back via a different syntax.\n    \"\"\"\n    must_match = [\n        # Bare or\n        'foo = bar or \"org-test\"',\n        # if-not pattern\n        'if not org: org = \"org-test\"',\n        # ternary \"if not\"\n        'org_id = \"org-test\" if not session_org else session_org',\n        # dict.get default\n        'org = settings.get(\"organization_id\", \"org-test\")',\n        # getattr default\n        'org = getattr(user, \"organization_id\", \"org-test\")',\n        # setattr literal\n        'setattr(action, \"organization_id\", \"org-test\")',\n        # plain assignment\n        'org_id = \"org-test\"',\n        'organization_id = \"org-test\"',\n    ]\n    # Note: ``= X if cond else \"org-test\"`` (ternary-else) was previously\n    # in must_match but the standalone ``else \"org-test\"`` regex\n    # over-matched UI style strings (``\"style\": \"primary\" if ok else\n    # \"org-test\"``). Dropped to reduce false positives. The ternary\n    # bypass is still partly covered by the plain-assignment shape on\n    # the next line, e.g. ``org_id = X if ok else \"org-test\"`` matches\n    # the org-shaped-LHS pattern when the line ends in\n    # ``\"org-test\"``. If a future contributor writes ``temp = X if ok\n    # else \"org-test\"; org_id = temp`` the regex misses \u2014 that's a\n    # gap we accept until we move to AST-level scanning.\n    for shape in must_match:\n        assert _OR_DEFAULT_RE.search(shape), (\n            f\"_OR_DEFAULT_RE missed: {shape!r}. A regression using \"\n            f\"this shape would re-introduce the M4 landmine without \"\n            f\"tripping the regression suite.\"\n        )\n\n    # Negative cases \u2014 must NOT match.\n    must_not_match = [\n        # Legitimate string config that happens to mention \"org-test\"\n        'COLOR_DEFAULT = \"org-test\"',\n        # Comment / docstring (already stripped before matching, but\n        # double-check the regex doesn't catch unrelated patterns)\n        'theme_name = \"org-test\"',  # ``theme_name`` isn't org-shaped\n    ]",
+    "new_string": "def test_or_default_regex_catches_alternate_rewrite_shapes():\n    \"\"\"M16: the regression-test detector ``_OR_DEFAULT_RE`` previously\n    matched only a literal ``or \"default\"``. The sub-agent review\n    found 5 alternate shapes a future regression could use to\n    silently re-introduce the M4 landmine. Pin them all here so a\n    contributor can never sneak the bug back via a different syntax.\n    \"\"\"\n    must_match = [\n        # Bare or\n        'foo = bar or \"default\"',\n        # if-not pattern\n        'if not org: org = \"default\"',\n        # ternary \"if not\"\n        'org_id = \"default\" if not session_org else session_org',\n        # dict.get default\n        'org = settings.get(\"organization_id\", \"default\")',\n        # getattr default\n        'org = getattr(user, \"organization_id\", \"default\")',\n        # setattr literal\n        'setattr(action, \"organization_id\", \"default\")',\n        # plain assignment\n        'org_id = \"default\"',\n        'organization_id = \"default\"',\n    ]\n    # Note: ``= X if cond else \"default\"`` (ternary-else) was previously\n    # in must_match but the standalone ``else \"default\"`` regex\n    # over-matched UI style strings (``\"style\": \"primary\" if ok else\n    # \"default\"``). Dropped to reduce false positives. The ternary\n    # bypass is still partly covered by the plain-assignment shape on\n    # the next line, e.g. ``org_id = X if ok else \"default\"`` matches\n    # the org-shaped-LHS pattern when the line ends in\n    # ``\"default\"``. If a future contributor writes ``temp = X if ok\n    # else \"default\"; org_id = temp`` the regex misses \u2014 that's a\n    # gap we accept until we move to AST-level scanning.\n    for shape in must_match:\n        assert _OR_DEFAULT_RE.search(shape), (\n            f\"_OR_DEFAULT_RE missed: {shape!r}. A regression using \"\n            f\"this shape would re-introduce the M4 landmine without \"\n            f\"tripping the regression suite.\"\n        )\n\n    # Negative cases \u2014 must NOT match.\n    must_not_match = [\n        # Legitimate string config that happens to mention \"default\"\n        'COLOR_DEFAULT = \"default\"',\n        # Comment / docstring (already stripped before matching, but\n        # double-check the regex doesn't catch unrelated patterns)\n        'theme_name = \"default\"',  # ``theme_name`` isn't org-shaped\n    ]",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_channel_approval_contract.py",
+    "ts": "2026-05-09T11:16:42.194Z",
+    "line": 50673,
+    "tool": "Edit",
+    "old_string": "def _stub_teams_claims():\n    \"\"\"Return a Teams token claim dict with a ``tid`` matching the\n    seeded installation. Use as the ``_verify_teams_token`` stub.\"\"\"\n    return {\n        \"appid\": \"bot-test\",\n        \"iat\": int(time.time()),\n        \"tid\": _TEST_AAD_TID,\n    }\n\n\ndef _create_ap_item(db, *, gmail_id: str) -> dict:",
+    "new_string": "def _stub_teams_claims():\n    \"\"\"Return a Teams token claim dict with a ``tid`` matching the\n    seeded installation. Use as the ``_verify_teams_token`` stub.\"\"\"\n    return {\n        \"appid\": \"bot-test\",\n        \"iat\": int(time.time()),\n        \"tid\": _TEST_AAD_TID,\n    }\n\n\n# M18 Slack contract: every interactive callback now resolves the\n# verified ``team.id`` against ``slack_installations`` BEFORE any AP-\n# item lookup. Tests must seed a ``slack_installations`` row whose\n# ``team_id`` matches the test payload's ``team.id``, and the test\n# payload must include a ``team`` field.\n_TEST_SLACK_TEAM_ID = \"T_SLACK_TEST\"\n\n\ndef _seed_slack_install_for_default_org(db) -> None:\n    db.set_slack_installation(\n        organization_id=\"default\",\n        team_id=_TEST_SLACK_TEAM_ID,\n        team_name=\"Slack Test Team\",\n        bot_user_id=\"U_BOT\",\n        bot_token=\"xoxb-test-token\",\n        scope_csv=\"chat:write,users:read\",\n    )\n\n\ndef _create_ap_item(db, *, gmail_id: str) -> dict:",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_channel_approval_contract.py",
+    "ts": "2026-05-09T11:43:25.718Z",
+    "line": 50686,
+    "tool": "Edit",
+    "old_string": "def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(monkeypatch, client, db):\n    item = _create_ap_item(db, gmail_id=\"thread-slack-blocked\")\n    db.ensure_organization(\"default\", organization_name=\"default\")\n    db.update_organization(\n    _seed_slack_install_for_default_org(db)\n        \"default\",\n        settings={",
+    "new_string": "def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(monkeypatch, client, db):\n    item = _create_ap_item(db, gmail_id=\"thread-slack-blocked\")\n    _seed_slack_install_for_default_org(db)\n    db.ensure_organization(\"default\", organization_name=\"default\")\n    db.update_organization(\n        \"default\",\n        settings={",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/ap_policies.py",
+    "ts": "2026-05-09T12:31:33.595Z",
+    "line": 50820,
+    "tool": "Edit",
+    "old_string": "from clearledgr.services.policy_compliance import (\nfrom clearledgr.core.org_utils import require_org\n    AP_POLICY_NAME,\n    get_approval_automation_policy,\n    get_policy_compliance,\n)",
+    "new_string": "from clearledgr.services.policy_compliance import (\n    AP_POLICY_NAME,\n    get_approval_automation_policy,\n    get_policy_compliance,\n)\nfrom clearledgr.core.org_utils import require_org",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/workspace_shell.py",
+    "ts": "2026-05-09T12:42:39.637Z",
+    "line": 50836,
+    "tool": "Edit",
+    "old_string": "def _slack_api_client_class():\n    from clearledgr.services.slack_api import SlackAPIClient\nfrom clearledgr.core.org_utils import require_org, assert_org_id\n\n    return SlackAPIClient",
+    "new_string": "def _slack_api_client_class():\n    from clearledgr.services.slack_api import SlackAPIClient\n\n    return SlackAPIClient",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/workspace_shell.py",
+    "ts": "2026-05-09T13:28:09.295Z",
+    "line": 50914,
+    "tool": "Edit",
+    "old_string": "def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:\n    \"\"\"Resolve + enforce tenant scope.\n\n    Previously allowed owner role to access any org \u2014 cross-tenant\n    vulnerability. Owner controls authority within the org, not across\n    orgs. No platform-level super-admin concept exists on tenant APIs.\n    \"\"\"\n    resolved = require_org(user, requested=organization_id)\n    if not resolved:\n        resolved = \"default\"\n    if resolved != str(user.organization_id or \"\").strip():\n        raise HTTPException(status_code=403, detail=\"org_access_denied\")\n    return resolved",
+    "new_string": "def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:\n    \"\"\"Resolve + enforce tenant scope.\n\n    Previously allowed owner role to access any org \u2014 cross-tenant\n    vulnerability. Owner controls authority within the org, not across\n    orgs. No platform-level super-admin concept exists on tenant APIs.\n\n    M19 sweep: ``require_org`` is the canonical resolver and already\n    raises 403 ``user_missing_organization_id`` on an empty session\n    org or 403 ``org_mismatch`` when the requested value disagrees.\n    The pre-fix dead-code fallback (``if not resolved: resolved =\n    \"default\"``) is unreachable because ``require_org`` never returns\n    empty \u2014 but its presence was the M4 anti-pattern in a different\n    syntax shape (``if not X: X = \"default\"``).\n    \"\"\"\n    return require_org(user, requested=organization_id)",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/workspace_shell.py",
+    "ts": "2026-05-09T13:40:33.006Z",
+    "line": 50930,
+    "tool": "Edit",
+    "old_string": "def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:\n    \"\"\"Resolve + enforce tenant scope.\n\n    Previously allowed owner role to access any org \u2014 cross-tenant\n    vulnerability. Owner controls authority within the org, not across\n    orgs. No platform-level super-admin concept exists on tenant APIs.\n\n    M19 sweep: ``require_org`` is the canonical resolver and already\n    raises 403 ``user_missing_organization_id`` on an empty session\n    org or 403 ``org_mismatch`` when the requested value disagrees.\n    The pre-fix dead-code fallback (``if not resolved: resolved =\n    \"default\"``) is unreachable because ``require_org`` never returns\n    empty \u2014 but its presence was the M4 anti-pattern in a different\n    syntax shape (``if not X: X = \"default\"``).\n    \"\"\"\n    return require_org(user, requested=organization_id)",
+    "new_string": "def _resolve_org_id(user: TokenData, organization_id: Optional[str]) -> str:\n    \"\"\"Resolve + enforce tenant scope on the workspace surface.\n\n    Previously allowed owner role to access any org \u2014 cross-tenant\n    vulnerability. Owner controls authority within the org, not across\n    orgs. No platform-level super-admin concept exists on tenant APIs.\n\n    M19 sweep: delegates to ``require_org`` for the canonical\n    resolution + cross-check, but re-raises the existing\n    ``\"org_access_denied\"`` detail string on mismatch so existing\n    workspace test fixtures + frontend error handling that key on\n    the legacy detail keep working. ``require_org``'s native\n    ``\"org_mismatch\"`` / ``\"user_missing_organization_id\"`` strings\n    are exposed on every other surface (ops, ap_items_action_routes,\n    teams, slack) \u2014 the workspace surface is the back-compat\n    exception until the next breaking-change pass.\n    \"\"\"\n    try:\n        return require_org(user, requested=organization_id)\n    except HTTPException as exc:\n        if exc.status_code == 403:\n            raise HTTPException(status_code=403, detail=\"org_access_denied\") from exc\n        raise",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/workspace_shell.py",
+    "ts": "2026-05-09T15:10:21.259Z",
+    "line": 51155,
+    "tool": "Edit",
+    "old_string": "    state_payload = _unsign_state(state)\n    org_id = assert_org_id(state_payload.get(\"organization_id\"), context=\"workspace_shell:state_payload\")",
+    "new_string": "    state_payload = _unsign_state(state)\n    # M19+: pre-fix coerced missing org to \"default\"; M19b switched to\n    # ``assert_org_id`` which raises ValueError \u2192 500 stack trace\n    # surfaced to the user during OAuth. State-payload corruption is\n    # a 400, not an internal error \u2014 re-cast.\n    raw_org = str(state_payload.get(\"organization_id\") or \"\").strip()\n    if not raw_org:\n        raise HTTPException(status_code=400, detail=\"invalid_state_payload\")\n    org_id = raw_org",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/match_config.py",
+    "ts": "2026-05-09T12:46:25.626Z",
+    "line": 50846,
+    "tool": "Edit",
+    "old_string": "    Partial: omit ``mode`` to leave it unchanged; omit ``tolerances``\n    to leave them unchanged. Sending both updates them atomically\n    from the caller's perspective (two version rows are written; the\n    next match operation sees both).\nfrom clearledgr.core.org_utils import require_org\n    \"\"\"",
+    "new_string": "    Partial: omit ``mode`` to leave it unchanged; omit ``tolerances``\n    to leave them unchanged. Sending both updates them atomically\n    from the caller's perspective (two version rows are written; the\n    next match operation sees both).\n    \"\"\"",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/org_config.py",
+    "ts": "2026-05-09T12:48:59.653Z",
+    "line": 50862,
+    "tool": "Edit",
+    "old_string": "    from clearledgr.core.clock import now_utc_iso\n    from clearledgr.core.database import get_db\nfrom clearledgr.core.org_utils import require_org\n\n    _require_admin(current_user)",
+    "new_string": "    from clearledgr.core.clock import now_utc_iso\n    from clearledgr.core.database import get_db\n\n    _require_admin(current_user)",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/finance_runtime_actions.py",
+    "ts": "2026-05-09T14:32:05.332Z",
+    "line": 50993,
+    "tool": "Edit",
+    "old_string": "            organization_id = assert_org_id(item.get(\"organization_id\") or runtime.organization_id, context=\"finance_runtime_actions\").strip() or \"default\"",
+    "new_string": "            organization_id = assert_org_id(item.get(\"organization_id\") or runtime.organization_id, context=\"finance_runtime_actions\")",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/finance_runtime_actions.py",
+    "ts": "2026-05-09T14:32:17.254Z",
+    "line": 50998,
+    "tool": "Edit",
+    "old_string": "            organization_id = assert_org_id(item.get(\"organization_id\") or runtime.organization_id, context=\"finance_runtime_actions\").strip() or \"default\"",
+    "new_string": "            organization_id = assert_org_id(item.get(\"organization_id\") or runtime.organization_id, context=\"finance_runtime_actions\")",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/finance_learning.py",
+    "ts": "2026-05-09T14:39:34.095Z",
+    "line": 51013,
+    "tool": "Edit",
+    "old_string": "        if organization_id is None:\n            # M19: assert_org_id raises on empty \u2014 was: organization_id = \"default\"\n        organization_id = assert_org_id(organization_id, context=\"FinanceLearning\")\n        normalized = str(organization_id).strip()",
+    "new_string": "        if organization_id is None:\n            organization_id = \"default\"  # noqa: org-default \u2014 intentional platform-mode sentinel\n        normalized = str(organization_id).strip()",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/correction_learning.py",
+    "ts": "2026-05-09T14:43:06.602Z",
+    "line": 51038,
+    "tool": "Edit",
+    "old_string": "    def __init__(self, organization_id: Optional[str] = \"default\"):\n        if organization_id is None:\n        organization_id = \"default\"  # noqa: org-default \u2014 platform-mode sentinel for None/unset\n        normalized = str(organization_id).strip()",
+    "new_string": "    def __init__(self, organization_id: Optional[str] = \"default\"):\n        if organization_id is None:\n            organization_id = \"default\"  # noqa: org-default \u2014 platform-mode sentinel for None/unset\n        normalized = str(organization_id).strip()",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/agent_memory.py",
+    "ts": "2026-05-09T14:43:17.989Z",
+    "line": 51044,
+    "tool": "Edit",
+    "old_string": "        if organization_id is None:\n        organization_id = \"default\"  # noqa: org-default \u2014 platform-mode sentinel for None/unset\n        normalized = str(organization_id).strip()",
+    "new_string": "        if organization_id is None:\n            organization_id = \"default\"  # noqa: org-default \u2014 platform-mode sentinel for None/unset\n        normalized = str(organization_id).strip()",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/ap_item_service.py",
+    "ts": "2026-05-09T15:09:32.310Z",
+    "line": 51134,
+    "tool": "Edit",
+    "old_string": "    db: ClearledgrDB,\n    *,\n    ap_item_id: str,\n    request: ResolveFieldReviewRequest,\n    organization_id: str,\n    user: Any,\n) -> Dict[str, Any]:\n    item = _require_item(db, ap_item_id)",
+    "new_string": "    db: ClearledgrDB,\n    *,\n    ap_item_id: str,\n    request: ResolveFieldReviewRequest,\n    organization_id: str,\n    user: Any,\n) -> Dict[str, Any]:\n    # M19+: M19b deleted the post-fetch ``verify_org_access(item.org or\n    # \"default\", user)`` line as redundant when ``_require_item`` is\n    # called with ``expected_organization_id=...``. This call site was\n    # using ``_require_item(db, ap_item_id)`` WITHOUT the kwarg, so\n    # the line deletion silently dropped the tenant check. Routes\n    # ``/field-review/resolve`` and ``/field-review/bulk-resolve``\n    # lost their tenant-scope guard. Restore by passing\n    # ``expected_organization_id`` through.\n    item = _require_item(db, ap_item_id, expected_organization_id=organization_id)",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/gmail_extension.py",
+    "ts": "2026-05-09T15:09:50.619Z",
+    "line": 51139,
+    "tool": "Edit",
+    "old_string": "    db = get_db()\n    if not hasattr(db, \"get_task_run\"):\n        raise HTTPException(status_code=404, detail=\"workflow_not_found\")\n    row = db.get_task_run(workflow_id)\n    if not row:\n        raise HTTPException(status_code=404, detail=\"workflow_not_found\")\n    return {\n        \"workflow_id\": row.get(\"id\"),\n        \"status\": row.get(\"status\"),\n        \"task_type\": row.get(\"task_type\"),\n        \"current_step\": row.get(\"current_step\"),\n        \"retry_count\": row.get(\"retry_count\"),\n        \"last_error\": row.get(\"last_error\"),\n        \"organization_id\": row.get(\"organization_id\"),\n        \"created_at\": row.get(\"created_at\"),\n        \"updated_at\": row.get(\"updated_at\"),\n        \"completed_at\": row.get(\"completed_at\"),\n    }",
+    "new_string": "    db = get_db()\n    if not hasattr(db, \"get_task_run\"):\n        raise HTTPException(status_code=404, detail=\"workflow_not_found\")\n    row = db.get_task_run(workflow_id)\n    if not row:\n        raise HTTPException(status_code=404, detail=\"workflow_not_found\")\n    # M19+: M19b deleted the ``_assert_user_org_access(user,\n    # str(row.get(\"organization_id\") or \"default\"))`` line as part of\n    # the verify_org_access redundancy sweep. But this route has NO\n    # ``_require_item`` upstream \u2014 the row is fetched purely by\n    # ``workflow_id`` (i.e., ``task_run`` id, which is global). The\n    # delete silently dropped tenant scope, letting any authenticated\n    # user iterate task_run ids and read any tenant's workflow status\n    # + last_error contents. Restore the post-fetch tenant check\n    # (404, not 403, so existence doesn't leak).\n    row_org = str(row.get(\"organization_id\") or \"\").strip()\n    if row_org != require_org(user):\n        raise HTTPException(status_code=404, detail=\"workflow_not_found\")\n    return {\n        \"workflow_id\": row.get(\"id\"),\n        \"status\": row.get(\"status\"),\n        \"task_type\": row.get(\"task_type\"),\n        \"current_step\": row.get(\"current_step\"),\n        \"retry_count\": row.get(\"retry_count\"),\n        \"last_error\": row.get(\"last_error\"),\n        \"organization_id\": row.get(\"organization_id\"),\n        \"created_at\": row.get(\"created_at\"),\n        \"updated_at\": row.get(\"updated_at\"),\n        \"completed_at\": row.get(\"completed_at\"),\n    }",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/ui_perf.py",
+    "ts": "2026-05-09T15:10:07.275Z",
+    "line": 51150,
+    "tool": "Edit",
+    "old_string": "    step_name = f\"ui.{beacon.surface}\"\n    context = beacon.context or {}\n    org_id = assert_org_id(context.get(\"org_id\") or context.get(\"organization_id\"), context=\"ui_perf:beacon\")\n    ap_item_id = str(context.get(\"ap_item_id\") or \"\").strip() or None",
+    "new_string": "    step_name = f\"ui.{beacon.surface}\"\n    context = beacon.context or {}\n    # M19+: ui_perf is a fire-and-forget telemetry beacon \u2014 the body\n    # is fully attacker-controlled. Pre-fix coerced missing org to\n    # \"default\", which polluted that tenant's metrics; M19b's\n    # ``assert_org_id`` (raise on empty) broke the documented\n    # \"always returns 200\" contract because malformed beacons now 500.\n    # Right shape: drop unscoped beacons silently with a structured\n    # ``no_org`` reason instead of raising.\n    raw_org = str(\n        context.get(\"org_id\") or context.get(\"organization_id\") or \"\"\n    ).strip()\n    if not raw_org:\n        return {\"recorded\": False, \"reason\": \"no_org\"}\n    org_id = raw_org\n    ap_item_id = str(context.get(\"ap_item_id\") or \"\").strip() or None",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/agent_retry_jobs.py",
+    "ts": "2026-05-09T15:10:35.854Z",
+    "line": 51163,
+    "tool": "Edit",
+    "old_string": "    for job in due_jobs:\n        job_id = str(job.get(\"id\") or \"\").strip()\n        if not job_id:\n            continue\n        job_org_id = assert_org_id(job.get(\"organization_id\") or organization_id, context=\"agent_retry_jobs\")\n        claimed = db.claim_agent_retry_job(",
+    "new_string": "    for job in due_jobs:\n        job_id = str(job.get(\"id\") or \"\").strip()\n        if not job_id:\n            continue\n        # M19+: ``assert_org_id`` raises on empty. Pre-M19 a poison\n        # row silently coerced to \"default\" and ran (cross-tenant);\n        # post-M19 we don't want a single bad row to kill the\n        # entire drain loop. Skip the row, log, continue.\n        try:\n            job_org_id = assert_org_id(\n                job.get(\"organization_id\") or organization_id,\n                context=\"agent_retry_jobs\",\n            )\n        except ValueError:\n            logger.warning(\n                \"[agent_retry_jobs] dropping job %s with no organization_id \"\n                \"(neither row nor sweep-context supplied)\",\n                job_id,\n            )\n            continue\n        claimed = db.claim_agent_retry_job(",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/api/policies.py",
+    "ts": "2026-05-09T15:10:50.132Z",
+    "line": 51169,
+    "tool": "Edit",
+    "old_string": "def _service(organization_id: str, user) -> PolicyService:\n    org = assert_org_id(organization_id, context=\"policies\")\n    verify_org_access(org, user)\n    return PolicyService(organization_id=org)",
+    "new_string": "def _service(organization_id: str, user) -> PolicyService:\n    # M19+: route helper. Use require_org so missing/mismatched org\n    # surfaces as HTTPException(403) instead of a ValueError \u2192 500.\n    org = require_org(user, requested=organization_id)\n    return PolicyService(organization_id=org)",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/services/slack_notifications.py",
+    "ts": "2026-05-09T15:42:58.879Z",
+    "line": 51237,
+    "tool": "Edit",
+    "old_string": "    logger.warning(\n        \"No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN, or connect via onboarding). org=%s mode=%s\",\n        assert_org_id(organization_id, context=\"slack_notifications\"),\n        runtime.get(\"mode\"),\n    )\n    return False",
+    "new_string": "    logger.warning(\n        \"No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN, or connect via onboarding). org=%s mode=%s\",\n        # Log-only context; raise-on-missing is wrong here since the\n        # function legitimately runs in env-only mode without an org.\n        # ``coerce_org_id`` returns None for empty inputs and the\n        # log line just shows \"None\" \u2014 readable, no raise.\n        organization_id or \"<unscoped>\",\n        runtime.get(\"mode\"),\n    )\n    return False",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/core/migrations.py",
+    "ts": "2026-05-09T20:08:11.036Z",
+    "line": 51865,
+    "tool": "Edit",
+    "old_string": "    except Exception as exc:\n        # Tolerate already-applied: re-running migrations on a DB\n        # that previously got partway through is normal. Any other\n        # error is real and re-raises.\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n",
+    "new_string": "    except Exception as exc:\n        # Tolerate already-applied: re-running migrations on a DB\n        # that previously got partway through is normal. Any other\n        # error is real and re-raises.\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n@migration(\n    80,\n    \"tenant rename: per-table CHECK constraints on every organization_id column (M21)\",\n)\ndef _v80_per_table_org_id_checks(cur, db):\n    \"\"\"Defense-in-depth: block ``organization_id IN ('default',\n    '_unprovisioned')`` on every tenant-bound table.\n\n    M20 (migration v79) renamed the legacy ``\"default\"`` org row and\n    added a CHECK constraint on ``organizations.id``. The application\n    layer (``assert_org_id`` / ``require_org``) is the canonical\n    defense against the literal landing on tenant-data rows. M21\n    completes the picture: per-table CHECK constraints catch any\n    future code path that bypasses the application guard. Production\n    rows already pass these checks because real tenants use UUID-\n    shaped ids; legacy ``\"default\"`` rows were rebound to\n    ``\"org_legacy_default\"`` by v79.\n\n    Exception: ``users`` legitimately holds the ``\"_unprovisioned\"``\n    sentinel as a placeholder until ops attaches the user to a real\n    org. Constrain ``users`` to forbid only ``\"default\"`` \u2014 the\n    sentinel stays valid there. No other table should carry the\n    sentinel because unprovisioned users have no write access to\n    tenant data (``require_org`` raises 403 before any row is\n    created).\n\n    Idempotent: ``IF NOT EXISTS`` would be ideal but PG doesn't\n    support it on ``ADD CONSTRAINT``; emulate by catching the\n    duplicate-name error.\n    \"\"\"\n    cur.execute(\n        \"\"\"\n        SELECT table_name\n        FROM information_schema.columns\n        WHERE table_schema = current_schema()\n          AND column_name = 'organization_id'\n          AND table_name <> 'schema_versions'\n        \"\"\"\n    )\n    tenant_tables = [r[\"table_name\"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]\n\n    for table in tenant_tables:\n        # PG truncates identifiers to 63 chars; enforce that here so\n        # long table names (e.g., ``vendor_onboarding_sessions``) get\n        # a stable name on both first apply and re-apply.\n        constraint_name = f\"{table}_org_id_not_legacy_default\"[:63]\n        if table == \"users\":\n            check_clause = \"organization_id <> 'default'\"\n        else:\n            check_clause = \"organization_id NOT IN ('default', '_unprovisioned')\"\n        try:\n            cur.execute(\n                f'ALTER TABLE \"{table}\" '\n                f'ADD CONSTRAINT \"{constraint_name}\" '\n                f\"CHECK ({check_clause})\"\n            )\n        except Exception as exc:\n            msg = str(exc).lower()\n            if \"already exists\" in msg or \"duplicate\" in msg:\n                continue\n            # If the CHECK fails to apply because existing rows\n            # violate it, that's a data-cleanup signal \u2014 re-raise so\n            # the migrator surfaces the offending table to the\n            # operator. They can run the v79 sweep manually for\n            # whichever rows leaked past v79's coverage.\n            raise\n",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/core/migrations.py",
+    "ts": "2026-05-10T09:53:41.960Z",
+    "line": 52662,
+    "tool": "Edit",
+    "old_string": "            # operator. They can run the v79 sweep manually for\n            # whichever rows leaked past v79's coverage.\n            raise\n\n\n",
+    "new_string": "            # operator. They can run the v79 sweep manually for\n            # whichever rows leaked past v79's coverage.\n            raise\n\n\n@migration(\n    81,\n    \"AP policy branches: branch_id on policy_versions + policy_branches table (Sprint 2)\",\n)\ndef _v81_policy_branches(cur, db):\n    \"\"\"Branchable AP policy.\n\n    Sprint 2 of the ModernRelay-inspired roadmap. Today the\n    ``policy_versions`` chain is linear: every ``set_policy`` call\n    appends a new version, ``get_active`` returns the latest by\n    ``version_number``, ``rollback_to`` creates a new linear version\n    copying historical content. There's no way for a finance team to\n    experiment with a policy change against historical AP items\n    without affecting production routing \u2014 they have to ship the\n    change to main and roll back if numbers look wrong.\n\n    Post-fix: branches are first-class refs to versions. Operators\n    create a branch off any historical version, commit edits to the\n    branch (each commit creates a new ``policy_versions`` row tagged\n    with the branch_id), replay the branch's tip against historical\n    AP items, and either merge (the branch's tip content becomes a\n    new version on main, mirrored into ``settings_json``) or\n    abandon. Versions stay immutable; the branch ref pointer moves.\n\n    Schema changes:\n\n    1. ``policy_versions.branch_id`` \u2014 nullable. NULL = main (every\n       extant version pre-migration). Branched versions point at\n       their branch row.\n    2. ``policy_branches`` \u2014 ref tracking + lifecycle metadata.\n       Status flow: ``open`` \u2192 ``merged`` (success) or\n       ``abandoned`` (discarded). Open branches are unique per\n       ``(org, kind, name)`` via a partial unique index; merged /\n       abandoned branches keep their names so the audit trail\n       survives.\n\n    The ``get_active`` query in ``services/policy_service.py`` is\n    updated separately to filter ``branch_id IS NULL``. Until that\n    code change ships, this migration is a no-op for runtime\n    behavior \u2014 branched versions don't exist yet.\n    \"\"\"\n    cur.execute(\n        \"ALTER TABLE policy_versions ADD COLUMN IF NOT EXISTS branch_id TEXT\"\n    )\n    cur.execute(\n        \"CREATE INDEX IF NOT EXISTS idx_policy_versions_branch \"\n        \"ON policy_versions (organization_id, policy_kind, branch_id)\"\n    )\n\n    cur.execute(\n        \"\"\"\n        CREATE TABLE IF NOT EXISTS policy_branches (\n            id TEXT PRIMARY KEY,\n            organization_id TEXT NOT NULL,\n            policy_kind TEXT NOT NULL,\n            name TEXT NOT NULL,\n            head_version_id TEXT NOT NULL,\n            base_version_id TEXT NOT NULL,\n            status TEXT NOT NULL DEFAULT 'open',\n            description TEXT NOT NULL DEFAULT '',\n            created_at TEXT NOT NULL,\n            created_by TEXT NOT NULL,\n            merged_at TEXT,\n            merged_into_version_id TEXT,\n            merged_by TEXT,\n            abandoned_at TEXT,\n            abandoned_by TEXT\n        )\n        \"\"\"\n    )\n    # Open branches must have unique names per (org, kind). Merged /\n    # abandoned branches keep their names so historical replays can\n    # reference \"the Q3 threshold experiment\" by name even after it\n    # closed.\n    cur.execute(\n        \"CREATE UNIQUE INDEX IF NOT EXISTS policy_branches_open_name_unique \"\n        \"ON policy_branches (organization_id, policy_kind, name) \"\n        \"WHERE status = 'open'\"\n    )\n    cur.execute(\n        \"CREATE INDEX IF NOT EXISTS idx_policy_branches_org_kind \"\n        \"ON policy_branches (organization_id, policy_kind, status)\"\n    )\n    # M22 tenancy CHECK constraint: enforce on this new table the\n    # same way migration v80 did for every other tenant-bound table.\n    try:\n        cur.execute(\n            \"ALTER TABLE policy_branches \"\n            \"ADD CONSTRAINT policy_branches_org_id_not_legacy_default \"\n            \"CHECK (organization_id NOT IN ('default', '_unprovisioned'))\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/core/migrations.py",
+    "ts": "2026-05-10T14:01:09.645Z",
+    "line": 53297,
+    "tool": "Edit",
+    "old_string": "        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n",
+    "new_string": "        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n@migration(\n    82,\n    \"row-set branches: data_branches + overlay columns on row-set tables (Sprint 5 Phase B)\",\n)\ndef _v82_rowset_branch_overlays(cur, db):\n    \"\"\"Branchable backoffice config \u2014 row-set surfaces (vendor master,\n    GL chart of accounts, custom roles, entity restrictions).\n\n    Sprint 5 Phase B of the ModernRelay-inspired roadmap. Where\n    Sprint 2's branchable AP policy treats a \"branch\" as a versioned\n    JSON blob (one row per version in ``policy_versions``), Phase B\n    treats a \"branch\" as an **overlay** on a row set: the live\n    vendor_profiles table plus a set of pending insert / modify /\n    delete operations recorded as overlay rows on the same table,\n    tagged with a ``branch_id``.\n\n    Reads on main filter ``branch_id IS NULL``. Branch reads union\n    main rows with the branch's overlay rows (overlay rows shadow /\n    tombstone main rows by primary key). Merge applies the overlay\n    operations to main; abandon discards them.\n\n    Schema additions per row-set table:\n\n    * ``branch_id TEXT``       \u2014 NULL = main; otherwise the branch\n                                  this overlay row belongs to.\n    * ``branch_op TEXT``       \u2014 'insert' | 'modify' | 'delete' on\n                                  overlay rows; NULL on main rows.\n    * ``branch_base_id TEXT``  \u2014 for 'modify' / 'delete' overlays,\n                                  the primary-key id of the main row\n                                  this overlay shadows / tombstones.\n                                  NULL for 'insert' overlays.\n\n    A new top-level ``data_branches`` table tracks branch lifecycle\n    (mirrors ``policy_branches`` from v81 \u2014 open / merged / abandoned,\n    creator + merger metadata, base content_hash for conflict\n    detection).\n    \"\"\"\n    cur.execute(\n        \"\"\"\n        CREATE TABLE IF NOT EXISTS data_branches (\n            id TEXT PRIMARY KEY,\n            organization_id TEXT NOT NULL,\n            table_name TEXT NOT NULL,\n            name TEXT NOT NULL,\n            description TEXT NOT NULL DEFAULT '',\n            status TEXT NOT NULL DEFAULT 'open',\n            base_snapshot_json TEXT NOT NULL DEFAULT '{}',\n            created_at TEXT NOT NULL,\n            created_by TEXT NOT NULL,\n            merged_at TEXT,\n            merged_by TEXT,\n            abandoned_at TEXT,\n            abandoned_by TEXT\n        )\n        \"\"\"\n    )\n    # Open branches must be unique by (org, table, name). Merged /\n    # abandoned branches keep their names so audit retrieval can\n    # surface them by name + status \u2014 same pattern as\n    # ``policy_branches`` (v81).\n    cur.execute(\n        \"CREATE UNIQUE INDEX IF NOT EXISTS data_branches_open_name_unique \"\n        \"ON data_branches (organization_id, table_name, name) \"\n        \"WHERE status = 'open'\"\n    )\n    cur.execute(\n        \"CREATE INDEX IF NOT EXISTS idx_data_branches_org_table \"\n        \"ON data_branches (organization_id, table_name, status)\"\n    )\n\n    # M22 tenancy CHECK constraint mirrors v80 / v81.\n    try:\n        cur.execute(\n            \"ALTER TABLE data_branches \"\n            \"ADD CONSTRAINT data_branches_org_id_not_legacy_default \"\n            \"CHECK (organization_id NOT IN ('default', '_unprovisioned'))\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n    # Add overlay columns to each row-set surface. Phase B fully\n    # wires ``vendor_profiles`` (the proof-of-pattern); the other\n    # three (``gl_corrections``, ``custom_roles``, ``user_entity_\n    # roles``) get schema support here so follow-up service-wiring\n    # commits don't need a fresh migration.\n    overlay_tables = (\n        \"vendor_profiles\",\n        \"gl_corrections\",\n        \"custom_roles\",\n        \"user_entity_roles\",\n    )\n    for table in overlay_tables:\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_id TEXT'\n        )\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_op TEXT'\n        )\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_base_id TEXT'\n        )\n        # Indexed for branch-view reads (``WHERE branch_id IS NULL OR\n        # branch_id = %s``). The partial index keeps main-only queries\n        # cheap by excluding overlay rows from the index.\n        cur.execute(\n            f'CREATE INDEX IF NOT EXISTS idx_{table}_branch '\n            f'ON \"{table}\" (organization_id, branch_id) '\n            f'WHERE branch_id IS NOT NULL'\n        )\n\n    # ``user_entity_roles`` has a composite PK (user_id, entity_id);\n    # branch-overlay rows for it can collide on the existing PK if a\n    # branch reuses an existing (user_id, entity_id) pair as a\n    # 'modify' overlay. Drop the strict PK uniqueness; enforce a\n    # narrower uniqueness scoped to ``branch_id``.\n    #\n    # The existing PK includes (user_id, entity_id) only. Replace it\n    # with a unique constraint that also includes branch_id (NULL\n    # is distinct in PG unique indexes by default \u2014 main rows still\n    # uniquely keyed on (user_id, entity_id), branch overlays on\n    # (user_id, entity_id, branch_id)).\n    try:\n        cur.execute(\n            \"ALTER TABLE user_entity_roles \"\n            \"DROP CONSTRAINT IF EXISTS user_entity_roles_pkey\"\n        )\n        cur.execute(\n            \"CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_main_pk \"\n            \"ON user_entity_roles (user_id, entity_id) \"\n            \"WHERE branch_id IS NULL\"\n        )\n        cur.execute(\n            \"CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_branch_pk \"\n            \"ON user_entity_roles (user_id, entity_id, branch_id) \"\n            \"WHERE branch_id IS NOT NULL\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"does not exist\" not in msg \\\n                and \"duplicate\" not in msg:\n            raise\n",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/clearledgr/core/migrations.py",
+    "ts": "2026-05-10T14:02:09.055Z",
+    "line": 53303,
+    "tool": "Edit",
+    "old_string": "    try:\n        cur.execute(\n            \"ALTER TABLE policy_branches \"\n            \"ADD CONSTRAINT policy_branches_org_id_not_legacy_default \"\n            \"CHECK (organization_id NOT IN ('default', '_unprovisioned'))\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n",
+    "new_string": "    try:\n        cur.execute(\n            \"ALTER TABLE policy_branches \"\n            \"ADD CONSTRAINT policy_branches_org_id_not_legacy_default \"\n            \"CHECK (organization_id NOT IN ('default', '_unprovisioned'))\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n\n@migration(\n    82,\n    \"row-set branches: data_branches + overlay columns on row-set tables (Sprint 5 Phase B)\",\n)\ndef _v82_rowset_branch_overlays(cur, db):\n    \"\"\"Branchable backoffice config \u2014 row-set surfaces (vendor master,\n    GL chart of accounts, custom roles, entity restrictions).\n\n    Sprint 5 Phase B of the ModernRelay-inspired roadmap. Where\n    Sprint 2's branchable AP policy treats a \"branch\" as a versioned\n    JSON blob (one row per version in ``policy_versions``), Phase B\n    treats a \"branch\" as an **overlay** on a row set: the live\n    vendor_profiles table plus a set of pending insert / modify /\n    delete operations recorded as overlay rows on the same table,\n    tagged with a ``branch_id``.\n\n    Reads on main filter ``branch_id IS NULL``. Branch reads union\n    main rows with the branch's overlay rows (overlay rows shadow /\n    tombstone main rows by primary key). Merge applies the overlay\n    operations to main; abandon discards them.\n\n    Schema additions per row-set table:\n\n    * ``branch_id TEXT``       \u2014 NULL = main; otherwise the branch\n                                  this overlay row belongs to.\n    * ``branch_op TEXT``       \u2014 'insert' | 'modify' | 'delete' on\n                                  overlay rows; NULL on main rows.\n    * ``branch_base_id TEXT``  \u2014 for 'modify' / 'delete' overlays,\n                                  the primary-key id of the main row\n                                  this overlay shadows / tombstones.\n                                  NULL for 'insert' overlays.\n\n    A new top-level ``data_branches`` table tracks branch lifecycle\n    (mirrors ``policy_branches`` from v81 \u2014 open / merged / abandoned,\n    creator + merger metadata, base content_hash for conflict\n    detection).\n    \"\"\"\n    cur.execute(\n        \"\"\"\n        CREATE TABLE IF NOT EXISTS data_branches (\n            id TEXT PRIMARY KEY,\n            organization_id TEXT NOT NULL,\n            table_name TEXT NOT NULL,\n            name TEXT NOT NULL,\n            description TEXT NOT NULL DEFAULT '',\n            status TEXT NOT NULL DEFAULT 'open',\n            base_snapshot_json TEXT NOT NULL DEFAULT '{}',\n            created_at TEXT NOT NULL,\n            created_by TEXT NOT NULL,\n            merged_at TEXT,\n            merged_by TEXT,\n            abandoned_at TEXT,\n            abandoned_by TEXT\n        )\n        \"\"\"\n    )\n    cur.execute(\n        \"CREATE UNIQUE INDEX IF NOT EXISTS data_branches_open_name_unique \"\n        \"ON data_branches (organization_id, table_name, name) \"\n        \"WHERE status = 'open'\"\n    )\n    cur.execute(\n        \"CREATE INDEX IF NOT EXISTS idx_data_branches_org_table \"\n        \"ON data_branches (organization_id, table_name, status)\"\n    )\n    try:\n        cur.execute(\n            \"ALTER TABLE data_branches \"\n            \"ADD CONSTRAINT data_branches_org_id_not_legacy_default \"\n            \"CHECK (organization_id NOT IN ('default', '_unprovisioned'))\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if \"already exists\" not in msg and \"duplicate\" not in msg:\n            raise\n\n    overlay_tables = (\n        \"vendor_profiles\",\n        \"gl_corrections\",\n        \"custom_roles\",\n        \"user_entity_roles\",\n    )\n    for table in overlay_tables:\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_id TEXT'\n        )\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_op TEXT'\n        )\n        cur.execute(\n            f'ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_base_id TEXT'\n        )\n        cur.execute(\n            f'CREATE INDEX IF NOT EXISTS idx_{table}_branch '\n            f'ON \"{table}\" (organization_id, branch_id) '\n            f'WHERE branch_id IS NOT NULL'\n        )\n\n    # ``user_entity_roles`` has a composite PK (user_id, entity_id).\n    # Branch overlays need to allow an additional row keyed by the\n    # same (user_id, entity_id) tagged with branch_id. Replace the\n    # strict PK with split partial-unique indexes: main rows uniquely\n    # keyed on (user_id, entity_id) where branch_id IS NULL, branch\n    # overlays uniquely keyed on (user_id, entity_id, branch_id).\n    try:\n        cur.execute(\n            \"ALTER TABLE user_entity_roles \"\n            \"DROP CONSTRAINT IF EXISTS user_entity_roles_pkey\"\n        )\n        cur.execute(\n            \"CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_main_pk \"\n            \"ON user_entity_roles (user_id, entity_id) \"\n            \"WHERE branch_id IS NULL\"\n        )\n        cur.execute(\n            \"CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_branch_pk \"\n            \"ON user_entity_roles (user_id, entity_id, branch_id) \"\n            \"WHERE branch_id IS NOT NULL\"\n        )\n    except Exception as exc:\n        msg = str(exc).lower()\n        if (\n            \"already exists\" not in msg\n            and \"does not exist\" not in msg\n            and \"duplicate\" not in msg\n        ):\n            raise\n",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_runtime_tenant_isolation.py",
+    "ts": "2026-05-09T16:32:37.785Z",
+    "line": 51522,
+    "tool": "Edit",
+    "old_string": "    def test_default_org_explicitly_constructs(self, db):\n        \"\"\"The platform runtime ('default') is allowed when passed\n        explicitly. Only empty/None is rejected.\"\"\"\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"org-test\",\n            actor_id=\"system\",\n            db=db,\n        )\n        assert runtime.organization_id == \"default\"",
+    "new_string": "    def test_default_org_explicitly_constructs(self, db):\n        \"\"\"The platform runtime ('default') is allowed when passed\n        explicitly. Only empty/None is rejected. Note: the literal\n        ``\"default\"`` here is the in-memory M10 platform sentinel \u2014\n        it's never written to a DB row (the platform runtime\n        re-resolves to a target tenant via ``_resolve_payload_org``\n        before any write). Migration v79's CHECK constraint blocks\n        ``\"default\"`` from landing as ``organization_id`` on any row\n        but does not affect this in-memory-only construction.\"\"\"\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"default\",\n            actor_id=\"system\",\n            db=db,\n        )\n        assert runtime.organization_id == \"default\"",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_runtime_tenant_isolation.py",
+    "ts": "2026-05-09T16:32:48.707Z",
+    "line": 51524,
+    "tool": "Edit",
+    "old_string": "        runtime = far.FinanceAgentRuntime(\n            organization_id=\"org-test\", actor_id=\"system\", db=db,\n            is_platform=True,\n        )\n        result = runtime._resolve_payload_org(\n            {\"organization_id\": \"orgA\"}, context=\"platform_dispatch\"\n        )\n        assert result == \"orgA\"\n\n    def test_default_org_runtime_without_is_platform_is_tenant_confined(self, db):\n        \"\"\"M10 regression: a runtime constructed with\n        ``organization_id=\"org-test\"`` but WITHOUT ``is_platform=True``\n        must be tenant-confined like any other tenant runtime. The\n        prior shape used the string ``\"default\"`` as the privilege\n        sentinel, which any silent ``\"default\"`` fallback could\n        accidentally trigger.\"\"\"\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"org-test\", actor_id=\"u1\", db=db,\n        )\n        with pytest.raises(ValueError, match=\"cross_tenant_write_blocked\"):\n            runtime._resolve_payload_org(\n                {\"organization_id\": \"orgA\"}, context=\"default_string_sentinel\"\n            )\n\n    def test_platform_runtime_with_no_payload_org_returns_default(self, db):\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"org-test\", actor_id=\"system\", db=db,\n            is_platform=True,\n        )\n        result = runtime._resolve_payload_org({}, context=\"test\")\n        assert result == \"default\"",
+    "new_string": "        runtime = far.FinanceAgentRuntime(\n            organization_id=\"default\", actor_id=\"system\", db=db,\n            is_platform=True,\n        )\n        result = runtime._resolve_payload_org(\n            {\"organization_id\": \"orgA\"}, context=\"platform_dispatch\"\n        )\n        assert result == \"orgA\"\n\n    def test_default_org_runtime_without_is_platform_is_tenant_confined(self, db):\n        \"\"\"M10 regression: a runtime constructed with\n        ``organization_id=\"default\"`` but WITHOUT ``is_platform=True``\n        must be tenant-confined like any other tenant runtime. The\n        prior shape used the string ``\"default\"`` as the privilege\n        sentinel, which any silent ``\"default\"`` fallback could\n        accidentally trigger.\"\"\"\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"default\", actor_id=\"u1\", db=db,\n        )\n        with pytest.raises(ValueError, match=\"cross_tenant_write_blocked\"):\n            runtime._resolve_payload_org(\n                {\"organization_id\": \"orgA\"}, context=\"default_string_sentinel\"\n            )\n\n    def test_platform_runtime_with_no_payload_org_returns_default(self, db):\n        runtime = far.FinanceAgentRuntime(\n            organization_id=\"default\", actor_id=\"system\", db=db,\n            is_platform=True,\n        )\n        result = runtime._resolve_payload_org({}, context=\"test\")\n        assert result == \"default\"",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_workspace_audit_export.py",
+    "ts": "2026-05-09T19:01:00.386Z",
+    "line": 51698,
+    "tool": "Edit",
+    "old_string": "    assert body[\"content_filename\"].startswith(\"audit-default-\")",
+    "new_string": "    assert body[\"content_filename\"].startswith(\"audit-org-test-\")",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_workspace_erp_field_mappings.py",
+    "ts": "2026-05-09T19:01:57.605Z",
+    "line": 51707,
+    "tool": "Edit",
+    "old_string": "    assert state_entry[\"org-test\"].startswith(\"custbody_\")",
+    "new_string": "    assert state_entry[\"default\"].startswith(\"custbody_\")",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/tests/test_erp_payment_dispatcher.py",
+    "ts": "2026-05-09T20:36:45.331Z",
+    "line": 51955,
+    "tool": "Edit",
+    "old_string": "    expected_key = (\n        \"payment_orphan:default:netsuite:VP-ORPHAN\"\n    )",
+    "new_string": "    expected_key = (\n        \"payment_orphan:org-test:netsuite:VP-ORPHAN\"\n    )",
+    "replace_all": false
+  },
+  {
+    "file": "/Users/mombalam/Desktop/Clearledgr.v1.fresh/ui/web-app/src/routes/pages/PipelinePage.js",
+    "ts": "2026-05-10T07:48:28.659Z",
+    "line": 52280,
+    "tool": "Edit",
+    "old_string": "    perfMarkDone('kanban', { context: { org_id: orgId || 'default' } });",
+    "new_string": "    perfMarkDone('kanban', { context: { org_id: orgId || 'unscoped' } });",
+    "replace_all": false
+  }
+]

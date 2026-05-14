@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -627,19 +627,27 @@ async def get_autopilot_status(
         payload["runtime_surface"] = runtime_surface_contract
     # Surface canonical runtime readiness and durable queue state.
     try:
-        from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
+        from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+        from clearledgr.core.database import get_db as _get_runtime_db
 
-        # Pre-fix this coerced ``getattr(_user, "organization_id", "default") or "default"``,
-        # which under M10 silently obtains an ``is_platform=True`` runtime
-        # keyed to the legacy ``"default"`` org whenever the session's
-        # organization_id was missing or empty. The runtime then
-        # surfaces other tenants' agent-skill readiness and pending
-        # retry job state on this endpoint, plus grants cross-tenant
-        # dispatch privilege if any later call dispatches through it.
-        # Use the canonical session-scoped resolver — same fail-closed
-        # contract as every other ``/api/ops/*`` route on this surface.
+        # M11 fixed the org coercion (was: ``getattr(_user,
+        # "organization_id", "default") or "default"``). M16 finishes
+        # the job: this is a tenant ops endpoint surfacing a single
+        # tenant's runtime status — it should NEVER use the platform
+        # runtime. ``get_platform_finance_runtime`` constructs with
+        # ``is_platform=True``, which would let any future write
+        # dispatch through this cached instance bypass the M10
+        # cross-tenant gate (``_resolve_payload_org`` returns the
+        # payload org unchanged when ``is_platform`` is set). Build a
+        # fresh tenant-confined runtime instead — same status reads,
+        # zero platform privilege.
         org_id = _assert_org_access(_user, getattr(_user, "organization_id", None))
-        runtime = get_platform_finance_runtime(org_id)
+        runtime = FinanceAgentRuntime(
+            organization_id=org_id,
+            actor_id=getattr(_user, "user_id", None) or getattr(_user, "email", None) or "ops_status",
+            actor_email=getattr(_user, "email", None),
+            db=_get_runtime_db(),
+        )
         execution_contract = _execution_contract_status()
         enabled_by_config = _env_flag("AP_AGENT_AUTONOMOUS_RETRY_ENABLED", True)
         post_process_enabled = _env_flag("AP_AGENT_POST_PROCESS_DURABLE_ENABLED", True)
@@ -648,11 +656,38 @@ async def get_autopilot_status(
             "AP_AGENT_NON_DURABLE_RETRY_ALLOWED",
             allow_non_durable_default,
         )
+        # M18: read-only pending count instead of
+        # ``runtime.resume_pending_agent_tasks()`` — that method
+        # DRAINS the retry queue (executes write-side intents). The
+        # M16 commit message acknowledged "slightly more allocation"
+        # but missed that this turned the GET status endpoint into a
+        # per-request queue trigger. Two issues that landed in
+        # production behavior:
+        #
+        # (1) Thundering herd: status polled by the SPA every N
+        #     seconds × M users × open tabs => N×M concurrent
+        #     drains contending on the per-org advisory lock.
+        # (2) DoS surface: an authenticated low-priv user can hammer
+        #     this read-shaped endpoint to force unbounded queue
+        #     drains. The endpoint is sold to operators as "status
+        #     read" but it was running writes.
+        #
+        # Replace with a bounded list-due read. Resume itself stays
+        # available via Celery Beat (``fire_pending_timers``) and
+        # the dedicated ``deliver_audit_webhook`` retry chain — the
+        # ops endpoint just shows what's in the queue.
+        try:
+            pending_due = runtime.db.list_due_agent_retry_jobs(
+                organization_id=org_id, limit=25,
+            )
+            pending_count = len(pending_due) if pending_due else 0
+        except Exception:
+            pending_count = None
         payload["agent_runtime"] = {
             "available": True,
             "mode": "finance_agent_runtime",
             "organization_id": org_id,
-            "pending_retry_jobs": await runtime.resume_pending_agent_tasks(),
+            "pending_retry_jobs": {"count": pending_count, "drained": False},
             "ap_skill_readiness": runtime.skill_readiness("ap_v1", window_hours=168),
             "ap_autonomy_gate": runtime.ap_autonomy_summary(window_hours=168),
             "autonomous_retry": {

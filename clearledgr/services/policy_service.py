@@ -73,6 +73,31 @@ POLICY_KINDS: Set[str] = {
     #   - policy_only:        skip matching entirely; route via
     #                          approval_thresholds.
     "match_mode",
+    # Sprint 5 Phase A — branchable backoffice config (item #9 in
+    # the ModernRelay-inspired roadmap). Four new single-blob kinds
+    # that share Sprint 2's branch + replay infrastructure with the
+    # existing kinds. Category-2 row-set surfaces (vendor master,
+    # GL chart, custom roles, entity restrictions) ride a separate
+    # overlay table — see ``services/rowset_branch.py`` (Phase B).
+    #
+    # ``sanctions_list`` — per-tenant sanctions screening list.
+    # Branch-and-replay lets compliance test a list update against
+    # historical AP items without affecting live screening.
+    "sanctions_list",
+    # ``erp_field_mappings`` — per-tenant ERP custom-field mappings
+    # (NetSuite custbody_*, SAP Z-fields, etc.). Already a feature
+    # surface (workspace_erp_field_mappings); now versioned.
+    "erp_field_mappings",
+    # ``approval_routing`` — channel routing for approval requests
+    # (Slack channel ID, Teams team, email distribution list, fallback).
+    # Distinct from ``approval_thresholds`` which determines WHO has
+    # to approve; this determines WHERE the request lands.
+    "approval_routing",
+    # ``org_settings`` — operator-tunable org-level toggles
+    # (timezone, fiscal year start, default currency, default
+    # payment terms). Branchable for org-wide changes that need
+    # ops-side preview before ship.
+    "org_settings",
 }
 
 VALID_MATCH_MODES: Set[str] = {
@@ -97,6 +122,39 @@ class PolicyVersion:
     description: str = ""
     parent_version_id: Optional[str] = None
     is_rollback: bool = False
+    # Sprint 2 branchable policy: NULL = main, otherwise the branch
+    # this version belongs to. ``get_active`` filters on
+    # ``branch_id IS NULL`` so branched experiments don't accidentally
+    # become production.
+    branch_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PolicyBranch:
+    """A named ref pointing at a ``PolicyVersion``.
+
+    Branches are the unit of policy experimentation. Operators
+    create a branch off a base version, commit edits (each commit
+    appends a new ``PolicyVersion`` with this branch's id), replay
+    the head against historical AP items, and either merge (the
+    head's content becomes a new version on main) or abandon.
+    """
+
+    id: str
+    organization_id: str
+    policy_kind: str
+    name: str
+    head_version_id: str
+    base_version_id: str
+    status: str  # 'open' | 'merged' | 'abandoned'
+    description: str
+    created_at: str
+    created_by: str
+    merged_at: Optional[str] = None
+    merged_into_version_id: Optional[str] = None
+    merged_by: Optional[str] = None
+    abandoned_at: Optional[str] = None
+    abandoned_by: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +183,10 @@ class PolicyKindError(ValueError):
 
 class PolicyVersionNotFound(LookupError):
     """Raised when a version_id doesn't exist for the org."""
+
+
+class PolicyBranchNotFound(LookupError):
+    """Raised when a branch_id (or branch name) doesn't exist for the org."""
 
 
 # ─── Service ────────────────────────────────────────────────────────
@@ -246,6 +308,335 @@ class PolicyService:
             is_rollback=True,
         )
 
+    # ─── Branches (Sprint 2 — branchable AP policy with replay) ──
+
+    def create_branch(
+        self,
+        kind: str,
+        *,
+        name: str,
+        actor: str,
+        base_version_id: Optional[str] = None,
+        description: str = "",
+    ) -> "PolicyBranch":
+        """Open a branch off ``base_version_id`` (or the active main
+        version, if not supplied).
+
+        The branch has no commits yet — its ``head_version_id`` equals
+        ``base_version_id``. The first ``commit_to_branch`` advances
+        the head and writes a new ``policy_versions`` row tagged with
+        this branch's id.
+
+        Names must be unique across open branches per (org, kind).
+        Reusing a name from a merged / abandoned branch is allowed —
+        history reads can still find the closed branch by name +
+        status.
+        """
+        _validate_kind(kind)
+        normalized_name = (name or "").strip()
+        if not normalized_name:
+            raise ValueError("branch name is required")
+        if normalized_name in {"main", ""}:
+            raise ValueError(
+                "branch name 'main' is reserved for the active version chain"
+            )
+        if base_version_id is None:
+            active = self.get_active(kind)
+            base_version_id = active.id
+        else:
+            # Validate the base version exists + belongs to this org
+            # — passing a foreign org's version id would silently bind
+            # the branch to that org's content otherwise.
+            base = self.get_version(base_version_id)
+            if base.policy_kind != kind:
+                raise ValueError(
+                    f"base version {base_version_id!r} is for kind "
+                    f"{base.policy_kind!r}, not {kind!r}"
+                )
+
+        branch = PolicyBranch(
+            id=f"PB-{uuid.uuid4().hex}",
+            organization_id=self.organization_id,
+            policy_kind=kind,
+            name=normalized_name,
+            head_version_id=base_version_id,
+            base_version_id=base_version_id,
+            status="open",
+            description=description or "",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            created_by=actor,
+        )
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO policy_branches
+                  (id, organization_id, policy_kind, name,
+                   head_version_id, base_version_id, status, description,
+                   created_at, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    branch.id, branch.organization_id, branch.policy_kind,
+                    branch.name, branch.head_version_id, branch.base_version_id,
+                    branch.status, branch.description, branch.created_at,
+                    branch.created_by,
+                ),
+            )
+            conn.commit()
+        return branch
+
+    def commit_to_branch(
+        self,
+        branch_id: str,
+        content: Dict[str, Any],
+        *,
+        actor: str,
+        description: str = "",
+    ) -> PolicyVersion:
+        """Append a new version to a branch.
+
+        Creates a ``policy_versions`` row with ``branch_id`` set and
+        ``parent_version_id`` pointing at the branch's current head,
+        then advances the branch's head pointer. Idempotent on
+        content hash: re-committing the same content returns the
+        existing head without inflating the version chain.
+
+        Branch commits do NOT mirror into ``settings_json`` —
+        production routing keeps reading main. The merge step is the
+        only path that promotes branch content into runtime.
+        """
+        branch = self.get_branch(branch_id)
+        if branch.status != "open":
+            raise ValueError(
+                f"cannot commit to branch {branch.name!r}: status={branch.status!r}"
+            )
+
+        new_hash = _hash_content(content)
+        head = self.get_version(branch.head_version_id)
+        if head.content_hash == new_hash:
+            # No-op commit; return the existing head.
+            return head
+
+        new_version = self._insert(
+            kind=branch.policy_kind,
+            content=content,
+            created_by=actor,
+            description=description,
+            parent_version_id=branch.head_version_id,
+            is_rollback=False,
+            branch_id=branch.id,
+        )
+        # Advance the branch's head pointer.
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE policy_branches SET head_version_id = %s WHERE id = %s",
+                (new_version.id, branch.id),
+            )
+            conn.commit()
+        return new_version
+
+    def list_branches(
+        self,
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 200,
+    ) -> List["PolicyBranch"]:
+        """Branches for this org, newest-first. Optional filters by
+        kind ('approval_thresholds' / etc.) and status ('open' /
+        'merged' / 'abandoned').
+        """
+        self.db.initialize()
+        clauses = ["organization_id = %s"]
+        params: List[Any] = [self.organization_id]
+        if kind:
+            _validate_kind(kind)
+            clauses.append("policy_kind = %s")
+            params.append(kind)
+        if status:
+            if status not in {"open", "merged", "abandoned"}:
+                raise ValueError(f"invalid status filter {status!r}")
+            clauses.append("status = %s")
+            params.append(status)
+        sql = (
+            "SELECT * FROM policy_branches "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY created_at DESC LIMIT %s"
+        )
+        params.append(int(limit))
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return [_row_to_branch(dict(r)) for r in rows]
+
+    def get_branch(self, branch_id: str) -> "PolicyBranch":
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM policy_branches WHERE id = %s AND organization_id = %s",
+                (branch_id, self.organization_id),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise PolicyBranchNotFound(
+                f"branch {branch_id!r} not found for org {self.organization_id!r}"
+            )
+        return _row_to_branch(dict(row))
+
+    def get_branch_by_name(
+        self, kind: str, name: str, *, status: str = "open",
+    ) -> "PolicyBranch":
+        _validate_kind(kind)
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM policy_branches "
+                "WHERE organization_id = %s AND policy_kind = %s "
+                "AND name = %s AND status = %s",
+                (self.organization_id, kind, name, status),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise PolicyBranchNotFound(
+                f"no {status} branch named {name!r} for kind {kind!r}"
+            )
+        return _row_to_branch(dict(row))
+
+    def diff_branch(self, branch_id: str) -> Dict[str, Any]:
+        """Compare a branch's head content against the current main.
+
+        Returns a dict with both contents + a coarse "changed" flag.
+        Replay-driven impact analysis (how AP routing would shift)
+        is the separate ``replay_against(branch.head_version_id)``
+        flow; this method is the cheap content-level diff.
+        """
+        branch = self.get_branch(branch_id)
+        head = self.get_version(branch.head_version_id)
+        try:
+            main_active = self.get_active(branch.policy_kind)
+        except Exception:
+            main_active = None
+        return {
+            "branch_id": branch.id,
+            "branch_name": branch.name,
+            "branch_head_version_id": head.id,
+            "branch_head_content": head.content,
+            "branch_head_hash": head.content_hash,
+            "main_version_id": main_active.id if main_active else None,
+            "main_version_number": main_active.version_number if main_active else None,
+            "main_content": main_active.content if main_active else None,
+            "main_hash": main_active.content_hash if main_active else None,
+            "changed": (main_active is None) or (head.content_hash != main_active.content_hash),
+        }
+
+    def merge_branch(
+        self,
+        branch_id: str,
+        *,
+        actor: str,
+        description: str = "",
+    ) -> PolicyVersion:
+        """Promote a branch's head content to a new version on main.
+
+        Creates a fresh ``policy_versions`` row with ``branch_id =
+        NULL`` and ``parent_version_id`` pointing at both the prior
+        main head AND (via the audit trail) the branch's head — so
+        history readers can trace the merge back to the source
+        branch. Marks the branch as ``merged`` and records the new
+        version id on the branch row.
+
+        Mirrors content into ``settings_json`` like ``set_policy``,
+        so production routing picks up the merged policy on the
+        next read.
+
+        Idempotent on content hash: if the branch's head content
+        matches the current main, the branch is closed without a
+        new version.
+        """
+        branch = self.get_branch(branch_id)
+        if branch.status != "open":
+            raise ValueError(
+                f"cannot merge branch {branch.name!r}: status={branch.status!r}"
+            )
+        head = self.get_version(branch.head_version_id)
+
+        # Pre-merge content hash check: a no-op merge (branch head ==
+        # current main content) closes the branch without inflating
+        # the version chain.
+        try:
+            main_active = self.get_active(branch.policy_kind)
+        except Exception:
+            main_active = None
+
+        if main_active is not None and main_active.content_hash == head.content_hash:
+            self._mark_branch_merged(branch.id, main_active.id, actor)
+            return main_active
+
+        # Standard merge: create a new version on main with the
+        # branch's content. ``set_policy`` handles settings_json
+        # mirroring so runtime readers pick up the change.
+        merge_description = (
+            description
+            or f"Merged branch {branch.name!r} (v{head.version_number}) into main"
+        )
+        new_main_version = self.set_policy(
+            kind=branch.policy_kind,
+            content=head.content,
+            actor=actor,
+            description=merge_description,
+            parent_version_id=main_active.id if main_active else None,
+        )
+        self._mark_branch_merged(branch.id, new_main_version.id, actor)
+        return new_main_version
+
+    def abandon_branch(
+        self,
+        branch_id: str,
+        *,
+        actor: str,
+    ) -> "PolicyBranch":
+        """Close a branch without merging. Versions on the branch
+        stay in ``policy_versions`` (they're audit-trail evidence
+        of an experiment that was tried) but the branch is no
+        longer ``open``.
+        """
+        branch = self.get_branch(branch_id)
+        if branch.status != "open":
+            raise ValueError(
+                f"cannot abandon branch {branch.name!r}: status={branch.status!r}"
+            )
+        ts = datetime.now(timezone.utc).isoformat()
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE policy_branches SET status = 'abandoned', "
+                "abandoned_at = %s, abandoned_by = %s WHERE id = %s",
+                (ts, actor, branch.id),
+            )
+            conn.commit()
+        return self.get_branch(branch.id)
+
+    def _mark_branch_merged(self, branch_id: str, target_version_id: str, actor: str) -> None:
+        ts = datetime.now(timezone.utc).isoformat()
+        self.db.initialize()
+        with self.db.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE policy_branches SET status = 'merged', "
+                "merged_at = %s, merged_by = %s, merged_into_version_id = %s "
+                "WHERE id = %s",
+                (ts, actor, target_version_id, branch_id),
+            )
+            conn.commit()
+
     # ─── Replay (the novel piece) ────────────────────────────────
 
     def replay_against(
@@ -296,10 +687,20 @@ class PolicyService:
     # ─── Internals ────────────────────────────────────────────────
 
     def _fetch_latest(self, kind: str) -> Optional[PolicyVersion]:
+        """Latest version on **main** for org+kind.
+
+        Sprint 2 branchable-policy: filters ``branch_id IS NULL`` so
+        in-progress branch experiments don't accidentally become the
+        active production policy. Branches advance via
+        ``commit_to_branch`` (which sets ``branch_id``); merges write
+        a fresh row with ``branch_id = NULL`` so the merged content
+        flows through ``get_active`` like any normal ``set_policy``.
+        """
         self.db.initialize()
         sql = (
             "SELECT * FROM policy_versions "
             "WHERE organization_id = %s AND policy_kind = %s "
+            "AND branch_id IS NULL "
             "ORDER BY version_number DESC LIMIT 1"
         )
         with self.db.connect() as conn:
@@ -317,7 +718,17 @@ class PolicyService:
         description: str,
         parent_version_id: Optional[str],
         is_rollback: bool,
+        branch_id: Optional[str] = None,
     ) -> PolicyVersion:
+        """Append a new ``policy_versions`` row.
+
+        ``version_number`` is monotonic per (org, kind) regardless of
+        branch — every commit (main or branch) gets a fresh number.
+        Keeps audit replay deterministic (one number = one row).
+        ``branch_id=None`` means main; ``branch_id=<id>`` means the
+        version belongs to a branch and is filtered out of
+        ``get_active`` / ``_fetch_latest``.
+        """
         self.db.initialize()
         latest_number = 0
         with self.db.connect() as conn:
@@ -345,6 +756,7 @@ class PolicyService:
             description=description,
             parent_version_id=parent_version_id,
             is_rollback=is_rollback,
+            branch_id=branch_id,
         )
         with self.db.connect() as conn:
             cur = conn.cursor()
@@ -353,15 +765,15 @@ class PolicyService:
                 INSERT INTO policy_versions
                   (id, organization_id, policy_kind, version_number,
                    content_json, content_hash, created_at, created_by,
-                   description, parent_version_id, is_rollback)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   description, parent_version_id, is_rollback, branch_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     version.id, version.organization_id, version.policy_kind,
                     version.version_number, json.dumps(version.content),
                     version.content_hash, version.created_at, version.created_by,
                     version.description, version.parent_version_id,
-                    1 if version.is_rollback else 0,
+                    1 if version.is_rollback else 0, branch_id,
                 ),
             )
             conn.commit()
@@ -516,6 +928,48 @@ def _default_content(kind: str) -> Dict[str, Any]:
                 "show_actor_attribution": True,
             },
         }
+    # ─── Sprint 5 Phase A defaults ──────────────────────────────
+    if kind == "sanctions_list":
+        # Empty list by default. Each ``entries`` row carries the
+        # sanctioned name + reason + source (OFAC / EU / UN / custom)
+        # so an audit explaining why a screening fired can render
+        # back to the originating source.
+        return {"entries": [], "default_action": "block"}
+    if kind == "erp_field_mappings":
+        # One namespace per supported ERP. Keys inside each
+        # namespace are Solden field names → ERP custom field ids
+        # (custbody_*, YY1_*, etc.). Defaults are intentionally
+        # empty so an org that hasn't configured mappings produces
+        # no spurious ERP custom-field writes.
+        return {
+            "netsuite": {},
+            "sap": {},
+            "quickbooks": {},
+            "xero": {},
+        }
+    if kind == "approval_routing":
+        # Where approval requests land. Empty defaults mean "use
+        # the existing tenant integrations" — Slack channel
+        # resolves to the org's default channel, Teams to the
+        # default team. Operators override here when they want a
+        # specific channel for AP approvals (vs e.g. mention
+        # threads).
+        return {
+            "slack_channel": "",
+            "teams_team_id": "",
+            "email_distribution": [],
+            "fallback_channel": "slack",
+        }
+    if kind == "org_settings":
+        # Org-level toggles that don't fit any other kind. Kept
+        # narrow on purpose — adding a new toggle here is a small
+        # decision; adding a whole new kind is a bigger one.
+        return {
+            "timezone": "UTC",
+            "fiscal_year_start": "01-01",
+            "default_currency": "USD",
+            "default_payment_terms_days": 30,
+        }
     return {}
 
 
@@ -552,6 +1006,44 @@ def _slice_settings_for_kind(kind: str, settings: Dict[str, Any]) -> Dict[str, A
         if isinstance(existing, dict) and existing:
             return existing
         return _default_content("annotation_targets")
+    # ─── Sprint 5 Phase A slices ────────────────────────────────
+    if kind == "sanctions_list":
+        existing = settings.get("sanctions_list") or {}
+        if isinstance(existing, dict) and "entries" in existing:
+            return {
+                "entries": list(existing.get("entries") or []),
+                "default_action": str(existing.get("default_action") or "block"),
+            }
+        return _default_content("sanctions_list")
+    if kind == "erp_field_mappings":
+        existing = settings.get("erp_field_mappings") or {}
+        if isinstance(existing, dict) and existing:
+            # Make sure every supported ERP namespace is present
+            # (operators sometimes ship with only one configured;
+            # normalize on read so the version content has a stable
+            # shape for diffing / replaying).
+            normalized = dict(_default_content("erp_field_mappings"))
+            for key, value in existing.items():
+                if isinstance(value, dict):
+                    normalized[key] = value
+            return normalized
+        return _default_content("erp_field_mappings")
+    if kind == "approval_routing":
+        existing = settings.get("approval_routing") or {}
+        if isinstance(existing, dict) and existing:
+            base = dict(_default_content("approval_routing"))
+            base.update({k: v for k, v in existing.items()
+                          if k in base})
+            return base
+        return _default_content("approval_routing")
+    if kind == "org_settings":
+        existing = settings.get("org_settings") or {}
+        if isinstance(existing, dict) and existing:
+            base = dict(_default_content("org_settings"))
+            base.update({k: v for k, v in existing.items()
+                          if k in base})
+            return base
+        return _default_content("org_settings")
     return {}
 
 
@@ -579,6 +1071,22 @@ def _merge_kind_into_settings(
             settings["match_mode"] = {"mode": mode}
     elif kind == "annotation_targets":
         settings["annotation_targets"] = dict(content or {})
+    # ─── Sprint 5 Phase A mirror ────────────────────────────────
+    elif kind == "sanctions_list":
+        # Normalize to the canonical shape so settings_json stays
+        # stable regardless of how the operator authored the JSON.
+        settings["sanctions_list"] = {
+            "entries": list((content or {}).get("entries") or []),
+            "default_action": str(
+                (content or {}).get("default_action") or "block"
+            ),
+        }
+    elif kind == "erp_field_mappings":
+        settings["erp_field_mappings"] = dict(content or {})
+    elif kind == "approval_routing":
+        settings["approval_routing"] = dict(content or {})
+    elif kind == "org_settings":
+        settings["org_settings"] = dict(content or {})
 
 
 def _row_to_version(row: Dict[str, Any]) -> PolicyVersion:
@@ -602,6 +1110,27 @@ def _row_to_version(row: Dict[str, Any]) -> PolicyVersion:
         description=str(row.get("description") or ""),
         parent_version_id=str(row.get("parent_version_id")) if row.get("parent_version_id") else None,
         is_rollback=bool(row.get("is_rollback") or 0),
+        branch_id=str(row.get("branch_id")) if row.get("branch_id") else None,
+    )
+
+
+def _row_to_branch(row: Dict[str, Any]) -> "PolicyBranch":
+    return PolicyBranch(
+        id=str(row.get("id") or ""),
+        organization_id=str(row.get("organization_id") or ""),
+        policy_kind=str(row.get("policy_kind") or ""),
+        name=str(row.get("name") or ""),
+        head_version_id=str(row.get("head_version_id") or ""),
+        base_version_id=str(row.get("base_version_id") or ""),
+        status=str(row.get("status") or "open"),
+        description=str(row.get("description") or ""),
+        created_at=str(row.get("created_at") or ""),
+        created_by=str(row.get("created_by") or ""),
+        merged_at=str(row.get("merged_at")) if row.get("merged_at") else None,
+        merged_into_version_id=str(row.get("merged_into_version_id")) if row.get("merged_into_version_id") else None,
+        merged_by=str(row.get("merged_by")) if row.get("merged_by") else None,
+        abandoned_at=str(row.get("abandoned_at")) if row.get("abandoned_at") else None,
+        abandoned_by=str(row.get("abandoned_by")) if row.get("abandoned_by") else None,
     )
 
 

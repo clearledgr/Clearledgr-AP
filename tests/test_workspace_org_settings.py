@@ -41,7 +41,7 @@ def db():
     inst = db_module.get_db()
     inst.initialize()
     # Seed the org so update_organization has something to mutate.
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -49,7 +49,7 @@ def _admin_user():
     return SimpleNamespace(
         email="admin@example.com",
         user_id="admin-user",
-        organization_id="default",
+        organization_id="org-test",
         role="owner",
     )
 
@@ -58,7 +58,7 @@ def _operator_user():
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
-        organization_id="default",
+        organization_id="org-test",
         role="ops",
     )
 
@@ -91,7 +91,7 @@ def test_patch_org_settings_requires_admin(client_factory):
     client = client_factory(_operator_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"organization_name": "Clearledgr"}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "Clearledgr"}},
     )
     assert resp.status_code == 403
     # workspace_shell._require_admin uses has_admin_access (Financial
@@ -105,7 +105,7 @@ def test_patch_org_settings_blocks_cross_tenant_rename(client_factory):
         "/api/workspace/org/settings",
         json={"organization_id": "other-org", "patch": {"organization_name": "Other"}},
     )
-    # Cross-tenant: admin of org 'default' cannot rename 'other-org'.
+    # Cross-tenant: admin of org 'org-test' cannot rename 'other-org'.
     # _resolve_org_id raises ``org_access_denied`` (no platform-level
     # super-admin concept on tenant APIs).
     assert resp.status_code == 403
@@ -121,7 +121,7 @@ def test_patch_org_settings_rejects_empty_name(client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"organization_name": "   "}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "   "}},
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "organization_name_required"
@@ -131,7 +131,7 @@ def test_patch_org_settings_rejects_oversize_name(client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"organization_name": "x" * 200}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "x" * 200}},
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "organization_name_too_long"
@@ -142,7 +142,7 @@ def test_patch_org_settings_rejects_control_characters(client_factory):
     resp = client.patch(
         "/api/workspace/org/settings",
         # Embedded NUL — would break CSV export + breaks UI rendering.
-        json={"organization_id": "default", "patch": {"organization_name": "Clear\x00ledgr"}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "Clear\x00ledgr"}},
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "organization_name_invalid_characters"
@@ -152,7 +152,7 @@ def test_patch_org_settings_rejects_invalid_integration_mode(client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"integration_mode": "neither"}},
+        json={"organization_id": "org-test", "patch": {"integration_mode": "neither"}},
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "invalid_integration_mode"
@@ -167,7 +167,7 @@ def test_patch_org_settings_renames_and_audits(db, client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"organization_name": "Clearledgr"}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "Clearledgr"}},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -175,18 +175,18 @@ def test_patch_org_settings_renames_and_audits(db, client_factory):
     assert body["organization"]["name"] == "Clearledgr"
 
     # DB carried the rename.
-    org = db.get_organization("default") or {}
+    org = db.get_organization("org-test") or {}
     assert org.get("name") == "Clearledgr"
 
     # Exactly one audit event was emitted, of type organization_renamed,
     # with the old + new names captured for post-mortem grep.
-    renames = _audit_events(db, org_id="default", event_type="organization_renamed")
+    renames = _audit_events(db, org_id="org-test", event_type="organization_renamed")
     assert len(renames) == 1
     event = renames[0]
     assert event["actor_id"] == "admin@example.com"
     assert event["actor_type"] == "user"
     # prev_state / new_state columns carry the rename pair.
-    assert event.get("prev_state") == "default"
+    assert event.get("prev_state") == "org-test"
     assert event.get("new_state") == "Clearledgr"
 
 
@@ -195,15 +195,15 @@ def test_patch_org_settings_noop_does_not_audit(db, client_factory):
     or churn the DB. Defensive against a UI that re-saves on blur."""
     client = client_factory(_admin_user)
     # Seed prior name.
-    db.update_organization("default", name="Clearledgr")
+    db.update_organization("org-test", name="Clearledgr")
 
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"organization_name": "Clearledgr"}},
+        json={"organization_id": "org-test", "patch": {"organization_name": "Clearledgr"}},
     )
     assert resp.status_code == 200
 
-    renames = _audit_events(db, org_id="default", event_type="organization_renamed")
+    renames = _audit_events(db, org_id="org-test", event_type="organization_renamed")
     assert renames == []
 
 
@@ -211,11 +211,11 @@ def test_patch_org_settings_audits_domain_change(db, client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"domain": "clearledgr.com"}},
+        json={"organization_id": "org-test", "patch": {"domain": "clearledgr.com"}},
     )
     assert resp.status_code == 200
 
-    domain_events = _audit_events(db, org_id="default", event_type="organization_domain_changed")
+    domain_events = _audit_events(db, org_id="org-test", event_type="organization_domain_changed")
     assert len(domain_events) == 1
     assert domain_events[0].get("new_state") == "clearledgr.com"
 
@@ -224,12 +224,12 @@ def test_patch_org_settings_audits_integration_mode_change(db, client_factory):
     client = client_factory(_admin_user)
     resp = client.patch(
         "/api/workspace/org/settings",
-        json={"organization_id": "default", "patch": {"integration_mode": "per_org"}},
+        json={"organization_id": "org-test", "patch": {"integration_mode": "per_org"}},
     )
     assert resp.status_code == 200
 
     mode_events = _audit_events(
-        db, org_id="default", event_type="organization_integration_mode_changed",
+        db, org_id="org-test", event_type="organization_integration_mode_changed",
     )
     assert len(mode_events) == 1
     assert mode_events[0].get("prev_state") == "shared"

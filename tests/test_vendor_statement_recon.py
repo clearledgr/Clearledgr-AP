@@ -46,7 +46,7 @@ def _create_ap_item(db, item_id, vendor, amount, invoice_number="", state="poste
         "invoice_number": invoice_number,
         "invoice_date": invoice_date,
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -58,7 +58,7 @@ class TestReferenceMatching:
     def test_exact_reference_match(self, db):
         _create_ap_item(db, "r1", "Acme", 1000.0, invoice_number="INV-001")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Acme", [
             {"reference": "INV-001", "amount": 1000.0, "date": "2026-03-15"},
         ])
@@ -69,7 +69,7 @@ class TestReferenceMatching:
     def test_partial_reference_match(self, db):
         _create_ap_item(db, "r2", "Acme", 500.0, invoice_number="INV-2026-002")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Acme", [
             {"reference": "2026-002", "amount": 500.0, "date": "2026-03-20"},
         ])
@@ -80,7 +80,7 @@ class TestReferenceMatching:
     def test_normalized_reference_match(self, db):
         _create_ap_item(db, "r3", "Acme", 750.0, invoice_number="INV/003")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Acme", [
             {"reference": "INV-003", "amount": 750.0, "date": "2026-03-25"},
         ])
@@ -93,7 +93,7 @@ class TestAmountDateMatching:
     def test_amount_and_date_match(self, db):
         _create_ap_item(db, "ad1", "Beta", 2000.0, invoice_date="2026-03-10")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Beta", [
             {"reference": "", "amount": 2000.0, "date": "2026-03-12"},  # 2 days apart
         ])
@@ -104,7 +104,7 @@ class TestAmountDateMatching:
     def test_amount_only_match(self, db):
         _create_ap_item(db, "ao1", "Gamma", 3333.33)
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Gamma", [
             {"reference": "", "amount": 3333.33, "date": ""},
         ])
@@ -120,7 +120,7 @@ class TestAmountDateMatching:
 class TestUnmatched:
     def test_unmatched_on_statement(self, db):
         # No AP items for this vendor
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("NoItems", [
             {"reference": "INV-X", "amount": 500.0, "date": "2026-03-01"},
         ])
@@ -132,7 +132,7 @@ class TestUnmatched:
         _create_ap_item(db, "u1", "Delta", 1000.0, invoice_number="INV-100")
         _create_ap_item(db, "u2", "Delta", 2000.0, invoice_number="INV-200")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         # Statement only has one of the two invoices
         result = svc.reconcile("Delta", [
             {"reference": "INV-100", "amount": 1000.0, "date": "2026-03-01"},
@@ -145,7 +145,7 @@ class TestUnmatched:
     def test_amount_discrepancy(self, db):
         _create_ap_item(db, "disc1", "Epsilon", 1000.0, invoice_number="INV-D1")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Epsilon", [
             {"reference": "INV-D1", "amount": 1050.0, "date": "2026-03-01"},  # $50 difference
         ])
@@ -163,7 +163,7 @@ class TestReconSummary:
         _create_ap_item(db, "s1", "Zeta", 1000.0, invoice_number="Z-001")
         _create_ap_item(db, "s2", "Zeta", 2000.0, invoice_number="Z-002")
 
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Zeta", [
             {"reference": "Z-001", "amount": 1000.0, "date": "2026-03-01"},
             {"reference": "Z-002", "amount": 2000.0, "date": "2026-03-15"},
@@ -181,7 +181,7 @@ class TestReconSummary:
         assert s["match_rate_pct"] == pytest.approx(66.7, abs=0.1)
 
     def test_empty_statement(self, db):
-        svc = VendorStatementRecon("default")
+        svc = VendorStatementRecon("org-test")
         result = svc.reconcile("Nobody", [])
         assert result["summary"]["match_rate_pct"] == 0.0
 
@@ -200,7 +200,7 @@ class TestReconEndpoint:
             return TokenData(
                 user_id="rc-user",
                 email="rc@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )

@@ -34,8 +34,11 @@ export function LoginPage() {
 
   const startGoogle = () => {
     setError('');
+    // M20 tenant-rename: don't send a placeholder organization_id —
+    // login pre-dates org binding. Backend derives the user's org
+    // from invite/domain in the OAuth callback; passing
+    // organization_id="default" used to flow into the legacy bucket.
     const params = new URLSearchParams({
-      organization_id: 'default',
       redirect_path: '/?post_oauth=1',
     });
     window.location.href = `${GOOGLE_START_PATH}?${params.toString()}`;
@@ -44,7 +47,6 @@ export function LoginPage() {
   const startMicrosoft = () => {
     setError('');
     const params = new URLSearchParams({
-      organization_id: 'default',
       redirect_path: '/?post_oauth=1',
     });
     // The api returns 503 microsoft_oauth_not_configured if the

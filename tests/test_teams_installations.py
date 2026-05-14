@@ -94,7 +94,7 @@ def test_teams_callback_refuses_aad_tenant_without_installation(monkeypatch):
     Source-inspection regression: a future change that drops the
     pre-AP-item AAD lookup or weakens its fail-closed contract
     (e.g., reverts to reading ``organization_id`` from the body or
-    falling back to "default") fails this test.
+    falling back to "org-test") fails this test.
     """
     from pathlib import Path
 

@@ -94,10 +94,15 @@ def resolve_ap_context(
 
     # Defense in depth: if the row's org disagrees with the requested
     # org, drop the row. Pre-fix this branch ADOPTED the row's org —
-    # the cross-tenant landmine.
+    # the cross-tenant landmine. The check uses ``!=`` directly so
+    # an empty-string row org also fails (was: ``if row_org and
+    # row_org != org_id`` which let ``row_org == ""`` slip through —
+    # caught downstream today, but the comment said "drop on
+    # disagreement" while the code skipped the drop on empty-org
+    # rows).
     if invoice_row and org_id:
         row_org = str(invoice_row.get("organization_id") or "").strip()
-        if row_org and row_org != org_id:
+        if row_org != org_id:
             invoice_row = None
 
     item = resolve_ap_item_reference(db, org_id, ref)
@@ -138,10 +143,12 @@ def resolve_ap_correlation_id(
             except Exception:
                 invoice_row = None
             # Defense in depth: drop foreign-org rows even if the
-            # unscoped fallback path returned one.
+            # unscoped fallback path returned one. Use ``!=`` directly
+            # so empty row org fails the check too — same M16
+            # tightening as the resolve_ap_context branch above.
             if isinstance(invoice_row, dict) and organization_id:
                 row_org = str(invoice_row.get("organization_id") or "").strip()
-                if row_org and row_org != organization_id:
+                if row_org != organization_id:
                     invoice_row = None
             row = invoice_row if isinstance(invoice_row, dict) else None
             organization_id = org_id

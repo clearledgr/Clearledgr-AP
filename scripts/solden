@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Thin shim for the Solden CLI. Lets operators run ``solden <cmd>``
+# from anywhere in $PATH instead of ``python -m clearledgr.cli``.
+#
+# Resolves the project root by walking up from this script's
+# location, then invokes the CLI module with whatever Python is on
+# the operator's PATH (no virtualenv assumed — ops boxes vary).
+#
+# Set SOLDEN_PYTHON to override the interpreter; useful when the
+# default ``python3`` is too old or behind a venv.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." &>/dev/null && pwd)"
+
+PY="${SOLDEN_PYTHON:-python3}"
+
+# Prepend the project root so ``-m clearledgr.cli`` resolves without
+# requiring an editable install. Operators on a fresh checkout can
+# clone + run with no setup.
+export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+exec "$PY" -m clearledgr.cli "$@"

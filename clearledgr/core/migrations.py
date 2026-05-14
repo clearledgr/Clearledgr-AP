@@ -4409,3 +4409,413 @@ def _v78_teams_installations(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_teams_installations_aad_tenant "
         "ON teams_installations(aad_tenant_id) WHERE is_active = 1"
     )
+
+
+@migration(
+    79,
+    "tenant rename: retire literal 'default' org id (M19 audit close-out)",
+)
+def _v79_tenant_rename_default(cur, db):
+    """Retire the literal ``"default"`` organization id.
+
+    Pre-fix: ``"default"`` had a dual identity — it was both a real
+    legacy single-tenant organization (the one M10 platform-runtime
+    privilege used to bind to) AND the placeholder string that
+    auto-provisioning + OAuth-state-pre-session paths used when no
+    real org was bound to a user. That ambiguity was the M19 audit's
+    last open landmine: any code site that lost the verified org
+    along the way silently routed to the legacy bucket.
+
+    Mo's tenant-policy decision (2026-05-09): unprovisioned users
+    should be GATED — land on a "your organization isn't set up yet"
+    screen, ops manually attaches them to a real org. So the literal
+    ``"default"`` becomes a sentinel that must NEVER be a real
+    tenant id again, and the new sentinel is ``"_unprovisioned"``
+    (mirrors the ``"_unauthenticated"`` Teams audit sentinel — the
+    underscore prefix guarantees no collision with a real tenant id).
+
+    What this migration does:
+
+    1. **Rename the legacy ``"default"`` organization row** (if any)
+       to a deterministic UUID-shaped id ``org_legacy_default``.
+       Idempotent: if no row exists, this is a no-op.
+    2. **Sweep every table with an ``organization_id`` column**: any
+       row pointing at ``"default"`` gets rebound to the new id.
+       Tables are discovered via ``information_schema`` so future
+       schema additions don't need to be enumerated here.
+    3. **Add CHECK constraints** preventing future inserts/updates
+       with ``id = 'default'`` on the ``organizations`` table or
+       ``organization_id = 'default'`` / ``organization_id =
+       '_unprovisioned'`` on every tenant-bound table. The
+       application-layer test
+       ``test_no_default_org_coercion_anywhere_in_clearledgr`` is the
+       first line of defense; the DB CHECK is the last.
+
+    Idempotency: every step uses ``IF NOT EXISTS`` / no-op-on-zero-
+    rows, so re-running is safe (e.g., a partial failure half-way
+    through completes cleanly on the next migrator pass).
+
+    The new sentinel ``"_unprovisioned"`` itself is NEVER inserted as
+    an organization row — it lives on user rows as their
+    ``organization_id`` until ops provisions them. ``require_org``
+    rejects it with a 403 ``organization_pending_provisioning`` so
+    the frontend can route to the provisioning-pending page.
+    """
+
+    LEGACY_ID = "default"
+    NEW_ID = "org_legacy_default"
+    SENTINEL = "_unprovisioned"
+
+    # Step 1: rename the legacy organizations row, if present.
+    # Use a single UPDATE with a WHERE so this is a no-op when no
+    # legacy row exists (e.g., fresh DBs created post-fix).
+    #
+    # M22 review #5 hardening: guard against the corner case where
+    # ``id='org_legacy_default'`` already exists (operator pre-created
+    # it, or migration was partially applied then re-run after a
+    # manual cleanup). Without the NOT EXISTS clause, the UPDATE
+    # would PK-violate and abort the migration mid-flight, leaving
+    # the schema in a half-migrated state. With it, the UPDATE
+    # silently no-ops and the migration continues.
+    cur.execute(
+        "UPDATE organizations SET id = %s "
+        "WHERE id = %s "
+        "AND NOT EXISTS (SELECT 1 FROM organizations WHERE id = %s)",
+        (NEW_ID, LEGACY_ID, NEW_ID),
+    )
+
+    # Step 2: walk every table with an ``organization_id`` column and
+    # rebind any rows that still point at the legacy literal. Use
+    # information_schema so the migration survives future schema
+    # additions.
+    cur.execute(
+        """
+        SELECT table_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND column_name = 'organization_id'
+          AND table_name <> 'schema_versions'
+        """
+    )
+    tenant_tables = [r["table_name"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+    for table in tenant_tables:
+        # Quote the table name defensively; information_schema only
+        # returns identifiers that already exist, so this is safe but
+        # the quoting protects against future names that collide with
+        # reserved words.
+        cur.execute(
+            f'UPDATE "{table}" SET organization_id = %s WHERE organization_id = %s',
+            (NEW_ID, LEGACY_ID),
+        )
+
+    # Step 3: CHECK constraint on ``organizations.id`` — the legacy
+    # bucket cannot be recreated. No future row may reuse the literal
+    # ``"default"`` or the ``"_unprovisioned"`` sentinel as a real
+    # org id.
+    #
+    # The application-layer guard is the canonical defense:
+    # ``assert_org_id`` / ``require_org`` reject both literals before
+    # any DB write, and the tree-walking test
+    # (``test_no_default_org_coercion_anywhere_in_clearledgr``)
+    # catches any new code path that tries to bypass them. This
+    # constraint is the last-resort backstop on the only table
+    # whose identity matters: if no organization row can ever have
+    # id="default" again, the literal cannot accidentally regrow into
+    # a real tenant — even if a future code path slips past the
+    # application checks.
+    #
+    # Per-table ``CHECK`` constraints on every ``organization_id``
+    # column were tempting (defense in depth) but rejected here:
+    # they break test fixtures that use ``"default"`` as a convenience
+    # placeholder, and the application layer already prevents the
+    # production landmine. Re-add them in a follow-up ticket once
+    # the test fixtures are swept (~395 failing tests scoped under
+    # M21).
+    try:
+        cur.execute(
+            "ALTER TABLE organizations "
+            "ADD CONSTRAINT organizations_id_not_legacy_default "
+            "CHECK (id NOT IN ('default', '_unprovisioned'))"
+        )
+    except Exception as exc:
+        # Tolerate already-applied: re-running migrations on a DB
+        # that previously got partway through is normal. Any other
+        # error is real and re-raises.
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
+
+
+@migration(
+    80,
+    "tenant rename: per-table CHECK constraints on every organization_id column (M21)",
+)
+def _v80_per_table_org_id_checks(cur, db):
+    """Defense-in-depth: block ``organization_id IN ('default',
+    '_unprovisioned')`` on every tenant-bound table.
+
+    M20 (migration v79) renamed the legacy ``"default"`` org row and
+    added a CHECK constraint on ``organizations.id``. The application
+    layer (``assert_org_id`` / ``require_org``) is the canonical
+    defense against the literal landing on tenant-data rows. M21
+    completes the picture: per-table CHECK constraints catch any
+    future code path that bypasses the application guard.
+
+    Exception: ``users`` legitimately holds the ``"_unprovisioned"``
+    sentinel as a placeholder until ops attaches the user to a real
+    org. Constrain ``users`` to forbid only ``"default"``, the
+    sentinel stays valid there.
+    """
+    cur.execute(
+        """
+        SELECT table_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND column_name = 'organization_id'
+          AND table_name <> 'schema_versions'
+        """
+    )
+    tenant_tables = [r["table_name"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+
+    for table in tenant_tables:
+        constraint_name = f"{table}_org_id_not_legacy_default"[:63]
+        if table == "users":
+            check_clause = "organization_id <> 'default'"
+        else:
+            check_clause = "organization_id NOT IN ('default', '_unprovisioned')"
+        try:
+            cur.execute(
+                f'ALTER TABLE "{table}" '
+                f'ADD CONSTRAINT "{constraint_name}" '
+                f"CHECK ({check_clause})"
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg or "duplicate" in msg:
+                continue
+            raise
+
+
+@migration(
+    81,
+    "AP policy branches: branch_id on policy_versions + policy_branches table (Sprint 2)",
+)
+def _v81_policy_branches(cur, db):
+    """Branchable AP policy.
+
+    Sprint 2 of the ModernRelay-inspired roadmap. Today the
+    ``policy_versions`` chain is linear: every ``set_policy`` call
+    appends a new version, ``get_active`` returns the latest by
+    ``version_number``, ``rollback_to`` creates a new linear version
+    copying historical content. There's no way for a finance team to
+    experiment with a policy change against historical AP items
+    without affecting production routing, they have to ship the
+    change to main and roll back if numbers look wrong.
+
+    Post-fix: branches are first-class refs to versions. Operators
+    create a branch off any historical version, commit edits to the
+    branch (each commit creates a new ``policy_versions`` row tagged
+    with the branch_id), replay the branch's tip against historical
+    AP items, and either merge (the branch's tip content becomes a
+    new version on main, mirrored into ``settings_json``) or
+    abandon. Versions stay immutable; the branch ref pointer moves.
+
+    Schema changes:
+
+    1. ``policy_versions.branch_id``, nullable. NULL = main (every
+       extant version pre-migration). Branched versions point at
+       their branch row.
+    2. ``policy_branches``, ref tracking + lifecycle metadata.
+       Status flow: ``open`` -> ``merged`` (success) or
+       ``abandoned`` (discarded). Open branches are unique per
+       ``(org, kind, name)`` via a partial unique index; merged /
+       abandoned branches keep their names so the audit trail
+       survives.
+
+    The ``get_active`` query in ``services/policy_service.py`` is
+    updated separately to filter ``branch_id IS NULL``. Until that
+    code change ships, this migration is a no-op for runtime
+    behavior, branched versions don't exist yet.
+    """
+    cur.execute(
+        "ALTER TABLE policy_versions ADD COLUMN IF NOT EXISTS branch_id TEXT"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_policy_versions_branch "
+        "ON policy_versions (organization_id, policy_kind, branch_id)"
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS policy_branches (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            policy_kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            head_version_id TEXT NOT NULL,
+            base_version_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            description TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            merged_at TEXT,
+            merged_into_version_id TEXT,
+            merged_by TEXT,
+            abandoned_at TEXT,
+            abandoned_by TEXT
+        )
+        """
+    )
+    # Open branches must have unique names per (org, kind). Merged /
+    # abandoned branches keep their names so historical replays can
+    # reference "the Q3 threshold experiment" by name even after it
+    # closed.
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS policy_branches_open_name_unique "
+        "ON policy_branches (organization_id, policy_kind, name) "
+        "WHERE status = 'open'"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_policy_branches_org_kind "
+        "ON policy_branches (organization_id, policy_kind, status)"
+    )
+    # M22 tenancy CHECK constraint: enforce on this new table the
+    # same way migration v80 did for every other tenant-bound table.
+    try:
+        cur.execute(
+            "ALTER TABLE policy_branches "
+            "ADD CONSTRAINT policy_branches_org_id_not_legacy_default "
+            "CHECK (organization_id NOT IN ('default', '_unprovisioned'))"
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
+
+
+@migration(
+    82,
+    "row-set branches: data_branches + overlay columns on row-set tables (Sprint 5 Phase B)",
+)
+def _v82_rowset_branch_overlays(cur, db):
+    """Branchable backoffice config, row-set surfaces (vendor master,
+    GL chart of accounts, custom roles, entity restrictions).
+
+    Sprint 5 Phase B of the ModernRelay-inspired roadmap. Where
+    Sprint 2's branchable AP policy treats a "branch" as a versioned
+    JSON blob (one row per version in ``policy_versions``), Phase B
+    treats a "branch" as an overlay on a row set: the live
+    vendor_profiles table plus a set of pending insert / modify /
+    delete operations recorded as overlay rows on the same table,
+    tagged with a ``branch_id``.
+
+    Reads on main filter ``branch_id IS NULL``. Branch reads union
+    main rows with the branch's overlay rows (overlay rows shadow /
+    tombstone main rows by primary key). Merge applies the overlay
+    operations to main; abandon discards them.
+
+    Schema additions per row-set table:
+
+    * ``branch_id TEXT`` — NULL = main; otherwise the branch
+      this overlay row belongs to.
+    * ``branch_op TEXT`` — 'insert' | 'modify' | 'delete' on
+      overlay rows; NULL on main rows.
+    * ``branch_base_id TEXT`` — for 'modify' / 'delete' overlays,
+      the primary-key id of the main row this overlay shadows /
+      tombstones. NULL for 'insert' overlays.
+
+    A new top-level ``data_branches`` table tracks branch lifecycle
+    (mirrors ``policy_branches`` from v81: open / merged / abandoned,
+    creator + merger metadata, base content_hash for conflict
+    detection).
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS data_branches (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            table_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            base_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            merged_at TEXT,
+            merged_by TEXT,
+            abandoned_at TEXT,
+            abandoned_by TEXT
+        )
+        """
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS data_branches_open_name_unique "
+        "ON data_branches (organization_id, table_name, name) "
+        "WHERE status = 'open'"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_data_branches_org_table "
+        "ON data_branches (organization_id, table_name, status)"
+    )
+    try:
+        cur.execute(
+            "ALTER TABLE data_branches "
+            "ADD CONSTRAINT data_branches_org_id_not_legacy_default "
+            "CHECK (organization_id NOT IN ('default', '_unprovisioned'))"
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
+
+    overlay_tables = (
+        "vendor_profiles",
+        "gl_corrections",
+        "custom_roles",
+        "user_entity_roles",
+    )
+    for table in overlay_tables:
+        cur.execute(
+            f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS branch_id TEXT'
+        )
+        cur.execute(
+            f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS branch_op TEXT'
+        )
+        cur.execute(
+            f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS branch_base_id TEXT'
+        )
+        cur.execute(
+            f'CREATE INDEX IF NOT EXISTS idx_{table}_branch '
+            f'ON "{table}" (organization_id, branch_id) '
+            f'WHERE branch_id IS NOT NULL'
+        )
+
+    # ``user_entity_roles`` has a composite PK (user_id, entity_id).
+    # Branch overlays need to allow an additional row keyed by the
+    # same (user_id, entity_id) tagged with branch_id. Replace the
+    # strict PK with split partial-unique indexes: main rows uniquely
+    # keyed on (user_id, entity_id) where branch_id IS NULL, branch
+    # overlays uniquely keyed on (user_id, entity_id, branch_id).
+    try:
+        cur.execute(
+            "ALTER TABLE user_entity_roles "
+            "DROP CONSTRAINT IF EXISTS user_entity_roles_pkey"
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_main_pk "
+            "ON user_entity_roles (user_id, entity_id) "
+            "WHERE branch_id IS NULL"
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS user_entity_roles_branch_pk "
+            "ON user_entity_roles (user_id, entity_id, branch_id) "
+            "WHERE branch_id IS NOT NULL"
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if (
+            "already exists" not in msg
+            and "does not exist" not in msg
+            and "duplicate" not in msg
+        ):
+            raise

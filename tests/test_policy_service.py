@@ -94,6 +94,21 @@ def test_merge_round_trips_for_every_kind():
             "customer_webhook": {"enabled": False, "filter_event_types": [], "include_metadata": True},
             "slack_card_update": {"enabled": False, "show_actor_attribution": True},
         },
+        # Sprint 5 Phase A — branchable backoffice config kinds.
+        "sanctions_list": {"entries": [], "default_action": "block"},
+        "erp_field_mappings": {"netsuite": {}, "sap": {}, "quickbooks": {}, "xero": {}},
+        "approval_routing": {
+            "slack_channel": "",
+            "teams_team_id": "",
+            "email_distribution": [],
+            "fallback_channel": "slack",
+        },
+        "org_settings": {
+            "timezone": "UTC",
+            "fiscal_year_start": "01-01",
+            "default_currency": "USD",
+            "default_payment_terms_days": 30,
+        },
     }
     for kind in POLICY_KINDS:
         settings: Dict[str, Any] = {}
@@ -130,10 +145,10 @@ def test_match_threshold_band_respects_vendor_filter():
     from clearledgr.services.policy_service import _match_threshold_band
     thresholds = [
         {"min_amount": 0, "max_amount": 10000, "label": "vip", "vendors": ["acme"]},
-        {"min_amount": 0, "max_amount": 10000, "label": "default"},
+        {"min_amount": 0, "max_amount": 10000, "label": "org-test"},
     ]
     assert _match_threshold_band(thresholds, 500, {"vendor_name": "Acme"}) == "vip"
-    assert _match_threshold_band(thresholds, 500, {"vendor_name": "Other Co"}) == "default"
+    assert _match_threshold_band(thresholds, 500, {"vendor_name": "Other Co"}) == "org-test"
 
 
 # ─── Replay strategies ─────────────────────────────────────────────
@@ -240,8 +255,14 @@ def _make_mock_db():
                 self._last = ({"coalesce": max((r["version_number"] for r in matching), default=0)},)
             elif sql_lower.startswith("select * from policy_versions where organization_id") and "limit 1" in sql_lower:
                 org, kind = params
+                # Sprint 2: ``_fetch_latest`` filters ``branch_id IS NULL``
+                # so branches don't accidentally become active. The fake
+                # cursor mirrors that — only main-branch rows count.
                 matching = sorted(
-                    [r for r in rows if r["organization_id"] == org and r["policy_kind"] == kind],
+                    [r for r in rows
+                     if r["organization_id"] == org
+                     and r["policy_kind"] == kind
+                     and r.get("branch_id") in (None, "")],
                     key=lambda r: r["version_number"], reverse=True,
                 )
                 self._last = (matching[0],) if matching else ()
@@ -257,14 +278,17 @@ def _make_mock_db():
                 matching = [r for r in rows if r["id"] == version_id and r["organization_id"] == org]
                 self._last = (matching[0],) if matching else ()
             elif sql_lower.startswith("insert into policy_versions"):
+                # Sprint 2 added the trailing branch_id parameter.
                 (vid, org, kind, vnum, content_json, content_hash, created_at,
-                 created_by, description, parent_version_id, is_rollback) = params
+                 created_by, description, parent_version_id, is_rollback,
+                 branch_id) = params
                 rows.append({
                     "id": vid, "organization_id": org, "policy_kind": kind,
                     "version_number": vnum, "content_json": content_json,
                     "content_hash": content_hash, "created_at": created_at,
                     "created_by": created_by, "description": description,
                     "parent_version_id": parent_version_id, "is_rollback": is_rollback,
+                    "branch_id": branch_id,
                 })
                 self._last = ()
             elif sql_lower.startswith("select * from ap_items"):

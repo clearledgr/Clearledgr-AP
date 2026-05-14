@@ -52,7 +52,7 @@ def _seed_ap_item_at_needs_approval(
     db,
     *,
     ap_item_id: str = "AP-TEAMS-1",
-    organization_id: str = "default",
+    organization_id: str = "org-test",
 ) -> Dict[str, Any]:
     """Create an AP item with the metadata Phase 1 reads for the
     auto-built decision_context snapshot, and walk it to
@@ -142,11 +142,11 @@ async def test_teams_approve_dispatch_lands_ui_surface_teams(postgres_test_db):
     """
     db = get_db()
     db.initialize()
-    db.ensure_organization("default", organization_name="Test Org")
+    db.ensure_organization("org-test", organization_name="Test Org")
     _seed_ap_item_at_needs_approval(db, ap_item_id="AP-TEAMS-APPROVE")
 
     runtime = build_channel_runtime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="alice@example.com",
         actor_email="alice@example.com",
         db=db,
@@ -214,11 +214,11 @@ async def test_teams_reject_dispatch_lands_ui_surface_teams(postgres_test_db):
     """Reject via Teams: same audit-trail contract."""
     db = get_db()
     db.initialize()
-    db.ensure_organization("default", organization_name="Test Org")
+    db.ensure_organization("org-test", organization_name="Test Org")
     _seed_ap_item_at_needs_approval(db, ap_item_id="AP-TEAMS-REJECT")
 
     runtime = build_channel_runtime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="bob@example.com",
         actor_email="bob@example.com",
         db=db,
@@ -261,11 +261,11 @@ async def test_teams_request_info_dispatch_lands_ui_surface_teams(postgres_test_
     """Request-info via Teams: same audit-trail contract."""
     db = get_db()
     db.initialize()
-    db.ensure_organization("default", organization_name="Test Org")
+    db.ensure_organization("org-test", organization_name="Test Org")
     _seed_ap_item_at_needs_approval(db, ap_item_id="AP-TEAMS-RFI")
 
     runtime = build_channel_runtime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="carol@example.com",
         actor_email="carol@example.com",
         db=db,

@@ -41,7 +41,7 @@ def client(db):
         return TokenData(
             user_id="analyst-1",
             email="analyst@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -68,7 +68,7 @@ def _create_item(db, item_id, vendor, amount, due_date, state="approved", curren
         "invoice_number": f"INV-{item_id}",
         "due_date": due_date,
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     })
 
 
@@ -85,7 +85,7 @@ class TestAPAgingBuckets:
         _create_item(db, "cur-1", "Vendor A", 1000.0, future)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["current"]["count"] == 1
@@ -98,7 +98,7 @@ class TestAPAgingBuckets:
         _create_item(db, "b30-1", "Vendor B", 500.0, past)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["1_30"]["count"] == 1
@@ -110,7 +110,7 @@ class TestAPAgingBuckets:
         _create_item(db, "b60-1", "Vendor C", 750.0, past)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["31_60"]["count"] == 1
@@ -122,7 +122,7 @@ class TestAPAgingBuckets:
         _create_item(db, "b90-1", "Vendor D", 2000.0, past)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["61_90"]["count"] == 1
@@ -134,7 +134,7 @@ class TestAPAgingBuckets:
         _create_item(db, "b90p-1", "Vendor E", 3000.0, past)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["90_plus"]["count"] == 1
@@ -146,7 +146,7 @@ class TestAPAgingBuckets:
         _create_item(db, "today-1", "Vendor F", 100.0, today)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["buckets"]["current"]["count"] == 1
@@ -165,7 +165,7 @@ class TestAPAgingFilters:
         _create_item(db, "closed-1", "Vendor G", 500.0, past, state="closed")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["total_open_count"] == 0
@@ -176,7 +176,7 @@ class TestAPAgingFilters:
         _create_item(db, "rej-1", "Vendor H", 300.0, past, state="rejected")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["total_open_count"] == 0
@@ -186,7 +186,7 @@ class TestAPAgingFilters:
         _create_item(db, "nodue-1", "Vendor I", 400.0, None, state="approved")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["total_open_count"] == 0
@@ -198,7 +198,7 @@ class TestAPAgingFilters:
         _create_item(db, "posted-1", "Vendor J", 800.0, past, state="posted_to_erp")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["total_open_count"] == 1
@@ -218,7 +218,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "mc-2", "Vendor Y", 500.0, past, currency="EUR")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         bucket = result["buckets"]["1_30"]
@@ -234,7 +234,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "sc-2", "Vendor B", 2000.0, past, currency="NGN")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["total_open_payables"]["USD"] == 1000.0
@@ -249,7 +249,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "vbc-2", "Acme Corp", 500.0, past, currency="EUR")
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         breakdown = result["vendor_breakdown"]
@@ -276,7 +276,7 @@ class TestAPAgingVendorBreakdown:
         _create_item(db, "vb-3", "Beta LLC", 2000.0, past_50)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         breakdown = result["vendor_breakdown"]
@@ -311,7 +311,7 @@ class TestAPAgingSummary:
         _create_item(db, "sum-3", "Vendor M", 3000.0, past_100)    # 90+
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         summary = result["summary"]
@@ -335,7 +335,7 @@ class TestAPAgingSummary:
         _create_item(db, "wavg-2", "Vendor B", 3000.0, past_50)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["weighted_avg_days_past_due"] == 40.0
@@ -346,7 +346,7 @@ class TestAPAgingSummary:
         _create_item(db, "wavgn-1", "Vendor A", 1000.0, future)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate()
 
         assert result["summary"]["weighted_avg_days_past_due"] is None
@@ -377,7 +377,7 @@ class TestAPAgingItemsCap:
             _create_item(db, f"cap-{i}", f"Vendor {i}", 100.0, past)
 
         from clearledgr.services.ap_aging_report import APAgingReport
-        report = APAgingReport("default")
+        report = APAgingReport("org-test")
         result = report.generate(items_per_bucket=3)
 
         bucket = result["buckets"]["1_30"]
@@ -396,7 +396,7 @@ class TestAPAgingEndpoint:
         future = (date.today() + timedelta(days=10)).isoformat()
         _create_item(db, "api-1", "Vendor N", 500.0, future)
 
-        resp = client.get("/api/ap/items/aging?organization_id=default")
+        resp = client.get("/api/ap/items/aging?organization_id=org-test")
         assert resp.status_code == 200
         data = resp.json()
         assert "buckets" in data
@@ -406,13 +406,13 @@ class TestAPAgingEndpoint:
 
     def test_aging_endpoint_empty_org(self, client, db):
         """No AP items for this org — should return empty buckets."""
-        resp = client.get("/api/ap/items/aging?organization_id=default")
+        resp = client.get("/api/ap/items/aging?organization_id=org-test")
         assert resp.status_code == 200
         data = resp.json()
         assert data["summary"]["total_open_count"] == 0
 
     def test_aging_endpoint_has_as_of_date(self, client, db):
-        resp = client.get("/api/ap/items/aging?organization_id=default")
+        resp = client.get("/api/ap/items/aging?organization_id=org-test")
         assert resp.status_code == 200
         data = resp.json()
         assert "as_of_date" in data

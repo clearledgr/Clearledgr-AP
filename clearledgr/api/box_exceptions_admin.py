@@ -55,7 +55,18 @@ def _require_admin(user: TokenData) -> None:
 
 
 def _assert_org_match(user: TokenData, organization_id: str) -> None:
-    if str(organization_id or "default") != str(user.organization_id):
+    """Assert the requested org matches the caller's session org.
+
+    Pre-fix this coerced ``organization_id or "default"`` before
+    comparing, the M4 landmine: a session whose
+    ``user.organization_id`` was the legacy ``"default"`` literal
+    could pass an empty body org and bypass the check. Same shape as
+    the audit's ops.py / gmail_extension_common fixes — both sides
+    must be non-empty and equal.
+    """
+    requested = str(organization_id or "").strip()
+    user_org = str(getattr(user, "organization_id", "") or "").strip()
+    if not requested or not user_org or requested != user_org:
         raise HTTPException(status_code=403, detail="org_mismatch")
 
 
@@ -167,6 +178,81 @@ def list_exceptions(
         str(r.get("raised_at") or ""),
     ))
     return {"items": items, "count": len(items)}
+
+
+@router.get("/exceptions/graph")
+def exception_graph(
+    box_type: Optional[str] = Query(None, description="Filter by box type (e.g. ap_item)"),
+    severity: Optional[str] = Query(None, description="Filter by severity"),
+    limit: int = Query(200, ge=1, le=500),
+    same_cause_window_days: int = Query(7, ge=1, le=90,
+        description="Window for inferring shares_cause_with edges between exceptions"),
+    user: TokenData = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Render the org's unresolved exceptions as a graph (Sprint 3-B).
+
+    Nodes:
+      * ``exception`` — one per row in the unresolved queue.
+      * ``ap_item`` — one per AP item that has an exception attached.
+      * ``vendor`` — one per distinct vendor across the AP items.
+
+    Edges:
+      * ``raised_on`` — exception → ap_item (the exception lives on
+        the AP item).
+      * ``billed_by`` — ap_item → vendor (matched by normalized
+        vendor_name).
+      * ``shares_cause_with`` — exception → exception when both share
+        the same vendor + exception_type within
+        ``same_cause_window_days``. Weighted by time-gap decay.
+
+    The frontend renders this as a force-directed graph or clustered
+    layout; the heavy lifting (cause-clustering, node typing) lives
+    server-side so every renderer (workspace SPA, Slack card link
+    target, future mobile) reads the same shape.
+    """
+    _require_admin(user)
+    if severity and severity not in _VALID_SEVERITIES:
+        raise HTTPException(status_code=400, detail="invalid_severity")
+
+    db = get_db()
+    items = _gather_unresolved(
+        db, user.organization_id, box_type=box_type, limit=limit,
+    )
+    if severity:
+        items = [row for row in items if str(row.get("severity")) == severity]
+
+    # Fetch the AP items referenced by these exceptions so the graph
+    # builder can decorate ap_item nodes with vendor + amount + state.
+    # Synthetic vendor-onboarding exceptions (no underlying ap_item)
+    # are fine — the builder handles missing records gracefully.
+    ap_ids = {str(row.get("box_id") or "").strip()
+              for row in items if row.get("box_id")}
+    ap_records: List[Dict[str, Any]] = []
+    if ap_ids and hasattr(db, "get_ap_item"):
+        for ap_id in ap_ids:
+            if not ap_id:
+                continue
+            try:
+                record = db.get_ap_item(ap_id)
+            except Exception:
+                record = None
+            if record:
+                # Tenant-scope check: drop AP items that don't
+                # belong to this org. ``get_ap_item`` is org-agnostic
+                # in the current store; this is the defense-in-depth
+                # gate that prevents a corrupted exception row
+                # pointing at another tenant's AP item from leaking
+                # data into the graph.
+                if str(record.get("organization_id") or "") == user.organization_id:
+                    ap_records.append(dict(record))
+
+    from clearledgr.services.exception_graph import build_exception_graph
+    return build_exception_graph(
+        exceptions=items,
+        ap_items=ap_records,
+        organization_id=user.organization_id,
+        same_cause_window_days=same_cause_window_days,
+    )
 
 
 @router.get("/exceptions/stats")

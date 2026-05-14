@@ -11,7 +11,7 @@ class _FakeRetryDB:
         self.jobs = [
             {
                 "id": "job-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "job_type": "erp_post_retry",
                 "ap_item_id": "ap-1",
                 "retry_count": 0,
@@ -54,7 +54,7 @@ def test_drain_agent_retry_jobs_recovers_due_jobs(monkeypatch):
 
     summary = asyncio.run(
         retry_jobs_module.drain_agent_retry_jobs(
-            organization_id="default",
+            organization_id="org-test",
             worker_id_prefix="runtime_resume",
         )
     )
@@ -66,14 +66,14 @@ def test_drain_agent_retry_jobs_recovers_due_jobs(monkeypatch):
 
 def test_runtime_resume_pending_agent_tasks_uses_retry_drain(monkeypatch):
     runtime = FinanceAgentRuntime(
-        organization_id="default",
+        organization_id="org-test",
         actor_id="system",
         actor_email="system@example.com",
         db=object(),
     )
 
     async def _fake_drain(**kwargs):
-        assert kwargs["organization_id"] == "default"
+        assert kwargs["organization_id"] == "org-test"
         return {"claimed": 1, "completed": 1, "rescheduled": 0, "dead_letter": 0}
 
     monkeypatch.setattr(

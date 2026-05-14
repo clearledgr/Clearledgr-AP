@@ -2783,7 +2783,15 @@ async def _execute_field_review_resolution(
     organization_id: str,
     user: Any,
 ) -> Dict[str, Any]:
-    item = _require_item(db, ap_item_id)
+    # M19+: M19b deleted the post-fetch ``verify_org_access(item.org or
+    # "default", user)`` line as redundant when ``_require_item`` is
+    # called with ``expected_organization_id=...``. But this call site
+    # was using ``_require_item(db, ap_item_id)`` WITHOUT the kwarg,
+    # so the line deletion silently dropped the tenant check. Routes
+    # ``/api/ap/items/{id}/field-review/resolve`` and
+    # ``/field-review/bulk-resolve`` lost their tenant-scope guard.
+    # Restore by passing the expected_organization_id through.
+    item = _require_item(db, ap_item_id, expected_organization_id=organization_id)
     verify_org_access(item.get("organization_id") or organization_id or "default", user)
 
     normalized_field = _normalize_field_review_field(request.field)

@@ -56,12 +56,12 @@ from clearledgr.services.connection_health import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
 
-def _user(org_id: str = "default", role: str = "owner"):
+def _user(org_id: str = "org-test", role: str = "owner"):
     return SimpleNamespace(
         email=f"{role}@example.com",
         user_id=f"{role}-user",
@@ -85,7 +85,7 @@ def _seed_event(
     *,
     event_type: str,
     source: str = "test",
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     box_id: str = "box-test",
     box_type: str = "ap_item",
     payload: dict | None = None,
@@ -107,7 +107,7 @@ def _seed_event(
     })
 
 
-def _seed_integration(db, *, organization_id="default", integration_type="gmail", status="connected", last_sync_at=None):
+def _seed_integration(db, *, organization_id="org-test", integration_type="gmail", status="connected", last_sync_at=None):
     return db.upsert_organization_integration(
         organization_id=organization_id,
         integration_type=integration_type,
@@ -124,8 +124,8 @@ def _seed_integration(db, *, organization_id="default", integration_type="gmail"
 
 
 def test_empty_tenant_returns_all_not_configured(db):
-    out = build_connection_health(db, "default")
-    assert out["organization_id"] == "default"
+    out = build_connection_health(db, "org-test")
+    assert out["organization_id"] == "org-test"
     assert {row["integration_type"] for row in out["integrations"]} == {"gmail", "slack", "teams", "erp"}
     for row in out["integrations"]:
         assert row["status"] == "not_configured", row
@@ -137,7 +137,7 @@ def test_connected_with_recent_events_classifies_healthy(db):
     _seed_integration(db, integration_type="gmail")
     for i in range(3):
         _seed_event(db, event_type="gmail_thread_linked", source="gmail_webhook", counter=i)
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     gmail = next(r for r in out["integrations"] if r["integration_type"] == "gmail")
     assert gmail["status"] == "healthy"
     assert gmail["events_24h"] >= 3
@@ -149,7 +149,7 @@ def test_one_error_classifies_degraded(db):
     _seed_event(db, event_type="erp_post_completed", source="erp_router", counter=1)
     _seed_event(db, event_type="erp_post_failed", source="erp_router", counter=2,
                 payload={"error": "QB API rate-limited"})
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     erp = next(r for r in out["integrations"] if r["integration_type"] == "erp")
     assert erp["status"] == "degraded"
     assert erp["errors_24h"] == 1
@@ -162,7 +162,7 @@ def test_five_errors_classifies_down(db):
     for i in range(5):
         _seed_event(db, event_type="erp_post_failed", source="erp_router", counter=i,
                     payload={"error": f"failure #{i}"})
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     erp = next(r for r in out["integrations"] if r["integration_type"] == "erp")
     assert erp["status"] == "down"
     assert erp["errors_24h"] == 5
@@ -175,14 +175,14 @@ def test_stale_connected_with_no_events_classifies_down(db):
     targets: an integration that crashed silently."""
     stale_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     _seed_integration(db, integration_type="slack", status="connected", last_sync_at=stale_ts)
-    out = build_connection_health(db, "default", window_hours=24)
+    out = build_connection_health(db, "org-test", window_hours=24)
     slack = next(r for r in out["integrations"] if r["integration_type"] == "slack")
     assert slack["status"] == "down"
 
 
 def test_disconnected_integration_returns_not_configured(db):
     _seed_integration(db, integration_type="teams", status="disconnected")
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     teams = next(r for r in out["integrations"] if r["integration_type"] == "teams")
     assert teams["status"] == "not_configured"
 
@@ -193,7 +193,7 @@ def test_latest_error_payload_trimmed_to_summary(db):
         db, event_type="erp_post_failed", source="erp_router", counter=99,
         payload={"error": "x" * 500, "huge": "y" * 9999},
     )
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     erp = next(r for r in out["integrations"] if r["integration_type"] == "erp")
     err = erp["latest_error"]
     assert err is not None
@@ -206,19 +206,19 @@ def test_latest_error_payload_trimmed_to_summary(db):
 
 def test_webhook_delivery_aggregates(db):
     db.insert_webhook_delivery(
-        organization_id="default", webhook_subscription_id="wh_1",
+        organization_id="org-test", webhook_subscription_id="wh_1",
         event_type="invoice.approved", request_url="https://x", status="success",
     )
     db.insert_webhook_delivery(
-        organization_id="default", webhook_subscription_id="wh_1",
+        organization_id="org-test", webhook_subscription_id="wh_1",
         event_type="invoice.approved", request_url="https://x", status="success",
     )
     db.insert_webhook_delivery(
-        organization_id="default", webhook_subscription_id="wh_2",
+        organization_id="org-test", webhook_subscription_id="wh_2",
         event_type="invoice.posted", request_url="https://y", status="failed",
         error_message="timeout",
     )
-    out = build_connection_health(db, "default")
+    out = build_connection_health(db, "org-test")
     assert out["webhooks"]["delivered"] == 2
     assert out["webhooks"]["failed"] == 1
     assert out["webhooks"]["retrying"] == 0
@@ -233,10 +233,10 @@ def test_endpoint_returns_health_for_org(db, client_factory):
     _seed_integration(db, integration_type="gmail")
     _seed_event(db, event_type="gmail_thread_linked", source="gmail_webhook", counter=10)
     client = client_factory(_user)
-    resp = client.get("/api/workspace/connections/health?organization_id=default")
+    resp = client.get("/api/workspace/connections/health?organization_id=org-test")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["organization_id"] == "default"
+    assert body["organization_id"] == "org-test"
     assert body["window_hours"] == 24
     assert "computed_at" in body
     gmail = next(r for r in body["integrations"] if r["integration_type"] == "gmail")
@@ -259,10 +259,10 @@ def test_endpoint_window_param_narrows_results(db, client_factory):
                 counter=1000, ts=stale_ts)
     client = client_factory(_user)
     resp_wide = client.get(
-        "/api/workspace/connections/health?organization_id=default&window_hours=72"
+        "/api/workspace/connections/health?organization_id=org-test&window_hours=72"
     )
     resp_narrow = client.get(
-        "/api/workspace/connections/health?organization_id=default&window_hours=1"
+        "/api/workspace/connections/health?organization_id=org-test&window_hours=1"
     )
     assert resp_wide.status_code == 200
     assert resp_narrow.status_code == 200
@@ -278,6 +278,6 @@ def test_endpoint_bounds_window_to_168_hours(client_factory):
     a typo."""
     client = client_factory(_user)
     resp = client.get(
-        "/api/workspace/connections/health?organization_id=default&window_hours=999"
+        "/api/workspace/connections/health?organization_id=org-test&window_hours=999"
     )
     assert resp.status_code == 422

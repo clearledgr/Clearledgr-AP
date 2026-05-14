@@ -242,7 +242,9 @@ _label_scope_locks: Dict[str, asyncio.Lock] = {}
 
 
 def _cache_key(cache_scope: str = "") -> str:
-    return str(cache_scope or "default").strip() or "default"
+    # The "default" literal here is a cache-key namespace, NOT an org
+    # id. Used to bucket label-cache lookups when no scope is given.
+    return str(cache_scope or "default").strip() or "default"  # noqa: org-default  # noqa: org-default — cache-key namespace, not an org id
 
 
 def _scope_lock(cache_scope: str) -> asyncio.Lock:

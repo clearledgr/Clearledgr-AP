@@ -167,7 +167,7 @@ class TestAuthEndpoints:
 
         state = auth_module._sign_google_state(
             {
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "redirect_path": "/workspace",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
                 "nonce": "nonce-1",
@@ -213,7 +213,7 @@ class TestAuthEndpoints:
         fake_user = SimpleNamespace(
             id="user-123",
             email="user@company.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
         )
         monkeypatch.setattr("clearledgr.core.auth.get_user_by_email", lambda _email: None)
@@ -252,7 +252,7 @@ class TestAPRetryPostEndpoint:
         return TokenData(
             user_id="ap-user-1",
             email="ap-user@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="operator",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -261,7 +261,7 @@ class TestAPRetryPostEndpoint:
         fake_db = MagicMock()
         fake_db.get_ap_item.return_value = {
             "id": "ap-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "state": "failed_post",
             "thread_id": "gmail-thread-retry-1",
         }
@@ -285,7 +285,7 @@ class TestAPRetryPostEndpoint:
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
                 ):
-                    response = client.post("/api/ap/items/ap-1/retry-post?organization_id=default")
+                    response = client.post("/api/ap/items/ap-1/retry-post?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(get_current_user, None)
 
@@ -301,7 +301,7 @@ class TestAPRetryPostEndpoint:
         fake_db = MagicMock()
         fake_db.get_ap_item.return_value = {
             "id": "ap-2",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "state": "failed_post",
             "thread_id": "gmail-thread-retry-2",
         }
@@ -316,7 +316,7 @@ class TestAPRetryPostEndpoint:
                     "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
                 ):
-                    response = client.post("/api/ap/items/ap-2/retry-post?organization_id=default")
+                    response = client.post("/api/ap/items/ap-2/retry-post?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(get_current_user, None)
 
@@ -332,7 +332,7 @@ class TestGmailWebhooks:
         return TokenData(
             user_id=user_id,
             email=f"{user_id}@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role=role,
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -448,7 +448,7 @@ class TestGmailWebhooks:
         monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
         state = workspace_shell_module._sign_state(
             {
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "user_id": "gmail-user-1",
                 "redirect_url": "/gmail/connected?source=oauth",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
@@ -491,7 +491,7 @@ class TestGmailWebhooks:
         monkeypatch.setenv("CLEARLEDGR_SECRET_KEY", "test-secret-key")
         state = workspace_shell_module._sign_state(
             {
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "user_id": "gmail-user-1",
                 "redirect_url": "/workspace?page=integrations",
                 "iat": int(datetime.now(timezone.utc).timestamp()),
@@ -916,7 +916,7 @@ class TestGmailWebhooks:
                                 client=MagicMock(),
                                 message=message,
                                 user_id="gmail-user-1",
-                                organization_id="default",
+                                organization_id="org-test",
                                 confidence=0.91,
                             )
                         )
@@ -993,7 +993,7 @@ class TestGmailWebhooks:
                                     client=MagicMock(),
                                     message=message,
                                     user_id="gmail-user-1",
-                                    organization_id="default",
+                                    organization_id="org-test",
                                     confidence=0.91,
                                 )
                             )
@@ -1066,7 +1066,7 @@ class TestGmailWebhooks:
                                     client=MagicMock(),
                                     message=message,
                                     user_id="gmail-user-1",
-                                    organization_id="default",
+                                    organization_id="org-test",
                                     confidence=0.91,
                                 )
                             )
@@ -1136,7 +1136,7 @@ class TestGmailWebhooks:
                                     client=MagicMock(),
                                     message=message,
                                     user_id="gmail-user-1",
-                                    organization_id="default",
+                                    organization_id="org-test",
                                     confidence=0.91,
                                 )
                             )
@@ -1206,7 +1206,7 @@ class TestGmailWebhooks:
                                 client=MagicMock(),
                                 message=message,
                                 user_id="gmail-user-1",
-                                organization_id="default",
+                                organization_id="org-test",
                                 confidence=0.91,
                                 run_runtime=False,
                                 create_draft=False,
@@ -1290,7 +1290,7 @@ class TestGmailWebhooks:
                                 client=MagicMock(),
                                 message=message,
                                 user_id="gmail-user-1",
-                                organization_id="default",
+                                organization_id="org-test",
                                 confidence=0.91,
                             )
                         )
@@ -1415,15 +1415,15 @@ class TestGmailWebhooks:
         app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
             user_id="extension-user-1",
             email="extension@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
                 with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailAPIClient):
-                    lookup_response = client.get("/extension/by-thread/thread-1", params={"organization_id": "default"})
-                    recover_response = client.post("/extension/by-thread/thread-1/recover", params={"organization_id": "default"})
+                    lookup_response = client.get("/extension/by-thread/thread-1", params={"organization_id": "org-test"})
+                    recover_response = client.post("/extension/by-thread/thread-1/recover", params={"organization_id": "org-test"})
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
 
@@ -1559,7 +1559,7 @@ class TestGmailWebhooks:
         app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
             user_id="extension-user-1",
             email="extension@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -1567,7 +1567,7 @@ class TestGmailWebhooks:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
                 with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailAPIClient):
                     with patch("clearledgr.api.gmail_webhooks.process_single_email", AsyncMock(side_effect=_fake_process_single_email)) as process_mock:
-                        recover_response = client.post("/extension/by-thread/thread-school-1/recover", params={"organization_id": "default"})
+                        recover_response = client.post("/extension/by-thread/thread-school-1/recover", params={"organization_id": "org-test"})
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
 
@@ -1584,7 +1584,7 @@ class TestGmailWebhooks:
         fake_user = SimpleNamespace(
             id="gmail-user-1",
             email="ops@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
         )
         fake_token = SimpleNamespace(
@@ -1626,7 +1626,7 @@ class TestAdminConsoleIntegrations:
         return TokenData(
             user_id="admin-user-1",
             email="admin@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role=role,
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -1636,7 +1636,7 @@ class TestAdminConsoleIntegrations:
         try:
             response = client.post(
                 "/api/workspace/integrations/gmail/connect/start",
-                json={"organization_id": "default", "redirect_path": "/workspace?page=integrations"},
+                json={"organization_id": "org-test", "redirect_path": "/workspace?page=integrations"},
             )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
@@ -1656,21 +1656,21 @@ class TestAdminConsoleIntegrations:
             with patch.object(workspace_shell_module, "_generate_auth_url", side_effect=_fake_auth_url):
                 response = client.post(
                     "/api/workspace/integrations/gmail/connect/start",
-                    json={"organization_id": "default", "redirect_path": "/gmail/connected"},
+                    json={"organization_id": "org-test", "redirect_path": "/gmail/connected"},
                 )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["organization_id"] == "default"
+        assert payload["organization_id"] == "org-test"
         assert payload["redirect_path"] == "/gmail/connected"
         assert payload["auth_url"].startswith("https://accounts.google.com/o/oauth2/v2/auth")
         signed_state = captured.get("state")
         assert isinstance(signed_state, str) and "." in signed_state
         decoded = gmail_webhooks_module._unsign_oauth_state(signed_state)
         assert decoded.get("user_id") == "admin-user-1"
-        assert decoded.get("organization_id") == "default"
+        assert decoded.get("organization_id") == "org-test"
         assert decoded.get("redirect_url") == "/gmail/connected"
         assert decoded.get("oauth_redirect_uri") == "http://127.0.0.1:8010/gmail/callback"
 
@@ -1718,7 +1718,7 @@ class TestAdminConsoleIntegrations:
 
         user = self._fake_user("admin")
         with patch.object(workspace_shell_module, "get_db", return_value=fake_db):
-            status = workspace_shell_module._gmail_status_for_org("default", user)
+            status = workspace_shell_module._gmail_status_for_org("org-test", user)
 
         assert status["connected"] is True
         assert status["durable"] is False
@@ -1730,7 +1730,7 @@ class TestAdminConsoleIntegrations:
     def test_slack_status_requires_runtime_connection_not_channel_only_config(self):
         fake_db = MagicMock()
         fake_db.get_organization.return_value = {
-            "id": "default",
+            "id": "org-test",
             "integration_mode": "shared",
             "settings_json": {"slack_channels": {"invoices": "cl-finance-ap"}},
         }
@@ -1747,7 +1747,7 @@ class TestAdminConsoleIntegrations:
                 "_resolve_slack_runtime",
                 return_value={"connected": False, "source": "shared_env_unconfigured"},
             ):
-                status = workspace_shell_module._slack_status_for_org("default")
+                status = workspace_shell_module._slack_status_for_org("org-test")
 
         assert status["connected"] is False
         assert status["status"] == "disconnected"
@@ -1759,11 +1759,11 @@ class TestAdminConsoleIntegrations:
     def test_set_slack_channel_does_not_mark_connected_without_runtime_token(self):
         fake_db = MagicMock()
         fake_db.ensure_organization.return_value = {
-            "id": "default",
+            "id": "org-test",
             "settings_json": {},
         }
         fake_db.get_organization.return_value = {
-            "id": "default",
+            "id": "org-test",
             "integration_mode": "shared",
         }
         fake_db.get_organization_integration.return_value = {
@@ -1783,7 +1783,7 @@ class TestAdminConsoleIntegrations:
                     ):
                         response = client.post(
                             "/api/workspace/integrations/slack/channel",
-                            json={"organization_id": "default", "channel_id": "cl-finance-ap"},
+                            json={"organization_id": "org-test", "channel_id": "cl-finance-ap"},
                         )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
@@ -1795,7 +1795,7 @@ class TestAdminConsoleIntegrations:
         save_settings.assert_called_once()
         fake_db.upsert_organization_integration.assert_called_once()
         kwargs = fake_db.upsert_organization_integration.call_args.kwargs
-        assert kwargs["organization_id"] == "default"
+        assert kwargs["organization_id"] == "org-test"
         assert kwargs["integration_type"] == "slack"
         assert kwargs["status"] == "disconnected"
         assert kwargs["mode"] == "shared"
@@ -1832,7 +1832,7 @@ class TestAdminConsoleIntegrations:
                 with patch.object(workspace_shell_module, "_slack_api_client_class", return_value=_FakeSlackClient):
                     response = client.post(
                         "/api/workspace/integrations/slack/test",
-                        json={"organization_id": "default", "channel_id": "cl-finance-ap"},
+                        json={"organization_id": "org-test", "channel_id": "cl-finance-ap"},
                     )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
@@ -1858,7 +1858,7 @@ class TestAdminConsoleIntegrations:
         try:
             response = client.post(
                 "/api/workspace/integrations/slack/install/start",
-                json={"organization_id": "default", "mode": "per_org", "redirect_path": "/"},
+                json={"organization_id": "org-test", "mode": "per_org", "redirect_path": "/"},
             )
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
@@ -1878,7 +1878,7 @@ class TestAdminConsoleIntegrations:
     def test_slack_status_flags_missing_email_lookup_scope_for_reauth(self):
         fake_db = MagicMock()
         fake_db.get_organization.return_value = {
-            "id": "default",
+            "id": "org-test",
             "integration_mode": "per_org",
             "settings_json": {"slack_channels": {"invoices": "cl-finance-ap"}},
         }
@@ -1899,7 +1899,7 @@ class TestAdminConsoleIntegrations:
                 "_resolve_slack_runtime",
                 return_value={"connected": True, "source": "org_installation"},
             ):
-                status = workspace_shell_module._slack_status_for_org("default")
+                status = workspace_shell_module._slack_status_for_org("org-test")
 
         assert status["connected"] is True
         assert status["status"] == "reauthorization_required"
@@ -1914,7 +1914,7 @@ class TestAdminConsoleIntegrations:
         monkeypatch.setenv("APP_BASE_URL", "https://public.clearledgr.test")
         monkeypatch.delenv("SLACK_REDIRECT_URI", raising=False)
         try:
-            response = client.get("/api/workspace/integrations/slack/manifest?organization_id=default")
+            response = client.get("/api/workspace/integrations/slack/manifest?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
 
@@ -1939,12 +1939,12 @@ class TestERPEndpoints:
         app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-1",
             email="erp-user@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
-            response = client.get("/api/workspace/integrations?organization_id=default")
+            response = client.get("/api/workspace/integrations?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(workspace_shell_module.get_current_user, None)
         assert response.status_code == 200
@@ -1955,7 +1955,7 @@ class TestERPEndpoints:
         app.dependency_overrides[workspace_shell_module.get_current_user] = lambda: TokenData(
             user_id="erp-user-2",
             email="erp-user-2@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -1980,7 +1980,7 @@ class TestExtensionEndpoints:
         return TokenData(
             user_id="extension-user-1",
             email="extension@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="operator",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -2004,7 +2004,7 @@ class TestExtensionEndpoints:
                     "subject": "Invoice #12345 from Acme Corp",
                     "sender": "billing@acme.com",
                     "body": "Please find attached invoice for $1,500.00",
-                    "organization_id": "default",
+                    "organization_id": "org-test",
                 })
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
@@ -2019,7 +2019,7 @@ class TestExtensionEndpoints:
             "subject": "Invoice",
             "sender": "billing@acme.com",
             "body": "Invoice body",
-            "organization_id": "default",
+            "organization_id": "org-test",
         })
         assert response.status_code == 401
 
@@ -2045,7 +2045,7 @@ class TestExtensionEndpoints:
                         "email_id": "process-inline-1",
                         "subject": "Invoice inline process",
                         "sender": "billing@acme.com",
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -2087,7 +2087,7 @@ class TestExtensionEndpoints:
                     "/extension/scan",
                     json={
                         "email_ids": ["scan-inline-1", "scan-inline-2"],
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -2131,7 +2131,7 @@ class TestExtensionEndpoints:
                             "override_justification": "month_end_exception",
                         },
                         "override": True,
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -2197,7 +2197,7 @@ class TestExtensionEndpoints:
                             "currency": "USD",
                             "invoice_number": "INV-1001",
                             "confidence": 0.76,
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                             "vendor_intelligence": {"risk": "low"},
                             "policy_compliance": {"compliant": True, "required_approvers": []},
                             "priority": {"priority": "normal", "priority_label": "Normal"},
@@ -2216,7 +2216,7 @@ class TestExtensionEndpoints:
         assert captured["idempotency_key"] == "idem-submit-runtime-1"
         assert captured["actor_email"] == "extension@example.com"
         assert captured["invoice_payload"]["gmail_id"] == "gmail-thread-1"
-        assert captured["invoice_payload"]["organization_id"] == "default"
+        assert captured["invoice_payload"]["organization_id"] == "org-test"
         assert captured["invoice_payload"]["user_id"] == "extension-user-1"
         assert captured["invoice_payload"]["confidence"] >= 0.95
         # The endpoint should delegate domain writes to the runtime —
@@ -2277,7 +2277,7 @@ class TestExtensionEndpoints:
                     "confidence": 82,
                     "mismatches": [{"message": "Amount mismatch"}],
                     "channel": "#finance-escalations",
-                    "organization_id": "default",
+                    "organization_id": "org-test",
                 },
             )
         finally:
@@ -2344,7 +2344,7 @@ class TestExtensionEndpoints:
             lambda _email: SimpleNamespace(
                 id="user-123",
                 email="mo@clearledgr.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="user",
             ),
         )
@@ -2399,7 +2399,7 @@ class TestExtensionEndpoints:
             lambda _email: SimpleNamespace(
                 id="user-123",
                 email="mo@clearledgr.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="user",
             ),
         )
@@ -2446,7 +2446,7 @@ class TestExtensionEndpoints:
             lambda _email: SimpleNamespace(
                 id="user-123",
                 email="mo@clearledgr.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="user",
             ),
         )
@@ -2500,7 +2500,7 @@ class TestExtensionEndpoints:
         )
         # Post unprovisioned-email guard: unknown users on unmapped
         # domains are refused with 403 instead of being silently
-        # auto-provisioned into a "default" tenant. The test name
+        # auto-provisioned into a "org-test" tenant. The test name
         # ("requires_provisioned_user") matches the new behavior;
         # the assertion was stale from before the guard landed.
         assert response.status_code == 403
@@ -2511,31 +2511,31 @@ class TestExtensionEndpoints:
 
         assert client.post(
             "/extension/verify-confidence",
-            json={"email_id": "x", "extraction": {}, "organization_id": "default"},
+            json={"email_id": "x", "extraction": {}, "organization_id": "org-test"},
         ).status_code == 401
         assert client.post(
             "/extension/match-bank",
-            json={"extraction": {}, "organization_id": "default"},
+            json={"extraction": {}, "organization_id": "org-test"},
         ).status_code == 401
         assert client.post(
             "/extension/match-erp",
-            json={"extraction": {}, "organization_id": "default"},
+            json={"extraction": {}, "organization_id": "org-test"},
         ).status_code == 401
         assert client.post(
             "/extension/suggestions/gl-code",
-            json={"vendor_name": "Acme", "organization_id": "default"},
+            json={"vendor_name": "Acme", "organization_id": "org-test"},
         ).status_code == 401
         assert client.post(
             "/extension/suggestions/vendor",
-            json={"organization_id": "default", "extracted_vendor": "Acme"},
+            json={"organization_id": "org-test", "extracted_vendor": "Acme"},
         ).status_code == 401
         assert client.post(
             "/extension/suggestions/amount-validation",
-            json={"vendor_name": "Acme", "amount": 10.5, "organization_id": "default"},
+            json={"vendor_name": "Acme", "amount": 10.5, "organization_id": "org-test"},
         ).status_code == 401
-        assert client.get("/extension/suggestions/form-prefill/email-1?organization_id=default").status_code == 401
+        assert client.get("/extension/suggestions/form-prefill/email-1?organization_id=org-test").status_code == 401
         assert client.get("/extension/needs-info-draft/AP-1").status_code == 401
-        assert client.get("/extension/pipeline?organization_id=default").status_code == 401
+        assert client.get("/extension/pipeline?organization_id=org-test").status_code == 401
         assert client.get("/extension/invoice-pipeline/default").status_code == 401
         assert client.get("/extension/invoice-status/email-1").status_code == 401
         assert client.get("/extension/workflow/wf-1").status_code == 401
@@ -2612,7 +2612,7 @@ class TestExtensionEndpoints:
             match_bank = client.post(
                 "/extension/match-bank",
                 json={
-                    "organization_id": "default",
+                    "organization_id": "org-test",
                     "extraction": {
                         "vendor": "Acme Corp",
                         "amount": 1250.0,
@@ -2624,7 +2624,7 @@ class TestExtensionEndpoints:
             match_erp = client.post(
                 "/extension/match-erp",
                 json={
-                    "organization_id": "default",
+                    "organization_id": "org-test",
                     "extraction": {
                         "vendor": "Acme Corp",
                         "amount": 1250.0,
@@ -2649,7 +2649,7 @@ class TestExtensionEndpoints:
             gmail_id="msg-repair-1",
             email_type="invoice",
             confidence=0.92,
-            organization_id="default",
+            organization_id="org-test",
             user_id="extension-user-1",
             status="processed",
             metadata={},
@@ -2660,7 +2660,7 @@ class TestExtensionEndpoints:
             gmail_id="msg-repair-1",
             email_type="invoice",
             confidence=0.92,
-            organization_id="default",
+            organization_id="org-test",
             user_id="extension-user-1",
             status="review_required",
             metadata={"field_provenance": {"amount": {"source": "attachment"}}},
@@ -2676,7 +2676,7 @@ class TestExtensionEndpoints:
                 return updated_finance_email
 
             def get_ap_item_by_message_id(self, organization_id, message_id):
-                assert organization_id == "default"
+                assert organization_id == "org-test"
                 assert message_id == "msg-repair-1"
                 return {"id": "ap-item-1", "metadata": {}}
 
@@ -2723,7 +2723,7 @@ class TestExtensionEndpoints:
                             response = client.post(
                                 "/extension/repair-historical-invoices",
                                 json={
-                                    "organization_id": "default",
+                                    "organization_id": "org-test",
                                     "limit": 10,
                                 },
                             )
@@ -2783,7 +2783,7 @@ class TestExtensionEndpoints:
                     response = client.post(
                         "/extension/cleanup-gmail-labels",
                         json={
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                             "dry_run": False,
                             "max_messages_per_label": 250,
                         },
@@ -2804,7 +2804,7 @@ class TestExtensionEndpoints:
 
     def test_extension_cors_preflight_returns_single_origin_header(self):
         response = client.options(
-            "/extension/worklist?organization_id=default",
+            "/extension/worklist?organization_id=org-test",
             headers={
                 "Origin": "https://mail.google.com",
                 "Access-Control-Request-Method": "GET",
@@ -2824,14 +2824,14 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = lambda: TokenData(
             user_id="extension-user-1",
             email="extension@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=_FakeDB()):
                 with patch("clearledgr.services.gmail_autopilot.ensure_gmail_autopilot_progress", AsyncMock(return_value={"started": True, "nudged": True})) as ensure_mock:
-                    response = client.get("/extension/worklist?organization_id=default")
+                    response = client.get("/extension/worklist?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
 
@@ -2896,7 +2896,7 @@ class TestExtensionEndpoints:
         def __init__(self, *, ap_item=None, slack_thread=None, audit_events=None):
             self.ap_item = ap_item or {
                 "id": "ap-item-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-1",
                 "state": "needs_approval",
                 "vendor_name": "Acme Corp",
@@ -2999,7 +2999,7 @@ class TestExtensionEndpoints:
                             "email_id": "gmail-thread-1",
                             "ap_item_id": "ap-item-1",
                             "message": "Please review today",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                         },
                     )
         finally:
@@ -3038,7 +3038,7 @@ class TestExtensionEndpoints:
                             "ap_item_id": "ap-item-1",
                             "decision": "approve_override",
                             "justification": "Policy exception approved",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                         },
                     )
         finally:
@@ -3075,7 +3075,7 @@ class TestExtensionEndpoints:
                             "ap_item_id": "ap-item-1",
                             "decision": "request_budget_adjustment",
                             "justification": "Need updated cost centre approval",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                         },
                     )
         finally:
@@ -3111,7 +3111,7 @@ class TestExtensionEndpoints:
                             "ap_item_id": "ap-item-1",
                             "decision": "reject",
                             "justification": "Budget not approved",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                         },
                     )
         finally:
@@ -3132,7 +3132,7 @@ class TestExtensionEndpoints:
         fake_db = self._FakeExtensionDB(
             ap_item={
                 "id": "ap-item-2",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-2",
                 "state": "failed_post",
                 "vendor_name": "Vendor Ops",
@@ -3153,7 +3153,7 @@ class TestExtensionEndpoints:
                         "target": "email_draft",
                         "preview_only": True,
                         "recipient_email": "financelead@example.com",
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3208,7 +3208,7 @@ class TestExtensionEndpoints:
                         "target": "email_draft",
                         "preview_only": True,
                         "recipient_email": "financelead@example.com",
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3231,7 +3231,7 @@ class TestExtensionEndpoints:
         fake_db = self._FakeExtensionDB(
             ap_item={
                 "id": "ap-item-3",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-3",
                 "state": "needs_approval",
                 "vendor_name": "Blue Supply",
@@ -3252,7 +3252,7 @@ class TestExtensionEndpoints:
                         "email_id": "gmail-thread-3",
                         "target": "slack_thread",
                         "preview_only": True,
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3274,7 +3274,7 @@ class TestExtensionEndpoints:
         fake_db = self._FakeExtensionDB(
             ap_item={
                 "id": "ap-item-4",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-4",
                 "state": "needs_info",
                 "vendor_name": "Northwind",
@@ -3297,7 +3297,7 @@ class TestExtensionEndpoints:
                         "email_id": "gmail-thread-4",
                         "target": "teams_reply",
                         "preview_only": True,
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3363,7 +3363,7 @@ class TestExtensionEndpoints:
         fake_db = self._FakeExtensionDB(
             ap_item={
                 "id": "ap-item-route-1",
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "thread_id": "gmail-thread-route-1",
                 "state": "validated",
                 "vendor_name": "Route Co",
@@ -3386,7 +3386,7 @@ class TestExtensionEndpoints:
 
         body = {
             "email_id": "gmail-thread-route-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "idempotency_key": "idem-route-1",
         }
 
@@ -3431,7 +3431,7 @@ class TestExtensionEndpoints:
 
         body = {
             "email_id": "gmail-thread-retry-1",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "idempotency_key": "idem-retry-1",
         }
 
@@ -3457,7 +3457,7 @@ class TestOrgConfigEndpoints:
     """Strict AP-v1 profile should not expose legacy /config routes."""
 
     @staticmethod
-    def _fake_user(role: str = "user", org_id: str = "default"):
+    def _fake_user(role: str = "user", org_id: str = "org-test"):
         return TokenData(
             user_id="config-user-1",
             email="config-user@example.com",
@@ -3514,7 +3514,7 @@ class TestAgentIntentEndpoints:
         return TokenData(
             user_id="agent-user-1",
             email="agent@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="user",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -3524,7 +3524,7 @@ class TestAgentIntentEndpoints:
         return TokenData(
             user_id="agent-admin-1",
             email="agent-admin@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="admin",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -3534,7 +3534,7 @@ class TestAgentIntentEndpoints:
         return TokenData(
             user_id="agent-operator-1",
             email="agent-operator@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="operator",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -3558,7 +3558,7 @@ class TestAgentIntentEndpoints:
                     json={
                         "intent": "route_low_risk_for_approval",
                         "input": {"email_id": "gmail-thread-1"},
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3607,7 +3607,7 @@ class TestAgentIntentEndpoints:
                         "intent": "route_low_risk_for_approval",
                         "input": {"email_id": "gmail-thread-1"},
                         "idempotency_key": "idem-agent-1",
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3670,12 +3670,12 @@ class TestAgentIntentEndpoints:
         class _FakeRuntimeDB:
             def list_ap_items(self, organization_id, state=None, limit=200, prioritized=False):
                 _ = state, prioritized
-                if str(organization_id or "") != "default":
+                if str(organization_id or "") != "org-test":
                     return []
                 return [
-                    {"id": "ap-1", "organization_id": "default", "state": "needs_info"},
-                    {"id": "ap-2", "organization_id": "default", "state": "failed_post"},
-                    {"id": "ap-3", "organization_id": "default", "state": "validated"},
+                    {"id": "ap-1", "organization_id": "org-test", "state": "needs_info"},
+                    {"id": "ap-2", "organization_id": "org-test", "state": "failed_post"},
+                    {"id": "ap-3", "organization_id": "org-test", "state": "validated"},
                 ][: max(1, int(limit or 200))]
 
         try:
@@ -3685,7 +3685,7 @@ class TestAgentIntentEndpoints:
                     json={
                         "intent": "read_ap_workflow_health",
                         "input": {"limit": 100},
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                     },
                 )
         finally:
@@ -3707,7 +3707,7 @@ class TestAgentIntentEndpoints:
         from clearledgr.core.database import get_db
         db = get_db()
         db.upsert_vendor_profile(
-            organization_id="default",
+            organization_id="org-test",
             vendor_name="Acme Supplies",
             requires_po=1,
             payment_terms="Net 30",
@@ -3723,7 +3723,7 @@ class TestAgentIntentEndpoints:
                 json={
                     "intent": "read_vendor_compliance_health",
                     "input": {"limit": 100},
-                    "organization_id": "default",
+                    "organization_id": "org-test",
                 },
             )
         finally:
@@ -3746,7 +3746,7 @@ class TestAgentIntentEndpoints:
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["organization_id"] == "default"
+        assert payload["organization_id"] == "org-test"
         assert isinstance(payload.get("skills"), list)
         assert "route_low_risk_for_approval" in payload.get("supported_intents", [])
         ap_skill = next((row for row in payload["skills"] if row.get("skill_id") == "ap_v1"), None)
@@ -3757,7 +3757,7 @@ class TestAgentIntentEndpoints:
     def test_skill_readiness_endpoint_returns_runtime_gate_report(self):
         app.dependency_overrides[agent_intents_module.get_current_user] = self._fake_user
         readiness_payload = {
-            "organization_id": "default",
+            "organization_id": "org-test",
             "skill_id": "ap_v1",
             "status": "blocked",
             "gates": [
@@ -3775,7 +3775,7 @@ class TestAgentIntentEndpoints:
         try:
             with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
                 response = client.get(
-                    "/api/agent/intents/skills/ap_v1/readiness?window_hours=168&organization_id=default"
+                    "/api/agent/intents/skills/ap_v1/readiness?window_hours=168&organization_id=org-test"
                 )
         finally:
             app.dependency_overrides.pop(agent_intents_module.get_current_user, None)
@@ -3799,16 +3799,16 @@ class TestAgentIntentEndpoints:
             "evidence_refs": ["gmail-thread-1"],
         }
         mock_runtime = MagicMock()
-        mock_runtime.organization_id = "default"
+        mock_runtime.organization_id = "org-test"
         mock_runtime.preview_skill_request = MagicMock(return_value=preview_response)
         try:
             with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
                 response = client.post(
                     "/api/agent/intents/preview-request",
                     json={
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                         "request": {
-                            "org_id": "default",
+                            "org_id": "org-test",
                             "skill_id": "ap_v1",
                             "task_type": "route_low_risk_for_approval",
                             "entity_id": "gmail-thread-1",
@@ -3845,16 +3845,16 @@ class TestAgentIntentEndpoints:
             },
         }
         mock_runtime = MagicMock()
-        mock_runtime.organization_id = "default"
+        mock_runtime.organization_id = "org-test"
         mock_runtime.execute_skill_request = AsyncMock(return_value=execute_response)
         try:
             with patch.object(agent_intents_module, "_runtime_for_request", return_value=mock_runtime):
                 response = client.post(
                     "/api/agent/intents/execute-request",
                     json={
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                         "request": {
-                            "org_id": "default",
+                            "org_id": "org-test",
                             "skill_id": "ap_v1",
                             "task_type": "route_low_risk_for_approval",
                             "entity_id": "gmail-thread-1",

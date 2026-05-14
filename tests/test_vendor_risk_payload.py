@@ -40,7 +40,7 @@ from clearledgr.services.vendor_risk import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
@@ -110,13 +110,13 @@ def test_service_compute_matches_pure_function(db):
     """The class-based service is a thin wrapper — its result must
     match calling the pure function directly with the same profile."""
     db.upsert_vendor_profile(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Acme",
         invoice_count=0,
     )
-    profile = db.get_vendor_profile("default", "Acme")
+    profile = db.get_vendor_profile("org-test", "Acme")
     direct = compute_risk_from_profile(profile)
-    via_service = VendorRiskScoreService("default", db=db).compute("Acme")
+    via_service = VendorRiskScoreService("org-test", db=db).compute("Acme")
     assert direct.score == via_service.score
     assert {c.code for c in direct.components} == {
         c.code for c in via_service.components
@@ -132,12 +132,12 @@ def test_summary_rows_include_risk_score(db):
     rather than missing the key — the SPA gates the chip on ``> 0``."""
     # Two vendors with very different profiles.
     db.upsert_vendor_profile(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Acme",
         invoice_count=0,  # new vendor → score includes +30
     )
     db.upsert_vendor_profile(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Globex",
         invoice_count=50,
         registration_number="REG-100",
@@ -149,20 +149,20 @@ def test_summary_rows_include_risk_score(db):
     # summary builder (which iterates ap_items).
     db.create_ap_item({
         "ap_item_id": "ap-acme-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 500.0,
         "state": "received",
     })
     db.create_ap_item({
         "ap_item_id": "ap-globex-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Globex",
         "amount": 1000.0,
         "state": "received",
     })
 
-    rows = ap_vendor_analysis._build_vendor_summary_rows(db, "default", limit=50)
+    rows = ap_vendor_analysis._build_vendor_summary_rows(db, "org-test", limit=50)
     by_name = {r["vendor_name"]: r for r in rows}
     assert "Acme" in by_name and "Globex" in by_name
     for row in rows:
@@ -178,20 +178,20 @@ def test_summary_rows_include_risk_score(db):
 
 def test_detail_payload_includes_risk_breakdown(db):
     db.upsert_vendor_profile(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name="Initech",
         invoice_count=0,
         iban_change_pending=True,
     )
     db.create_ap_item({
         "ap_item_id": "ap-initech-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Initech",
         "amount": 250.0,
         "state": "received",
     })
     payload = ap_vendor_analysis._build_vendor_detail_payload(
-        db, "default", "Initech",
+        db, "org-test", "Initech",
     )
     assert "risk" in payload
     risk = payload["risk"]

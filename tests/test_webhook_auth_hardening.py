@@ -49,16 +49,67 @@ _OR_DEFAULT_PATTERNS = [
     r'\.get\s*\(\s*["\']organization_id["\']\s*,\s*["\']default["\']',
     # ``getattr(x, "organization_id", "default")``
     r'getattr\s*\([^)]*["\']organization_id["\']\s*,\s*["\']default["\']',
+    # ``setattr(x, "organization_id", "default")`` — write-side
+    r'setattr\s*\([^)]*["\']organization_id["\']\s*,\s*["\']default["\']',
+    # Plain assignment ``organization_id = "default"`` / ``org_id = "default"``
+    # at end of expression. The variable name must look org-shaped to
+    # avoid catching unrelated assignments (e.g., a config field
+    # legitimately named ``"default"``). Match common shapes:
+    # ``org``, ``org_id``, ``organization_id``, ``tenant``, ``tenant_id``.
+    r'\b(?:org(?:_id)?|organization_id|tenant(?:_id)?)\s*=\s*["\']default["\']\s*$',
+    # M22 additions — review #5 found 3 critical landmines the regex
+    # missed. Add patterns the per-table CHECK catches at runtime so
+    # source-walking surfaces them at code-review time too:
+    # Function-signature defaults: ``def foo(... organization_id: ...
+    # = "default" ...)`` and ``def foo(... organization_id="default")``.
+    r'(?:organization_id|org_id|tenant_id|tenant)\s*(?::\s*[^=,)]+)?\s*=\s*["\']default["\']\s*[,)]',
+    # Bare ``return "default"`` — bare returns of the literal as a
+    # tenant id. Org-shaped LHS isn't required for this one because the
+    # surface is small (search-and-fix is cheap).
+    r'\breturn\s+["\']default["\']',
+    # ``os.getenv("FOO_ORG", "default")`` / ``os.environ.get(..., "default")``
+    # used as the fallback for an org id env var. Matches both
+    # ``os.getenv`` and ``os.environ.get``; covers any env var whose
+    # name contains ``ORG`` or ``TENANT`` (case-insensitive).
+    r'os\.(?:getenv|environ\.get)\s*\(\s*["\'][^"\']*(?i:org|tenant)[^"\']*["\']\s*,\s*["\']default["\']',
+    # FastAPI ``Query(default="default")`` / ``Query("default")`` —
+    # M22 review #5 caught ~27 route handlers using this. The route
+    # body usually flows through ``require_org`` which now rejects
+    # the literal, but the Query default itself is misleading and a
+    # latent footgun if a caller mis-orders args. Either form fails:
+    # ``Query(default=...)`` or the positional ``Query(...)``.
+    r'Query\s*\(\s*(?:default\s*=\s*)?["\']default["\']',
 ]
-_OR_DEFAULT_RE = re.compile("|".join(_OR_DEFAULT_PATTERNS))
+# NOTE: the previous ``else "default"`` ternary catch was too broad —
+# it matched UI style strings like ``"style": "primary" if cond else
+# "default"``. The other patterns (assignment + ``or`` + ``.get``)
+# already cover the ternary forms when they're in an org-id context.
+_OR_DEFAULT_RE = re.compile("|".join(_OR_DEFAULT_PATTERNS), flags=re.MULTILINE)
+
+
+# Per-line escape hatch. A line containing this exact comment marker
+# is excluded from the M4 detector. Use ONLY when the literal
+# ``"default"`` is genuinely a non-org value (cache-key namespace,
+# theme name, UI style sentinel, etc.). Adding the marker requires
+# review; new uses should be rare.
+_OR_DEFAULT_NOQA_MARKER = "# noqa: org-default"
 
 
 def _strip_docstrings(src: str) -> str:
     """Strip triple-quoted docstrings so docstring mentions of the
     buggy patterns don't false-positive. Only EXECUTABLE shapes
     matter for regression. Both double-triple-quote and single-
-    triple-quote docstrings are caught. Line comments stripped too.
+    triple-quote docstrings are caught. Lines carrying the
+    ``# noqa: org-default`` marker are also stripped (legitimate
+    non-org "default" literals like cache-key namespaces). Line
+    comments stripped after the noqa check.
     """
+    # Drop entire ``# noqa: org-default``-marked lines BEFORE stripping
+    # comments — otherwise the marker itself disappears.
+    src = "\n".join(
+        line for line in src.split("\n")
+        if _OR_DEFAULT_NOQA_MARKER not in line
+    )
     src = re.sub(r"\"{3}.*?\"{3}", "", src, flags=re.DOTALL)
     src = re.sub(r"'{3}.*?'{3}", "", src, flags=re.DOTALL)
     src = re.sub(r"#.*$", "", src, flags=re.MULTILINE)
@@ -68,6 +119,168 @@ def _strip_docstrings(src: str) -> str:
 def _find_default_coercions(src: str) -> list[str]:
     """Return executable ``or "default"``-style coercions. Empty list = clean."""
     return _OR_DEFAULT_RE.findall(_strip_docstrings(src))
+
+
+# M19 tree-wide sweep. As each file is swept clean, REMOVE it from
+# this allowlist. New code must NEVER be added to the allowlist.
+# Once empty, ``test_no_default_org_coercion_anywhere_in_clearledgr``
+# pins the entire ``clearledgr/`` tree against M4-class regressions.
+#
+# Last sub-agent review counted 41 files / ~125 sites. M19 sweep
+# proceeds in phases: api/ (Phase A), services/ (Phase B), core/
+# + workflows/ (Phase C). Each phase removes its files from this
+# list as they're swept.
+_M19_OR_DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
+    # M20 tenant-rename closed api/auth.py and core/auth.py by replacing
+    # the literal ``"default"`` placeholder with the ``"_unprovisioned"``
+    # sentinel. Migration v79 renamed any extant ``"default"`` org row
+    # to ``org_legacy_default`` and added CHECK constraints across every
+    # tenant-bound table.
+    #
+    # The 2026-05-10 disk corruption caught the M19 Phase B (services/)
+    # and Phase C (core/ + workflows/) source sweeps mid-flight. The
+    # 80 files below still carry ``organization_id: str = "default"``
+    # parameter defaults and similar shapes. Tracked as deferred
+    # follow-up: each entry is removed as the corresponding function
+    # signature is rewritten to require an explicit org id (which
+    # forces callers to plumb require_org / assert_org_id through).
+    # Defense in depth is in place at the DB layer (v79+v80 CHECKs)
+    # and the application layer (require_org / assert_org_id) — this
+    # allowlist holds the punchlist visible so the sweep resumes
+    # without losing track of which files still need work.
+    "clearledgr/api/ap_audit.py",
+    "clearledgr/api/ap_item_detail.py",
+    "clearledgr/api/ap_policies.py",
+    "clearledgr/api/erp_connections.py",
+    "clearledgr/api/gmail_extension.py",
+    "clearledgr/api/gmail_extension_support_routes.py",
+    "clearledgr/api/match_config.py",
+    "clearledgr/api/netsuite_panel.py",
+    "clearledgr/api/ops.py",
+    "clearledgr/api/org_config.py",
+    "clearledgr/api/outbox_ops.py",
+    "clearledgr/api/paddle_billing.py",
+    "clearledgr/api/pipelines.py",
+    "clearledgr/api/policies.py",
+    "clearledgr/api/projections_ops.py",
+    "clearledgr/api/saml.py",
+    "clearledgr/api/sap_extension.py",
+    "clearledgr/api/slack_invoices.py",
+    "clearledgr/api/vendor_onboarding.py",
+    "clearledgr/api/vendor_status.py",
+    "clearledgr/api/workspace_rules.py",
+    "clearledgr/core/ap_confidence.py",
+    "clearledgr/core/events.py",
+    "clearledgr/core/finance_contracts.py",
+    "clearledgr/core/llm_gateway.py",
+    "clearledgr/core/plan.py",
+    "clearledgr/core/sla_tracker.py",
+    "clearledgr/integrations/erp_router.py",
+    "clearledgr/services/adaptive_thresholds.py",
+    "clearledgr/services/agent_background.py",
+    "clearledgr/services/agent_memory.py",
+    "clearledgr/services/agent_reasoning.py",
+    "clearledgr/services/ap_aging_report.py",
+    "clearledgr/services/ap_context_connectors.py",
+    "clearledgr/services/ap_decision.py",
+    "clearledgr/services/ap_item_service.py",
+    "clearledgr/services/ap_vendor_analysis.py",
+    "clearledgr/services/approval_delegation.py",
+    "clearledgr/services/audit_trail.py",
+    "clearledgr/services/box_projection.py",
+    "clearledgr/services/budget_awareness.py",
+    "clearledgr/services/celery_tasks.py",
+    "clearledgr/services/confidence_calibration.py",
+    "clearledgr/services/conversational_agent.py",
+    "clearledgr/services/correction_learning.py",
+    "clearledgr/services/cross_invoice_analysis.py",
+    "clearledgr/services/dispute_service.py",
+    "clearledgr/services/email_parser.py",
+    "clearledgr/services/erp/contracts.py",
+    "clearledgr/services/erp_follow_on_reconciliation.py",
+    "clearledgr/services/finance_agent_runtime.py",
+    "clearledgr/services/finance_learning.py",
+    "clearledgr/services/finance_skills/ap_intent_handlers.py",
+    "clearledgr/services/gl_correction.py",
+    "clearledgr/services/gmail_autopilot.py",
+    "clearledgr/services/learning.py",
+    "clearledgr/services/learning_calibration.py",
+    "clearledgr/services/llm_email_parser.py",
+    "clearledgr/services/monitoring.py",
+    "clearledgr/services/outbox.py",
+    "clearledgr/services/outlook_autopilot.py",
+    "clearledgr/services/payment_request.py",
+    "clearledgr/services/period_close.py",
+    "clearledgr/services/policy_compliance.py",
+    "clearledgr/services/policy_service.py",
+    "clearledgr/services/priority_detection.py",
+    "clearledgr/services/proactive_insights.py",
+    "clearledgr/services/purchase_orders.py",
+    "clearledgr/services/rate_limit.py",
+    "clearledgr/services/scheduled_reports.py",
+    "clearledgr/services/shadow_mode.py",
+    "clearledgr/services/sheets_export.py",
+    "clearledgr/services/single_pass_processor.py",
+    "clearledgr/services/slack_notifications.py",
+    "clearledgr/services/spend_analysis.py",
+    "clearledgr/services/tax_compliance.py",
+    "clearledgr/services/vendor_dedup.py",
+    "clearledgr/services/vendor_statement_recon.py",
+    "clearledgr/workflows/gmail_activities.py",
+})
+
+
+def test_no_default_org_coercion_anywhere_in_clearledgr():
+    """M19 tree-wide invariant: NO file in ``clearledgr/`` may contain
+    an executable ``or "default"`` coercion (or any of the equivalent
+    rewrites listed in ``_OR_DEFAULT_PATTERNS``). Files still being
+    swept are listed in ``_M19_OR_DEFAULT_ALLOWLIST`` and skipped here;
+    the allowlist shrinks to empty as M19 progresses.
+
+    A NEW file with a fresh M4 landmine fails this test immediately.
+    A SWEPT file that drops out of the allowlist must be clean — if
+    a regression re-introduces the pattern, this test catches it.
+    """
+    import os
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    pkg_root = repo_root / "clearledgr"
+
+    bad_unallowed: list[str] = []
+    bad_allowed: list[str] = []
+    for root, dirs, files in os.walk(pkg_root):
+        dirs[:] = [d for d in dirs if d not in ("__pycache__", "node_modules")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            path = Path(root) / f
+            rel = str(path.relative_to(repo_root))
+            try:
+                src = path.read_text()
+            except Exception:
+                continue
+            matches = _find_default_coercions(src)
+            if not matches:
+                # Confirm file isn't pointlessly on the allowlist.
+                if rel in _M19_OR_DEFAULT_ALLOWLIST:
+                    bad_allowed.append(rel)
+                continue
+            if rel in _M19_OR_DEFAULT_ALLOWLIST:
+                continue  # known dirty; M19 sweep pending
+            bad_unallowed.append(f"{rel}: {len(matches)} site(s)")
+
+    assert not bad_unallowed, (
+        "Files NOT on the M19 allowlist contain ``or 'default'``-class "
+        "coercions. Either fix them or add them to the allowlist with "
+        "a justification (allowlist additions need maintainer sign-off):\n  - "
+        + "\n  - ".join(bad_unallowed)
+    )
+    assert not bad_allowed, (
+        "These files are on the M19 allowlist but have NO coercions left "
+        "— remove them from the allowlist so the test pins them:\n  - "
+        + "\n  - ".join(bad_allowed)
+    )
 
 
 def test_slack_events_route_requires_signature_verification():
@@ -737,6 +950,110 @@ def test_ap_item_task_routes_check_user_org_against_task_org():
         )
 
 
+def test_field_review_resolution_passes_org_to_require_item():
+    """M19+ regression for sub-agent #4 finding: M19b deleted the
+    post-fetch ``verify_org_access(item.org or "default", user)`` line
+    on every site that called ``_require_item(...,
+    expected_organization_id=...)`` upstream — but
+    ``_execute_field_review_resolution`` was calling
+    ``_require_item(db, ap_item_id)`` WITHOUT the kwarg, so the
+    deletion silently dropped the tenant-scope check.
+
+    This test pins that the resolver passes the
+    ``expected_organization_id`` argument so the helper rejects
+    cross-tenant reads at the data layer.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src = (repo_root / "clearledgr" / "services" / "ap_item_service.py").read_text()
+    body = src.split("def _execute_field_review_resolution", 1)[1].split("\ndef ", 1)[0]
+    assert "expected_organization_id=organization_id" in body, (
+        "_execute_field_review_resolution must pass "
+        "expected_organization_id to _require_item — without it the "
+        "field-review/resolve and field-review/bulk-resolve routes "
+        "leak cross-tenant writes."
+    )
+
+
+def test_gmail_extension_workflow_status_checks_row_org():
+    """M19+ regression: ``GET /api/gmail-extension/workflow/{id}`` was
+    fetching ``task_runs`` rows by primary key only. M19b deleted the
+    ``_assert_user_org_access(user, row.org or "default")`` line as
+    redundant, but this route has NO ``_require_item`` upstream — the
+    tenant check went away entirely. Pin the post-fetch row_org check.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src = (repo_root / "clearledgr" / "api" / "gmail_extension.py").read_text()
+    # Find the route handler body.
+    marker = '/workflow/{workflow_id}'
+    if marker in src:
+        chunk = src.split(marker, 1)[1].split("\n@router.", 1)[0]
+        assert "row_org" in chunk and "require_org" in chunk, (
+            "/workflow/{id} handler must check row.organization_id "
+            "against the session org — pre-fix the line existed; "
+            "M19b's redundancy sweep removed it."
+        )
+
+
+def test_or_default_regex_catches_alternate_rewrite_shapes():
+    """M16: the regression-test detector ``_OR_DEFAULT_RE`` previously
+    matched only a literal ``or "default"``. The sub-agent review
+    found 5 alternate shapes a future regression could use to
+    silently re-introduce the M4 landmine. Pin them all here so a
+    contributor can never sneak the bug back via a different syntax.
+    """
+    must_match = [
+        # Bare or
+        'foo = bar or "default"',
+        # if-not pattern
+        'if not org: org = "default"',
+        # ternary "if not"
+        'org_id = "default" if not session_org else session_org',
+        # dict.get default
+        'org = settings.get("organization_id", "default")',
+        # getattr default
+        'org = getattr(user, "organization_id", "default")',
+        # setattr literal
+        'setattr(action, "organization_id", "default")',
+        # plain assignment
+        'org_id = "default"',
+        'organization_id = "default"',
+    ]
+    # Note: ``= X if cond else "default"`` (ternary-else) was previously
+    # in must_match but the standalone ``else "default"`` regex
+    # over-matched UI style strings (``"style": "primary" if ok else
+    # "default"``). Dropped to reduce false positives. The ternary
+    # bypass is still partly covered by the plain-assignment shape on
+    # the next line, e.g. ``org_id = X if ok else "default"`` matches
+    # the org-shaped-LHS pattern when the line ends in
+    # ``"default"``. If a future contributor writes ``temp = X if ok
+    # else "default"; org_id = temp`` the regex misses — that's a
+    # gap we accept until we move to AST-level scanning.
+    for shape in must_match:
+        assert _OR_DEFAULT_RE.search(shape), (
+            f"_OR_DEFAULT_RE missed: {shape!r}. A regression using "
+            f"this shape would re-introduce the M4 landmine without "
+            f"tripping the regression suite."
+        )
+
+    # Negative cases — must NOT match.
+    must_not_match = [
+        # Legitimate string config that happens to mention "default"
+        'COLOR_DEFAULT = "default"',
+        # Comment / docstring (already stripped before matching, but
+        # double-check the regex doesn't catch unrelated patterns)
+        'theme_name = "default"',  # ``theme_name`` isn't org-shaped
+    ]
+    for shape in must_not_match:
+        assert not _OR_DEFAULT_RE.search(shape), (
+            f"_OR_DEFAULT_RE false-positive on: {shape!r}. The plain-"
+            f"assignment pattern is too permissive."
+        )
+
+
 def test_finance_runtime_platform_privilege_gated_by_explicit_flag():
     """Tier 2: ``FinanceAgentRuntime`` previously gated cross-tenant
     write privilege on ``self.organization_id == "default"`` — a
@@ -926,9 +1243,12 @@ def test_ops_assert_org_access_has_no_role_bypass_and_no_default_fallback():
         "that's the tenant-admin cross-tenant bypass the audit flagged."
     )
 
-    # No ``or "default"`` coercion before equality.
-    import re
-    assert not _OR_DEFAULT_RE.search(body), (
+    # No ``or "default"`` coercion before equality. Strip the
+    # function's docstring before matching — M22 widened the regex
+    # to catch ``Query("default")`` shapes and the docstring of
+    # ``_assert_org_access`` legitimately quotes that pattern as
+    # historical context.
+    assert not _OR_DEFAULT_RE.search(_strip_docstrings(body)), (
         "ops.py:_assert_org_access still coerces missing org to "
         "'default' before comparing — same M4 landmine."
     )

@@ -541,7 +541,7 @@ class TestSinglePassConfidenceGate:
             "risk_assessment": {"fraud_risk": "none"},
         }
         payload = {"email_id": "msg-1"}
-        return _format_single_pass_result(sp, payload, "default")
+        return _format_single_pass_result(sp, payload, "org-test")
 
     def test_high_confidence_extraction_does_not_require_field_review(self):
         result = self._format({

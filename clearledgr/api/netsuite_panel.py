@@ -139,7 +139,15 @@ def _candidate_org_ids(db) -> list:
         rows = db.list_organizations()
     except Exception:
         return []
-    return [str(row.get("id") or "default").strip() for row in (rows or []) if row]
+    # Skip rows whose ``id`` is empty rather than coercing to the
+    # legacy ``"default"`` literal — a synthetic "default" id would
+    # then be treated as a real account candidate by downstream
+    # callers, which is the M4 landmine in a different shape.
+    return [
+        rid
+        for rid in (str(row.get("id") or "").strip() for row in (rows or []) if row)
+        if rid
+    ]
 
 
 def _resolve_panel_user(

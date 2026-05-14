@@ -476,7 +476,10 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       // Seed the workspace name with the email domain as a reasonable
       // default ("acme.com" → "Acme"). User can overwrite before continuing.
       try {
-        const boot = await api('/api/workspace/bootstrap?organization_id=default', { silent: true });
+        // M20 tenant-rename: don't send organization_id — backend
+        // derives org from session via require_org, treats the
+        // query param as informational only.
+        const boot = await api('/api/workspace/bootstrap', { silent: true });
         const orgName = boot?.organization?.name;
         const email = boot?.user?.email || '';
         const domainGuess = email.split('@')[1]?.split('.')[0] || '';
@@ -502,10 +505,10 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     setPending(true);
     setWorkspaceError('');
     try {
+      // M20 tenant-rename: backend derives org from session.
       await api('/api/workspace/org/settings', {
         method: 'PATCH',
         body: JSON.stringify({
-          organization_id: 'default',
           patch: { organization_name: workspaceName },
         }),
       });
@@ -527,7 +530,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
   // popup lifecycle.
   const verifyErpConnected = useCallback(async () => {
     try {
-      const data = await api('/api/workspace/integrations?organization_id=default', { silent: true });
+      const data = await api('/api/workspace/integrations', { silent: true });
       const erp = (data?.integrations || []).find((i) => i?.name === 'erp');
       return Boolean(erp?.connected);
     } catch {
@@ -542,7 +545,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     try {
       const payload = await api('/api/workspace/integrations/erp/connect/start', {
         method: 'POST',
-        body: JSON.stringify({ organization_id: 'default', erp_type: erpId }),
+        body: JSON.stringify({ erp_type: erpId }),
       });
 
       // Credential-based ERPs (NetSuite, SAP): no OAuth popup. Backend
@@ -595,7 +598,6 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       await api('/api/workspace/policies/ap', {
         method: 'PUT',
         body: JSON.stringify({
-          organization_id: 'default',
           config: policyConfig,
         }),
       });
@@ -613,7 +615,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     try {
       const payload = await api('/api/workspace/integrations/slack/install/start', {
         method: 'POST',
-        body: JSON.stringify({ organization_id: 'default' }),
+        body: JSON.stringify({}),
       });
       if (payload?.auth_url && oauthBridge) {
         await new Promise((resolve) => {
@@ -623,7 +625,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
         window.open(payload.auth_url, '_blank', 'width=600,height=700');
       }
       // Verify connection landed server-side.
-      const data = await api('/api/workspace/integrations?organization_id=default', { silent: true });
+      const data = await api('/api/workspace/integrations', { silent: true });
       const slackIntegration = (data?.integrations || []).find((i) => i?.name === 'slack');
       if (slackIntegration?.connected) {
         setSlackConnected(true);
@@ -645,7 +647,7 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
     setStep('done');
     api('/api/workspace/onboarding/step', {
       method: 'POST',
-      body: JSON.stringify({ organization_id: 'default', step: 4 }),
+      body: JSON.stringify({ step: 4 }),
     }).catch(() => {});
     if (onComplete) onComplete();
   }, [api, onComplete]);

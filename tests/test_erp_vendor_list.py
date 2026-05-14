@@ -440,7 +440,7 @@ class TestERPVendorsEndpoint:
             return TokenData(
                 user_id="u1",
                 email="user@example.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )

@@ -265,7 +265,13 @@ def _emit_audit(
         {
             "id": f"EVT-{uuid.uuid4().hex}",
             "ap_item_id": item["id"],
-            "organization_id": item.get("organization_id") or "default",
+            # M20 tenant-rename: an AP item without an organization_id
+            # is malformed — record the audit row against the item's
+            # actual org or skip. Pre-fix this fell back to the legacy
+            # ``"default"`` bucket and silently bound recalibration
+            # audit rows to the wrong tenant. Stripping plus an empty-
+            # check keeps the script idempotent on partial data.
+            "organization_id": str(item.get("organization_id") or "").strip() or "_unprovisioned",
             "event_type": "confidence_gate_recalibrated",
             "actor_type": "system",
             "actor_id": "scripts/recalibrate_confidence_gate.py",

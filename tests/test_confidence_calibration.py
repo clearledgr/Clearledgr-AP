@@ -25,13 +25,13 @@ from clearledgr.services.confidence_calibration import (  # noqa: E402
 def db(tmp_path, monkeypatch):
     _db = db_module.get_db()
     _db.initialize()
-    _db.create_organization("default", "Default", settings={})
+    _db.create_organization("org-test", "Default", settings={})
     return _db
 
 
 @pytest.fixture()
 def calibrator(db):
-    return ConfidenceCalibrator(organization_id="default")
+    return ConfidenceCalibrator(organization_id="org-test")
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class TestCalibrate:
     def test_reduces_confidence_based_on_correction_rate(self, calibrator, db):
         """If a field is corrected 30% of the time, max calibrated confidence is 0.7."""
         db.upsert_vendor_profile(
-            "default", "Acme Corp",
+            "org-test", "Acme Corp",
             metadata={
                 "field_correction_rates": {"vendor": 0.3, "amount": 0.1},
             },
@@ -85,7 +85,7 @@ class TestRecordCorrection:
         calibrator.record_correction("Acme Corp", "vendor")
         calibrator.record_correction("Acme Corp", "vendor")
 
-        profile = db.get_vendor_profile("default", "Acme Corp") or {}
+        profile = db.get_vendor_profile("org-test", "Acme Corp") or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -97,7 +97,7 @@ class TestRecordCorrection:
         """Corrections increment corrected, total stays at whatever it was (0 initially)."""
         calibrator.record_correction("Acme Corp", "amount")
 
-        profile = db.get_vendor_profile("default", "Acme Corp") or {}
+        profile = db.get_vendor_profile("org-test", "Acme Corp") or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -117,7 +117,7 @@ class TestRecordExtraction:
         calibrator.record_extraction("Acme Corp", ["vendor", "amount"])
         calibrator.record_extraction("Acme Corp", ["vendor", "amount"])
 
-        profile = db.get_vendor_profile("default", "Acme Corp") or {}
+        profile = db.get_vendor_profile("org-test", "Acme Corp") or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -135,7 +135,7 @@ class TestRecordExtraction:
         calibrator.record_correction(vendor, "vendor")
         calibrator.record_correction(vendor, "vendor")
 
-        profile = db.get_vendor_profile("default", vendor) or {}
+        profile = db.get_vendor_profile("org-test", vendor) or {}
         meta = profile.get("metadata") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)

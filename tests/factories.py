@@ -3,7 +3,7 @@
 Test files used to hand-roll the same setup boilerplate over and over:
 
     payload = {
-        "organization_id": "default",
+        "organization_id": "org-test",
         "gmail_id": f"msg-{uuid.uuid4().hex}",
         "vendor_name": "Acme",
         "amount": 100.0,
@@ -77,7 +77,7 @@ _DEFAULT_AP_STATE = "received"
 def make_ap_item(
     db,
     *,
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     vendor_name: str = "Acme Corp",
     amount: float = 100.0,
     currency: str = "USD",
@@ -125,7 +125,7 @@ def make_ap_item(
 def make_vendor_profile(
     db,
     *,
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     vendor_name: str = "Acme Corp",
     sender_domains: Optional[list] = None,
     typical_gl_code: Optional[str] = None,
@@ -159,7 +159,7 @@ def make_user(
     db,
     *,
     email: Optional[str] = None,
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     role: str = "ap_clerk",
     name: Optional[str] = None,
     is_active: bool = True,

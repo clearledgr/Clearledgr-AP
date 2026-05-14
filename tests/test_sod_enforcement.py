@@ -42,14 +42,14 @@ from clearledgr.services.sod_check import (  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     return inst
 
 
 def _seed_ap_item(db, *, item_id: str, requester_user_id: str = "alice-uid"):
     return db.create_ap_item({
         "id": item_id,
-        "organization_id": "default",
+        "organization_id": "org-test",
         "vendor_name": "Acme",
         "amount": 250.0,
         "currency": "USD",
@@ -70,7 +70,7 @@ def _seed_processor_event(
         "event_type": event_type,
         "actor_type": "user",
         "actor_id": processor_user_id,
-        "organization_id": "default",
+        "organization_id": "org-test",
         "box_id": ap_item_id,
         "box_type": "ap_item",
         "source": "test",
@@ -83,27 +83,27 @@ def _seed_processor_event(
 
 
 def test_mode_default_when_setting_missing_is_enforced(db):
-    assert _resolve_mode(db, "default") == "enforced"
+    assert _resolve_mode(db, "org-test") == "enforced"
 
 
 def test_mode_disabled_via_bool_false(db):
-    db.update_organization("default", settings_json={"sod_enforcement": False})
-    assert _resolve_mode(db, "default") == "disabled"
+    db.update_organization("org-test", settings_json={"sod_enforcement": False})
+    assert _resolve_mode(db, "org-test") == "disabled"
 
 
 def test_mode_disabled_via_string(db):
-    db.update_organization("default", settings_json={"sod_enforcement": "off"})
-    assert _resolve_mode(db, "default") == "disabled"
+    db.update_organization("org-test", settings_json={"sod_enforcement": "off"})
+    assert _resolve_mode(db, "org-test") == "disabled"
 
 
 def test_mode_warn(db):
-    db.update_organization("default", settings_json={"sod_enforcement": "warn"})
-    assert _resolve_mode(db, "default") == "warn"
+    db.update_organization("org-test", settings_json={"sod_enforcement": "warn"})
+    assert _resolve_mode(db, "org-test") == "warn"
 
 
 def test_mode_enforced_via_string_true(db):
-    db.update_organization("default", settings_json={"sod_enforcement": "true"})
-    assert _resolve_mode(db, "default") == "enforced"
+    db.update_organization("org-test", settings_json={"sod_enforcement": "true"})
+    assert _resolve_mode(db, "org-test") == "enforced"
 
 
 # ─── Service: check_sod ─────────────────────────────────────────────
@@ -116,7 +116,7 @@ def test_no_processor_yet_passes(db):
         ap_item_id=item["id"],
         approver_user_id="bob-uid",
         approver_email="bob@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is True
     assert out.violation_reason is None
@@ -134,7 +134,7 @@ def test_different_user_approves_passes(db):
         ap_item_id=item["id"],
         approver_user_id="bob-uid",
         approver_email="bob@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is True
     assert out.violation_reason is None
@@ -152,7 +152,7 @@ def test_approver_is_processor_blocks(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is False
     assert out.violation_reason == "approver_is_processor"
@@ -172,7 +172,7 @@ def test_approver_is_processor_via_email_only(db):
         ap_item_id=item["id"],
         approver_user_id=None,  # no user_id resolved
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is False
     assert out.violation_reason == "approver_is_processor"
@@ -186,14 +186,14 @@ def test_approver_is_requester_blocks(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is False
     assert out.violation_reason == "approver_is_requester"
 
 
 def test_warn_mode_still_returns_allowed_true(db):
-    db.update_organization("default", settings_json={"sod_enforcement": "warn"})
+    db.update_organization("org-test", settings_json={"sod_enforcement": "warn"})
     item = _seed_ap_item(db, item_id="ap-sod-warn-1")
     _seed_processor_event(
         db, ap_item_id=item["id"], processor_user_id="alice-uid",
@@ -204,7 +204,7 @@ def test_warn_mode_still_returns_allowed_true(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     # Warn mode = audit-emit but still proceed
     assert out.allowed is True
@@ -213,7 +213,7 @@ def test_warn_mode_still_returns_allowed_true(db):
 
 
 def test_disabled_mode_skips_check_entirely(db):
-    db.update_organization("default", settings_json={"sod_enforcement": False})
+    db.update_organization("org-test", settings_json={"sod_enforcement": False})
     item = _seed_ap_item(db, item_id="ap-sod-disabled-1")
     _seed_processor_event(
         db, ap_item_id=item["id"], processor_user_id="alice-uid",
@@ -224,7 +224,7 @@ def test_disabled_mode_skips_check_entirely(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is True
     assert out.mode == "disabled"
@@ -240,7 +240,7 @@ def test_decision_events_are_not_treated_as_processor_activity(db):
         "event_type": "invoice_routed_for_approval",  # decision, not processor
         "actor_type": "user",
         "actor_id": "alice-uid",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "box_id": item["id"],
         "box_type": "ap_item",
         "source": "test",
@@ -252,7 +252,7 @@ def test_decision_events_are_not_treated_as_processor_activity(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     # Alice never PROCESSED — she only routed. Processor-gate passes.
     # (She IS the requester, but for this test the AP item user_id is
@@ -281,7 +281,7 @@ def test_latest_processor_event_wins(db):
         ap_item_id=item["id"],
         approver_user_id="alice-uid",
         approver_email="alice@example.test",
-        organization_id="default",
+        organization_id="org-test",
     )
     assert out.allowed is True
     assert out.processor_user_id == "bob-uid"

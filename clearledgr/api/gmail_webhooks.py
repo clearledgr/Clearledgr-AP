@@ -306,15 +306,27 @@ def _unsign_oauth_state(state: str) -> Dict[str, Any]:
 
 
 def _resolve_user_org_id(user_id: str) -> str:
-    """Resolve org for a Gmail token user_id; fallback to default when unknown."""
+    """Resolve org for a Gmail token user_id; fail closed when unknown.
+
+    M20 tenant-rename: a token whose user can't be resolved to a real
+    org used to fall through to the literal ``"default"`` tenant —
+    every Gmail webhook for that token would silently bind AP items
+    into the legacy bucket. Now returns the ``"_unprovisioned"``
+    sentinel so the downstream ``assert_org_id`` / ``require_org``
+    guards reject the write at the canonical defense layer instead.
+    """
     try:
         user = get_db().get_user(user_id)
     except Exception:
         user = None
     if user and user.get("organization_id"):
         return str(user["organization_id"])
-    logger.warning("Unable to resolve organization for gmail user_id=%s; using default", user_id)
-    return "default"
+    logger.warning(
+        "Unable to resolve organization for gmail user_id=%s; "
+        "returning _unprovisioned sentinel — webhook will fail closed",
+        user_id,
+    )
+    return "_unprovisioned"
 
 
 def _append_success_query(redirect_url: str, *, success: bool) -> str:
@@ -1700,7 +1712,24 @@ async def process_invoice_email(
     try:
         from clearledgr.services.finance_agent_runtime import get_platform_finance_runtime
 
-        runtime = get_platform_finance_runtime(invoice.organization_id or organization_id)
+        # M16: explicit two-tier fallback rather than ``or`` chain.
+        # ``invoice.organization_id`` comes from the extracted/matched
+        # invoice; ``organization_id`` is the gmail-token-derived org.
+        # Both should normally agree; the ``or`` shape silently masked
+        # cases where they didn't. Be loud about a missing org so the
+        # ingestion fails fast rather than silently skipping AP
+        # processing.
+        runtime_org = (
+            str(invoice.organization_id or "").strip()
+            or str(organization_id or "").strip()
+        )
+        if not runtime_org:
+            raise ValueError(
+                "gmail webhook AP-processing requires a non-empty "
+                "organization_id from either the invoice or the gmail "
+                "token; both were empty"
+            )
+        runtime = get_platform_finance_runtime(runtime_org)
         if run_runtime:
             result = await runtime.execute_ap_invoice_processing(
                 invoice_payload=runtime_invoice_payload,

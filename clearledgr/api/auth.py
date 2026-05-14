@@ -646,10 +646,18 @@ async def start_google_web_auth(
 
     safe_redirect_path = _sanitize_redirect_path(redirect_path)
     if not organization_id:
-        logger.warning("google_oauth_start called without organization_id, falling back to 'default'")
+        logger.warning(
+            "google_oauth_start called without organization_id, "
+            "marking state as _unprovisioned"
+        )
+    # Post tenant-rename (M20): the literal "default" is retired.
+    # The signed state's organization_id is informational only — the
+    # callback re-resolves the binding org from invite/domain anyway
+    # (see lines 759-776 below) — but using the sentinel keeps the
+    # state self-consistent and tree-walking-test clean.
     state = _sign_google_state(
         {
-            "organization_id": organization_id or "default",
+            "organization_id": organization_id or "_unprovisioned",
             "redirect_path": safe_redirect_path,
             "invite_token": invite_token,
             "nonce": secrets.token_urlsafe(8),
@@ -771,8 +779,17 @@ async def google_web_auth_callback(
         if org:
             org_id = str(org.get("id") or org.get("organization_id"))
         else:
-            org_id = "default"
-            logger.warning("No org found for domain %s — new user will be placed in default org", email_domain)
+            # Post tenant-rename (M20): unprovisioned users get the
+            # ``_unprovisioned`` sentinel, not a real tenant id.
+            # ``require_org`` rejects this with 403
+            # ``organization_pending_provisioning`` so the frontend
+            # routes them to a "your organization isn't set up yet"
+            # screen. Ops manually attaches them to a real org.
+            org_id = "_unprovisioned"
+            logger.warning(
+                "No org found for domain %s — user pending manual provisioning",
+                email_domain,
+            )
         role = ROLE_AP_CLERK
 
     user = get_user_by_email(email)
@@ -879,13 +896,18 @@ async def start_microsoft_web_auth(
 
     safe_redirect_path = _sanitize_redirect_path(redirect_path)
     if not organization_id:
-        logger.warning("microsoft_oauth_start called without organization_id, falling back to 'default'")
+        logger.warning(
+            "microsoft_oauth_start called without organization_id, "
+            "marking state as _unprovisioned"
+        )
 
     # Reuse the Google state signer so /microsoft/callback can use the
     # same _unsign_google_state() helper. Only the surface differs.
+    # See google_oauth_start above — the state's organization_id is
+    # informational; the callback re-resolves from invite/domain.
     state = _sign_google_state(
         {
-            "organization_id": organization_id or "default",
+            "organization_id": organization_id or "_unprovisioned",
             "redirect_path": safe_redirect_path,
             "invite_token": invite_token,
             "nonce": secrets.token_urlsafe(8),
@@ -992,9 +1014,12 @@ async def microsoft_web_auth_callback(
         if org:
             org_id = str(org.get("id") or org.get("organization_id"))
         else:
-            org_id = "default"
+            # Post tenant-rename (M20): see google_callback above. Same
+            # gating policy — sentinel binds the user to the manual-
+            # provisioning queue rather than the legacy bucket.
+            org_id = "_unprovisioned"
             logger.warning(
-                "No org found for Microsoft user domain %s — placing in default org",
+                "No org found for Microsoft user domain %s — pending manual provisioning",
                 email_domain,
             )
         role = ROLE_AP_CLERK
@@ -1102,7 +1127,7 @@ async def google_oauth_popup_complete():
       (async function () {
         const params = new URLSearchParams(window.location.search);
         const authCode = params.get('auth_code');
-        const orgId = params.get('org') || 'default';
+        const orgId = params.get('org') || '';
         const titleEl = document.getElementById('title');
         const detailEl = document.getElementById('detail');
 
@@ -1183,7 +1208,16 @@ async def accept_invite(request: InviteAcceptRequest, response: Response):
     # Phase 2.3: normalize legacy invite roles to canonical thesis values.
     from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
     role = normalize_user_role(invite.get("role")) or ROLE_AP_CLERK
-    organization_id = str(invite.get("organization_id") or "default")
+    # M20 tenant-rename: invites MUST carry a real organization_id
+    # (the inviting org). A malformed invite is a programming error
+    # in the inviter flow — fail closed (400) rather than silently
+    # bind the new user to a sentinel / legacy bucket. Pre-fix the
+    # ``or "default"`` fallback absorbed broken invites and quietly
+    # placed users in the legacy single-tenant bucket, which was the
+    # M19 audit's last data-leak path.
+    organization_id = str(invite.get("organization_id") or "").strip()
+    if not organization_id or organization_id in ("default", "_unprovisioned"):
+        raise HTTPException(status_code=400, detail="invite_missing_organization_id")
     user = get_user_by_email(email)
     if user is None:
         if not request.password:

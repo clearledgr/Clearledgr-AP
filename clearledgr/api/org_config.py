@@ -26,6 +26,7 @@ from clearledgr.core.org_config import (
     get_preset_configs,
     create_default_config,
 )
+from clearledgr.core.org_utils import require_org
 
 logger = logging.getLogger(__name__)
 router = APIRouter(

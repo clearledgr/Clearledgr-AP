@@ -274,7 +274,7 @@ export default function PipelinePage({ api, bootstrap, toast, orgId, userEmail, 
   // commits (items may still be loading — "first paint" is the Kanban
   // skeleton being visible, not data settling, per the thesis wording).
   useEffect(() => {
-    perfMarkDone('kanban', { context: { org_id: orgId || 'default' } });
+    perfMarkDone('kanban', { context: { org_id: orgId || 'unscoped' } });
     return () => { _kanbanPerfStarted = false; };
   }, []);
 

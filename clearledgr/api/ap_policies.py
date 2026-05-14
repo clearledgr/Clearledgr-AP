@@ -1,7 +1,7 @@
 """AP business policy APIs (tenant-configurable, versioned, auditable)."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -13,6 +13,7 @@ from clearledgr.services.policy_compliance import (
     get_approval_automation_policy,
     get_policy_compliance,
 )
+from clearledgr.core.org_utils import require_org
 
 
 router = APIRouter(prefix="/api/ap/policies", tags=["ap-policies"])

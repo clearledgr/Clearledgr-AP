@@ -24,7 +24,7 @@ from clearledgr.services.invoice_models import InvoiceData
 from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
 
-def _make_workflow(organization_id: str = "default") -> InvoiceWorkflowService:
+def _make_workflow(organization_id: str = "org-test") -> InvoiceWorkflowService:
     return InvoiceWorkflowService(organization_id=organization_id)
 
 
@@ -42,7 +42,7 @@ def _seed_ap_item_for_validation(
         "subject": f"Bill from {vendor_name}",
         "sender": f"{vendor_name.lower().replace(' ', '')}@example.com",
         "state": state,
-        "organization_id": "default",
+        "organization_id": "org-test",
     }
     result = db.create_ap_item(payload)
     return result["id"]
@@ -74,7 +74,7 @@ async def test_validation_gate_evaluated_audit_records_every_rule(postgres_test_
         currency="USD",
         invoice_number="INV-100",
         confidence=0.95,
-        organization_id="default",
+        organization_id="org-test",
         user_id="test-user",
     )
 
@@ -140,7 +140,7 @@ async def test_validation_gate_records_failed_rule_with_evidence(postgres_test_d
         currency="USD",
         invoice_number="INV-200",
         confidence=0.5,
-        organization_id="default",
+        organization_id="org-test",
         user_id="test-user",
     )
 
@@ -177,7 +177,7 @@ async def test_validation_gate_blocks_sanctions_blocked_vendor(postgres_test_db)
     # path the screening service uses to roll up the rolled-up
     # disposition column.
     db.upsert_vendor_profile(
-        organization_id="default",
+        organization_id="org-test",
         vendor_name=vendor_name,
         sanctions_status="blocked",
         last_sanctions_check_at=datetime.now(timezone.utc).isoformat(),
@@ -192,7 +192,7 @@ async def test_validation_gate_blocks_sanctions_blocked_vendor(postgres_test_db)
         currency="USD",
         invoice_number="INV-S1",
         confidence=0.95,
-        organization_id="default",
+        organization_id="org-test",
         user_id="test-user",
     )
 
@@ -248,7 +248,7 @@ async def test_validation_gate_records_skip_when_check_raises(postgres_test_db):
         currency="USD",
         invoice_number="INV-EXC-1",
         confidence=0.99,
-        organization_id="default",
+        organization_id="org-test",
         user_id="test-user",
     )
 
@@ -292,7 +292,7 @@ async def test_fuzzy_dedup_window_honours_per_tenant_setting(postgres_test_db):
     """
     db = get_db()
     db.initialize()
-    org_id = "default"
+    org_id = "org-test"
 
     # Ensure the org row exists (the postgres_test_db fixture truncates
     # most tables between tests; organization rows aren't auto-seeded).
@@ -377,7 +377,7 @@ async def test_currency_consistency_passes_org_id_first_to_get_vendor_profile(po
     """
     db = get_db()
     db.initialize()
-    org_id = "default"
+    org_id = "org-test"
     vendor = "EUR Vendor"
     if not db.get_organization(org_id):
         db.create_organization(organization_id=org_id, name="Default Org")
@@ -477,7 +477,7 @@ async def test_fraud_thresholds_gate_records_low_frequency_high_amount(postgres_
     """
     db = get_db()
     db.initialize()
-    org_id = "default"
+    org_id = "org-test"
     vendor = "Low-Frequency Vendor"
     if not db.get_organization(org_id):
         db.create_organization(organization_id=org_id, name="Default Org")
@@ -549,7 +549,7 @@ async def test_fraud_thresholds_gate_passes_when_no_threshold_fires(postgres_tes
     rule isn't a false-positive machine."""
     db = get_db()
     db.initialize()
-    org_id = "default"
+    org_id = "org-test"
     vendor = "Established Vendor"
     if not db.get_organization(org_id):
         db.create_organization(organization_id=org_id, name="Default Org")

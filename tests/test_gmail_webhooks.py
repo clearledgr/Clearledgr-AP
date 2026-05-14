@@ -327,19 +327,25 @@ class TestResolveUserOrgId:
         with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
             assert _resolve_user_org_id("user@test.com") == "acme-corp"
 
-    def test_returns_default_on_missing_user(self, monkeypatch):
+    def test_returns_unprovisioned_sentinel_on_missing_user(self, monkeypatch):
+        # M20 tenant-rename: missing-user fallback now returns the
+        # ``_unprovisioned`` sentinel so downstream ``assert_org_id``
+        # rejects the webhook write closed instead of silently binding
+        # to the legacy ``"org-test"`` bucket.
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.return_value = None
         with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
-            assert _resolve_user_org_id("unknown@test.com") == "default"
+            assert _resolve_user_org_id("unknown@test.com") == "_unprovisioned"
 
-    def test_returns_default_on_db_error(self, monkeypatch):
+    def test_returns_unprovisioned_sentinel_on_db_error(self, monkeypatch):
+        # Same fail-closed fallback — a transient DB error must not
+        # downgrade an unknown caller to the legacy bucket.
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.side_effect = Exception("DB down")
         with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
-            assert _resolve_user_org_id("user@test.com") == "default"
+            assert _resolve_user_org_id("user@test.com") == "_unprovisioned"
 
 
 # ---------------------------------------------------------------------------

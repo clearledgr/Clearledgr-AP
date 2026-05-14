@@ -10,7 +10,7 @@ def test_create_task_run_resets_failed_idempotent_runs(tmp_path, monkeypatch):
     db = ClearledgrDB(str(tmp_path / "task-store.db"))
     first = db.create_task_run(
         id="task-1",
-        org_id="default",
+        org_id="org-test",
         task_type="ap_invoice_processing",
         input_payload='{"invoice":{"gmail_id":"msg-1"}}',
         idempotency_key="invoice:msg-1",
@@ -20,7 +20,7 @@ def test_create_task_run_resets_failed_idempotent_runs(tmp_path, monkeypatch):
 
     retried = db.create_task_run(
         id="task-2",
-        org_id="default",
+        org_id="org-test",
         task_type="ap_invoice_processing",
         input_payload='{"invoice":{"gmail_id":"msg-1","thread_id":"thread-1"}}',
         idempotency_key="invoice:msg-1",

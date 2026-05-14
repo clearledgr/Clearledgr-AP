@@ -39,7 +39,7 @@ def _fake_user():
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
-        organization_id="default",
+        organization_id="org-test",
         role="ops",
     )
 
@@ -66,7 +66,7 @@ def _create_item(db, *, item_id: str, state: str = "needs_approval", thread_id: 
             "invoice_number": f"INV-{item_id}",
             "state": state,
             "confidence": 0.99,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {},
         }
     )
@@ -119,7 +119,7 @@ def test_bulk_snooze_transitions_all_items_and_returns_per_item_results(db):
 
     client = _app_with_router()
     response = client.post(
-        "/api/ap/items/bulk-snooze?organization_id=default",
+        "/api/ap/items/bulk-snooze?organization_id=org-test",
         json={
             "ap_item_ids": ["AP-S1", "AP-S2", "AP-S3"],
             "duration_minutes": 240,
@@ -149,7 +149,7 @@ def test_bulk_snooze_reports_per_item_failures_without_aborting(db):
 
     client = _app_with_router()
     response = client.post(
-        "/api/ap/items/bulk-snooze?organization_id=default",
+        "/api/ap/items/bulk-snooze?organization_id=org-test",
         json={
             "ap_item_ids": ["AP-OK", "AP-BAD", "AP-MISSING"],
             "duration_minutes": 60,
@@ -176,7 +176,7 @@ def test_bulk_snooze_rejects_wrong_org_items(db):
 
     client = _app_with_router()
     response = client.post(
-        "/api/ap/items/bulk-snooze?organization_id=default",
+        "/api/ap/items/bulk-snooze?organization_id=org-test",
         json={"ap_item_ids": ["AP-WRONGORG"], "duration_minutes": 60},
     )
     assert response.status_code == 200
@@ -208,7 +208,7 @@ def test_bulk_approve_calls_runtime_once_per_item_and_aggregates(db):
     client = _app_with_router()
     with patch.object(action_routes.shared, "_finance_agent_runtime_cls", return_value=runtime_factory):
         response = client.post(
-            "/api/ap/items/bulk-approve?organization_id=default",
+            "/api/ap/items/bulk-approve?organization_id=org-test",
             json={"ap_item_ids": ["AP-A1", "AP-A2", "AP-A3"]},
         )
     assert response.status_code == 200
@@ -240,7 +240,7 @@ def test_bulk_approve_single_runtime_failure_does_not_abort_batch(db):
     client = _app_with_router()
     with patch.object(action_routes.shared, "_finance_agent_runtime_cls", return_value=runtime_factory):
         response = client.post(
-            "/api/ap/items/bulk-approve?organization_id=default",
+            "/api/ap/items/bulk-approve?organization_id=org-test",
             json={"ap_item_ids": ["AP-EX1", "AP-EX2"]},
         )
     assert response.status_code == 200
@@ -263,7 +263,7 @@ def test_bulk_approve_override_forwards_justification(db):
     client = _app_with_router()
     with patch.object(action_routes.shared, "_finance_agent_runtime_cls", return_value=runtime_factory):
         response = client.post(
-            "/api/ap/items/bulk-approve?organization_id=default",
+            "/api/ap/items/bulk-approve?organization_id=org-test",
             json={
                 "ap_item_ids": ["AP-OV1"],
                 "override": True,
@@ -290,7 +290,7 @@ def test_bulk_reject_routes_to_reject_intent_and_tags_bulk_channel(db):
     client = _app_with_router()
     with patch.object(action_routes.shared, "_finance_agent_runtime_cls", return_value=runtime_factory):
         response = client.post(
-            "/api/ap/items/bulk-reject?organization_id=default",
+            "/api/ap/items/bulk-reject?organization_id=org-test",
             json={"ap_item_ids": ["AP-R1"], "reason": "duplicate"},
         )
     assert response.status_code == 200
@@ -320,7 +320,7 @@ def test_bulk_retry_post_rejects_items_not_in_failed_post_state(db):
     client = _app_with_router()
     with patch.object(action_routes.shared, "_finance_agent_runtime_cls", return_value=runtime_factory):
         response = client.post(
-            "/api/ap/items/bulk-retry-post?organization_id=default",
+            "/api/ap/items/bulk-retry-post?organization_id=org-test",
             json={"ap_item_ids": ["AP-FAIL", "AP-APPROVED"]},
         )
     assert response.status_code == 200

@@ -27,7 +27,7 @@ def client(db):
         return TokenData(
             user_id="ops-user-1",
             email="ops@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -73,7 +73,7 @@ def _create_item(
             "currency": "USD",
             "invoice_number": f"INV-{item_id}",
             "state": state,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": metadata or {},
         }
     )
@@ -171,7 +171,7 @@ def test_ap_kpis_expose_vendor_drift_scorecards_and_review_sampling(client, db):
             metadata=clean_email_provenance,
         )
 
-    response = client.get("/api/ops/ap-kpis?organization_id=default")
+    response = client.get("/api/ops/ap-kpis?organization_id=org-test")
     assert response.status_code == 200
 
     payload = response.json()
@@ -241,7 +241,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
     db.append_audit_event(
         {
             "ap_item_id": strong_item["id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "event_type": "erp_post_attempted",
             "actor_type": "system",
             "actor_id": "test",
@@ -250,7 +250,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
     db.append_audit_event(
         {
             "ap_item_id": strong_item["id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "event_type": "erp_post_succeeded",
             "actor_type": "system",
             "actor_id": "test",
@@ -285,13 +285,13 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
             "message_ts": "171.1",
             "source_channel": "slack",
             "status": "pending",
-            "organization_id": "default",
+            "organization_id": "org-test",
         }
     )
     db.append_audit_event(
         {
             "ap_item_id": weak_item["id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "event_type": "field_correction",
             "actor_type": "user",
             "actor_id": "ops@example.com",
@@ -326,7 +326,7 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
     db.append_audit_event(
         {
             "ap_item_id": mismatch_item["id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "event_type": "erp_post_attempted",
             "actor_type": "system",
             "actor_id": "test",
@@ -335,14 +335,14 @@ def test_ap_kpis_expose_shadow_scoring_and_post_action_verification(client, db):
     db.append_audit_event(
         {
             "ap_item_id": mismatch_item["id"],
-            "organization_id": "default",
+            "organization_id": "org-test",
             "event_type": "erp_post_succeeded",
             "actor_type": "system",
             "actor_id": "test",
         }
     )
 
-    response = client.get("/api/ops/ap-kpis?organization_id=default")
+    response = client.get("/api/ops/ap-kpis?organization_id=org-test")
     assert response.status_code == 200
 
     telemetry = ((response.json().get("kpis") or {}).get("agentic_telemetry") or {})

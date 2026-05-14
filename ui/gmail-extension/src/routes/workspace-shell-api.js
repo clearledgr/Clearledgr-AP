@@ -12,7 +12,7 @@ let _toastFn = null;
 export function setToastFn(fn) { _toastFn = fn; }
 
 export function createWorkspaceShellApi(queueManager) {
-  const orgId = () => String(queueManager?.runtimeConfig?.organizationId || 'default').trim();
+  const orgId = () => String(queueManager?.runtimeConfig?.organizationId || '').trim();
   const backendUrl = () => String(queueManager?.runtimeConfig?.backendUrl || 'http://127.0.0.1:8010').replace(/\/+$/, '');
 
   async function api(path, options = {}) {

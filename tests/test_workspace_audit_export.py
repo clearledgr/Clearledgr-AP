@@ -46,12 +46,12 @@ from clearledgr.core.auth import get_current_user  # noqa: E402
 def db():
     inst = db_module.get_db()
     inst.initialize()
-    inst.ensure_organization("default", organization_name="default")
+    inst.ensure_organization("org-test", organization_name="org-test")
     inst.ensure_organization("other-tenant", organization_name="other-tenant")
     return inst
 
 
-def _admin_user(org_id: str = "default"):
+def _admin_user(org_id: str = "org-test"):
     return SimpleNamespace(
         email="admin@example.com",
         user_id="admin-user",
@@ -64,7 +64,7 @@ def _operator_user():
     return SimpleNamespace(
         email="ops@example.com",
         user_id="ops-user",
-        organization_id="default",
+        organization_id="org-test",
         role="ap_clerk",
     )
 
@@ -84,7 +84,7 @@ def _seed_event(
     *,
     box_id: str,
     event_type: str = "state_transition",
-    organization_id: str = "default",
+    organization_id: str = "org-test",
     actor_id: str = "admin@example.com",
     box_type: str = "ap_item",
     ts: str | None = None,
@@ -126,7 +126,7 @@ def test_export_requires_admin(client_factory):
     client = client_factory(_operator_user)
     resp = client.post(
         "/api/workspace/audit/export",
-        json={"organization_id": "default"},
+        json={"organization_id": "org-test"},
     )
     assert resp.status_code == 403
     assert resp.json()["detail"] == "admin_role_required"
@@ -183,7 +183,7 @@ def test_export_full_lifecycle_writes_csv(db, client_factory):
         mock_task.delay.return_value = None
         post_resp = client.post(
             "/api/workspace/audit/export",
-            json={"organization_id": "default"},
+            json={"organization_id": "org-test"},
         )
     assert post_resp.status_code == 200
     body = post_resp.json()
@@ -209,7 +209,7 @@ def test_export_full_lifecycle_writes_csv(db, client_factory):
     assert body["status"] == "done"
     assert body["total_rows"] >= 3
     assert body["content_size_bytes"] > 0
-    assert body["content_filename"].startswith("audit-default-")
+    assert body["content_filename"].startswith("audit-org-test-")
     assert body["content_filename"].endswith(".csv")
     assert body["completed_at"] is not None
     # Status payload must NOT include the content blob.
@@ -249,7 +249,7 @@ def test_export_filters_apply_to_csv_content(db, client_factory):
         post_resp = client.post(
             "/api/workspace/audit/export",
             json={
-                "organization_id": "default",
+                "organization_id": "org-test",
                 "box_id": "ap-filter-1",
                 "event_types": ["invoice_approved"],
             },
@@ -278,7 +278,7 @@ def test_export_download_409_when_not_done(db, client_factory):
         mock_task.delay.return_value = None
         post_resp = client.post(
             "/api/workspace/audit/export",
-            json={"organization_id": "default"},
+            json={"organization_id": "org-test"},
         )
     job_id = post_resp.json()["job_id"]
 
@@ -297,7 +297,7 @@ def test_export_dispatch_failure_marks_failed(db, client_factory):
         mock_task.delay.side_effect = RuntimeError("broker unreachable")
         post_resp = client.post(
             "/api/workspace/audit/export",
-            json={"organization_id": "default"},
+            json={"organization_id": "org-test"},
         )
     assert post_resp.status_code == 200
     body = post_resp.json()
@@ -314,14 +314,14 @@ def test_reap_expired_audit_exports_drops_old_rows(db):
     """Reaper sweeps rows past expires_at; in-flight rows untouched."""
     # Force-expired
     expired = db.create_audit_export(
-        organization_id="default",
+        organization_id="org-test",
         requested_by="admin@example.com",
         filters_json="{}",
         retention_hours=-1,  # already expired
     )
     # Fresh
     fresh = db.create_audit_export(
-        organization_id="default",
+        organization_id="org-test",
         requested_by="admin@example.com",
         filters_json="{}",
         retention_hours=24,

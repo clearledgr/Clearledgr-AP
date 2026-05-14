@@ -341,12 +341,19 @@ async def exchange_xsuaa_for_clearledgr_jwt(
         )
 
     # Per-tenant config wins on org binding. Falls through to the
-    # user's home org only when no tenant match was found.
+    # user's home org only when no tenant match was found. M19: if
+    # neither the tenant config nor the user row carries an org,
+    # fail closed instead of binding the JWT to the legacy "default"
+    # tenant. SAP XSUAA tokens have no other org source.
     organization_id = (
-        resolved_org_id_hint
-        or str(user_row.get("organization_id") or "default").strip()
-        or "default"
+        str(resolved_org_id_hint or "").strip()
+        or str(user_row.get("organization_id") or "").strip()
     )
+    if not organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="sap_xsuaa: cannot resolve organization_id from JWT or user record",
+        )
 
     # Cross-tenant guard: if a tenant config matched, the user's home
     # org must be the same. Prevents a user from one Clearledgr org

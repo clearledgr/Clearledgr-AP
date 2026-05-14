@@ -36,7 +36,7 @@ def client(db):
         return TokenData(
             user_id="ops-user",
             email="ops@example.com",
-            organization_id="default",
+            organization_id="org-test",
             role="owner",
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
@@ -73,14 +73,14 @@ class TestLLMCostSummary:
     def test_aggregates_totals_and_by_action(self, client, db):
         now = datetime.now(timezone.utc)
         today = now.isoformat()
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=1000, output_tok=200, cost=0.01, created_at=today)
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=2000, output_tok=300, cost=0.02, created_at=today)
-        _insert_call(db, org_id="default", action="classify_email",
+        _insert_call(db, org_id="org-test", action="classify_email",
                      input_tok=500, output_tok=50, cost=0.001, created_at=today)
 
-        resp = client.get("/api/ops/llm-cost-summary?organization_id=default&window_days=30")
+        resp = client.get("/api/ops/llm-cost-summary?organization_id=org-test&window_days=30")
         assert resp.status_code == 200
         payload = resp.json()["summary"]
 
@@ -100,43 +100,43 @@ class TestLLMCostSummary:
         now = datetime.now(timezone.utc)
         today = now.isoformat()
         ancient = (now - timedelta(days=60)).isoformat()
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=100, output_tok=10, cost=0.002, created_at=today)
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=9999, output_tok=9999, cost=1.0, created_at=ancient)
 
-        resp = client.get("/api/ops/llm-cost-summary?organization_id=default&window_days=7")
+        resp = client.get("/api/ops/llm-cost-summary?organization_id=org-test&window_days=7")
         payload = resp.json()["summary"]
         assert payload["total_calls"] == 1
         assert payload["total_cost_usd"] == 0.002
 
     def test_error_calls_counted(self, client, db):
         today = datetime.now(timezone.utc).isoformat()
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=100, output_tok=0, cost=0.0,
                      created_at=today, error="rate_limited")
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=100, output_tok=10, cost=0.001, created_at=today)
 
-        resp = client.get("/api/ops/llm-cost-summary?organization_id=default")
+        resp = client.get("/api/ops/llm-cost-summary?organization_id=org-test")
         payload = resp.json()["summary"]
         assert payload["total_calls"] == 2
         assert payload["error_calls"] == 1
 
     def test_organization_isolation(self, client, db):
         today = datetime.now(timezone.utc).isoformat()
-        _insert_call(db, org_id="default", action="extract_invoice_fields",
+        _insert_call(db, org_id="org-test", action="extract_invoice_fields",
                      input_tok=100, output_tok=10, cost=0.005, created_at=today)
         _insert_call(db, org_id="other-org", action="extract_invoice_fields",
                      input_tok=99999, output_tok=99999, cost=99.0, created_at=today)
 
-        resp = client.get("/api/ops/llm-cost-summary?organization_id=default")
+        resp = client.get("/api/ops/llm-cost-summary?organization_id=org-test")
         payload = resp.json()["summary"]
         assert payload["total_calls"] == 1
         assert payload["total_cost_usd"] == 0.005
 
     def test_empty_window_returns_zero_totals(self, client, db):
-        resp = client.get("/api/ops/llm-cost-summary?organization_id=default")
+        resp = client.get("/api/ops/llm-cost-summary?organization_id=org-test")
         payload = resp.json()["summary"]
         assert payload["total_calls"] == 0
         assert payload["total_cost_usd"] == 0.0

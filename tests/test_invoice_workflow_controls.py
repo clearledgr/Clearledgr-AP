@@ -26,7 +26,7 @@ class _FakeDB:
 
 
 def _setup_service(monkeypatch):
-    service = InvoiceWorkflowService(organization_id="default", auto_approve_threshold=0.95)
+    service = InvoiceWorkflowService(organization_id="org-test", auto_approve_threshold=0.95)
     service.db = _FakeDB()
 
     calls = {"auto": 0, "send": 0, "send_context": None}

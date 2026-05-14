@@ -76,7 +76,7 @@ class TestPostSlackBlocks:
                         [{"type": "section"}],
                         "test",
                         preferred_channel="C0AN8FFHAPJ",
-                        organization_id="default",
+                        organization_id="org-test",
                     )
                 )
 
@@ -177,12 +177,12 @@ class TestSendApprovalReminder:
                             "vendor_name": "Approval Reminder Co",
                             "amount": 42.0,
                             "invoice_number": "INV-REM-1",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                             "metadata": {"approval_channel": "C-APPROVALS"},
                         },
                         approver_ids=[],
                         hours_pending=4,
-                        organization_id="default",
+                        organization_id="org-test",
                         stage="reminder",
                     )
                 )
@@ -215,12 +215,12 @@ class TestSendApprovalReminder:
                         "amount": 42.0,
                         "currency": "USD",
                         "invoice_number": "INV-REM-2",
-                        "organization_id": "default",
+                        "organization_id": "org-test",
                         "metadata": {"approval_channel": "C-APPROVALS"},
                     },
                     approver_ids=["U123"],
                     hours_pending=4,
-                    organization_id="default",
+                    organization_id="org-test",
                     stage="reminder",
                 )
             )
@@ -261,12 +261,12 @@ class TestSendApprovalReminder:
                             "amount": 420.0,
                             "currency": "USD",
                             "invoice_number": "INV-ESC-1",
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                             "metadata": {"approval_channel": "C-APPROVALS"},
                         },
                         approver_ids=["approver@company.com"],
                         hours_pending=24,
-                        organization_id="default",
+                        organization_id="org-test",
                         stage="escalation",
                     )
                 )

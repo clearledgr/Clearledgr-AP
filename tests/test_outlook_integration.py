@@ -271,7 +271,7 @@ class TestOutlookRoutes:
             return TokenData(
                 user_id="route-user",
                 email="route@test.com",
-                organization_id="default",
+                organization_id="org-test",
                 role="owner",
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             )

@@ -296,7 +296,7 @@ async def test_post_delivery_db_failure_marks_dispatch_orphan_with_slack_breadcr
     svc = _make_workflow(db)
 
     async def _ok_deliver(**kwargs):
-        return {"channel": "C-LIVE", "ts": "1700000000.000999", "routing_rule": "default", "dm_sent": False}
+        return {"channel": "C-LIVE", "ts": "1700000000.000999", "routing_rule": "org-test", "dm_sent": False}
 
     with patch(
         "clearledgr.services.slack_notifications.deliver_approval_with_routing",
@@ -337,7 +337,7 @@ async def test_happy_path_writes_pending_then_dispatched_outbox():
     svc = _make_workflow(db)
 
     async def _ok_deliver(**kwargs):
-        return {"channel": "C-CHOSEN", "ts": "1700000000.000444", "routing_rule": "default", "dm_sent": False}
+        return {"channel": "C-CHOSEN", "ts": "1700000000.000444", "routing_rule": "org-test", "dm_sent": False}
 
     with patch(
         "clearledgr.services.slack_notifications.deliver_approval_with_routing",

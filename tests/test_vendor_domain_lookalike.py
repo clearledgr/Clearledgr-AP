@@ -189,7 +189,7 @@ class TestCollectOrgTrustedDomains:
             {"sender_domains": ["acme.com"]},
             {"sender_domains": ["notion.so"]},  # duplicate — deduped
         ]
-        result = collect_org_trusted_domains(db, "default")
+        result = collect_org_trusted_domains(db, "org-test")
         # Registrable bases only, deduplicated.
         assert "notion.so" in result
         assert "acme.com" in result
@@ -205,7 +205,7 @@ class TestCollectOrgTrustedDomains:
             {"sender_domains": ["stripe.com"]},  # processor — excluded
             {"sender_domains": ["acme.com"]},
         ]
-        result = collect_org_trusted_domains(db, "default")
+        result = collect_org_trusted_domains(db, "org-test")
         assert "stripe.com" not in result
         assert "acme.com" in result
 
@@ -216,12 +216,12 @@ class TestCollectOrgTrustedDomains:
         db.list_vendor_profiles.return_value = [
             {"sender_domains": '["acme.com", "notion.so"]'},
         ]
-        result = collect_org_trusted_domains(db, "default")
+        result = collect_org_trusted_domains(db, "org-test")
         assert "acme.com" in result
         assert "notion.so" in result
 
     def test_db_error_returns_empty(self):
         db = MagicMock()
         db.list_vendor_profiles.side_effect = RuntimeError("db down")
-        result = collect_org_trusted_domains(db, "default")
+        result = collect_org_trusted_domains(db, "org-test")
         assert result == []

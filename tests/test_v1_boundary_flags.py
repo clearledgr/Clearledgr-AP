@@ -91,7 +91,7 @@ class TestTeamsRouteGating:
             "/api/workspace/integrations/teams/test",
             "/api/workspace/integrations/teams/webhook",
         ]:
-            resp = client.post(path, json={"organization_id": "default"})
+            resp = client.post(path, json={"organization_id": "org-test"})
             assert resp.status_code == 404, f"{path} should 404, got {resp.status_code}"
 
 
@@ -169,7 +169,7 @@ class TestBootstrapTeamsStatus:
         monkeypatch.delenv("FEATURE_TEAMS_ENABLED", raising=False)
         from clearledgr.api.workspace_shell import _teams_status_for_org
 
-        result = _teams_status_for_org("default")
+        result = _teams_status_for_org("org-test")
         assert result["status"] == "disabled_in_v1"
         assert result["connected"] is False
         # Reason string points the extension UI at the thesis so the
@@ -183,7 +183,7 @@ class TestBootstrapTeamsStatus:
         # With the flag on, the function falls through to the real DB
         # lookup. No webhook configured → connected=False but the
         # disabled_in_v1 terminal status is gone.
-        result = _teams_status_for_org("default")
+        result = _teams_status_for_org("org-test")
         assert result["status"] != "disabled_in_v1"
 
 
@@ -194,7 +194,7 @@ class TestTeamsCardSkipping:
         # check the flag and short-circuit.
         from clearledgr.services.invoice_workflow import InvoiceWorkflowService
         svc = InvoiceWorkflowService.__new__(InvoiceWorkflowService)
-        svc.organization_id = "default"
+        svc.organization_id = "org-test"
         # Attribute accesses after the flag check won't happen, so
         # we don't need to populate teams_client, invoice, etc.
         result = svc._send_teams_budget_card(

@@ -288,7 +288,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         _audit_callback_event(
             db,
             event_type="channel_callback_unauthorized",
-            organization_id="default",
+            organization_id="_unauthenticated",
             idempotency_key=f"teams:unauthorized:{body_hash}",
             reason=str(exc.detail),
             metadata={"status_code": exc.status_code},
@@ -306,7 +306,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         _audit_callback_event(
             db,
             event_type="channel_action_invalid",
-            organization_id="default",
+            organization_id="_unauthenticated",
             idempotency_key=f"teams:invalid:{body_hash}",
             reason="invalid_payload",
             metadata={"status_code": 400},
@@ -338,7 +338,7 @@ async def handle_teams_interactive(request: Request) -> Dict[str, Any]:
         _audit_callback_event(
             db,
             event_type="channel_callback_unauthorized",
-            organization_id="default",
+            organization_id="_unauthenticated",
             idempotency_key=f"teams:no_installation:{body_hash}",
             reason="aad_tenant_not_provisioned",
             metadata={"aad_tid": aad_tid or None},

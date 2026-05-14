@@ -34,7 +34,7 @@ def _item_payload(
         "invoice_number": f"INV-{item_id}",
         "state": state,
         "confidence": 0.97,
-        "organization_id": "default",
+        "organization_id": "org-test",
         "metadata": metadata or {},
     }
     if extra:
@@ -127,8 +127,8 @@ def db(tmp_path, monkeypatch):
 )
 def test_ap_projection_contract_matrix(db, name, payload, org_settings, expected):
     if org_settings:
-        db.ensure_organization("default", organization_name="default")
-        db.update_organization("default", settings=org_settings)
+        db.ensure_organization("org-test", organization_name="org-test")
+        db.update_organization("org-test", settings=org_settings)
 
     item = db.create_ap_item(payload)
     projected = build_worklist_item(db, item)

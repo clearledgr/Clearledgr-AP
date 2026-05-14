@@ -207,15 +207,15 @@ class TestSAPVerify:
 
 class TestQuickBooksWebhookEndpoint:
     def test_unconfigured_tenant_returns_503(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="quickbooks", secret=None)
-        r = client.post("/erp/webhooks/quickbooks/default", content=b"{}")
+        _stub_connection(monkeypatch, org_id="org-test", erp="quickbooks", secret=None)
+        r = client.post("/erp/webhooks/quickbooks/org-test", content=b"{}")
         assert r.status_code == 503
         assert r.json()["error"] == "webhook_not_configured"
 
     def test_bad_signature_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="quickbooks", secret="verifier-abc")
+        _stub_connection(monkeypatch, org_id="org-test", erp="quickbooks", secret="verifier-abc")
         r = client.post(
-            "/erp/webhooks/quickbooks/default",
+            "/erp/webhooks/quickbooks/org-test",
             content=b'{"eventNotifications":[]}',
             headers={"intuit-signature": "AAAAAAAAAAAAAAAAAA=="},
         )
@@ -223,17 +223,17 @@ class TestQuickBooksWebhookEndpoint:
         assert r.json()["error"] == "invalid_signature"
 
     def test_missing_signature_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="quickbooks", secret="verifier-abc")
-        r = client.post("/erp/webhooks/quickbooks/default", content=b"{}")
+        _stub_connection(monkeypatch, org_id="org-test", erp="quickbooks", secret="verifier-abc")
+        r = client.post("/erp/webhooks/quickbooks/org-test", content=b"{}")
         assert r.status_code == 401
 
     def test_valid_signature_accepted_and_audited(self, client, db, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="quickbooks", secret="verifier-abc")
+        _stub_connection(monkeypatch, org_id="org-test", erp="quickbooks", secret="verifier-abc")
         body = b'{"eventNotifications":[{"realmId":"9130","dataChangeEvent":{}}]}'
         sig = sign_quickbooks(body, "verifier-abc")
 
         r = client.post(
-            "/erp/webhooks/quickbooks/default",
+            "/erp/webhooks/quickbooks/org-test",
             content=body,
             headers={"intuit-signature": sig},
         )
@@ -257,26 +257,26 @@ class TestQuickBooksWebhookEndpoint:
         org = row[2] if not isinstance(row, dict) else row["organization_id"]
         assert event_type == "erp_webhook_received"
         assert box_type == "erp_webhook"
-        assert org == "default"
+        assert org == "org-test"
 
 
 class TestXeroWebhookEndpoint:
     def test_bad_signature_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="xero", secret="xero-key-abc")
+        _stub_connection(monkeypatch, org_id="org-test", erp="xero", secret="xero-key-abc")
         r = client.post(
-            "/erp/webhooks/xero/default",
+            "/erp/webhooks/xero/org-test",
             content=b'{"events":[]}',
             headers={"x-xero-signature": "bad=="},
         )
         assert r.status_code == 401
 
     def test_intent_to_receive_distinct_audit_event(self, client, db, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="xero", secret="xero-key-abc")
+        _stub_connection(monkeypatch, org_id="org-test", erp="xero", secret="xero-key-abc")
         itr_body = b'{"events":[],"firstEventSequence":0,"lastEventSequence":0,"entropy":"x"}'
         sig = sign_xero(itr_body, "xero-key-abc")
 
         r = client.post(
-            "/erp/webhooks/xero/default",
+            "/erp/webhooks/xero/org-test",
             content=itr_body,
             headers={"x-xero-signature": sig},
         )
@@ -295,12 +295,12 @@ class TestXeroWebhookEndpoint:
         assert "erp_webhook_intent_to_receive" in event_types
 
     def test_real_notification_audit_event(self, client, db, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="xero", secret="xero-key-abc")
+        _stub_connection(monkeypatch, org_id="org-test", erp="xero", secret="xero-key-abc")
         body = b'{"events":[{"resourceUrl":"https://api.xero.com/..."}]}'
         sig = sign_xero(body, "xero-key-abc")
 
         r = client.post(
-            "/erp/webhooks/xero/default",
+            "/erp/webhooks/xero/org-test",
             content=body,
             headers={"x-xero-signature": sig},
         )
@@ -321,27 +321,27 @@ class TestXeroWebhookEndpoint:
 
 class TestNetSuiteWebhookEndpoint:
     def test_unconfigured_returns_503(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="netsuite", secret=None)
-        r = client.post("/erp/webhooks/netsuite/default", content=b"{}")
+        _stub_connection(monkeypatch, org_id="org-test", erp="netsuite", secret=None)
+        r = client.post("/erp/webhooks/netsuite/org-test", content=b"{}")
         assert r.status_code == 503
 
     def test_missing_timestamp_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="netsuite", secret="ns-sec")
+        _stub_connection(monkeypatch, org_id="org-test", erp="netsuite", secret="ns-sec")
         # Signature but no timestamp → reject.
         r = client.post(
-            "/erp/webhooks/netsuite/default",
+            "/erp/webhooks/netsuite/org-test",
             content=b'{}',
             headers={"X-NetSuite-Signature": "v1=deadbeef"},
         )
         assert r.status_code == 401
 
     def test_replay_old_timestamp_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="netsuite", secret="ns-sec")
+        _stub_connection(monkeypatch, org_id="org-test", erp="netsuite", secret="ns-sec")
         body = b'{"bill":"INV-1"}'
         stale_ts = int(time.time() - REPLAY_WINDOW_SECONDS - 10)
         sig = sign_timestamped(body, "ns-sec", stale_ts)
         r = client.post(
-            "/erp/webhooks/netsuite/default",
+            "/erp/webhooks/netsuite/org-test",
             content=body,
             headers={
                 "X-NetSuite-Signature": sig,
@@ -351,12 +351,12 @@ class TestNetSuiteWebhookEndpoint:
         assert r.status_code == 401
 
     def test_valid_signature_accepted(self, client, db, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="netsuite", secret="ns-sec")
+        _stub_connection(monkeypatch, org_id="org-test", erp="netsuite", secret="ns-sec")
         body = b'{"bill":"INV-77","subsidiary":1}'
         ts = int(time.time())
         sig = sign_timestamped(body, "ns-sec", ts)
         r = client.post(
-            "/erp/webhooks/netsuite/default",
+            "/erp/webhooks/netsuite/org-test",
             content=body,
             headers={
                 "X-NetSuite-Signature": sig,
@@ -369,12 +369,12 @@ class TestNetSuiteWebhookEndpoint:
 
 class TestSAPWebhookEndpoint:
     def test_valid_signature_accepted(self, client, db, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="sap", secret="sap-sec")
+        _stub_connection(monkeypatch, org_id="org-test", erp="sap", secret="sap-sec")
         body = b'{"company_code":"1000","doc":"5100000023"}'
         ts = int(time.time())
         sig = sign_timestamped(body, "sap-sec", ts)
         r = client.post(
-            "/erp/webhooks/sap/default",
+            "/erp/webhooks/sap/org-test",
             content=body,
             headers={
                 "X-SAP-Signature": sig,
@@ -384,10 +384,10 @@ class TestSAPWebhookEndpoint:
         assert r.status_code == 200
 
     def test_bad_signature_returns_401(self, client, monkeypatch):
-        _stub_connection(monkeypatch, org_id="default", erp="sap", secret="sap-sec")
+        _stub_connection(monkeypatch, org_id="org-test", erp="sap", secret="sap-sec")
         ts = int(time.time())
         r = client.post(
-            "/erp/webhooks/sap/default",
+            "/erp/webhooks/sap/org-test",
             content=b'{}',
             headers={
                 "X-SAP-Signature": "v1=deadbeef",

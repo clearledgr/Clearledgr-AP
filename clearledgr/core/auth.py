@@ -268,10 +268,14 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
         return TokenData(
             user_id=str(row.get("id") or user_id or email or "unknown"),
             email=str(row.get("email") or email or getattr(token_data, "email", "") or ""),
+            # M20 tenant-rename: ``_unprovisioned`` is the sentinel
+            # for users without a bound org (post-OAuth, awaiting ops
+            # provisioning). ``require_org`` rejects it with 403
+            # ``organization_pending_provisioning``.
             organization_id=str(
                 row.get("organization_id")
                 or getattr(token_data, "organization_id", None)
-                or "default"
+                or "_unprovisioned"
             ),
             role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
             exp=token_data.exp,
@@ -450,12 +454,20 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
         db = _get_db()
         user = db.get_user_by_email(email)
         if not user:
-            # Auto-provision: resolve org from email domain (Streak pattern)
+            # Auto-provision: resolve org from email domain (Streak pattern).
+            # M20 tenant-rename: when no domain match, bind to the
+            # ``_unprovisioned`` sentinel so the next ``require_org``
+            # call returns 403 ``organization_pending_provisioning``.
+            # Frontend routes the user to "your organization isn't
+            # set up yet"; ops manually attaches them to a real org.
             email_domain = email.split("@")[1].lower() if "@" in email else ""
             domain_org = db.get_organization_by_domain(email_domain) if email_domain else None
-            provision_org = str((domain_org or {}).get("id") or "default")
+            provision_org = str((domain_org or {}).get("id") or "_unprovisioned")
             if not domain_org:
-                logger.warning("No org found for domain %s — auto-provisioning into default org", email_domain)
+                logger.warning(
+                    "No org found for domain %s — user pending manual provisioning",
+                    email_domain,
+                )
             user = db.create_user(
                 email=email,
                 name=email.split("@")[0],
@@ -468,7 +480,8 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
         token_data = TokenData(
             user_id=user_id,
             email=email,
-            organization_id=user.get("organization_id", "default"),
+            # M20: same sentinel as the auto-provision path above.
+            organization_id=user.get("organization_id", "_unprovisioned"),
             role=user.get("role", "operator"),
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )

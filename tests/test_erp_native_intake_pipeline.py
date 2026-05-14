@@ -421,7 +421,7 @@ def test_upsert_netsuite_po_idempotent_on_replay():
     shared_db.get_purchase_order_by_number.side_effect = _get_po_by_number
 
     class FakeService:
-        def __init__(self, organization_id: str = "default"):
+        def __init__(self, organization_id: str = "org-test"):
             self.organization_id = organization_id
             self._db = shared_db
 

@@ -36,7 +36,7 @@ def _create_ap_item(db, *, item_id: str, thread_id: str, state: str = "needs_app
             "invoice_number": f"INV-{item_id}",
             "state": state,
             "confidence": 0.99,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {},
         }
     )
@@ -51,7 +51,7 @@ def _parse_metadata(row: dict) -> dict:
     return {}
 
 
-def _mock_user(*, user_id: str = "test-user", organization_id: str = "default"):
+def _mock_user(*, user_id: str = "test-user", organization_id: str = "org-test"):
     return SimpleNamespace(
         email=None,
         user_id=user_id,
@@ -79,7 +79,7 @@ def test_merge_ap_items_uses_metadata_linkage_without_illegal_state(db):
     response = asyncio.run(merge_ap_items(
         target["id"],
         MergeItemsRequest(source_ap_item_id=source["id"], actor_id="user-1", reason="duplicate_invoice"),
-        _user=_mock_user(user_id="user-1", organization_id="default"),
+        _user=_mock_user(user_id="user-1", organization_id="org-test"),
     ))
 
     assert response["status"] == "merged"
@@ -122,7 +122,7 @@ def test_audit_events_table_is_append_only(db):
             "event_type": "test_audit_event",
             "actor_type": "system",
             "actor_id": "test-suite",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "idempotency_key": "audit-append-only:test",
             "metadata": {"ok": True},
         }
@@ -179,7 +179,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(d
             thread_id="thread-rej-v2",
             amount=125.50,
         ),
-        _user=_mock_user(user_id="ap-user-1", organization_id="default"),
+        _user=_mock_user(user_id="ap-user-1", organization_id="org-test"),
     ))
 
     assert response["status"] == "resubmitted"
@@ -222,7 +222,7 @@ def test_rejected_item_resubmission_creates_new_item_with_supersession_linkage(d
         _user=SimpleNamespace(
             user_id="user-test",
             email="user-test@default.example",
-            organization_id="default",
+            organization_id="org-test",
             role="operator",
         ),
     )
@@ -244,7 +244,7 @@ def test_resubmission_requires_rejected_state(db):
         asyncio.run(resubmit_rejected_item(
             item["id"],
             ResubmitRejectedItemRequest(actor_id="ap-user-1", reason="should_fail"),
-            _user=_mock_user(user_id="ap-user-1", organization_id="default"),
+            _user=_mock_user(user_id="ap-user-1", organization_id="org-test"),
         ))
     assert exc.value.status_code == 400
     assert exc.value.detail == "resubmission_requires_rejected_state"

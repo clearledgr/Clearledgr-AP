@@ -42,7 +42,7 @@ _TEST_AAD_TID = "aad-tenant-test"
 
 def _seed_teams_install_for_default_org(db) -> None:
     db.set_teams_installation(
-        organization_id="default",
+        organization_id="org-test",
         aad_tenant_id=_TEST_AAD_TID,
         tenant_name="Test AAD",
         bot_app_id="bot-test",
@@ -59,6 +59,24 @@ def _stub_teams_claims():
     }
 
 
+# M18 Slack contract: every interactive callback now resolves the
+# verified ``team.id`` against ``slack_installations`` BEFORE any AP-
+# item lookup. Tests must seed a ``slack_installations`` row whose
+# ``team_id`` matches the test payload's ``team.id``.
+_TEST_SLACK_TEAM_ID = "T_SLACK_TEST"
+
+
+def _seed_slack_install_for_default_org(db) -> None:
+    db.upsert_slack_installation(
+        organization_id="org-test",
+        team_id=_TEST_SLACK_TEAM_ID,
+        team_name="Slack Test Team",
+        bot_user_id="U_BOT",
+        bot_token="xoxb-test-token",
+        scope_csv="chat:write,users:read",
+    )
+
+
 def _create_ap_item(db, *, gmail_id: str) -> dict:
     return db.create_ap_item(
         {
@@ -73,7 +91,7 @@ def _create_ap_item(db, *, gmail_id: str) -> dict:
             "invoice_number": f"INV-{gmail_id}",
             "state": "needs_approval",
             "confidence": 0.99,
-            "organization_id": "default",
+            "organization_id": "org-test",
             "metadata": {},
         }
     )
@@ -113,7 +131,7 @@ class _InvoiceStub:
 def test_approval_routing_passes_invoice_context_for_gl_filtering(db):
     from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     svc._settings = {
         "approval_thresholds": [
@@ -151,7 +169,7 @@ def test_approval_routing_passes_invoice_context_for_gl_filtering(db):
 def test_approval_routing_preserves_structured_approver_targets(db):
     from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     svc._settings = {
         "approval_thresholds": [
@@ -184,7 +202,7 @@ def test_approval_routing_preserves_structured_approver_targets(db):
 def test_approval_routing_falls_back_to_amount_only_without_invoice(db):
     from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     svc._settings = {
         "approval_thresholds": [
@@ -216,7 +234,7 @@ def test_approval_routing_falls_back_to_amount_only_without_invoice(db):
 def test_approval_routing_vendor_and_department_filters(db):
     from clearledgr.services.invoice_workflow import InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     svc._settings = {
         "approval_thresholds": [
@@ -266,7 +284,7 @@ def test_segregation_of_duties_blocks_submitter_from_approving():
         request_ts=str(int(time.time())),
         idempotency_key="idem-sod-1",
         gmail_id="thread-sod-1",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     # Submitter matches approver — should block
@@ -299,7 +317,7 @@ def test_segregation_of_duties_allows_different_approver():
         request_ts=str(int(time.time())),
         idempotency_key="idem-sod-2",
         gmail_id="thread-sod-2",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     # Different submitter — should allow
@@ -330,7 +348,7 @@ def test_segregation_of_duties_allows_rejection_by_submitter():
         request_ts=str(int(time.time())),
         idempotency_key="idem-sod-3",
         gmail_id="thread-sod-3",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     # Reject by same person — allowed (doesn't release funds)
@@ -357,7 +375,7 @@ def test_segregation_of_duties_case_insensitive():
         request_ts=str(int(time.time())),
         idempotency_key="idem-sod-4",
         gmail_id="thread-sod-4",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     ap_item = {"id": "ap-sod-4", "state": "needs_approval", "user_id": "operator-1"}
@@ -384,7 +402,7 @@ def test_approver_authorization_blocks_unauthorized_actor():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-1",
         gmail_id="thread-auth-1",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="random@company.com",
     )
 
@@ -418,7 +436,7 @@ def test_approver_authorization_allows_named_approver():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-2",
         gmail_id="thread-auth-2",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="jane@company.com",
     )
 
@@ -449,7 +467,7 @@ def test_approver_authorization_allows_anyone_when_no_named_approvers():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-3",
         gmail_id="thread-auth-3",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="anyone@company.com",
     )
 
@@ -477,7 +495,7 @@ def test_approver_authorization_case_insensitive():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-4",
         gmail_id="thread-auth-4",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="Bob@Company.com",
     )
 
@@ -504,7 +522,7 @@ def test_approver_authorization_allows_rejection_by_non_approver():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-5",
         gmail_id="thread-auth-5",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="random@company.com",
     )
 
@@ -532,7 +550,7 @@ def test_approver_authorization_teams_actor_id_is_email():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-6",
         gmail_id="thread-auth-6",
-        organization_id="default",
+        organization_id="org-test",
         actor_email=None,  # No resolved email — but actor_id IS the email
     )
 
@@ -560,7 +578,7 @@ def test_sod_checked_before_authorization():
         request_ts=str(int(time.time())),
         idempotency_key="idem-auth-7",
         gmail_id="thread-auth-7",
-        organization_id="default",
+        organization_id="org-test",
         actor_email="operator@company.com",
     )
 
@@ -593,7 +611,7 @@ def test_approval_action_precedence_prefers_duplicate_before_stale():
         request_ts=str(int(time.time()) - 90_000),
         idempotency_key="idem-1",
         gmail_id="thread-1",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     result = resolve_action_precedence(
@@ -625,7 +643,7 @@ def test_approval_action_precedence_marks_superseded_states_as_stale():
         request_ts=str(int(time.time())),
         idempotency_key="idem-2",
         gmail_id="thread-2",
-        organization_id="default",
+        organization_id="org-test",
     )
 
     result = resolve_action_precedence(
@@ -654,7 +672,7 @@ def test_slack_and_teams_card_builders_include_request_info_action():
 
     teams_card = TeamsAPIClient.build_invoice_budget_card(
         email_id="thread-123",
-        organization_id="default",
+        organization_id="org-test",
         vendor="Acme",
         amount=100.0,
         currency="USD",
@@ -683,7 +701,7 @@ def test_slack_and_teams_card_builders_include_request_info_action():
 
     teams_budget_card = TeamsAPIClient.build_invoice_budget_card(
         email_id="thread-123",
-        organization_id="default",
+        organization_id="org-test",
         vendor="Acme",
         amount=100.0,
         currency="USD",
@@ -698,7 +716,7 @@ def test_slack_and_teams_card_builders_include_request_info_action():
 def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_budget_paths(monkeypatch, db):
     from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
 
     invoice = InvoiceData(
@@ -779,7 +797,7 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
 def test_approval_surface_copy_tunes_what_happens_next_for_confidence_validation_and_duplicate(db):
     from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     invoice = InvoiceData(
         gmail_id="thread-copy-1",
@@ -821,7 +839,7 @@ def test_approval_surface_copy_tunes_what_happens_next_for_confidence_validation
 def test_approval_surface_copy_tunes_budget_hard_block_next_steps(db):
     from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     invoice = InvoiceData(
         gmail_id="thread-copy-2",
@@ -856,7 +874,7 @@ def test_approval_surface_copy_tunes_budget_hard_block_next_steps(db):
 def test_approval_surface_copy_uses_po_and_vendor_queue_context_in_why_summary(db):
     from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
-    svc = InvoiceWorkflowService(organization_id="default")
+    svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
     invoice = InvoiceData(
         gmail_id="thread-copy-3",
@@ -956,6 +974,7 @@ def test_slack_interactive_invalid_payload_audits(monkeypatch, client, db):
 
 def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-1")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-1"})
     runtime = _RuntimeStub()
 
@@ -970,6 +989,7 @@ def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client,
 
     payload = {
         "callback_id": "run-slack-1",
+        "team": {"id": "T_SLACK_TEST"},
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
         "message": {"ts": "1711111111.000"},
@@ -1022,6 +1042,7 @@ def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client,
 
 def test_slack_interactive_response_url_path_acks_fast_and_completes_in_background(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-response-url")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-response-url"})
     runtime = _RuntimeStub()
     posted = []
@@ -1032,7 +1053,7 @@ def test_slack_interactive_response_url_path_acks_fast_and_completes_in_backgrou
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    async def _fake_post(response_url, payload, *, organization_id="default", ap_item_id=None):
+    async def _fake_post(response_url, payload, *, organization_id="org-test", ap_item_id=None):
         posted.append({
             "response_url": response_url,
             "payload": dict(payload or {}),
@@ -1047,6 +1068,7 @@ def test_slack_interactive_response_url_path_acks_fast_and_completes_in_backgrou
 
     payload = {
         "callback_id": "run-slack-response-url-1",
+        "team": {"id": "T_SLACK_TEST"},
         "response_url": "https://hooks.slack.com/actions/response-url",
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
@@ -1078,6 +1100,7 @@ def test_slack_interactive_response_url_path_acks_fast_and_completes_in_backgrou
 
 def test_slack_interactive_forwards_resolved_actor_identity(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-actor-identity")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-actor-identity"})
     runtime = _RuntimeStub()
 
@@ -1089,7 +1112,7 @@ def test_slack_interactive_forwards_resolved_actor_identity(monkeypatch, client,
 
     async def _fake_identity(_db, slack_user_id, organization_id):
         assert slack_user_id == "U_MO"
-        assert organization_id == "default"
+        assert organization_id == "org-test"
         return {
             "email": "mo@clearledgr.com",
             "display_name": "Mo Mbalam",
@@ -1102,6 +1125,7 @@ def test_slack_interactive_forwards_resolved_actor_identity(monkeypatch, client,
 
     payload = {
         "callback_id": "run-slack-actor-identity-1",
+        "team": {"id": "T_SLACK_TEST"},
         "user": {"id": "U_MO", "username": "mo"},
         "channel": {"id": "C1"},
         "message": {"ts": "1711111111.777"},
@@ -1137,6 +1161,7 @@ def test_slack_interactive_forwards_resolved_actor_identity(monkeypatch, client,
 
 def test_legacy_slack_interactions_alias_routes_to_same_handler(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-legacy-alias")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-legacy-alias"})
     runtime = _RuntimeStub()
 
@@ -1146,7 +1171,7 @@ def test_legacy_slack_interactions_alias_routes_to_same_handler(monkeypatch, cli
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    async def _fake_post(response_url, payload, *, organization_id="default", ap_item_id=None):
+    async def _fake_post(response_url, payload, *, organization_id="org-test", ap_item_id=None):
         return True
 
     monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
@@ -1155,6 +1180,7 @@ def test_legacy_slack_interactions_alias_routes_to_same_handler(monkeypatch, cli
 
     payload = {
         "callback_id": "run-slack-legacy-alias-1",
+        "team": {"id": "T_SLACK_TEST"},
         "response_url": "https://hooks.slack.com/actions/response-url",
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
@@ -1178,6 +1204,7 @@ def test_legacy_slack_interactions_alias_routes_to_same_handler(monkeypatch, cli
 def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db):
     """Burst duplicate callbacks should execute workflow once and audit duplicates."""
     item = _create_ap_item(db, gmail_id="thread-slack-storm")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-storm"})
     runtime = _RuntimeStub()
 
@@ -1192,6 +1219,7 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
 
     payload = {
         "callback_id": "run-slack-storm-1",
+        "team": {"id": "T_SLACK_TEST"},
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
         "message": {"ts": "1712222222.000"},
@@ -1221,6 +1249,7 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
 
 def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-field-review")
+    _seed_slack_install_for_default_org(db)
     db.update_ap_item(item["id"], metadata={"correlation_id": "corr-slack-field-review"})
 
     async def _return_body(request):
@@ -1239,6 +1268,7 @@ def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, clie
 
     payload = {
         "callback_id": "run-slack-field-review-1",
+        "team": {"id": "T_SLACK_TEST"},
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
         "message": {"ts": "1713333333.000"},
@@ -1271,7 +1301,7 @@ def test_teams_interactive_requires_authorization_and_audits(monkeypatch, client
     payload = {
         "action": "approve_invoice",
         "email_id": "thread-teams-unauth",
-        "organization_id": "default",
+        "organization_id": "org-test",
     }
     body = json.dumps(payload).encode("utf-8")
 
@@ -1337,7 +1367,7 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
     payload = {
         "action": "request_info",
         "email_id": "thread-teams-1",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "actor": "approver@clearledgr.com",
         "conversation_id": "19:finance",
         "message_id": "msg-001",
@@ -1403,7 +1433,7 @@ def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch,
     payload = {
         "action": "approve",
         "email_id": "thread-teams-superseded",
-        "organization_id": "default",
+        "organization_id": "org-test",
         "actor": "approver@clearledgr.com",
         "conversation_id": "19:finance",
         "message_id": "msg-superseded",
@@ -1424,9 +1454,10 @@ def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch,
 
 def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(monkeypatch, client, db):
     item = _create_ap_item(db, gmail_id="thread-slack-blocked")
-    db.ensure_organization("default", organization_name="default")
+    _seed_slack_install_for_default_org(db)
+    db.ensure_organization("org-test", organization_name="org-test")
     db.update_organization(
-        "default",
+        "org-test",
         settings={
             "rollback_controls": {
                 "channel_actions_disabled": {"slack": True},
@@ -1447,6 +1478,7 @@ def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(mo
 
     payload = {
         "callback_id": "run-slack-blocked-1",
+        "team": {"id": "T_SLACK_TEST"},
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
         "message": {"ts": "1711111111.100"},
@@ -1476,9 +1508,9 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
     monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
     _seed_teams_install_for_default_org(db)
     item = _create_ap_item(db, gmail_id="thread-teams-blocked")
-    db.ensure_organization("default", organization_name="default")
+    db.ensure_organization("org-test", organization_name="org-test")
     db.update_organization(
-        "default",
+        "org-test",
         settings={
             "rollback_controls": {
                 "channel_actions_disabled": {"teams": True},
@@ -1501,7 +1533,7 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
         json={
             "action": "approve_invoice",
             "email_id": "thread-teams-blocked",
-            "organization_id": "default",
+            "organization_id": "org-test",
             "actor": "approver@clearledgr.com",
             "conversation_id": "19:finance",
             "message_id": "msg-blocked",

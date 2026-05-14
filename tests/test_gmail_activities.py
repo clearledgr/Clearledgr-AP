@@ -84,7 +84,7 @@ def test_send_slack_notification_activity_threads_existing_escalations_and_norma
                     result = _run(
                         send_slack_notification_activity(
                             {
-                                "organization_id": "default",
+                                "organization_id": "org-test",
                                 "channel": "cl-finance-ap",
                                 "email_id": "gmail-thread-1",
                                 "ap_item_id": "ap-1",
@@ -137,7 +137,7 @@ def test_send_slack_notification_activity_dedupes_recent_escalations_in_existing
                 result = _run(
                     send_slack_notification_activity(
                         {
-                            "organization_id": "default",
+                            "organization_id": "org-test",
                             "channel": "cl-finance-ap",
                             "email_id": "gmail-thread-1",
                             "ap_item_id": "ap-1",

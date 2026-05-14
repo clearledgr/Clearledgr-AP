@@ -25,7 +25,7 @@ def test_ap_finance_skill_policy_precheck_delegates_to_handler(monkeypatch):
 
         def policy_precheck(self, skill, runtime, payload):
             assert skill.skill_id == "ap_v1"
-            assert runtime.organization_id == "default"
+            assert runtime.organization_id == "org-test"
             assert payload == {"email_id": "gmail-thread-1"}
             return {
                 "intent": self.intent,
@@ -40,7 +40,7 @@ def test_ap_finance_skill_policy_precheck_delegates_to_handler(monkeypatch):
 
     monkeypatch.setattr(ap_skill_module, "get_ap_intent_handler", lambda _intent: _StubHandler())
 
-    runtime = SimpleNamespace(organization_id="default")
+    runtime = SimpleNamespace(organization_id="org-test")
     result = APFinanceSkill().policy_precheck(
         runtime,
         "request_approval",
@@ -78,7 +78,7 @@ def test_ap_finance_skill_execute_delegates_to_handler(monkeypatch):
 
     monkeypatch.setattr(ap_skill_module, "get_ap_intent_handler", lambda _intent: _StubHandler())
 
-    runtime = SimpleNamespace(organization_id="default")
+    runtime = SimpleNamespace(organization_id="org-test")
     result = asyncio.run(
         APFinanceSkill().execute(
             runtime,
