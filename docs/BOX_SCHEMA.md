@@ -119,6 +119,10 @@ Stable keys callers can rely on:
 | `erp_reference` | string \| null | The ERP system's record id once the bill is posted. |
 | `thread_id` | string \| null | Email thread id (when sourced from Gmail/Outlook). |
 | `last_error` | string \| null | Most recent error during processing. |
+| `owner_id` | string \| null | Current explicit owner (canonical user id). Null when no human action is currently required. |
+| `owner_email` | string \| null | Human-readable owner identifier (mirrors `owner_id`). |
+| `owner_assigned_at` | ISO-8601 string \| null | When the current owner was assigned. |
+| `owner_source` | string \| null | How the owner was determined: `auto`, `delegate`, `manual`, or `escalation`. |
 
 All other keys are domain-specific extensions; consumers should
 preserve them but not depend on them.

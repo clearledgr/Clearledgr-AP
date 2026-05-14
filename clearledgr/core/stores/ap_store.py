@@ -112,6 +112,15 @@ class APStore:
         "vat_code",
         "tax_treatment",
         "bill_country",
+        # Manifesto §"Ownership": explicit Box owner. owner_id is the
+        # canonical user identifier; owner_email is the readable form
+        # surfaces use. owner_assigned_at + owner_source record when
+        # and how the owner was determined (see CREATE TABLE comments
+        # on ap_items for owner_source values).
+        "owner_id",
+        "owner_email",
+        "owner_assigned_at",
+        "owner_source",
     })
 
     # ------------------------------------------------------------------

@@ -942,6 +942,21 @@ class _ClearledgrDBBase:
                     -- (DESIGN_THESIS.md §19). Never store plaintext IBANs
                     -- or account numbers in metadata.
                     bank_details_encrypted TEXT,
+                    -- Manifesto §"Ownership": explicit owner of the Box.
+                    -- owner_id is the canonical user identifier; owner_email
+                    -- is the human-readable form surfaces render. Both are
+                    -- populated together so callers can pick whichever fits.
+                    -- owner_source records HOW the owner was determined:
+                    --   'auto'        — resolved from org config + role mapping
+                    --   'delegate'    — auto-routed via an active delegation_rules row
+                    --   'manual'      — operator-set via /reassign
+                    --   'escalation'  — escalation policy fired
+                    -- NULL means "no human action required yet" (e.g. Box in
+                    -- ``received`` or ``validated``).
+                    owner_id TEXT,
+                    owner_email TEXT,
+                    owner_assigned_at TEXT,
+                    owner_source TEXT,
                     UNIQUE(organization_id, invoice_key)
                 )
             """)
@@ -1379,6 +1394,15 @@ class _ClearledgrDBBase:
             self._ensure_column(cur, "ap_items", "approval_policy_version", "TEXT")
             self._ensure_column(cur, "ap_items", "post_attempted_at", "TEXT")
             self._ensure_column(cur, "ap_items", "resubmission_reason", "TEXT")
+            # Manifesto §"Ownership" — explicit owner of the Box.
+            # See v84 migration for the canonical place these are
+            # added; the _ensure_column calls keep idempotent
+            # safety-netting under initialize() for environments that
+            # never run the migration runner (some legacy test paths).
+            self._ensure_column(cur, "ap_items", "owner_id", "TEXT")
+            self._ensure_column(cur, "ap_items", "owner_email", "TEXT")
+            self._ensure_column(cur, "ap_items", "owner_assigned_at", "TEXT")
+            self._ensure_column(cur, "ap_items", "owner_source", "TEXT")
 
             self._ensure_column(cur, "audit_events", "source", "TEXT")
             self._ensure_column(cur, "audit_events", "correlation_id", "TEXT")

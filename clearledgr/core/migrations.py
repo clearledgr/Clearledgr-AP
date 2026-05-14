@@ -4863,3 +4863,66 @@ def _v83_audit_events_policy_version(cur, db):
         "ON audit_events (organization_id, policy_version) "
         "WHERE policy_version IS NOT NULL"
     )
+
+
+@migration(
+    84,
+    "ap_items.owner_*: explicit Box ownership columns (manifesto §Ownership)",
+)
+def _v84_ap_items_owner(cur, db):
+    """Add explicit ownership columns to ``ap_items``.
+
+    The manifesto's ownership promise — "When an attestor goes on leave,
+    the workflow knows. When a delegate picks up half, the workflow
+    tracks the split. Ownership is explicit, enforceable, auditable" —
+    needs ownership as first-class state on the Box, not implicit
+    through forwarding rules and PTO calendars.
+
+    Columns:
+
+    * ``owner_id`` — canonical user identifier (matches ``users.id``).
+    * ``owner_email`` — human-readable form surfaces render.
+    * ``owner_assigned_at`` — ISO-8601 timestamp of the assignment.
+    * ``owner_source`` — how the owner was determined:
+        ``auto``       — resolved from org config + role mapping
+        ``delegate``   — auto-routed via active ``delegation_rules`` row
+        ``manual``     — operator-set via ``POST /ap-items/{id}/reassign``
+        ``escalation`` — escalation policy fired
+
+    NULL means "no human action required yet" — e.g. Box in
+    ``received`` or ``validated``. The auto-assignment hook in
+    :class:`CoordinationEngine` populates these columns as the Box
+    moves into a state requiring action; the manual reassign endpoint
+    overwrites them with ``owner_source='manual'`` and records an
+    ``owner_changed`` audit event for the audit trail.
+
+    A partial index on (organization_id, owner_id) speeds up the
+    operator's "show me my queue" query without bloating the index
+    with unassigned rows.
+    """
+    cur.execute(
+        "ALTER TABLE ap_items "
+        "ADD COLUMN IF NOT EXISTS owner_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE ap_items "
+        "ADD COLUMN IF NOT EXISTS owner_email TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE ap_items "
+        "ADD COLUMN IF NOT EXISTS owner_assigned_at TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE ap_items "
+        "ADD COLUMN IF NOT EXISTS owner_source TEXT"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_org_owner "
+        "ON ap_items (organization_id, owner_id) "
+        "WHERE owner_id IS NOT NULL"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ap_items_org_state_owner "
+        "ON ap_items (organization_id, state, owner_id) "
+        "WHERE owner_id IS NOT NULL"
+    )
