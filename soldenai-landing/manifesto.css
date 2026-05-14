@@ -1442,3 +1442,35 @@ body.theme-light-landing .ribbon__title {
   color: #1F1B16;
   font-size: 14px;
 }
+
+/* Re-light text INSIDE dark specimen containers.
+   The body-scoped variable overrides for theme-light-landing turn
+   --text-on-dark into warm dark — which is correct for cream-page
+   content but breaks the dark audit panel + code blocks that
+   inherit those variables. Restore the original light values
+   within these containers so the specimen stays readable. */
+body.theme-light-landing .audit-chain__panel,
+body.theme-light-landing pre,
+body.theme-light-landing .code,
+body.theme-light-landing .code-block,
+body.theme-light-landing .audit__code {
+  --text-on-dark: #FFFFFF;
+  --text-on-dark-soft: rgba(255, 255, 255, 0.72);
+  --text-on-dark-muted: rgba(255, 255, 255, 0.5);
+  --text-on-dark-dim: rgba(255, 255, 255, 0.32);
+  color: #FFFFFF;
+}
+/* Default color of un-classed text inside the dark specimens */
+body.theme-light-landing .audit-chain__panel * {
+  color: inherit;
+}
+/* But keep elements that have their own explicit color (hash highlights, etc.) */
+body.theme-light-landing .audit-chain__panel .audit-chain__hash,
+body.theme-light-landing .audit-chain__panel .audit-chain__timestamp,
+body.theme-light-landing .audit-chain__panel .audit-chain__action,
+body.theme-light-landing .audit-chain__panel .audit-chain__actor {
+  color: rgba(255, 255, 255, 0.6);
+}
+body.theme-light-landing .audit-chain__panel .audit-chain__entry {
+  color: rgba(255, 255, 255, 0.85);
+}
