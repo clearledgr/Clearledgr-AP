@@ -56,8 +56,20 @@ jobs:
       - name: Install Railway CLI
         run: |
           set -euo pipefail
-          curl -fsSL https://railway.com/install.sh | sh
+          # Pipe through bash, not sh. Ubuntu's /bin/sh is dash, and
+          # the Railway installer uses bash-only syntax somewhere in
+          # its trailer (the binary installs fine, but the script
+          # exits with "Bad substitution" — pipefail then fails the
+          # step). Piping through bash sidesteps that.
+          curl -fsSL https://railway.com/install.sh | bash
           echo "$HOME/.railway/bin" >> "$GITHUB_PATH"
+          # Verify the binary actually landed where we expect, so a
+          # real install failure (vs the trailer hiccup we just
+          # papered over) still fails the step loudly.
+          test -x "$HOME/.railway/bin/railway" || {
+            echo "::error::railway CLI binary missing after install"
+            exit 1
+          }
 
       - name: Deploy to Railway
         env:
