@@ -4603,7 +4603,7 @@ def _v80_per_table_org_id_checks(cur, db):
 def _v81_policy_branches(cur, db):
     """Branchable AP policy.
 
-    Sprint 2 of the ModernRelay-inspired roadmap. Today the
+    Sprint 2 of the branchable-config roadmap. Today the
     ``policy_versions`` chain is linear: every ``set_policy`` call
     appends a new version, ``get_active`` returns the latest by
     ``version_number``, ``rollback_to`` creates a new linear version
@@ -4701,7 +4701,7 @@ def _v82_rowset_branch_overlays(cur, db):
     """Branchable backoffice config, row-set surfaces (vendor master,
     GL chart of accounts, custom roles, entity restrictions).
 
-    Sprint 5 Phase B of the ModernRelay-inspired roadmap. Where
+    Sprint 5 Phase B of the branchable-config roadmap. Where
     Sprint 2's branchable AP policy treats a "branch" as a versioned
     JSON blob (one row per version in ``policy_versions``), Phase B
     treats a "branch" as an overlay on a row set: the live

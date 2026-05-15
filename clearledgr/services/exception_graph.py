@@ -1,6 +1,6 @@
 """Exception graph for the operator UI.
 
-Sprint 3-B (ModernRelay-inspired roadmap, item #5). Where the
+Sprint 3-B (roadmap item #5). Where the
 flat exception queue (``api/box_exceptions_admin.py:list_exceptions``)
 shows exceptions as a list, the graph view renders them as nodes
 + edges so an operator can see at a glance:

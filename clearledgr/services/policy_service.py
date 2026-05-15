@@ -73,8 +73,8 @@ POLICY_KINDS: Set[str] = {
     #   - policy_only:        skip matching entirely; route via
     #                          approval_thresholds.
     "match_mode",
-    # Sprint 5 Phase A — branchable backoffice config (item #9 in
-    # the ModernRelay-inspired roadmap). Four new single-blob kinds
+    # Sprint 5 Phase A — branchable backoffice config (roadmap
+    # item #9). Four new single-blob kinds
     # that share Sprint 2's branch + replay infrastructure with the
     # existing kinds. Category-2 row-set surfaces (vendor master,
     # GL chart, custom roles, entity restrictions) ride a separate

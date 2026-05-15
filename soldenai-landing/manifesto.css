@@ -1,5 +1,5 @@
 /* ═════════════════════════════════════════════════════════════
-   MANIFESTO — light editorial mode (ModernRelay-grade)
+   MANIFESTO — light editorial mode
    ───────────────────────────────────────────────────────────── */
 
 body.theme-manifesto-light {
@@ -1676,7 +1676,7 @@ body.theme-light-landing .section-eyebrow::before {
   letter-spacing: 0;
 }
 
-/* ─── Belief divider (ModernRelay "We believe" anaphora) ──────
+/* ─── Belief divider ("We believe" anaphora) ──────────────────
    Three full-width italic-serif pull quotes inserted between
    sections. Each is bracketed by a hairline rule — reads like
    a typographic epigraph between chapters. */
@@ -2561,7 +2561,7 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
   color: #1F1B16;
 }
 
-/* Caps stanza beneath the H1 — ModernRelay-pattern.
+/* Caps stanza beneath the H1.
    Three small-caps lines, monospace, generous letter-spacing. */
 .hero__caps-stanza {
   display: flex;
@@ -2591,9 +2591,9 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
 }
 
 /* Hero subtitle (thesis line) — single declarative beat under the H1.
-   ModernRelay pattern: regular serif, no italic, slightly larger than
-   body, generous max-width so the trio reads as one phrase per line
-   pair rather than fragmented. */
+   Regular serif, no italic, slightly larger than body, generous
+   max-width so the trio reads as one phrase per line pair rather
+   than fragmented. */
 .hero__definition {
   font-family: "Iowan Old Style", "Georgia", serif;
   font-style: normal;

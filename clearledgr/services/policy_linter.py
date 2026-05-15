@@ -4,7 +4,7 @@ Where the M22-era ``policy_service`` validates that a policy *parses*,
 the linter validates that the policy *makes sense*. Same shape as a
 shellcheck / eslint pass: rule-based, severity-tagged, line-grained.
 
-Rules ship in v0.1 (Sprint 1, ModernRelay-inspired roadmap):
+Rules ship in v0.1 (Sprint 1):
 
 * ``empty-policy``         — no threshold bands; routes nothing
 * ``coverage-gap``         — bands don't span $0 → ∞ contiguously

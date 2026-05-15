@@ -4,9 +4,8 @@ Sole subcommand for v0.1:
 
 * ``export <org_id> [--since DATE] [--until DATE] [--limit N]`` —
   emits audit events as JSON or CSV. Honors ``audit_events.chain_seq``
-  ordering so the output is reproducible (snapshot-pinned reads in
-  ModernRelay vocab — every event has a deterministic position in
-  the per-org append-only chain).
+  ordering so the output is reproducible: every event has a
+  deterministic position in the per-org append-only chain.
 """
 from __future__ import annotations
 

@@ -298,8 +298,8 @@ body.theme-dark .nav__link { color: var(--text-on-dark-soft); }
 body.theme-dark .nav__link:hover { color: var(--text-on-dark); }
 
 /* Manifesto nav link gets the full-color weight at rest so it
-   reads first — matches ModernRelay's pattern of surfacing the
-   manifesto as an equal peer to the demo CTA. */
+   reads first, surfacing the manifesto as an equal peer to the
+   primary CTA. */
 .nav__link--manifesto { color: var(--text); font-weight: 600; }
 body.theme-dark .nav__link--manifesto { color: var(--text-on-dark); }
 .nav__link--manifesto::after { transform: scaleX(1); opacity: 0.4; }
