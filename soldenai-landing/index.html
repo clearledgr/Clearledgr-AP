@@ -104,29 +104,29 @@
       </div>
     </section>
 
-    <!-- ═══ THE BOX ═══════════════════════════════════════════
-         The primitive. One typed record. Six fields. -->
+    <!-- ═══ THE RECORD ═══════════════════════════════════════════
+         One record per workflow. Six fields, all customer-facing. -->
     <section class="primitive">
       <div class="shell primitive__inner">
         <div class="primitive__text">
-          <p class="section-eyebrow">The primitive</p>
+          <p class="section-eyebrow">The record</p>
           <h2 class="primitive__title">
-            The Box.<br />
-            One typed record per workflow.
+            One record<br />
+            per workflow.
           </h2>
           <p class="primitive__lead">
-            Solden runs the back office on a single primitive. One record per workflow instance. Typed state, named owner, declared dependencies, surfaced exceptions, sealed history, versioned policy. The Box is where the work lives between the tools.
+            Every workflow becomes a record. Its state. Its owner. What it&rsquo;s waiting on. What broke. Its history. Its policy. The record lives across your tools, without belonging to any one of them.
           </p>
           <p class="primitive__closer">
-            Your tools render the Box. Solden holds it.
+            Your tools render it. Solden holds it.
           </p>
         </div>
 
-        <aside class="box-card box-card--primitive" aria-label="The Box: typed workflow record">
+        <aside class="box-card box-card--primitive" aria-label="Workflow record">
           <header class="box-card__head">
             <div class="box-card__head-l">
-              <span class="box-card__type">BoxType</span>
-              <code class="box-card__type-val">ap_item</code>
+              <span class="box-card__type">Type</span>
+              <code class="box-card__type-val">AP invoice</code>
             </div>
             <div class="box-card__head-r">
               <span class="box-card__seal-dot" aria-hidden="true"></span>
@@ -170,24 +170,23 @@
             </ol>
           </footer>
 
-          <p class="box-card__caption">One Box. Six primitives. The runtime holds it.</p>
         </aside>
       </div>
     </section>
 
     <!-- ═══ TABBED DEMO ═══════════════════════════════════════
-         One Box, five lifecycle states. Same record. Same audit. -->
+         One record, five lifecycle states. Same audit. -->
     <section class="demo" id="demo">
       <div class="shell demo__shell">
         <header class="demo__head">
           <p class="demo__eyebrow">/ THE LIFECYCLE</p>
-          <h2 class="demo__title">One Box. Five states. Every transition signed.</h2>
+          <h2 class="demo__title">One record. Five states. Every transition signed.</h2>
           <p class="demo__sub">
             The same record passes through capture, validation, approval, posting, and seal. Each step is a state change. Each state change is a row in an append-only chain you can export, replay, and prove.
           </p>
         </header>
 
-        <nav class="demo__tabs" role="tablist" aria-label="Box lifecycle">
+        <nav class="demo__tabs" role="tablist" aria-label="Record lifecycle">
           <button class="demo__tab is-active" role="tab" data-tab="captured"  aria-selected="true">
             <span class="demo__tab-num">01</span><span class="demo__tab-label">Captured</span>
           </button>
@@ -212,8 +211,8 @@
             <aside class="box-card box-card--demo">
               <header class="box-card__head">
                 <div class="box-card__head-l">
-                  <span class="box-card__type">BoxType</span>
-                  <code class="box-card__type-val">ap_item</code>
+                  <span class="box-card__type">Type</span>
+                  <code class="box-card__type-val">AP invoice</code>
                 </div>
                 <div class="box-card__head-r">
                   <span class="box-card__seal-dot box-card__seal-dot--open" aria-hidden="true"></span>
@@ -239,7 +238,7 @@
               <p class="demo__caption-label">Step 01 · captured</p>
               <h3 class="demo__caption-title">No more &ldquo;did anyone log this?&rdquo;</h3>
               <p class="demo__caption-body">
-                Invoices arrive by email, EDI, portal upload, or PEPPOL. The model reads the unstructured input. Solden writes the typed record. The Box exists the moment work enters the building.
+                Invoices arrive by email, EDI, portal upload, or PEPPOL. The model reads the unstructured input. Solden writes the record. It exists the moment work enters the building.
               </p>
               <div class="demo__caption-tags">
                 <span>email</span><span>EDI</span><span>PEPPOL UBL</span>
@@ -252,8 +251,8 @@
             <aside class="box-card box-card--demo">
               <header class="box-card__head">
                 <div class="box-card__head-l">
-                  <span class="box-card__type">BoxType</span>
-                  <code class="box-card__type-val">ap_item</code>
+                  <span class="box-card__type">Type</span>
+                  <code class="box-card__type-val">AP invoice</code>
                 </div>
                 <div class="box-card__head-r">
                   <span class="box-card__seal-dot box-card__seal-dot--open" aria-hidden="true"></span>
@@ -294,8 +293,8 @@
             <aside class="box-card box-card--demo">
               <header class="box-card__head">
                 <div class="box-card__head-l">
-                  <span class="box-card__type">BoxType</span>
-                  <code class="box-card__type-val">ap_item</code>
+                  <span class="box-card__type">Type</span>
+                  <code class="box-card__type-val">AP invoice</code>
                 </div>
                 <div class="box-card__head-r">
                   <span class="box-card__seal-dot" aria-hidden="true"></span>
@@ -323,7 +322,7 @@
               <p class="demo__caption-label">Step 03 · approved</p>
               <h3 class="demo__caption-title">Decision happens where the approver already lives.</h3>
               <p class="demo__caption-body">
-                Slack card. Teams card. NetSuite SuiteApp panel. SAP Fiori extension. Same record, rendered where the approver is. The decision lands back on the Box. Audit captures who clicked, why, and the policy version that authorized it.
+                Slack card. Teams card. NetSuite SuiteApp panel. SAP Fiori extension. Same record, rendered where the approver is. The decision lands back on the record. Audit captures who clicked, why, and the policy version that authorized it.
               </p>
               <div class="demo__caption-tags">
                 <span>slack</span><span>teams</span><span>netsuite</span><span>sap fiori</span>
@@ -336,8 +335,8 @@
             <aside class="box-card box-card--demo">
               <header class="box-card__head">
                 <div class="box-card__head-l">
-                  <span class="box-card__type">BoxType</span>
-                  <code class="box-card__type-val">ap_item</code>
+                  <span class="box-card__type">Type</span>
+                  <code class="box-card__type-val">AP invoice</code>
                 </div>
                 <div class="box-card__head-r">
                   <span class="box-card__seal-dot" aria-hidden="true"></span>
@@ -365,7 +364,7 @@
               <p class="demo__caption-label">Step 04 · posted</p>
               <h3 class="demo__caption-title">The thing your ERP did is now provable, not assumed.</h3>
               <p class="demo__caption-body">
-                NetSuite, SAP, QuickBooks, Xero. The bill posts with retry, idempotency, and a bounded override window. The Box knows what posted, when, and by which policy version. Treasury runs the payment batch from your ERP on its own schedule.
+                NetSuite, SAP, QuickBooks, Xero. The bill posts with retry, idempotency, and a bounded override window. The record knows what posted, when, and by which policy version. Treasury runs the payment batch from your ERP on its own schedule.
               </p>
               <div class="demo__caption-tags">
                 <span>idempotent</span><span>override 15 min</span><span>reversible</span>
@@ -378,8 +377,8 @@
             <aside class="box-card box-card--demo">
               <header class="box-card__head">
                 <div class="box-card__head-l">
-                  <span class="box-card__type">BoxType</span>
-                  <code class="box-card__type-val">ap_item</code>
+                  <span class="box-card__type">Type</span>
+                  <code class="box-card__type-val">AP invoice</code>
                 </div>
                 <div class="box-card__head-r">
                   <span class="box-card__seal-dot" aria-hidden="true"></span>
@@ -407,7 +406,7 @@
               <p class="demo__caption-label">Step 05 · sealed</p>
               <h3 class="demo__caption-title">The auditor doesn&rsquo;t need a screen-share. They need a file.</h3>
               <p class="demo__caption-body">
-                When the Box closes, the chain seals. Every transition, every override, every reversal is captured. Six months later the audit committee reconstructs the entire workflow from one record. The hash chain proves nothing was changed after the fact.
+                When the record closes, the chain seals. Every transition, every override, every reversal is captured. Six months later the audit committee reconstructs the entire workflow from one file. The hash chain proves nothing was changed after the fact.
               </p>
               <div class="demo__caption-tags">
                 <span>append-only</span><span>hash-chained</span><span>exportable</span>
@@ -444,7 +443,7 @@
           The substrate is <em>yours</em>.
         </p>
         <p class="belief-plate__gloss">
-          Every Box exports as a portable record. Schema published. Audit chain travels with the work. Policy versions stamped on every transition. If you leave Solden, you leave with the work. The record is yours. The proof is yours. The state is yours. That&rsquo;s the runtime contract.
+          Every record exports as a portable file. Schema published. Audit chain travels with the work. Policy versions stamped on every transition. If you leave Solden, you leave with the work. The record is yours. The proof is yours. The state is yours. That&rsquo;s the runtime contract.
         </p>
       </div>
     </aside>
@@ -481,7 +480,7 @@
 
         <div class="audit-chain__panel" data-reveal data-reveal-delay="1">
           <header class="audit-chain__panel-head">
-            <span>audit_chain · ap_items · org_8f3</span>
+            <span>audit_chain · invoices · org_8f3</span>
             <span class="audit-chain__panel-head-status">chain intact</span>
           </header>
 
@@ -565,19 +564,19 @@
           <article class="for-whom__col">
             <h3 class="for-whom__col-title">Controllers and AP leads</h3>
             <p class="for-whom__col-body">
-              You own the close. You own the audit. You own the answer when something didn&rsquo;t post. The Box gives you a single record per invoice with the full chain, exportable on demand. Stop reconstructing the story tab by tab.
+              You own the close. You own the audit. You own the answer when something didn&rsquo;t post. Solden gives you a single record per invoice with the full chain, exportable on demand. Stop reconstructing the story tab by tab.
             </p>
           </article>
           <article class="for-whom__col">
             <h3 class="for-whom__col-title">Heads of finance ops</h3>
             <p class="for-whom__col-body">
-              You&rsquo;re the one who notices when the team grows from four to twelve and the knowledge doesn&rsquo;t scale. Solden makes the workflow a thing that exists outside any one person&rsquo;s head. New hires read the Box, not the Slack history.
+              You&rsquo;re the one who notices when the team grows from four to twelve and the knowledge doesn&rsquo;t scale. Solden makes the workflow a thing that exists outside any one person&rsquo;s head. New hires read the record, not the Slack history.
             </p>
           </article>
           <article class="for-whom__col">
             <h3 class="for-whom__col-title">And what comes next</h3>
             <p class="for-whom__col-body">
-              Finance is where Solden starts. The primitive isn&rsquo;t finance-shaped. Procurement next. Then audit and compliance. Then legal. Anywhere a workflow crosses tools and people, the Box holds.
+              Finance is where Solden starts. The shape isn&rsquo;t finance-only. Procurement next. Then audit and compliance. Then legal. Anywhere a workflow crosses tools and people, the record holds.
             </p>
           </article>
         </div>
@@ -598,7 +597,7 @@
             An agent that does work is just another participant in a workflow that already lives across too many surfaces. Without a runtime, every agent is its own island, with its own state, and the coordination cost compounds.
           </p>
           <p>
-            Solden gives the agents somewhere to stand. The same Box that holds human work holds agent work. The same audit chain that proves what a person did proves what an agent proposed. The same ownership trail that names who decided names which agent recommended and which human signed off.
+            Solden gives the agents somewhere to stand. The same record that holds human work holds agent work. The same audit chain that proves what a person did proves what an agent proposed. The same ownership trail that names who decided names which agent recommended and which human signed off.
           </p>
           <p class="thesis__sting">
             The fragmentation isn&rsquo;t a phase. It&rsquo;s the new shape of work. The runtime is how you hold it.
@@ -615,7 +614,7 @@
           <div class="category-pair__line category-pair__line--accent">Solden holds it.</div>
         </div>
         <p class="footer-cta__sub">
-          30-minute first call. One sample invoice through your stack. We&rsquo;ll show you the Box, walk the audit chain on screen, and export the record so you can hash it yourself.
+          30-minute first call. One sample invoice through your stack. We&rsquo;ll show you the record, walk the audit chain on screen, and export it so you can hash it yourself.
         </p>
         <div class="footer-cta__ctas">
           <a class="btn btn--teal btn--lg" href="/contact.html">Talk to us</a>
@@ -638,7 +637,7 @@
           <div>
             <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="#demo">The Box</a></li>
+              <li><a href="#demo">The record</a></li>
               <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/contact.html">Talk to us</a></li>
             </ul>
