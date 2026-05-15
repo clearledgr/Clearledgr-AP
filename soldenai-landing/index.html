@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/manifesto.css?v=27" />
+    <link rel="stylesheet" href="/manifesto.css?v=28" />
   </head>
   <body class="theme-light-landing">
 
@@ -104,361 +104,75 @@
       </div>
     </section>
 
-    <!-- ═══ THE RECORD ═══════════════════════════════════════════
-         One record per workflow. Six fields, all customer-facing. -->
-    <section class="primitive">
-      <div class="shell primitive__inner">
-        <div class="primitive__text">
-          <p class="section-eyebrow">The record</p>
-          <h2 class="primitive__title">
-            One record<br />
-            per workflow.
+    <!-- ═══ HOW SOLDEN WORKS ═══════════════════════════════════════
+         Replaces the prior Record / Tabbed Demo / Audit Chain trio
+         with a single editorial walkthrough. Five numbered steps in
+         prose. No cards, no tabs, no visualisations. Matches the
+         text-first register Mo named in his references. -->
+    <section class="howitworks" id="how-solden-works">
+      <div class="shell shell--narrow howitworks__inner">
+        <header class="howitworks__head">
+          <p class="section-eyebrow">How Solden works</p>
+          <h2 class="howitworks__title">
+            One record per workflow.<br />
+            Five steps. Every move signed.
           </h2>
-          <p class="primitive__lead">
-            Every workflow becomes a record. Its state. Its owner. What it&rsquo;s waiting on. What broke. Its history. Its policy. The record lives across your tools, without belonging to any one of them.
-          </p>
-          <p class="primitive__closer">
-            Your tools render it. Solden holds it.
-          </p>
-        </div>
-
-        <aside class="record-preview" aria-label="Record detail preview">
-          <header class="record-preview__topbar">
-            <span class="record-preview__back" aria-hidden="true">&larr; Records</span>
-            <code class="record-preview__id">AP-a1ea8e92fe5a&hellip;</code>
-          </header>
-
-          <section class="record-preview__header">
-            <div class="record-preview__header-primary">
-              <div class="record-preview__vendor">
-                <span class="record-preview__eyebrow">Vendor</span>
-                <p class="record-preview__vendor-name">Northwind Logistics</p>
-              </div>
-              <div class="record-preview__amount-block">
-                <span class="record-preview__eyebrow">Amount</span>
-                <span class="record-preview__money">&euro;18,420.00</span>
-              </div>
-            </div>
-            <dl class="record-preview__meta">
-              <div class="record-preview__meta-cell">
-                <dt>Invoice</dt>
-                <dd>INV-2026-0418</dd>
-              </div>
-              <div class="record-preview__meta-cell">
-                <dt>Status</dt>
-                <dd><span class="record-preview__state record-preview__state--pending">needs_approval</span></dd>
-              </div>
-              <div class="record-preview__meta-cell">
-                <dt>Due</dt>
-                <dd>14 Apr</dd>
-              </div>
-              <div class="record-preview__meta-cell">
-                <dt>Age</dt>
-                <dd>6d</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section class="record-preview__actions" aria-label="Record actions">
-            <button class="record-preview__btn record-preview__btn--primary" type="button" disabled>Approve</button>
-            <button class="record-preview__btn" type="button" disabled>Reject</button>
-            <button class="record-preview__btn" type="button" disabled>Request info</button>
-            <button class="record-preview__btn" type="button" disabled>Send to person</button>
-            <button class="record-preview__btn record-preview__btn--warn" type="button" disabled>Override and post</button>
-          </section>
-
-          <section class="record-preview__reasoning">
-            <header class="record-preview__reasoning-head">
-              <h4>Agent reasoning</h4>
-              <span class="record-preview__reasoning-tag">RULES</span>
-            </header>
-            <p class="record-preview__reasoning-body">
-              Three-way match passed against PO #4821 and GRN-0918, within 2% tolerance. Vendor verified, sanctions clean. Invoice is &euro;37.40 above PO total (&euro;18,382.60), inside the configured variance allowance.
-            </p>
-            <div class="record-preview__recommendation">
-              <span class="record-preview__eyebrow">Recommendation</span>
-              <span class="record-preview__recommendation-value">Approve <span class="record-preview__confidence">&middot; 87% confidence</span></span>
-            </div>
-          </section>
-
-          <section class="record-preview__spec" aria-label="Record state">
-            <dl class="record-preview__spec-grid">
-              <div class="record-preview__spec-row">
-                <dt>Owner</dt>
-                <dd>priya@your-co.example</dd>
-              </div>
-              <div class="record-preview__spec-row">
-                <dt>Waiting on</dt>
-                <dd>prior payment ref &middot; PO #4821</dd>
-              </div>
-              <div class="record-preview__spec-row">
-                <dt>Exception</dt>
-                <dd><span class="record-preview__exception">duplicate</span></dd>
-              </div>
-              <div class="record-preview__spec-row">
-                <dt>History</dt>
-                <dd>5 events &middot; sealed</dd>
-              </div>
-              <div class="record-preview__spec-row">
-                <dt>Policy</dt>
-                <dd><code class="record-preview__code">v1</code> &middot; stamped on transition</dd>
-              </div>
-            </dl>
-          </section>
-
-          <footer class="record-preview__chain">
-            <p class="record-preview__chain-label">&sect; Audit chain</p>
-            <ol class="record-preview__chain-list">
-              <li><code>ev_9182</code> &middot; sealed &nbsp;&nbsp; &middot; prev <code>a4f1ed&hellip;</code></li>
-              <li><code>ev_9181</code> &middot; routed &nbsp;&nbsp; &middot; prev <code>8a72f1&hellip;</code></li>
-              <li><code>ev_9180</code> &middot; validated &middot; prev <code>d3e4a0&hellip;</code></li>
-            </ol>
-          </footer>
-        </aside>
-      </div>
-    </section>
-
-    <!-- ═══ TABBED DEMO ═══════════════════════════════════════
-         One record, five lifecycle states. Same audit. -->
-    <section class="demo" id="demo">
-      <div class="shell demo__shell">
-        <header class="demo__head">
-          <p class="demo__eyebrow">/ THE LIFECYCLE</p>
-          <h2 class="demo__title">One record. Five states. Every transition signed.</h2>
-          <p class="demo__sub">
-            The same record passes through capture, validation, approval, posting, and seal. Each step is a state change. Each state change is a row in an append-only chain you can export, replay, and prove.
+          <p class="howitworks__lead">
+            Every back-office workflow becomes a record. The record holds its own state, its own owner, what it&rsquo;s waiting on, what broke, its history, and the policy that decided each call. It lives across your tools without belonging to any one of them. Your tools render it. Solden holds it.
           </p>
         </header>
 
-        <nav class="demo__tabs" role="tablist" aria-label="Record lifecycle">
-          <button class="demo__tab is-active" role="tab" data-tab="captured"  aria-selected="true">
-            <span class="demo__tab-num">01</span><span class="demo__tab-label">Captured</span>
-          </button>
-          <button class="demo__tab" role="tab" data-tab="validated" aria-selected="false">
-            <span class="demo__tab-num">02</span><span class="demo__tab-label">Validated</span>
-          </button>
-          <button class="demo__tab" role="tab" data-tab="approved" aria-selected="false">
-            <span class="demo__tab-num">03</span><span class="demo__tab-label">Approved</span>
-          </button>
-          <button class="demo__tab" role="tab" data-tab="posted" aria-selected="false">
-            <span class="demo__tab-num">04</span><span class="demo__tab-label">Posted</span>
-          </button>
-          <button class="demo__tab" role="tab" data-tab="sealed" aria-selected="false">
-            <span class="demo__tab-num">05</span><span class="demo__tab-label">Sealed</span>
-          </button>
-        </nav>
-
-        <div class="demo__stage">
-
-          <!-- Tab 01 — Captured -->
-          <article class="demo__panel is-active" data-panel="captured" role="tabpanel">
-            <aside class="box-card box-card--demo">
-              <header class="box-card__head">
-                <div class="box-card__head-l">
-                  <span class="box-card__type">Type</span>
-                  <code class="box-card__type-val">AP invoice</code>
-                </div>
-                <div class="box-card__head-r">
-                  <span class="box-card__seal-dot box-card__seal-dot--open" aria-hidden="true"></span>
-                  <code class="box-card__id">AP-9182</code>
-                </div>
-              </header>
-              <dl class="box-card__fields">
-                <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill box-card__state-pill--gray">received</span></dd></div>
-                <div class="box-card__row"><dt>vendor</dt><dd>Northwind Logistics</dd></div>
-                <div class="box-card__row"><dt>amount</dt><dd>€18,420.00</dd></div>
-                <div class="box-card__row"><dt>owner</dt><dd class="box-card__dim">&mdash;</dd></div>
-                <div class="box-card__row"><dt>history</dt><dd>1 event · open</dd></div>
-                <div class="box-card__row"><dt>policy</dt><dd><code>v1</code></dd></div>
-              </dl>
-              <footer class="box-card__chain">
-                <p class="box-card__chain-label">§ Audit chain</p>
-                <ol class="box-card__chain-list">
-                  <li><code>ev_9178</code> · captured · gmail webhook</li>
-                </ol>
-              </footer>
-            </aside>
-            <div class="demo__caption">
-              <p class="demo__caption-label">Step 01 · captured</p>
-              <h3 class="demo__caption-title">No more &ldquo;did anyone log this?&rdquo;</h3>
-              <p class="demo__caption-body">
-                Invoices arrive by email, EDI, portal upload, or PEPPOL. The model reads the unstructured input. Solden writes the record. It exists the moment work enters the building.
+        <ol class="howitworks__list">
+          <li class="howitworks__step">
+            <span class="howitworks__step-num" aria-hidden="true">01</span>
+            <div class="howitworks__step-body">
+              <h3 class="howitworks__step-title">Captured</h3>
+              <p>
+                Invoices arrive in your inbox, your ERP queue, a vendor portal, or a PEPPOL UBL feed. Solden reads the unstructured input. The model lifts vendor, amount, dates, references, and line items onto a typed record. The record exists the moment work enters the building.
               </p>
-              <div class="demo__caption-tags">
-                <span>email</span><span>EDI</span><span>PEPPOL UBL</span>
-              </div>
             </div>
-          </article>
+          </li>
 
-          <!-- Tab 02 — Validated -->
-          <article class="demo__panel" data-panel="validated" role="tabpanel" hidden>
-            <aside class="box-card box-card--demo">
-              <header class="box-card__head">
-                <div class="box-card__head-l">
-                  <span class="box-card__type">Type</span>
-                  <code class="box-card__type-val">AP invoice</code>
-                </div>
-                <div class="box-card__head-r">
-                  <span class="box-card__seal-dot box-card__seal-dot--open" aria-hidden="true"></span>
-                  <code class="box-card__id">AP-9182</code>
-                </div>
-              </header>
-              <dl class="box-card__fields">
-                <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill box-card__state-pill--teal">validated</span></dd></div>
-                <div class="box-card__row"><dt>3-way match</dt><dd>PO #4821 · GRN-0918 · vendor verified</dd></div>
-                <div class="box-card__row"><dt>tolerance</dt><dd>within 2% (configurable)</dd></div>
-                <div class="box-card__row"><dt>sanctions</dt><dd>pass</dd></div>
-                <div class="box-card__row"><dt>history</dt><dd>3 events · open</dd></div>
-                <div class="box-card__row"><dt>policy</dt><dd><code>v1</code> · stamped</dd></div>
-              </dl>
-              <footer class="box-card__chain">
-                <p class="box-card__chain-label">§ Audit chain</p>
-                <ol class="box-card__chain-list">
-                  <li><code>ev_9180</code> · 3-way matched · agent</li>
-                  <li><code>ev_9179</code> · sanctions cleared · agent</li>
-                  <li><code>ev_9178</code> · captured · gmail webhook</li>
-                </ol>
-              </footer>
-            </aside>
-            <div class="demo__caption">
-              <p class="demo__caption-label">Step 02 · validated</p>
-              <h3 class="demo__caption-title">The cross-checks your ERP has data for but doesn&rsquo;t run.</h3>
-              <p class="demo__caption-body">
-                Three-way match against PO and GRN. Tolerance check. Sanctions screen. Duplicate scan. Each gate is rule-based, versioned, and replayable. Rules decide. The model only writes the explanation.
+          <li class="howitworks__step">
+            <span class="howitworks__step-num" aria-hidden="true">02</span>
+            <div class="howitworks__step-body">
+              <h3 class="howitworks__step-title">Validated</h3>
+              <p>
+                The cross-checks your ERP has data for but doesn&rsquo;t run. Three-way match against PO and GRN. Sanctions screen. Duplicate scan. Budget tolerance. Each gate is rule-based, versioned, and replayable. Rules decide. The model only writes the explanation.
               </p>
-              <div class="demo__caption-tags">
-                <span>rules</span><span>deterministic</span><span>replayable</span>
-              </div>
             </div>
-          </article>
+          </li>
 
-          <!-- Tab 03 — Approved -->
-          <article class="demo__panel" data-panel="approved" role="tabpanel" hidden>
-            <aside class="box-card box-card--demo">
-              <header class="box-card__head">
-                <div class="box-card__head-l">
-                  <span class="box-card__type">Type</span>
-                  <code class="box-card__type-val">AP invoice</code>
-                </div>
-                <div class="box-card__head-r">
-                  <span class="box-card__seal-dot" aria-hidden="true"></span>
-                  <code class="box-card__id">AP-9182</code>
-                </div>
-              </header>
-              <dl class="box-card__fields">
-                <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill">approved</span></dd></div>
-                <div class="box-card__row"><dt>owner</dt><dd>priya@your-co.example</dd></div>
-                <div class="box-card__row"><dt>approver</dt><dd>Priya · surface: slack</dd></div>
-                <div class="box-card__row"><dt>decision</dt><dd>approved · &ldquo;duplicate cleared, vendor confirmed&rdquo;</dd></div>
-                <div class="box-card__row"><dt>history</dt><dd>5 events</dd></div>
-                <div class="box-card__row"><dt>policy</dt><dd><code>v1</code> · stamped on transition</dd></div>
-              </dl>
-              <footer class="box-card__chain">
-                <p class="box-card__chain-label">§ Audit chain</p>
-                <ol class="box-card__chain-list">
-                  <li><code>ev_9182</code> · approved · priya@your-co</li>
-                  <li><code>ev_9181</code> · routed · agent · via slack</li>
-                  <li><code>ev_9180</code> · 3-way matched · agent</li>
-                </ol>
-              </footer>
-            </aside>
-            <div class="demo__caption">
-              <p class="demo__caption-label">Step 03 · approved</p>
-              <h3 class="demo__caption-title">Decision happens where the approver already lives.</h3>
-              <p class="demo__caption-body">
-                Gmail sidebar. Slack card. Teams card. NetSuite SuiteApp panel. SAP Fiori extension. Same record, rendered where the approver is. The decision lands back on the record. Audit captures who clicked, why, and the policy version that authorized it.
+          <li class="howitworks__step">
+            <span class="howitworks__step-num" aria-hidden="true">03</span>
+            <div class="howitworks__step-body">
+              <h3 class="howitworks__step-title">Decided</h3>
+              <p>
+                When a record needs a human call, Solden surfaces it where the approver already works. Gmail sidebar, Slack card, Teams card, NetSuite SuiteApp panel, SAP Fiori extension. Same record, rendered where the approver is. The decision lands back on the record. Audit captures who clicked, why, and the policy version that authorized it.
               </p>
-              <div class="demo__caption-tags">
-                <span>gmail</span><span>slack</span><span>teams</span><span>netsuite</span><span>sap fiori</span>
-              </div>
             </div>
-          </article>
+          </li>
 
-          <!-- Tab 04 — Posted -->
-          <article class="demo__panel" data-panel="posted" role="tabpanel" hidden>
-            <aside class="box-card box-card--demo">
-              <header class="box-card__head">
-                <div class="box-card__head-l">
-                  <span class="box-card__type">Type</span>
-                  <code class="box-card__type-val">AP invoice</code>
-                </div>
-                <div class="box-card__head-r">
-                  <span class="box-card__seal-dot" aria-hidden="true"></span>
-                  <code class="box-card__id">AP-9182</code>
-                </div>
-              </header>
-              <dl class="box-card__fields">
-                <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill box-card__state-pill--blue">posted_to_erp</span></dd></div>
-                <div class="box-card__row"><dt>erp</dt><dd>NetSuite</dd></div>
-                <div class="box-card__row"><dt>erp_reference</dt><dd><code>NS-998447</code> · GL 5210</dd></div>
-                <div class="box-card__row"><dt>posted_at</dt><dd>14:03:21 · idempotent</dd></div>
-                <div class="box-card__row"><dt>override</dt><dd>15 min · reversible</dd></div>
-                <div class="box-card__row"><dt>policy</dt><dd><code>v1</code></dd></div>
-              </dl>
-              <footer class="box-card__chain">
-                <p class="box-card__chain-label">§ Audit chain</p>
-                <ol class="box-card__chain-list">
-                  <li><code>ev_9184</code> · posted · ERP webhook · NS-998447</li>
-                  <li><code>ev_9183</code> · post requested · agent</li>
-                  <li><code>ev_9182</code> · approved · priya@your-co</li>
-                </ol>
-              </footer>
-            </aside>
-            <div class="demo__caption">
-              <p class="demo__caption-label">Step 04 · posted</p>
-              <h3 class="demo__caption-title">The thing your ERP did is now provable, not assumed.</h3>
-              <p class="demo__caption-body">
-                NetSuite, SAP, QuickBooks, Xero. The bill posts with retry, idempotency, and a bounded override window. The record knows what posted, when, and by which policy version. Treasury runs the payment batch from your ERP on its own schedule.
+          <li class="howitworks__step">
+            <span class="howitworks__step-num" aria-hidden="true">04</span>
+            <div class="howitworks__step-body">
+              <h3 class="howitworks__step-title">Posted</h3>
+              <p>
+                Approval lands. Solden writes to your ERP &mdash; NetSuite, SAP, QuickBooks, Xero &mdash; with retry, idempotency, and a bounded override window. The record knows what posted, when, and by which policy. Treasury runs the payment from the ERP on its own schedule. Solden authors zero vendor email.
               </p>
-              <div class="demo__caption-tags">
-                <span>idempotent</span><span>override 15 min</span><span>reversible</span>
-              </div>
             </div>
-          </article>
+          </li>
 
-          <!-- Tab 05 — Sealed -->
-          <article class="demo__panel" data-panel="sealed" role="tabpanel" hidden>
-            <aside class="box-card box-card--demo">
-              <header class="box-card__head">
-                <div class="box-card__head-l">
-                  <span class="box-card__type">Type</span>
-                  <code class="box-card__type-val">AP invoice</code>
-                </div>
-                <div class="box-card__head-r">
-                  <span class="box-card__seal-dot" aria-hidden="true"></span>
-                  <code class="box-card__id">AP-9182</code>
-                </div>
-              </header>
-              <dl class="box-card__fields">
-                <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill box-card__state-pill--sealed">closed</span></dd></div>
-                <div class="box-card__row"><dt>erp_reference</dt><dd><code>NS-998447</code></dd></div>
-                <div class="box-card__row"><dt>payment</dt><dd>settled · 14:11:08 · €18,420.00</dd></div>
-                <div class="box-card__row"><dt>bank_match</dt><dd>matched · bsl-2207</dd></div>
-                <div class="box-card__row"><dt>history</dt><dd>9 events · sealed</dd></div>
-                <div class="box-card__row"><dt>policy</dt><dd><code>v1</code> · final</dd></div>
-              </dl>
-              <footer class="box-card__chain">
-                <p class="box-card__chain-label">§ Audit chain</p>
-                <ol class="box-card__chain-list">
-                  <li><code>ev_9186</code> · sealed · system</li>
-                  <li><code>ev_9185</code> · bank_match · agent</li>
-                  <li><code>ev_9184</code> · posted · ERP webhook</li>
-                </ol>
-              </footer>
-            </aside>
-            <div class="demo__caption">
-              <p class="demo__caption-label">Step 05 · sealed</p>
-              <h3 class="demo__caption-title">The auditor doesn&rsquo;t need a screen-share. They need a file.</h3>
-              <p class="demo__caption-body">
-                When the record closes, the chain seals. Every transition, every override, every reversal is captured. Six months later the audit committee reconstructs the entire workflow from one file. The hash chain proves nothing was changed after the fact.
+          <li class="howitworks__step">
+            <span class="howitworks__step-num" aria-hidden="true">05</span>
+            <div class="howitworks__step-body">
+              <h3 class="howitworks__step-title">Sealed</h3>
+              <p>
+                The chain closes when the bill is paid and the bank matched. Every transition is signed with sha256. Each event hashes the event before it. Strip a row and the chain breaks. Six months later your audit committee reconstructs the entire workflow from one file. The proof writes itself as a side effect of doing the work.
               </p>
-              <div class="demo__caption-tags">
-                <span>append-only</span><span>hash-chained</span><span>exportable</span>
-              </div>
             </div>
-          </article>
-
-        </div>
+          </li>
+        </ol>
       </div>
     </section>
 
@@ -491,108 +205,6 @@
         </p>
       </div>
     </aside>
-
-    <!-- ═══ AUDIT CHAIN ═══════════════════════════════════════
-         Tamper-evident at the schema layer. Editorial code listing. -->
-    <section class="audit-chain">
-      <div class="shell audit-chain__inner">
-        <div class="audit-chain__copy" data-reveal>
-          <p class="section-eyebrow">The proof</p>
-          <h2 class="audit-chain__title">Append-only. Hash-chained. Policy-versioned.</h2>
-          <p class="audit-chain__sub">
-            Every state change writes one row. Each row hashes the row before it. No update path. No delete path. Enforced at the database, not the application. This is what your auditor wants. Not a report. A file they can hash themselves and verify line by line.
-          </p>
-          <ul class="audit-chain__claims">
-            <li class="audit-chain__claim">
-              <span class="audit-chain__claim-key">guarantee</span>
-              <span class="audit-chain__claim-val">no row removable, no row backdated</span>
-            </li>
-            <li class="audit-chain__claim">
-              <span class="audit-chain__claim-key">enforced</span>
-              <span class="audit-chain__claim-val">db_trigger before_update, before_delete</span>
-            </li>
-            <li class="audit-chain__claim">
-              <span class="audit-chain__claim-key">algo</span>
-              <span class="audit-chain__claim-val">sha256(prev_hash || event)</span>
-            </li>
-            <li class="audit-chain__claim">
-              <span class="audit-chain__claim-key">retention</span>
-              <span class="audit-chain__claim-val">7 years, configurable per region</span>
-            </li>
-          </ul>
-        </div>
-
-        <div class="audit-chain__panel" data-reveal data-reveal-delay="1">
-          <header class="audit-chain__panel-head">
-            <span>audit_chain · invoices · org_8f3</span>
-            <span class="audit-chain__panel-head-status">chain intact</span>
-          </header>
-
-          <ol class="audit-chain__list">
-            <li class="audit-chain__entry audit-chain__entry--posted">
-              <div class="audit-chain__entry-head">
-                <span class="audit-chain__entry-time">14:03:21</span>
-                <span class="audit-chain__entry-action">posted</span>
-                <span class="audit-chain__entry-actor">ERP webhook</span>
-                <span class="audit-chain__entry-id">ev_9182</span>
-              </div>
-              <div class="audit-chain__entry-hashes">
-                <span class="audit-chain__hash"><span class="audit-chain__hash-key">hash</span><span class="audit-chain__hash-val">8a72f1c9b4e052dfa3c16b9f7c8e2a04</span></span>
-                <span class="audit-chain__hash audit-chain__hash-prev"><span class="audit-chain__hash-key">prev</span><span class="audit-chain__hash-val">d3e4a07b5f1c8a39e2b07c14d960f2a8</span></span>
-              </div>
-            </li>
-            <li class="audit-chain__entry audit-chain__entry--approved">
-              <div class="audit-chain__entry-head">
-                <span class="audit-chain__entry-time">14:03:18</span>
-                <span class="audit-chain__entry-action">approved</span>
-                <span class="audit-chain__entry-actor">priya@your-co</span>
-                <span class="audit-chain__entry-id">ev_9181</span>
-              </div>
-              <div class="audit-chain__entry-hashes">
-                <span class="audit-chain__hash"><span class="audit-chain__hash-key">hash</span><span class="audit-chain__hash-val">d3e4a07b5f1c8a39e2b07c14d960f2a8</span></span>
-                <span class="audit-chain__hash audit-chain__hash-prev"><span class="audit-chain__hash-key">prev</span><span class="audit-chain__hash-val">f1bc02e74a8d6b29e591a8fc22b7d031</span></span>
-              </div>
-            </li>
-            <li class="audit-chain__entry">
-              <div class="audit-chain__entry-head">
-                <span class="audit-chain__entry-time">14:02:45</span>
-                <span class="audit-chain__entry-action">routed</span>
-                <span class="audit-chain__entry-actor">agent</span>
-                <span class="audit-chain__entry-id">ev_9180</span>
-              </div>
-              <div class="audit-chain__entry-hashes">
-                <span class="audit-chain__hash"><span class="audit-chain__hash-key">hash</span><span class="audit-chain__hash-val">f1bc02e74a8d6b29e591a8fc22b7d031</span></span>
-                <span class="audit-chain__hash audit-chain__hash-prev"><span class="audit-chain__hash-key">prev</span><span class="audit-chain__hash-val">c4e919a3b8f502c61e7a3b9d8f04a712</span></span>
-              </div>
-            </li>
-            <li class="audit-chain__entry">
-              <div class="audit-chain__entry-head">
-                <span class="audit-chain__entry-time">14:02:23</span>
-                <span class="audit-chain__entry-action">validated</span>
-                <span class="audit-chain__entry-actor">agent</span>
-                <span class="audit-chain__entry-id">ev_9179</span>
-              </div>
-              <div class="audit-chain__entry-hashes">
-                <span class="audit-chain__hash"><span class="audit-chain__hash-key">hash</span><span class="audit-chain__hash-val">c4e919a3b8f502c61e7a3b9d8f04a712</span></span>
-                <span class="audit-chain__hash audit-chain__hash-prev"><span class="audit-chain__hash-key">prev</span><span class="audit-chain__hash-val">7d2a89f1c3b4e0a61828d9c7e677b0ac</span></span>
-              </div>
-            </li>
-            <li class="audit-chain__entry">
-              <div class="audit-chain__entry-head">
-                <span class="audit-chain__entry-time">14:02:11</span>
-                <span class="audit-chain__entry-action">captured</span>
-                <span class="audit-chain__entry-actor">gmail webhook</span>
-                <span class="audit-chain__entry-id">ev_9178</span>
-              </div>
-              <div class="audit-chain__entry-hashes">
-                <span class="audit-chain__hash"><span class="audit-chain__hash-key">hash</span><span class="audit-chain__hash-val">7d2a89f1c3b4e0a61828d9c7e677b0ac</span></span>
-                <span class="audit-chain__hash audit-chain__hash-prev"><span class="audit-chain__hash-key">prev</span><span class="audit-chain__hash-val">e3f80a5cb29714df8a31c0b5af9d6e2b</span></span>
-              </div>
-            </li>
-          </ol>
-        </div>
-      </div>
-    </section>
 
     <!-- ═══ WHO IT'S FOR ══════════════════════════════════════
          Name the buyer. Three roles. Finance is the wedge,
@@ -681,7 +293,7 @@
           <div>
             <span class="footer__col-title">product</span>
             <ul class="footer__col-list">
-              <li><a href="#demo">The record</a></li>
+              <li><a href="#how-solden-works">How it works</a></li>
               <li><a href="/manifesto.html">Manifesto</a></li>
               <li><a href="/contact.html">Talk to us</a></li>
             </ul>

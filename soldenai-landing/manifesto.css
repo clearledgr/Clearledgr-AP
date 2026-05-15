@@ -3108,6 +3108,108 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
 }
 
 /* ═════════════════════════════════════════════════════════════
+   HOW SOLDEN WORKS — five numbered editorial steps
+   Replaces the prior Record / Tabbed Demo / Audit Chain trio.
+   Pure prose, no cards. Numbered list with oversized step number
+   acting as a flush-left rule, step title in serif, body paragraph
+   in editorial body weight. Matches text-first register.
+   ───────────────────────────────────────────────────────────── */
+
+.howitworks {
+  padding: 112px 0 112px;
+  background: #F9F5EC;
+}
+
+.howitworks__inner {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+@media (max-width: 600px) {
+  .howitworks__inner { padding: 0 24px; }
+}
+
+.howitworks__head {
+  margin: 0 0 64px;
+}
+
+.howitworks__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(34px, 5vw, 56px);
+  line-height: 1.06;
+  letter-spacing: -0.024em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 28px;
+  max-width: 22ch;
+}
+
+.howitworks__lead {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 19px;
+  line-height: 1.62;
+  color: rgba(31, 27, 22, 0.84);
+  margin: 0;
+  max-width: 64ch;
+}
+
+.howitworks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: howitworks-steps;
+}
+
+.howitworks__step {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 24px;
+  align-items: baseline;
+  padding: 32px 0;
+  border-top: 1px solid rgba(31, 27, 22, 0.12);
+}
+.howitworks__step:last-child {
+  border-bottom: 1px solid rgba(31, 27, 22, 0.12);
+}
+
+@media (max-width: 700px) {
+  .howitworks__step {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 28px 0;
+  }
+}
+
+.howitworks__step-num {
+  font-family: var(--font-mono);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 500;
+  color: rgba(31, 27, 22, 0.35);
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.howitworks__step-body h3.howitworks__step-title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(26px, 3.2vw, 36px);
+  line-height: 1.1;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 14px;
+}
+
+.howitworks__step-body p {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 18px;
+  line-height: 1.62;
+  color: rgba(31, 27, 22, 0.82);
+  margin: 0;
+  max-width: 60ch;
+}
+
+
+/* ═════════════════════════════════════════════════════════════
    FOR-WHOM — three-column buyer block
    No icons. Header + body. Equal weight.
    ───────────────────────────────────────────────────────────── */
