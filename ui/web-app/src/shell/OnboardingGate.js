@@ -49,7 +49,13 @@ const ONBOARDING_PASSTHROUGH = new Set([
   '/vendors',
   '/activity',
   '/reports',
-  '/approval-rules',
+  '/rules',
+  // Record detail (drill-in from the Records / Review queue / Exceptions
+  // lists). Gating /items/:id would bounce an unboarded user to the
+  // onboarding wizard every time they click a row, which is hostile —
+  // they need to be able to inspect their own data while the wizard is
+  // still incomplete.
+  '/items',
   // Public + auth flows
   '/signup/accept',
   '/status',
