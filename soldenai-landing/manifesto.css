@@ -2590,6 +2590,20 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
   max-width: 36ch;
 }
 
+/* Hero subtitle (italic dek) — explains the H1 in plain language.
+   Two short clauses, no caps. The H1 names the category; this names
+   what the category does for a finance-ops reader. */
+.hero__definition {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: clamp(20px, 2.2vw, 25px);
+  line-height: 1.42;
+  letter-spacing: -0.012em;
+  color: rgba(31, 27, 22, 0.82);
+  margin: 0 0 40px;
+  max-width: 36ch;
+}
+
 .hero--welder .hero__ctas {
   display: flex;
   align-items: center;
