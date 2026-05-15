@@ -129,6 +129,30 @@ const THREAD_SIDEBAR_CSS = `
   background: #FEFCE8; color: #92400E;
   font: 500 12px/1.2 'DM Sans', sans-serif; cursor: pointer;
 }
+
+/* Action bar — canonical intent buttons (Approve / Reject / Send to person
+   / etc.). Mirrors the workspace RecordDetailPage action bar but laid out
+   for the narrow Gmail sidebar (~340px) — wraps to two rows when needed.
+   Primary action gets dark-fill treatment; secondary actions are bordered.
+   busy=true disables every button while dispatch is in flight. */
+.cl-ts-actionbar { padding: 12px 16px; border-bottom: 1px solid #E2E8F0; }
+.cl-ts-actionbar-buttons {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+}
+.cl-ts-actionbtn {
+  font: 500 12px/1.2 'DM Sans', sans-serif;
+  padding: 7px 12px; border-radius: 6px;
+  border: 1px solid #CBD5E1; background: #FFFFFF; color: #0F172A;
+  cursor: pointer; transition: background 100ms ease, border-color 100ms ease;
+}
+.cl-ts-actionbtn:hover:not(:disabled) { background: #F8FAFC; border-color: #94A3B8; }
+.cl-ts-actionbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-actionbtn--primary {
+  background: #0F172A; color: #FFFFFF; border-color: #0F172A;
+}
+.cl-ts-actionbtn--primary:hover:not(:disabled) {
+  background: #1E293B; border-color: #1E293B;
+}
 .cl-ts-snoozed-notice {
   font: 500 11px/1.3 'DM Sans', sans-serif; color: #CA8A04; padding: 4px 0;
 }
@@ -699,6 +723,63 @@ function VendorOnboardingPromptBanner({
   `;
 }
 
+// ───────── Action bar ─────────
+// Renders one button per legal intent at the current Box state. Same
+// vocabulary the workspace RecordDetailPage uses; SidebarApp owns the
+// dispatch + dialog. We keep the labels inline (rather than importing
+// from ui/shared/intent-labels.js) because the extension's webpack
+// build doesn't yet consume the shared directory.
+const THREAD_SIDEBAR_INTENT_LABELS = {
+  approve_invoice: 'Approve',
+  reject_invoice: 'Reject',
+  request_info: 'Send back for info',
+  escalate_approval: 'Escalate',
+  reassign_approval: 'Send to person',
+  request_approval: 'Send for approval',
+  snooze_invoice: 'Snooze',
+  unsnooze_invoice: 'Unsnooze',
+  post_to_erp: 'Post to ERP',
+  reverse_invoice_post: 'Reverse posting',
+  manually_classify_invoice: 'Reclassify',
+  resubmit_invoice: 'Resubmit',
+};
+
+function labelForIntent(intent) {
+  return THREAD_SIDEBAR_INTENT_LABELS[intent] || intent;
+}
+
+function ActionBarSection({ actions, busy, onIntent }) {
+  const available = Array.isArray(actions?.available) ? actions.available : [];
+  if (available.length === 0 || typeof onIntent !== 'function') return null;
+
+  const primary = actions?.primary && available.includes(actions.primary) ? actions.primary : null;
+  const secondary = available.filter((i) => i !== primary);
+
+  return html`
+    <div class="cl-ts-section cl-ts-actionbar" role="toolbar" aria-label="Record actions">
+      <div class="cl-ts-section-title">Actions</div>
+      <div class="cl-ts-actionbar-buttons">
+        ${primary ? html`
+          <button
+            class="cl-ts-actionbtn cl-ts-actionbtn--primary"
+            disabled=${busy}
+            onClick=${() => onIntent(primary)}
+          >${labelForIntent(primary)}</button>
+        ` : null}
+        ${secondary.map((intent) => html`
+          <button
+            class="cl-ts-actionbtn"
+            key=${intent}
+            disabled=${busy}
+            onClick=${() => onIntent(intent)}
+          >${labelForIntent(intent)}</button>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+
 function ResubmissionBanner({ item }) {
   if (!item?.is_resubmission && !item?.has_resubmission) return null;
   if (item.has_resubmission) {
@@ -1007,6 +1088,14 @@ export function ThreadSidebar({
   budgetStatus,
   onBudgetOverride,
   budgetOverridePending,
+  // Action-bar wiring. `actions` is {available: string[], primary?: string}
+  // from /api/ap/items/{id}/context (added in this PR). `onIntent` POSTs
+  // to /api/agent/intents/execute. Same surface contract as workspace
+  // RecordDetailPage so an approver can act inside Gmail without context-
+  // switching.
+  actions,
+  actionBusy,
+  onIntent,
 }) {
   const [boxLinks, setBoxLinks] = useState([]);
   const [onboardingStatus, setOnboardingStatus] = useState(null);
@@ -1306,6 +1395,12 @@ export function ThreadSidebar({
       <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
       <${WaitingBanner} waiting=${item.waiting_condition} />
       <${FraudFlagsBanner} flags=${item.fraud_flags} />
+
+      <${ActionBarSection}
+        actions=${actions}
+        busy=${actionBusy}
+        onIntent=${onIntent}
+      />
       <${VendorOnboardingPromptBanner}
         status=${onboardingStatus}
         onInvite=${() => setInviteOpen(true)}

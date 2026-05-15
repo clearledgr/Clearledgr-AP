@@ -2771,8 +2771,39 @@ def _build_context_payload(db: ClearledgrDB, item: Dict[str, Any]) -> Dict[str, 
             "vendor_spend_to_date": vendor_total_spend,
             "vendor_open_invoices": int(vendor_open_count),
         },
+        # Action availability — derived from the canonical state machine,
+        # mirrors the workspace detail endpoint. The Gmail extension's
+        # ThreadSidebar reads these to render an inline action bar so
+        # approvers can act without leaving the inbox. Computed late so
+        # any state mutation upstream in this function is reflected.
+        "actions": _context_actions(item, metadata),
     }
     return context
+
+
+def _context_actions(item: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the action-availability bundle for the context payload.
+
+    Imports are local to avoid a circular import: ap_item_detail imports
+    ap_item_service today via shared helpers. Computing this here keeps
+    the canonical intent-availability logic in one place
+    (``ap_item_detail.available_intents`` / ``primary_intent``).
+    """
+    try:
+        from clearledgr.api.ap_item_detail import available_intents, primary_intent
+    except Exception:
+        return {"available": [], "primary": None}
+
+    current_state = str(item.get("state") or "received")
+    recommendation = (
+        metadata.get("ap_decision_recommendation")
+        or item.get("recommendation")
+        or None
+    )
+    return {
+        "available": available_intents(current_state),
+        "primary": primary_intent(current_state, recommendation),
+    }
 
 
 async def _execute_field_review_resolution(

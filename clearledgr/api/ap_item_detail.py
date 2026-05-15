@@ -83,7 +83,7 @@ _INTENT_TARGET_STATES: Dict[str, frozenset] = {
 }
 
 
-def _available_intents(current_state: str) -> List[str]:
+def available_intents(current_state: str) -> List[str]:
     """Intents whose target state is reachable from ``current_state``."""
     try:
         cur = APState(normalize_state(current_state))
@@ -97,7 +97,7 @@ def _available_intents(current_state: str) -> List[str]:
     return sorted(available)
 
 
-def _primary_intent(current_state: str, recommendation: Optional[str]) -> Optional[str]:
+def primary_intent(current_state: str, recommendation: Optional[str]) -> Optional[str]:
     """The single most likely action for the leader, given state + recommendation.
 
     Drives which button gets the primary (mint-green) styling on the
@@ -602,8 +602,8 @@ def get_ap_item_detail(
 
     current_state = enriched.get("state") or item.get("state") or "received"
     actions = {
-        "available": _available_intents(current_state),
-        "primary": _primary_intent(
+        "available": available_intents(current_state),
+        "primary": primary_intent(
             current_state,
             (reasoning.get("agent_decision") or {}).get("recommendation"),
         ),

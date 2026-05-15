@@ -1850,6 +1850,39 @@ function EmptyState({ queueCount, queueManager }) {
   </div></div>`;
 }
 
+// ───────── Action-bar wiring ─────────
+// Mirrors the workspace RecordDetailPage ActionBar so the Gmail render
+// is a full approval surface, not a read-only view. Intent vocabulary
+// matches ui/shared/intent-labels.js — kept inline here because the
+// gmail-extension webpack build doesn't yet consume ui/shared.
+
+const SIDEBAR_INTENT_LABELS = {
+  approve_invoice: 'Approve',
+  reject_invoice: 'Reject',
+  request_info: 'Send back for info',
+  escalate_approval: 'Escalate',
+  reassign_approval: 'Send to person',
+  request_approval: 'Send for approval',
+  snooze_invoice: 'Snooze',
+  unsnooze_invoice: 'Unsnooze',
+  post_to_erp: 'Post to ERP',
+  reverse_invoice_post: 'Reverse posting',
+  manually_classify_invoice: 'Reclassify',
+  resubmit_invoice: 'Resubmit',
+};
+
+// Intents that require a reason before dispatch — caught in handleIntent
+// and routed through ActionDialog before hitting /api/agent/intents/execute.
+const SIDEBAR_INTENTS_REQUIRING_REASON = new Set([
+  'reject_invoice',
+  'request_info',
+  'escalate_approval',
+]);
+
+// Intent dispatch lives in SidebarApp (it owns the dialog + busy state
+// + refresh-after-action). ThreadSidebar just renders the buttons and
+// fires onIntent.
+
 export default function SidebarApp({ queueManager }) {
   const s = useStore();
   const item = s.getPrimaryItem();
@@ -2094,6 +2127,69 @@ export default function SidebarApp({ queueManager }) {
     }
   }, [item?.id, queueManager]);
 
+  // Action-bar wiring. The /context payload now carries actions.available
+  // and actions.primary (computed by available_intents / primary_intent
+  // on the backend). When non-empty, ThreadSidebar renders an inline
+  // action bar so an approver can act without leaving Gmail.
+  const sidebarContextPayload = item?.id ? s.contextState?.get?.(item.id) || null : null;
+  const sidebarActions = sidebarContextPayload?.actions || null;
+  const [sidebarActionBusy, setSidebarActionBusy] = useState(false);
+  const [sidebarActionDialog, openSidebarActionDialog] = useActionDialog();
+
+  const handleSidebarIntent = useCallback(async (intent, extraInput = {}) => {
+    if (!item || sidebarActionBusy) return;
+
+    // Dialog-required intents collect a reason first. Cancelled dialogs
+    // resolve to undefined; treat that as a no-op (user backed out).
+    let inputExtras = { ...(extraInput || {}) };
+    if (SIDEBAR_INTENTS_REQUIRING_REASON.has(intent) && !inputExtras.reason) {
+      const reason = await openSidebarActionDialog({
+        actionType: intent === 'reject_invoice' ? 'reject' : 'generic',
+        title: SIDEBAR_INTENT_LABELS[intent] || intent,
+        label: 'Reason',
+        placeholder: 'Why?',
+        confirmLabel: SIDEBAR_INTENT_LABELS[intent] || 'Confirm',
+      });
+      if (!reason) return;
+      inputExtras.reason = typeof reason === 'string' ? reason : (reason?.value || '');
+    }
+
+    setSidebarActionBusy(true);
+    try {
+      const backendUrl = queueManager.runtimeConfig?.backendUrl || '';
+      const orgId = queueManager.runtimeConfig?.organizationId || 'default';
+      const resp = await queueManager.backendFetch(
+        backendUrl + '/api/agent/intents/execute',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            intent,
+            organization_id: orgId,
+            input: {
+              ap_item_id: item.id,
+              actor: 'gmail_sidebar',
+              ...inputExtras,
+            },
+          }),
+        },
+      );
+      const ok = resp && resp.ok !== false && !resp.detail;
+      const label = SIDEBAR_INTENT_LABELS[intent] || intent;
+      showToast(ok ? `${label} recorded.` : (resp?.detail || `${label} failed.`), ok ? 'success' : 'error');
+      if (ok) {
+        await queueManager.refreshQueue();
+        // Refresh context so the action bar reflects the new state's
+        // available intents on the next render.
+        try { await queueManager.fetchItemContext(item.id, { refresh: true }); } catch (_) {}
+      }
+    } catch (err) {
+      showToast('Action failed: ' + (err?.message || err), 'error');
+    } finally {
+      setSidebarActionBusy(false);
+    }
+  }, [item, sidebarActionBusy, queueManager, openSidebarActionDialog]);
+
   useEffect(() => {
     if (item?.id && queueManager?.fetchItemTasks) {
       queueManager.fetchItemTasks(item.id).catch(() => {});
@@ -2196,6 +2292,9 @@ export default function SidebarApp({ queueManager }) {
                 auditEvents=${(store.auditState?.events || [])}
                 orgId=${queueManager.runtimeConfig?.organizationId || 'default'}
                 toast=${showToast}
+                actions=${sidebarActions}
+                actionBusy=${sidebarActionBusy}
+                onIntent=${handleSidebarIntent}
                 fetchBoxLinks=${async (boxId, boxType) => {
                   try {
                     const url = queueManager.runtimeConfig?.backendUrl
@@ -2273,6 +2372,8 @@ export default function SidebarApp({ queueManager }) {
             }`
           : html`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
+
+      <${ActionDialog} ...${sidebarActionDialog} />
     </div>
   `;
 }
