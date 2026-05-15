@@ -2590,18 +2590,20 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
   max-width: 36ch;
 }
 
-/* Hero subtitle (italic dek) — explains the H1 in plain language.
-   Conversational tone: starts with the reader's reality, ends with
-   what Solden does to it. */
+/* Hero subtitle (thesis line) — single declarative beat under the H1.
+   ModernRelay pattern: regular serif, no italic, slightly larger than
+   body, generous max-width so the trio reads as one phrase per line
+   pair rather than fragmented. */
 .hero__definition {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-style: italic;
-  font-size: clamp(19px, 2.1vw, 24px);
-  line-height: 1.44;
-  letter-spacing: -0.012em;
-  color: rgba(31, 27, 22, 0.82);
+  font-style: normal;
+  font-weight: 400;
+  font-size: clamp(20px, 2.3vw, 27px);
+  line-height: 1.36;
+  letter-spacing: -0.014em;
+  color: rgba(31, 27, 22, 0.84);
   margin: 0 0 40px;
-  max-width: 44ch;
+  max-width: 38ch;
 }
 
 .hero--welder .hero__ctas {
