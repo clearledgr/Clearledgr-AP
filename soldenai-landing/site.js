@@ -237,7 +237,50 @@
     nodes.forEach(function (n) { io.observe(n); });
   }
 
-  // ── 2. Contact form ──
+  // ── 2. Tabbed demo (landing page).
+  // Auto-advance every 7s; pauses on hover. Click any tab to scrub.
+  initTabbedDemo();
+
+  function initTabbedDemo() {
+    var tabs = document.querySelectorAll('.demo__tab');
+    var panels = document.querySelectorAll('.demo__panel');
+    if (!tabs.length || !panels.length) return;
+
+    var ORDER = Array.prototype.map.call(tabs, function (t) { return t.dataset.tab; });
+    var active = 0;
+    var autoAdvance = true;
+
+    function activate(name, fromClick) {
+      tabs.forEach(function (t) {
+        var on = t.dataset.tab === name;
+        t.classList.toggle('is-active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      panels.forEach(function (p) {
+        var on = p.dataset.panel === name;
+        p.classList.toggle('is-active', on);
+        if (on) p.removeAttribute('hidden'); else p.setAttribute('hidden', '');
+      });
+      active = ORDER.indexOf(name);
+      if (fromClick) autoAdvance = false;
+    }
+
+    setInterval(function () {
+      if (!autoAdvance) return;
+      activate(ORDER[(active + 1) % ORDER.length]);
+    }, 7000);
+
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () { activate(t.dataset.tab, true); });
+    });
+
+    var demo = document.getElementById('demo');
+    if (demo) {
+      demo.addEventListener('mouseenter', function () { autoAdvance = false; }, { passive: true });
+    }
+  }
+
+  // ── 3. Contact form ──
   var form = document.querySelector('form[data-contact]');
   if (!form) return;
 

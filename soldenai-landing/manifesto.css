@@ -2488,3 +2488,391 @@ body.theme-light-landing .ribbon--in-hero .ribbon__meta {
   border: 1px solid rgba(31, 27, 22, 0.35);
   box-shadow: none !important;
 }
+
+/* ═════════════════════════════════════════════════════════════
+   HERO — welder background (manifesto in one frame)
+   Fragmentation on the left, the bond on the right.
+   The image carries the metaphor; copy carries the claim.
+   ───────────────────────────────────────────────────────────── */
+
+.hero--welder {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 140px 0 160px;
+}
+@media (max-width: 720px) {
+  .hero--welder { padding: 96px 0 96px; }
+}
+
+.hero--welder .hero__bg {
+  position: absolute;
+  inset: 0;
+  background-image: url("/assets/manifesto/welder-fragments.jpg");
+  background-size: cover;
+  background-position: center 40%;
+  background-repeat: no-repeat;
+  opacity: 0.55;
+  z-index: -2;
+  filter: contrast(1.02) saturate(0.92);
+}
+
+/* Warm cream veil washes the photograph back so type sits clean.
+   Stronger on the left (where the type lives), softer on the right
+   (where the welder's spark + bond should remain visible). */
+.hero--welder .hero__bg-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      to right,
+      rgba(244, 237, 220, 0.92) 0%,
+      rgba(244, 237, 220, 0.78) 38%,
+      rgba(244, 237, 220, 0.55) 62%,
+      rgba(244, 237, 220, 0.42) 100%
+    );
+  z-index: -1;
+}
+@media (max-width: 860px) {
+  .hero--welder .hero__bg-veil {
+    background: rgba(244, 237, 220, 0.86);
+  }
+}
+
+.hero__welder-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 880px;
+}
+
+.hero__headline--welder {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(44px, 7.4vw, 96px);
+  line-height: 0.98;
+  letter-spacing: -0.032em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 36px;
+  text-align: left;
+  max-width: 12ch;
+}
+.hero__headline--welder .hero__accent {
+  font-style: italic;
+  color: #1F1B16;
+}
+
+/* Caps stanza beneath the H1 — ModernRelay-pattern.
+   Three small-caps lines, monospace, generous letter-spacing. */
+.hero__caps-stanza {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 32px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.7);
+  max-width: 48ch;
+}
+.hero__caps-stanza span {
+  display: block;
+}
+
+.hero__support {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(18px, 1.9vw, 22px);
+  line-height: 1.45;
+  letter-spacing: -0.012em;
+  color: rgba(31, 27, 22, 0.74);
+  font-style: italic;
+  margin: 0 0 40px;
+  max-width: 36ch;
+}
+
+.hero--welder .hero__ctas {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin: 0;
+  text-align: left;
+}
+
+.hero__secondary {
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(31, 27, 22, 0.7);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(31, 27, 22, 0.25);
+  padding-bottom: 2px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.hero__secondary:hover {
+  color: #1F1B16;
+  border-bottom-color: #1F1B16;
+}
+
+@media (max-width: 720px) {
+  .hero--welder .hero__ctas {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════
+   PROBLEM — twenty tools, one thread
+   Three short paragraphs + a controller pull quote.
+   No bullets. Editorial body weight.
+   ───────────────────────────────────────────────────────────── */
+
+.problem {
+  padding: 96px 0 80px;
+  background: #F4EDDC;
+  border-top: 1px solid rgba(31, 27, 22, 0.08);
+}
+
+.problem__inner {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+@media (max-width: 600px) {
+  .problem__inner { padding: 0 24px; }
+}
+
+.problem__head { margin: 0 0 40px; }
+
+.problem__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(32px, 4.6vw, 56px);
+  line-height: 1.08;
+  letter-spacing: -0.024em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0;
+  max-width: 22ch;
+}
+.problem__title em {
+  font-style: italic;
+  color: #1F1B16;
+}
+
+.problem__body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 64ch;
+}
+.problem__para {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 19px;
+  line-height: 1.62;
+  color: rgba(31, 27, 22, 0.84);
+  margin: 0;
+}
+
+.problem__pullquote {
+  margin: 56px 0 0;
+  padding: 32px 36px;
+  border-left: 2px solid rgba(31, 27, 22, 0.4);
+  max-width: 56ch;
+}
+.problem__pullquote blockquote {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: clamp(22px, 2.6vw, 30px);
+  line-height: 1.32;
+  letter-spacing: -0.014em;
+  color: #1F1B16;
+  margin: 0 0 12px;
+}
+.problem__pullquote figcaption {
+  font-family: var(--font);
+  font-size: 13px;
+  color: rgba(31, 27, 22, 0.55);
+  letter-spacing: 0.01em;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   PRIMITIVE (the Box) — two-column section
+   Text left, Box-spec card right. Linear-style split.
+   ───────────────────────────────────────────────────────────── */
+
+.primitive {
+  padding: 96px 0 96px;
+  background: #F4EDDC;
+}
+
+.primitive__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 72px;
+  align-items: center;
+}
+@media (max-width: 980px) {
+  .primitive__inner {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+}
+
+.primitive__text { max-width: 520px; }
+
+.primitive__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(32px, 4.4vw, 52px);
+  line-height: 1.06;
+  letter-spacing: -0.024em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 24px;
+}
+
+.primitive__lead {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 18px;
+  line-height: 1.6;
+  color: rgba(31, 27, 22, 0.78);
+  margin: 0 0 24px;
+}
+
+.primitive__closer {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-style: italic;
+  font-size: 19px;
+  line-height: 1.5;
+  color: #1F1B16;
+  margin: 0;
+}
+
+.box-card--primitive {
+  margin: 0;
+  width: 100%;
+  max-width: 480px;
+}
+@media (max-width: 980px) {
+  .box-card--primitive { margin: 0 auto; }
+}
+
+/* ═════════════════════════════════════════════════════════════
+   FOR-WHOM — three-column buyer block
+   No icons. Header + body. Equal weight.
+   ───────────────────────────────────────────────────────────── */
+
+.for-whom {
+  padding: 96px 0 96px;
+  background: #EEE4CD;
+  border-top: 1px solid rgba(31, 27, 22, 0.06);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.06);
+}
+
+.for-whom__head {
+  text-align: center;
+  margin: 0 0 56px;
+}
+.for-whom__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(30px, 4vw, 46px);
+  line-height: 1.1;
+  letter-spacing: -0.022em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0;
+}
+
+.for-whom__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 48px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+@media (max-width: 860px) {
+  .for-whom__grid { grid-template-columns: 1fr; gap: 36px; }
+}
+
+.for-whom__col {
+  border-top: 1px solid rgba(31, 27, 22, 0.18);
+  padding-top: 24px;
+}
+.for-whom__col-title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 22px;
+  line-height: 1.22;
+  letter-spacing: -0.014em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 16px;
+}
+.for-whom__col-body {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: rgba(31, 27, 22, 0.78);
+  margin: 0;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   THESIS — fragmentation grows with agents
+   Narrow editorial column. Last paragraph stings.
+   ───────────────────────────────────────────────────────────── */
+
+.thesis {
+  padding: 112px 0 112px;
+  background: #F4EDDC;
+}
+
+.thesis__inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+@media (max-width: 600px) {
+  .thesis__inner { padding: 0 24px; }
+}
+
+.thesis__title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(36px, 5.4vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.026em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0 0 36px;
+  max-width: 18ch;
+}
+
+.thesis__body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.thesis__body p {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 19px;
+  line-height: 1.62;
+  color: rgba(31, 27, 22, 0.82);
+  margin: 0;
+}
+.thesis__sting {
+  font-style: italic;
+  color: #1F1B16 !important;
+  border-left: 2px solid #1F1B16;
+  padding-left: 20px;
+  margin-top: 16px !important;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   FOOTER CTA — trust line beneath the buttons
+   ───────────────────────────────────────────────────────────── */
+
+.footer-cta__trust {
+  font-family: var(--font);
+  font-size: 13px;
+  color: rgba(31, 27, 22, 0.5);
+  text-align: center;
+  margin: 24px 0 0;
+  letter-spacing: 0.005em;
+}

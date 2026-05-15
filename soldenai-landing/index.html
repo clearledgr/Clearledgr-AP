@@ -6,12 +6,12 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>Solden. The workflow runtime for the back office.</title>
-    <meta name="description" content="One typed record per workflow. Six primitives. The runtime holds it. Solden is the workflow runtime for the back office — finance is the wedge." />
+    <meta name="description" content="Twenty tools, one thread. Solden is the workflow runtime for the back office. Workflows that hold. Agents that propose. State you own." />
     <meta name="theme-color" content="#F4EDDC" />
 
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Solden. The workflow runtime for the back office." />
-    <meta property="og:description" content="One typed record per workflow. Six primitives. The runtime holds it." />
+    <meta property="og:description" content="Twenty tools. One thread. The work doesn't drop when the person does." />
     <meta property="og:url" content="https://soldenai.com/" />
     <meta property="og:image" content="https://soldenai.com/assets/solden-lockup-dark.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -24,14 +24,14 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/manifesto.css?v=18" />
+    <link rel="stylesheet" href="/manifesto.css?v=19" />
   </head>
   <body class="theme-light-landing">
 
     <!-- Announcement bar ───────────────────────────────────── -->
     <a class="announcement-bar" href="/manifesto.html">
       <span class="announcement-bar__label">Manifesto</span>
-      <span class="announcement-bar__text">The workflow runtime for the back office.</span>
+      <span class="announcement-bar__text">The workflow runtime for the back office. Read it.</span>
       <span class="announcement-bar__arrow" aria-hidden="true">&rarr;</span>
     </a>
 
@@ -51,26 +51,81 @@
     </header>
 
     <!-- ═══ HERO ═══════════════════════════════════════════════
-         Linear-style split: claim left, primitive shown right.
-         The Box card on the right is the product, not a screenshot. -->
-    <section class="hero hero--split">
-      <div class="shell hero__split-grid">
-        <div class="hero__split-text">
-          <h1 class="hero__headline">
-            The workflow runtime<br />
-            for the <span class="hero__accent">back office</span>.
-          </h1>
-          <p class="hero__sub hero__sub--stanza">
-            <span class="hero__stanza-line">Workflows that hold.</span>
-            <span class="hero__stanza-line">Agents that propose.</span>
-            <span class="hero__stanza-line">State you own.</span>
+         Welder image as background. Fragmentation on the left,
+         the bond on the right. The image IS the manifesto. -->
+    <section class="hero hero--welder">
+      <div class="hero__bg" aria-hidden="true"></div>
+      <div class="hero__bg-veil" aria-hidden="true"></div>
+      <div class="shell hero__welder-inner">
+        <h1 class="hero__headline hero__headline--welder">
+          The workflow runtime<br />
+          for the <span class="hero__accent">back office</span>.
+        </h1>
+        <p class="hero__caps-stanza">
+          <span>Twenty tools.</span>
+          <span>One thread.</span>
+          <span>The work doesn&rsquo;t drop when the person does.</span>
+        </p>
+        <p class="hero__support">
+          Workflows that hold. Agents that propose. State you own.
+        </p>
+        <div class="hero__ctas">
+          <a class="btn btn--primary btn--lg" href="/contact.html">Talk to us</a>
+          <a class="hero__secondary" href="/manifesto.html">Read the manifesto &rarr;</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PROBLEM ═══════════════════════════════════════════
+         The shape of the problem. Booking.com signal + the
+         dropped-follow-up pain. No bullets, three short paragraphs. -->
+    <section class="problem">
+      <div class="shell problem__inner">
+        <header class="problem__head">
+          <p class="section-eyebrow">The shape of the problem</p>
+          <h2 class="problem__title">
+            Every back-office workflow lives in <em>twenty tools</em> and <em>one person&rsquo;s head</em>.
+          </h2>
+        </header>
+
+        <div class="problem__body">
+          <p class="problem__para">
+            A finance team at Booking.com touches more than twenty tools to close one month. Apollo for the lead. Gmail for the thread. The CRM for the deal. The doc with legal. The Slack ping to product. The invoice in NetSuite. The reconciliation in a spreadsheet that lives on someone&rsquo;s desktop.
           </p>
-          <div class="hero__ctas">
-            <a class="btn btn--primary btn--lg" href="/contact.html">Talk to us</a>
-          </div>
+          <p class="problem__para">
+            The tools each do their job. The work between them lives nowhere. When the person who held it leaves, or forgets, or goes on vacation, the work goes with them.
+          </p>
+          <p class="problem__para">
+            That&rsquo;s not an automation problem. That&rsquo;s a coordination problem. And it&rsquo;s getting worse, not better, as more of the work moves to agents that also need somewhere to stand.
+          </p>
         </div>
 
-        <aside class="box-card" aria-label="The Box: typed workflow record">
+        <figure class="problem__pullquote">
+          <blockquote>If I forget to follow up, that&rsquo;s it.</blockquote>
+          <figcaption>&mdash; a controller, on her own job</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ═══ THE BOX ═══════════════════════════════════════════
+         The primitive. One typed record. Six fields. -->
+    <section class="primitive">
+      <div class="shell primitive__inner">
+        <div class="primitive__text">
+          <p class="section-eyebrow">The primitive</p>
+          <h2 class="primitive__title">
+            The Box.<br />
+            One typed record per workflow.
+          </h2>
+          <p class="primitive__lead">
+            Solden runs the back office on a single primitive. One record per workflow instance. Typed state, named owner, declared dependencies, surfaced exceptions, sealed history, versioned policy. The Box is where the work lives between the tools.
+          </p>
+          <p class="primitive__closer">
+            Your tools render the Box. Solden holds it.
+          </p>
+        </div>
+
+        <aside class="box-card box-card--primitive" aria-label="The Box: typed workflow record">
           <header class="box-card__head">
             <div class="box-card__head-l">
               <span class="box-card__type">BoxType</span>
@@ -123,17 +178,15 @@
       </div>
     </section>
 
-    <!-- ═══ TABBED DEMO ════════════════════════════════════════
-         Attio-style: one slot, five states animated through it.
-         Same Box, different lifecycle moment. -->
+    <!-- ═══ TABBED DEMO ═══════════════════════════════════════
+         One Box, five lifecycle states. Same record. Same audit. -->
     <section class="demo" id="demo">
       <div class="shell demo__shell">
         <header class="demo__head">
-          <p class="demo__eyebrow">/ THE BOX, OVER TIME</p>
-          <h2 class="demo__title">Five states. Same record. Same audit.</h2>
+          <p class="demo__eyebrow">/ THE LIFECYCLE</p>
+          <h2 class="demo__title">One Box. Five states. Every transition signed.</h2>
           <p class="demo__sub">
-            Watch a single AP item move through its lifecycle. The fields
-            change. The audit chain grows. Nothing else does.
+            The same record passes through capture, validation, approval, posting, and seal. Each step is a state change. Each state change is a row in an append-only chain you can export, replay, and prove.
           </p>
         </header>
 
@@ -174,7 +227,7 @@
                 <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill box-card__state-pill--gray">received</span></dd></div>
                 <div class="box-card__row"><dt>vendor</dt><dd>Northwind Logistics</dd></div>
                 <div class="box-card__row"><dt>amount</dt><dd>€18,420.00</dd></div>
-                <div class="box-card__row"><dt>owner</dt><dd class="box-card__dim">—</dd></div>
+                <div class="box-card__row"><dt>owner</dt><dd class="box-card__dim">&mdash;</dd></div>
                 <div class="box-card__row"><dt>history</dt><dd>1 event · open</dd></div>
                 <div class="box-card__row"><dt>policy</dt><dd><code>v1</code></dd></div>
               </dl>
@@ -187,14 +240,12 @@
             </aside>
             <div class="demo__caption">
               <p class="demo__caption-label">Step 01 · captured</p>
-              <h3 class="demo__caption-title">Lands where your team works.</h3>
+              <h3 class="demo__caption-title">No more &ldquo;did anyone log this?&rdquo;</h3>
               <p class="demo__caption-body">
-                Gmail, Outlook, ERP queue, PEPPOL UBL. Solden lifts line
-                items, totals, taxes and references onto a typed record.
-                Vision fallback handles scans and photos.
+                Invoices arrive by email, EDI, portal upload, or PEPPOL. The model reads the unstructured input. Solden writes the typed record. The Box exists the moment work enters the building.
               </p>
               <div class="demo__caption-tags">
-                <span>PDF</span><span>UBL</span><span>no email to vendors</span>
+                <span>email</span><span>EDI</span><span>PEPPOL UBL</span>
               </div>
             </div>
           </article>
@@ -231,11 +282,9 @@
             </aside>
             <div class="demo__caption">
               <p class="demo__caption-label">Step 02 · validated</p>
-              <h3 class="demo__caption-title">Clears every gate before a human looks.</h3>
+              <h3 class="demo__caption-title">The cross-checks your ERP has data for but doesn&rsquo;t run.</h3>
               <p class="demo__caption-body">
-                Three-way match against the PO and GRN. Tolerance check.
-                Sanctions screen. Duplicate scan. Each gate is rule-based,
-                versioned, and replayable. The model never gets a vote.
+                Three-way match against PO and GRN. Tolerance check. Sanctions screen. Duplicate scan. Each gate is rule-based, versioned, and replayable. Rules decide. The model only writes the explanation.
               </p>
               <div class="demo__caption-tags">
                 <span>rules</span><span>deterministic</span><span>replayable</span>
@@ -259,7 +308,7 @@
               <dl class="box-card__fields">
                 <div class="box-card__row"><dt>state</dt><dd><span class="box-card__state-pill">approved</span></dd></div>
                 <div class="box-card__row"><dt>owner</dt><dd>priya@your-co.example</dd></div>
-                <div class="box-card__row"><dt>approver</dt><dd>Priya · approval surface: slack</dd></div>
+                <div class="box-card__row"><dt>approver</dt><dd>Priya · surface: slack</dd></div>
                 <div class="box-card__row"><dt>decision</dt><dd>approved · &ldquo;duplicate cleared, vendor confirmed&rdquo;</dd></div>
                 <div class="box-card__row"><dt>history</dt><dd>5 events</dd></div>
                 <div class="box-card__row"><dt>policy</dt><dd><code>v1</code> · stamped on transition</dd></div>
@@ -275,12 +324,9 @@
             </aside>
             <div class="demo__caption">
               <p class="demo__caption-label">Step 03 · approved</p>
-              <h3 class="demo__caption-title">Routes to the surface your team already lives in.</h3>
+              <h3 class="demo__caption-title">Decision happens where the approver already lives.</h3>
               <p class="demo__caption-body">
-                Slack card. Teams card. NetSuite SuiteApp panel. SAP Fiori
-                extension. Same record, rendered where the approver is.
-                The decision lands back on the Box. Audit captures who
-                clicked, why, and the policy version that authorized it.
+                Slack card. Teams card. NetSuite SuiteApp panel. SAP Fiori extension. Same record, rendered where the approver is. The decision lands back on the Box. Audit captures who clicked, why, and the policy version that authorized it.
               </p>
               <div class="demo__caption-tags">
                 <span>slack</span><span>teams</span><span>netsuite</span><span>sap fiori</span>
@@ -306,7 +352,7 @@
                 <div class="box-card__row"><dt>erp</dt><dd>NetSuite</dd></div>
                 <div class="box-card__row"><dt>erp_reference</dt><dd><code>NS-998447</code> · GL 5210</dd></div>
                 <div class="box-card__row"><dt>posted_at</dt><dd>14:03:21 · idempotent</dd></div>
-                <div class="box-card__row"><dt>history</dt><dd>7 events</dd></div>
+                <div class="box-card__row"><dt>override</dt><dd>15 min · reversible</dd></div>
                 <div class="box-card__row"><dt>policy</dt><dd><code>v1</code></dd></div>
               </dl>
               <footer class="box-card__chain">
@@ -320,15 +366,12 @@
             </aside>
             <div class="demo__caption">
               <p class="demo__caption-label">Step 04 · posted</p>
-              <h3 class="demo__caption-title">Writes back to your ERP. Never to your vendor.</h3>
+              <h3 class="demo__caption-title">The thing your ERP did is now provable, not assumed.</h3>
               <p class="demo__caption-body">
-                NetSuite, SAP, QuickBooks, Xero. The bill posts on
-                approval, the GL line lands, the vendor balance updates.
-                Solden authors zero vendor email. Treasury runs the
-                payment batch from your ERP on its own schedule.
+                NetSuite, SAP, QuickBooks, Xero. The bill posts with retry, idempotency, and a bounded override window. The Box knows what posted, when, and by which policy version. Treasury runs the payment batch from your ERP on its own schedule.
               </p>
               <div class="demo__caption-tags">
-                <span>idempotent</span><span>no vendor email</span><span>reversible (15 min)</span>
+                <span>idempotent</span><span>override 15 min</span><span>reversible</span>
               </div>
             </div>
           </article>
@@ -365,16 +408,12 @@
             </aside>
             <div class="demo__caption">
               <p class="demo__caption-label">Step 05 · sealed</p>
-              <h3 class="demo__caption-title">Every step is signed and chained.</h3>
+              <h3 class="demo__caption-title">The auditor doesn&rsquo;t need a screen-share. They need a file.</h3>
               <p class="demo__caption-body">
-                When the Box closes, the chain seals. Every transition,
-                every override, every reversal is captured. Six months
-                later the audit committee reconstructs the entire
-                workflow from one record. The hash chain proves nothing
-                was changed after the fact.
+                When the Box closes, the chain seals. Every transition, every override, every reversal is captured. Six months later the audit committee reconstructs the entire workflow from one record. The hash chain proves nothing was changed after the fact.
               </p>
               <div class="demo__caption-tags">
-                <span>append-only</span><span>hash-chained</span><span>SOC 2</span>
+                <span>append-only</span><span>hash-chained</span><span>exportable</span>
               </div>
             </div>
           </article>
@@ -383,8 +422,8 @@
       </div>
     </section>
 
-    <!-- ═══ EDITORIAL DIVIDER ═══════════════════════════════════
-         Bronze ruler head, Plate II. Pull quote. The sovereignty bet. -->
+    <!-- ═══ SOVEREIGNTY (BRONZE PLATE) ════════════════════════
+         The substrate is yours. The runtime contract. -->
     <aside class="belief-plate">
       <figure class="belief-plate__figure">
         <img
@@ -405,22 +444,23 @@
 
       <div class="belief-plate__text">
         <p class="belief-plate__belief">
-          We believe the workflow record belongs to <em>the operator</em>. Not to the tool that processes a slice of it.
+          The substrate is <em>yours</em>.
         </p>
         <p class="belief-plate__gloss">
-          Bronze outlasted every empire that smelted it. Workflow state should outlast every vendor that touches it. The substrate is the operator&rsquo;s; the surfaces commoditize.
+          Every Box exports as a portable record. Schema published. Audit chain travels with the work. Policy versions stamped on every transition. If you leave Solden, you leave with the work. The record is yours. The proof is yours. The state is yours. That&rsquo;s the runtime contract.
         </p>
       </div>
     </aside>
 
-    <!-- ═══ AUDIT CHAIN ════════════════════════════════════════
-         The one proof specimen on the landing. Editorial code listing. -->
+    <!-- ═══ AUDIT CHAIN ═══════════════════════════════════════
+         Tamper-evident at the schema layer. Editorial code listing. -->
     <section class="audit-chain">
       <div class="shell audit-chain__inner">
         <div class="audit-chain__copy" data-reveal>
-          <h2 class="audit-chain__title">Tamper-evident at the schema layer.</h2>
+          <p class="section-eyebrow">The proof</p>
+          <h2 class="audit-chain__title">Append-only. Hash-chained. Policy-versioned.</h2>
           <p class="audit-chain__sub">
-            Append-only audit log enforced by database triggers, not application code. Every event hashes the prior event. Strip a row and the chain breaks. Your auditor sees the gap.
+            Every state change writes one row. Each row hashes the row before it. No update path. No delete path. Enforced at the database, not the application. This is what your auditor wants. Not a report. A file they can hash themselves and verify line by line.
           </p>
           <ul class="audit-chain__claims">
             <li class="audit-chain__claim">
@@ -514,7 +554,63 @@
       </div>
     </section>
 
-    <!-- ═══ CLOSING CTA ═════════════════════════════════════════ -->
+    <!-- ═══ WHO IT'S FOR ══════════════════════════════════════
+         Name the buyer. Three roles. Finance is the wedge,
+         not the ceiling. -->
+    <section class="for-whom">
+      <div class="shell">
+        <header class="for-whom__head">
+          <p class="section-eyebrow">The buyer</p>
+          <h2 class="for-whom__title">Built for the people holding the thread.</h2>
+        </header>
+
+        <div class="for-whom__grid">
+          <article class="for-whom__col">
+            <h3 class="for-whom__col-title">Controllers and AP leads</h3>
+            <p class="for-whom__col-body">
+              You own the close. You own the audit. You own the answer when something didn&rsquo;t post. The Box gives you a single record per invoice with the full chain, exportable on demand. Stop reconstructing the story from six tools.
+            </p>
+          </article>
+          <article class="for-whom__col">
+            <h3 class="for-whom__col-title">Heads of finance ops</h3>
+            <p class="for-whom__col-body">
+              You&rsquo;re the one who notices when the team grows from four to twelve and the knowledge doesn&rsquo;t scale. Solden makes the workflow a thing that exists outside any one person&rsquo;s head. New hires read the Box, not the Slack history.
+            </p>
+          </article>
+          <article class="for-whom__col">
+            <h3 class="for-whom__col-title">BD ops, RevOps, anyone running coordinated work</h3>
+            <p class="for-whom__col-body">
+              Finance is where Solden starts. The primitive isn&rsquo;t finance-shaped. Procurement, audit, legal review, deal desk, vendor onboarding. Anywhere work crosses five tools and three people, the Box holds.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ FORWARD THESIS ════════════════════════════════════
+         Fragmentation grows with agents. Mo's discovery insight. -->
+    <section class="thesis">
+      <div class="shell shell--narrow thesis__inner">
+        <p class="section-eyebrow">Why now</p>
+        <h2 class="thesis__title">Fragmentation grows with agents.</h2>
+        <div class="thesis__body">
+          <p>
+            Every back-office team added five tools in the last three years. They&rsquo;re about to add five more, and most of those will be agents.
+          </p>
+          <p>
+            An agent that does work is just another participant in a workflow that already lives across too many surfaces. Without a runtime, every agent is its own island, with its own state, and the coordination cost compounds.
+          </p>
+          <p>
+            Solden gives the agents somewhere to stand. The same Box that holds human work holds agent work. The same audit chain that proves what a person did proves what an agent proposed. The same ownership trail that names who decided names which agent recommended and which human signed off.
+          </p>
+          <p class="thesis__sting">
+            The fragmentation isn&rsquo;t a phase. It&rsquo;s the new shape of work. The runtime is how you hold it.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ CLOSING CTA ═══════════════════════════════════════ -->
     <section class="footer-cta">
       <div class="shell shell--tight" data-reveal>
         <div class="category-pair">
@@ -522,12 +618,15 @@
           <div class="category-pair__line category-pair__line--accent">Solden holds it.</div>
         </div>
         <p class="footer-cta__sub">
-          30-minute demo. One sample invoice through your stack. The full audit trail.
+          30-minute first call. One sample invoice through your stack. We&rsquo;ll show you the Box, walk the audit chain on screen, and export the record so you can hash it yourself.
         </p>
         <div class="footer-cta__ctas">
           <a class="btn btn--teal btn--lg" href="/contact.html">Talk to us</a>
           <a class="btn btn--ghost btn--lg" href="/manifesto.html">Read the manifesto</a>
         </div>
+        <p class="footer-cta__trust">
+          Founder reply within one business day. No deck.
+        </p>
       </div>
     </section>
 
@@ -570,51 +669,6 @@
       </div>
     </footer>
 
-    <script src="/site.js" defer></script>
-    <script>
-      // Tabbed demo — vanilla, ~25 lines. Auto-advance every 7s, pauses
-      // on hover/focus. Click any tab to jump + cancel auto-advance.
-      (() => {
-        const tabs = document.querySelectorAll('.demo__tab');
-        const panels = document.querySelectorAll('.demo__panel');
-        if (!tabs.length || !panels.length) return;
-
-        let timer = null;
-        const ORDER = Array.from(tabs).map(t => t.dataset.tab);
-        let active = 0;
-        let autoAdvance = true;
-
-        function activate(name, fromClick = false) {
-          tabs.forEach(t => {
-            const on = t.dataset.tab === name;
-            t.classList.toggle('is-active', on);
-            t.setAttribute('aria-selected', on ? 'true' : 'false');
-          });
-          panels.forEach(p => {
-            const on = p.dataset.panel === name;
-            p.classList.toggle('is-active', on);
-            if (on) p.removeAttribute('hidden'); else p.setAttribute('hidden', '');
-          });
-          active = ORDER.indexOf(name);
-          if (fromClick) autoAdvance = false;
-        }
-
-        function tick() {
-          if (!autoAdvance) return;
-          activate(ORDER[(active + 1) % ORDER.length]);
-        }
-
-        timer = setInterval(tick, 7000);
-
-        tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab, true)));
-
-        const demo = document.getElementById('demo');
-        if (demo) {
-          demo.addEventListener('mouseenter', () => { autoAdvance = false; }, { passive: true });
-          // Don't resume after hover-leave: human looked at it, treat
-          // that as a deliberate scrub.
-        }
-      })();
-    </script>
+    <script src="/site.js?v=2" defer></script>
   </body>
 </html>
