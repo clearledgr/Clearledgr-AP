@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=10" />
-    <link rel="stylesheet" href="/manifesto.css?v=39" />
+    <link rel="stylesheet" href="/manifesto.css?v=40" />
   </head>
   <body class="theme-light-landing">
 
@@ -152,7 +152,11 @@
               <div class="howitworks__step-body">
                 <h3 class="howitworks__step-title">Captured</h3>
                 <p>
-                  Invoices arrive in your inbox, your ERP queue, a vendor portal, or a PEPPOL UBL feed. Solden reads the unstructured input. The model lifts vendor, amount, dates, references, and line items onto a typed record. The record exists the moment work enters the building.
+                  Any back-office artifact enters wherever the team already works. Inbox, ERP queue, vendor portal, UBL feed. The runtime reads the unstructured input and lifts the typed fields onto a record. The record exists the moment work enters the building.
+                </p>
+                <p class="howitworks__step-aside">
+                  <span class="howitworks__step-aside-tag">Today &middot; AP</span>
+                  invoices in; vendor, amount, dates, references, and line items out.
                 </p>
               </div>
             </div>
@@ -239,7 +243,11 @@
               <div class="howitworks__step-body">
                 <h3 class="howitworks__step-title">Validated</h3>
                 <p>
-                  The cross-checks your ERP has data for but doesn&rsquo;t run. Three-way match against PO and GRN. Sanctions screen. Duplicate scan. Budget tolerance. Each gate is rule-based, versioned, and replayable. Rules decide. The model only writes the explanation.
+                  The cross-checks defined for the workflow type run against the typed record. Each gate is rule-based, versioned, and replayable. Rules decide. The model only writes the explanation.
+                </p>
+                <p class="howitworks__step-aside">
+                  <span class="howitworks__step-aside-tag">Today &middot; AP</span>
+                  three-way match against PO and GRN, sanctions screen, duplicate scan, budget tolerance. The checks your ERP has data for but doesn&rsquo;t run.
                 </p>
               </div>
             </div>
@@ -457,7 +465,11 @@
               <div class="howitworks__step-body">
                 <h3 class="howitworks__step-title">Posted</h3>
                 <p>
-                  Approval lands. Solden writes to your ERP &mdash; NetSuite, SAP, QuickBooks, Xero &mdash; with retry, idempotency, and a bounded override window. The record knows what posted, when, and by which policy. Treasury runs the payment from the ERP on its own schedule. Solden authors zero vendor email.
+                  Approval lands. The runtime writes to the system of record with retry, idempotency, and a bounded override window. The record knows what posted, when, and by which policy.
+                </p>
+                <p class="howitworks__step-aside">
+                  <span class="howitworks__step-aside-tag">Today &middot; AP</span>
+                  the system of record is your ERP. NetSuite, SAP, QuickBooks, Xero. Treasury runs the payment from the ERP on its own schedule. Solden authors zero vendor email.
                 </p>
               </div>
             </div>
@@ -546,7 +558,11 @@
               <div class="howitworks__step-body">
                 <h3 class="howitworks__step-title">Sealed</h3>
                 <p>
-                  The chain closes when the bill is paid and the bank matched. Every transition is signed with sha256. Each event hashes the event before it. Strip a row and the chain breaks. Six months later your audit committee reconstructs the entire workflow from one file. The proof writes itself as a side effect of doing the work.
+                  The chain closes when the workflow terminates. Every transition is signed with sha256. Each event hashes the event before it. Strip a row and the chain breaks. Six months later your audit committee reconstructs the entire workflow from one file. The proof writes itself as a side effect of doing the work.
+                </p>
+                <p class="howitworks__step-aside">
+                  <span class="howitworks__step-aside-tag">Today &middot; AP</span>
+                  the chain closes when the bill is paid and the bank matched.
                 </p>
               </div>
             </div>

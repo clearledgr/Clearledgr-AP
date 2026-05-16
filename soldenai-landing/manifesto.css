@@ -1833,6 +1833,29 @@ body.theme-light-landing .section-eyebrow::before {
   margin: 0;
 }
 
+/* Aside paragraph: the AP-specific instance line beneath each step's
+   runtime-level body. Smaller, italic, muted. The leading mono tag
+   marks it as "the wedge today" rather than "what the runtime does". */
+.howitworks__step-body p.howitworks__step-aside {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 15.5px;
+  font-style: italic;
+  line-height: 1.55;
+  color: rgba(31, 27, 22, 0.6);
+  margin: 16px 0 0;
+}
+.howitworks__step-aside-tag {
+  display: inline-block;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-style: normal;
+  color: rgba(31, 27, 22, 0.52);
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
 /* ── Glyphs ──────────────────────────────────────────────────
    Schematic ink line-art per step. Each path is drawn on scroll
    via stroke-dasharray + stroke-dashoffset, staggered by element
