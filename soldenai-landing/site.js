@@ -268,7 +268,7 @@
       if (!best) return;
       var idx = parseInt(best.target.getAttribute('data-bullet'), 10);
       if (!isNaN(idx)) setStates(idx);
-    }, { rootMargin: '-40% 0px -40% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] });
+    }, { rootMargin: '-32% 0px -32% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] });
 
     bullets.forEach(function (b) { io.observe(b); });
     setStates(0);

@@ -1769,6 +1769,21 @@ body.theme-light-landing .section-eyebrow::before {
   margin: 0;
 }
 
+/* Pull-quote for the lead's punchline. Italic serif, left rule,
+   so 'Your tools render it. Solden holds it.' lands as the thesis
+   instead of getting buried at the end of the lead paragraph. */
+.runtime__pull {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(20px, 2vw, 24px);
+  line-height: 1.4;
+  letter-spacing: -0.012em;
+  font-style: italic;
+  color: #1F1B16;
+  margin: 28px 0 0;
+  padding: 6px 0 6px 22px;
+  border-left: 2px solid #1F1B16;
+}
+
 .runtime__layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -1815,8 +1830,8 @@ body.theme-light-landing .section-eyebrow::before {
 
 .runtime__dot {
   position: absolute;
-  left: 0;
-  top: 10px;
+  left: -2px;
+  top: 8px;
   width: 14px;
   height: 14px;
   border: 1.5px solid rgba(31, 27, 22, 0.32);
@@ -1824,12 +1839,26 @@ body.theme-light-landing .section-eyebrow::before {
   background: #F9F5EC;
   z-index: 1;
   box-sizing: border-box;
-  transition: background 0.4s ease, border-color 0.4s ease;
+  transition: background 0.35s ease, border-color 0.35s ease,
+              width 0.35s ease, height 0.35s ease,
+              left 0.35s ease, top 0.35s ease,
+              box-shadow 0.35s ease;
 }
-.runtime__bullet[data-state="active"] .runtime__dot,
+/* Past: filled, same size as future. The journey-passed state. */
 .runtime__bullet[data-state="past"] .runtime__dot {
   background: #1F1B16;
   border-color: #1F1B16;
+}
+/* Active: bigger, filled, with a soft cream halo so the eye lands. */
+.runtime__bullet[data-state="active"] .runtime__dot {
+  background: #1F1B16;
+  border-color: #1F1B16;
+  width: 18px;
+  height: 18px;
+  left: -4px;
+  top: 6px;
+  box-shadow: 0 0 0 4px rgba(249, 245, 236, 1),
+              0 0 0 5px rgba(31, 27, 22, 0.18);
 }
 
 .runtime__bullet-title {
@@ -1839,14 +1868,15 @@ body.theme-light-landing .section-eyebrow::before {
   letter-spacing: -0.02em;
   font-weight: 500;
   margin: 0 0 14px;
-  color: rgba(31, 27, 22, 0.35);
-  transition: color 0.45s ease;
+  color: rgba(31, 27, 22, 0.32);
+  transition: color 0.35s ease, font-weight 0.35s ease;
 }
 .runtime__bullet[data-state="active"] .runtime__bullet-title {
   color: #1F1B16;
+  font-weight: 600;
 }
 .runtime__bullet[data-state="past"] .runtime__bullet-title {
-  color: rgba(31, 27, 22, 0.55);
+  color: rgba(31, 27, 22, 0.42);
 }
 
 .runtime__bullet-body {
@@ -1865,11 +1895,11 @@ body.theme-light-landing .section-eyebrow::before {
   font-size: 17px;
   line-height: 1.6;
   margin: 0;
-  color: rgba(31, 27, 22, 0.82);
-  transition: color 0.4s ease;
+  color: rgba(31, 27, 22, 0.85);
+  transition: color 0.35s ease;
 }
 .runtime__bullet[data-state="past"] .runtime__bullet-body p {
-  color: rgba(31, 27, 22, 0.45);
+  color: rgba(31, 27, 22, 0.32);
 }
 
 /* ── Anchor visual: typed-record card, sticky-pinned ────────── */
