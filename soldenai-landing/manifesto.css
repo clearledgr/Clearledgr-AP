@@ -1673,7 +1673,6 @@ body.theme-light-landing .section-eyebrow::before {
   display: flex;
   flex-direction: column;
   gap: 22px;
-  max-width: 64ch;
 }
 .problem__para {
   font-family: "Iowan Old Style", "Georgia", serif;
@@ -1751,7 +1750,6 @@ body.theme-light-landing .section-eyebrow::before {
   line-height: 1.62;
   color: rgba(31, 27, 22, 0.84);
   margin: 0;
-  max-width: 72ch;
 }
 
 .howitworks__list {
@@ -1806,7 +1804,6 @@ body.theme-light-landing .section-eyebrow::before {
   line-height: 1.62;
   color: rgba(31, 27, 22, 0.82);
   margin: 0;
-  max-width: 68ch;
 }
 
 
@@ -1850,7 +1847,6 @@ body.theme-light-landing .section-eyebrow::before {
   line-height: 1.62;
   color: rgba(31, 27, 22, 0.84);
   margin: 0;
-  max-width: 72ch;
 }
 
 
