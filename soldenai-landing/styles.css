@@ -645,11 +645,12 @@ body:not(.theme-dark) .footer-cta {
   isolation: isolate;
   background-color: #F9F5EC;
   background-image: url('/assets/manifesto/cuneiform-tablet.jpg');
-  background-position: center right;
+  background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
   color: #1F1B16;
-  padding: 56px 0 32px;
+  padding: 96px 0 32px;
+  min-height: 560px;
   border-top: 1px solid rgba(31, 27, 22, 0.08);
   overflow: hidden;
 }
