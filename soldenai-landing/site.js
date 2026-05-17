@@ -244,6 +244,7 @@
   function initRuntimeBullets() {
     var track = document.querySelector('.runtime__scroll-track');
     var bullets = document.querySelectorAll('.runtime__bullet');
+    var rail = document.querySelector('.runtime__rail');
     if (!track || !bullets.length) return;
 
     function setStates(activeIdx) {
@@ -253,33 +254,37 @@
       }
     }
 
-    // Compute scroll progress through the sticky-pinned scroll track.
-    // The track is multi-viewport tall; the sticky-frame pins inside
-    // it. Progress is 0 when the track's top hits the viewport top,
-    // 1 when its bottom hits the viewport bottom. Divide that range
-    // into one segment per bullet, so each bullet stays active for
-    // its share of the scroll distance (~70vh per bullet at the
-    // current 310vh track height).
+    // Compute scroll progress through the sticky-pinned scroll
+    // track. The track is multi-viewport tall; the sticky-frame
+    // pins inside it. Progress is 0 when the track's top hits the
+    // viewport top, 1 when its bottom hits the viewport bottom.
+    //
+    // Two things ride that progress value:
+    //   1. The rail-fill (--runtime-progress) grows top→down as one
+    //      continuous element — the visual spine through the section.
+    //   2. State changes (future/active/past) fire at 25%/50%/75%,
+    //      timed so the fill tip reaches each bullet's dot exactly
+    //      when that bullet activates.
     function update() {
       var rect = track.getBoundingClientRect();
       var viewportH = window.innerHeight || document.documentElement.clientHeight;
       var scrollable = rect.height - viewportH;
       if (scrollable <= 0) {
-        // Mobile / non-sticky fallback: mark everything active.
+        // Mobile / non-sticky fallback: mark everything active and
+        // fill the rail so it doesn't read as empty.
         for (var i = 0; i < bullets.length; i++) bullets[i].setAttribute('data-state', 'active');
+        if (rail) rail.style.setProperty('--runtime-progress', '100%');
         return;
       }
-      // -rect.top goes from 0 (track top at viewport top) to
-      // scrollable (track bottom at viewport bottom).
       var raw = -rect.top / scrollable;
       var progress = Math.max(0, Math.min(0.9999, raw));
-      // Each bullet owns 1/N of the scroll distance.
+      // Drive the continuous rail-fill (0–100%).
+      if (rail) rail.style.setProperty('--runtime-progress', (progress * 100).toFixed(2) + '%');
+      // Discrete state per bullet — each owns 1/N of the range.
       var activeIdx = Math.floor(progress * bullets.length);
       setStates(activeIdx);
     }
 
-    // Mobile / no-sticky: scroll-track has height:auto via CSS, so
-    // scrollable will be <= 0 and everything renders active.
     var ticking = false;
     function onScroll() {
       if (ticking) return;

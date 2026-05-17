@@ -1833,6 +1833,34 @@ body.theme-light-landing .section-eyebrow::before {
   list-style: none;
   margin: 0;
   padding: 0;
+  position: relative;
+}
+
+/* Continuous vertical rail spanning all bullets. Replaces the
+   per-bullet ::before connector with one unbroken element. The
+   rail-fill grows top→down as the reader scrolls, driven by the
+   --runtime-progress CSS custom property set in site.js. This is
+   the single continuous motion through the section — the visual
+   spine the eye locks onto. */
+.runtime__rail {
+  position: absolute;
+  left: 6.5px;
+  top: 17px;
+  bottom: 17px;
+  width: 1px;
+  background: rgba(31, 27, 22, 0.15);
+  pointer-events: none;
+  z-index: 0;
+}
+.runtime__rail-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--runtime-progress, 0%);
+  background: #1F1B16;
+  transform-origin: top;
+  will-change: height;
 }
 
 .runtime__bullet {
@@ -1842,20 +1870,6 @@ body.theme-light-landing .section-eyebrow::before {
 }
 .runtime__bullet:last-child {
   padding-bottom: 0;
-}
-
-/* Connector line from each dot down to the next */
-.runtime__bullet::before {
-  content: '';
-  position: absolute;
-  left: 6.5px;
-  top: 22px;
-  bottom: 0;
-  width: 1px;
-  background: rgba(31, 27, 22, 0.15);
-}
-.runtime__bullet:last-child::before {
-  display: none;
 }
 
 .runtime__dot {
@@ -1910,20 +1924,17 @@ body.theme-light-landing .section-eyebrow::before {
   color: rgba(31, 27, 22, 0.42);
 }
 
-/* Body slots are pre-reserved at full height from the start. No
-   grid trick, no max-height, no layout shift when bullets activate.
-   Future bodies render with opacity 0 (invisible, but still take
-   vertical space). Reveal is pure opacity — GPU-accelerated, no
-   reflow, no jolt as the user scrolls. Combined with the
-   transform-scale dot, the whole transition is one consistent
-   motion that never pushes content below. */
+/* Body slots are pre-reserved at full height (no layout shift),
+   but only the ACTIVE bullet's body is visible. Past and future
+   bodies are both invisible so the section reads as one focal
+   point at a time, not an accumulating scroll. The progress rail
+   is the only 'you are here' indicator the reader needs. */
 .runtime__bullet-body {
   opacity: 0;
   transition: opacity 0.45s ease;
   will-change: opacity;
 }
-.runtime__bullet[data-state="active"] .runtime__bullet-body,
-.runtime__bullet[data-state="past"] .runtime__bullet-body {
+.runtime__bullet[data-state="active"] .runtime__bullet-body {
   opacity: 1;
 }
 .runtime__bullet-body p {
@@ -1932,10 +1943,6 @@ body.theme-light-landing .section-eyebrow::before {
   line-height: 1.6;
   margin: 0;
   color: rgba(31, 27, 22, 0.85);
-  transition: color 0.35s ease;
-}
-.runtime__bullet[data-state="past"] .runtime__bullet-body p {
-  color: rgba(31, 27, 22, 0.32);
 }
 
 /* ── Anchor visual: typed-record card ───────────────────────── */
