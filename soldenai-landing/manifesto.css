@@ -518,31 +518,6 @@ body.theme-manifesto-light .btn--primary:hover {
 }
 .btn--text:hover { color: #4a3f30; }
 
-/* Light footer override */
-.footer--light {
-  background: #F2ECDE;
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-}
-body.theme-manifesto-light .footer--light {
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-manifesto-light .footer--light .footer__col-title {
-  color: rgba(31, 27, 22, 0.5);
-}
-body.theme-manifesto-light .footer--light .footer__col-list a {
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-manifesto-light .footer--light .footer__col-list a:hover {
-  color: #1F1B16;
-}
-body.theme-manifesto-light .footer--light .footer__tagline {
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-manifesto-light .footer--light .footer__bottom {
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-  color: rgba(31, 27, 22, 0.5);
-}
-
 /* ═════════════════════════════════════════════════════════════
    SUBPAGE LIGHT THEME — about / contact / security
    Reuses .page-* classes from styles.css but overrides their
@@ -923,30 +898,6 @@ body.theme-subpage-light .topbar {
   border-bottom: 1px solid rgba(31, 27, 22, 0.1);
 }
 
-body.theme-subpage-light .footer {
-  background: #F2ECDE;
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-subpage-light .footer .footer__col-title {
-  color: rgba(31, 27, 22, 0.5);
-}
-body.theme-subpage-light .footer .footer__col-list a {
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-subpage-light .footer .footer__col-list a:hover {
-  color: #1F1B16;
-}
-body.theme-subpage-light .footer .footer__tagline {
-  color: rgba(31, 27, 22, 0.7);
-  font-family: "Iowan Old Style", "Georgia", serif;
-  font-style: italic;
-}
-body.theme-subpage-light .footer .footer__bottom {
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-  color: rgba(31, 27, 22, 0.5);
-}
-
 /* ═════════════════════════════════════════════════════════════
    LANDING LIGHT THEME — index.html overrides
    Reuses all existing landing markup (hero, ribbon, flow, rules,
@@ -1253,23 +1204,6 @@ body.theme-light-landing .footer-cta__sub {
 }
 
 /* FOOTER */
-body.theme-light-landing .footer {
-  background: #F2ECDE;
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-  color: rgba(31, 27, 22, 0.7);
-}
-body.theme-light-landing .footer .footer__col-title { color: rgba(31, 27, 22, 0.5); }
-body.theme-light-landing .footer .footer__col-list a { color: rgba(31, 27, 22, 0.7); }
-body.theme-light-landing .footer .footer__col-list a:hover { color: #1F1B16; }
-body.theme-light-landing .footer .footer__tagline {
-  font-family: "Iowan Old Style", "Georgia", serif;
-  font-style: italic; color: rgba(31, 27, 22, 0.7);
-}
-body.theme-light-landing .footer .footer__bottom {
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
-  color: rgba(31, 27, 22, 0.5);
-}
-
 /* Generic text-color overrides — catch anything not explicitly themed */
 body.theme-light-landing { color: #1F1B16; }
 body.theme-light-landing p { color: rgba(31, 27, 22, 0.85); }

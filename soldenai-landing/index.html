@@ -23,8 +23,8 @@
 
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
-    <link rel="stylesheet" href="/styles.css?v=12" />
-    <link rel="stylesheet" href="/manifesto.css?v=57" />
+    <link rel="stylesheet" href="/styles.css?v=14" />
+    <link rel="stylesheet" href="/manifesto.css?v=58" />
   </head>
   <body class="theme-light-landing">
 
@@ -368,61 +368,45 @@
       </div>
     </section>
 
-    <!-- ═══ CLOSING CTA ═══════════════════════════════════════ -->
-    <section class="footer-cta">
-      <div class="shell shell--tight" data-reveal>
-        <div class="category-pair">
-          <div class="category-pair__line">Your tools touched the work.</div>
-          <div class="category-pair__line category-pair__line--accent">Solden holds it.</div>
+    <!-- ═══ FOOTER ════════════════════════════════════════════
+         Basis-style: the footer IS the closing CTA. Dark slab.
+         Brand + minimal nav on top, big pitch + button on left,
+         museum-piece illustration on the right (cuneiform tablet
+         bookending the manifesto's first-ledger line), legal at
+         the bottom. -->
+    <footer class="footer footer--hero">
+      <div class="shell footer__inner">
+        <div class="footer__top">
+          <a class="footer__brand" href="/" aria-label="Solden home">
+            <img class="footer__brand-lockup" src="/assets/solden-lockup-white.png" alt="Solden" />
+          </a>
+          <nav class="footer__nav" aria-label="Footer">
+            <a href="/manifesto.html">Manifesto</a>
+            <a href="/security.html">Security</a>
+            <a href="/contact.html">Contact</a>
+          </nav>
         </div>
-        <p class="footer-cta__sub">
-          30-minute first call. One sample invoice through your stack. We&rsquo;ll show you the record, walk the audit chain on screen, and export it so you can hash it yourself.
-        </p>
-        <div class="footer-cta__ctas">
-          <a class="btn btn--teal btn--lg" href="/contact.html">Talk to us</a>
-          <a class="btn btn--ghost btn--lg" href="/manifesto.html">Read the manifesto</a>
-        </div>
-        <p class="footer-cta__trust">
-          Founder reply within one business day. No deck.
-        </p>
-      </div>
-    </section>
 
-    <!-- Footer ─────────────────────────────────────────────── -->
-    <footer class="footer">
-      <div class="shell">
-        <div class="footer__row">
-          <div class="footer__brand-block">
-            <img class="footer__brand-lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
-            <p class="footer__tagline">The workflow runtime for the back office. Workflows that hold.</p>
+        <div class="footer__hero">
+          <div class="footer__pitch-block">
+            <h2 class="footer__pitch">
+              Put Solden <em>to work.</em>
+            </h2>
+            <p class="footer__pitch-sub">
+              30-minute first call. One sample invoice through your stack. We&rsquo;ll show you the record, walk the audit chain on screen, and export it so you can hash it yourself.
+            </p>
+            <a class="footer__cta" href="/contact.html">
+              Talk to us <span aria-hidden="true">&rarr;</span>
+            </a>
           </div>
-          <div>
-            <span class="footer__col-title">product</span>
-            <ul class="footer__col-list">
-              <li><a href="#how-solden-works">How it works</a></li>
-              <li><a href="/manifesto.html">Manifesto</a></li>
-              <li><a href="/contact.html">Talk to us</a></li>
-            </ul>
-          </div>
-          <div>
-            <span class="footer__col-title">trust</span>
-            <ul class="footer__col-list">
-              <li><a href="/security.html">Security</a></li>
-              <li><a href="/security.html#dpa">DPA</a></li>
-              <li><a href="/security.html#subprocessors">Sub-processors</a></li>
-            </ul>
-          </div>
-          <div>
-            <span class="footer__col-title">company</span>
-            <ul class="footer__col-list">
-              <li><a href="/manifesto.html">About</a></li>
-              <li><a href="/contact.html">Contact</a></li>
-            </ul>
-          </div>
+          <figure class="footer__visual" aria-hidden="true">
+            <img src="/assets/manifesto/cuneiform-tablet.jpg" alt="" />
+          </figure>
         </div>
-        <div class="footer__bottom">
-          <span>© <span data-year>2026</span> Solden, Inc.</span>
-          <span>soldenai.com</span>
+
+        <div class="footer__legal">
+          <img class="footer__mark" src="/assets/favicon.png" alt="Solden" />
+          <span class="footer__copyright">© <span data-year>2026</span> Solden, Inc.</span>
         </div>
       </div>
     </footer>
