@@ -2035,19 +2035,19 @@ body.theme-light-landing .section-eyebrow::before {
 
 
 /* ═════════════════════════════════════════════════════════════
-   SCOPE — back-office functions the runtime is built to cover.
-   Two-column row at desktop: H2 + sub on the left, five function
-   labels on the right. Matches the Basis 'One platform across
-   your firm' pattern. Confident: no status pills, no shipping
-   markers. The category claim names the scope; this section names
-   the functions inside it.
+   SCOPE — five back-office functions the runtime covers.
+   Header on top (left-aligned editorial), then a 5-column grid
+   below with vertical dividers between cells. Each cell carries
+   its function name (serif H3) plus a one-line description of
+   the concrete workflows inside it, so the substrate-reach claim
+   lands with evidence rather than a word-list.
    ───────────────────────────────────────────────────────────── */
 
 .scope {
-  padding: 96px 0;
+  padding: 112px 0 128px;
   background: #F2ECDE;
-  border-top: 1px solid rgba(31, 27, 22, 0.08);
-  border-bottom: 1px solid rgba(31, 27, 22, 0.08);
+  border-top: 1px solid rgba(31, 27, 22, 0.1);
+  border-bottom: 1px solid rgba(31, 27, 22, 0.1);
 }
 
 .scope__inner {
@@ -2059,67 +2059,101 @@ body.theme-light-landing .section-eyebrow::before {
   .scope__inner { padding: 0 24px; }
 }
 
-.scope__row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  gap: 64px;
-  align-items: center;
-}
-@media (max-width: 940px) {
-  .scope__row {
-    grid-template-columns: 1fr;
-    gap: 40px;
-    align-items: start;
-  }
-}
-
-.scope__lead {
-  max-width: 420px;
+.scope__head {
+  max-width: 720px;
+  margin: 0 0 72px;
 }
 
 .scope__title {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: clamp(28px, 3.6vw, 40px);
-  line-height: 1.1;
-  letter-spacing: -0.018em;
+  font-size: clamp(32px, 4.4vw, 48px);
+  line-height: 1.08;
+  letter-spacing: -0.022em;
   font-weight: 500;
   color: #1F1B16;
-  margin: 14px 0 16px;
+  margin: 14px 0 18px;
 }
 .scope__title em { font-style: italic; }
 
 .scope__sub {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.55;
-  color: rgba(31, 27, 22, 0.62);
+  color: rgba(31, 27, 22, 0.68);
   margin: 0;
 }
 
-.scope__cells {
+/* The five-cell grid. Equal columns at desktop, dividers between,
+   no card backgrounds (the cream panel does the framing). Each
+   cell pads top-aligned so titles line up across the row. */
+.scope__grid {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px 56px;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid rgba(31, 27, 22, 0.18);
 }
 
 .scope__cell {
-  font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: clamp(22px, 2.4vw, 30px);
-  font-weight: 600;
-  color: #1F1B16;
-  letter-spacing: -0.014em;
-  line-height: 1.1;
+  padding: 32px 28px 0 28px;
+  border-right: 1px solid rgba(31, 27, 22, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.scope__cell:first-child { padding-left: 0; }
+.scope__cell:last-child {
+  padding-right: 0;
+  border-right: none;
 }
 
-@media (max-width: 600px) {
-  .scope__cells {
-    flex-direction: column;
-    gap: 18px;
+.scope__cell-title {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: clamp(22px, 2.2vw, 28px);
+  line-height: 1.1;
+  letter-spacing: -0.014em;
+  font-weight: 500;
+  color: #1F1B16;
+  margin: 0;
+}
+
+.scope__cell-body {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 15px;
+  line-height: 1.55;
+  color: rgba(31, 27, 22, 0.7);
+  margin: 0;
+}
+
+@media (max-width: 1080px) {
+  .scope__grid {
+    grid-template-columns: repeat(3, 1fr);
   }
+  .scope__cell {
+    padding: 32px 24px;
+    border-right: 1px solid rgba(31, 27, 22, 0.12);
+    border-bottom: 1px solid rgba(31, 27, 22, 0.12);
+  }
+  .scope__cell:nth-child(3n),
+  .scope__cell:last-child { border-right: none; }
+  .scope__cell:nth-last-child(-n+2),
+  .scope__cell:last-child { border-bottom: none; }
+  .scope__cell:first-child { padding-left: 24px; }
+}
+@media (max-width: 720px) {
+  .scope__grid {
+    grid-template-columns: 1fr;
+    border-top: 1px solid rgba(31, 27, 22, 0.18);
+  }
+  .scope__cell {
+    padding: 28px 0;
+    border-right: none;
+    border-bottom: 1px solid rgba(31, 27, 22, 0.12);
+  }
+  .scope__cell:first-child { padding-left: 0; }
+  .scope__cell:last-child { border-bottom: none; }
 }
 
 

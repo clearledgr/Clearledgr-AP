@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=10" />
-    <link rel="stylesheet" href="/manifesto.css?v=48" />
+    <link rel="stylesheet" href="/manifesto.css?v=49" />
   </head>
   <body class="theme-light-landing">
 
@@ -149,29 +149,44 @@
 
     <!-- ═══ SCOPE ════════════════════════════════════════════════
          The scope claim — one runtime across the back office.
-         Five back-office functions the runtime is built to cover.
-         No status pills, no 'coming soon' markers — same confidence
-         move Basis makes with CAS / Tax / Audit / Advisory. The
-         category claim already named the scope; this section names
-         the functions inside it. -->
+         Five back-office functions the runtime is built to cover,
+         each cell naming concrete workflows inside the function so
+         the substrate-reach claim lands with evidence (not just a
+         word list). Vertical dividers between cells, equal heights
+         via grid, no status pills — same confidence move Basis
+         makes but with structural body. -->
     <section class="scope">
       <div class="shell scope__inner">
-        <div class="scope__row">
-          <div class="scope__lead">
-            <p class="section-eyebrow">Scope</p>
-            <h2 class="scope__title">
-              One runtime <em>across the back office.</em>
-            </h2>
-            <p class="scope__sub">Same substrate. Every domain.</p>
-          </div>
-          <ul class="scope__cells">
-            <li class="scope__cell">Finance</li>
-            <li class="scope__cell">Procurement</li>
-            <li class="scope__cell">Compliance</li>
-            <li class="scope__cell">Legal</li>
-            <li class="scope__cell">Customer&nbsp;Ops</li>
-          </ul>
-        </div>
+        <header class="scope__head">
+          <p class="section-eyebrow">Scope</p>
+          <h2 class="scope__title">
+            One runtime <em>across the back office.</em>
+          </h2>
+          <p class="scope__sub">Same substrate, every domain. The runtime runs whatever back-office workflow you point it at.</p>
+        </header>
+
+        <ul class="scope__grid">
+          <li class="scope__cell">
+            <h3 class="scope__cell-title">Finance</h3>
+            <p class="scope__cell-body">Accounts payable, AR, expense, period close, revenue recognition, treasury.</p>
+          </li>
+          <li class="scope__cell">
+            <h3 class="scope__cell-title">Procurement</h3>
+            <p class="scope__cell-body">Vendor onboarding, requisitions, purchase orders, sourcing, renewals.</p>
+          </li>
+          <li class="scope__cell">
+            <h3 class="scope__cell-title">Compliance</h3>
+            <p class="scope__cell-body">Internal audit, SOX walkthroughs, attestations, regulatory filings, risk register.</p>
+          </li>
+          <li class="scope__cell">
+            <h3 class="scope__cell-title">Legal</h3>
+            <p class="scope__cell-body">Contract review, NDAs, DPAs, MSA tracking, e-sign, renewals.</p>
+          </li>
+          <li class="scope__cell">
+            <h3 class="scope__cell-title">Customer Ops</h3>
+            <p class="scope__cell-body">KYC, customer onboarding, disputes, chargebacks, refund approvals.</p>
+          </li>
+        </ul>
       </div>
     </section>
 
