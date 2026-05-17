@@ -654,21 +654,17 @@ body:not(.theme-dark) .footer-cta {
   border-top: 1px solid rgba(31, 27, 22, 0.08);
   overflow: hidden;
 }
-/* Cream gradient overlay matching the hero's veil — heavy on the
-   left so the pitch text reads clean, softer on the right so the
-   cuneiform tablet shows through. Same RGBA values as the welder
-   hero so the page bookends in tone. */
+/* Cream wash, uniform across the whole footer, so the cuneiform
+   tablet reads as the actual background — not a side decoration.
+   Lighter than the hero's veil because there's no welder image
+   to fight here; the tablet is flatter and lower-contrast, so a
+   moderate single-stop overlay keeps pitch text legible while the
+   carved surface stays visible everywhere. */
 .footer--hero::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to right,
-    rgba(249, 245, 236, 0.92) 0%,
-    rgba(249, 245, 236, 0.78) 38%,
-    rgba(249, 245, 236, 0.55) 62%,
-    rgba(249, 245, 236, 0.42) 100%
-  );
+  background: rgba(249, 245, 236, 0.65);
   z-index: -1;
 }
 .footer__inner {
