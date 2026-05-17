@@ -242,8 +242,9 @@
   }
 
   function initRuntimeBullets() {
+    var track = document.querySelector('.runtime__scroll-track');
     var bullets = document.querySelectorAll('.runtime__bullet');
-    if (!bullets.length) return;
+    if (!track || !bullets.length) return;
 
     function setStates(activeIdx) {
       for (var i = 0; i < bullets.length; i++) {
@@ -252,26 +253,45 @@
       }
     }
 
-    if (typeof IntersectionObserver === 'undefined') {
-      // No IO: mark everything active so all bodies render.
-      for (var i = 0; i < bullets.length; i++) bullets[i].setAttribute('data-state', 'active');
-      return;
+    // Compute scroll progress through the sticky-pinned scroll track.
+    // The track is multi-viewport tall; the sticky-frame pins inside
+    // it. Progress is 0 when the track's top hits the viewport top,
+    // 1 when its bottom hits the viewport bottom. Divide that range
+    // into one segment per bullet, so each bullet stays active for
+    // its share of the scroll distance (~70vh per bullet at the
+    // current 310vh track height).
+    function update() {
+      var rect = track.getBoundingClientRect();
+      var viewportH = window.innerHeight || document.documentElement.clientHeight;
+      var scrollable = rect.height - viewportH;
+      if (scrollable <= 0) {
+        // Mobile / non-sticky fallback: mark everything active.
+        for (var i = 0; i < bullets.length; i++) bullets[i].setAttribute('data-state', 'active');
+        return;
+      }
+      // -rect.top goes from 0 (track top at viewport top) to
+      // scrollable (track bottom at viewport bottom).
+      var raw = -rect.top / scrollable;
+      var progress = Math.max(0, Math.min(0.9999, raw));
+      // Each bullet owns 1/N of the scroll distance.
+      var activeIdx = Math.floor(progress * bullets.length);
+      setStates(activeIdx);
     }
 
-    var io = new IntersectionObserver(function (entries) {
-      // Among visible entries, pick the one with the largest ratio.
-      var best = null;
-      entries.forEach(function (e) {
-        if (!e.isIntersecting) return;
-        if (!best || e.intersectionRatio > best.intersectionRatio) best = e;
+    // Mobile / no-sticky: scroll-track has height:auto via CSS, so
+    // scrollable will be <= 0 and everything renders active.
+    var ticking = false;
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(function () {
+        update();
+        ticking = false;
       });
-      if (!best) return;
-      var idx = parseInt(best.target.getAttribute('data-bullet'), 10);
-      if (!isNaN(idx)) setStates(idx);
-    }, { rootMargin: '-32% 0px -32% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] });
-
-    bullets.forEach(function (b) { io.observe(b); });
-    setStates(0);
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    update();
   }
 
   // ── 2. Contact form ──

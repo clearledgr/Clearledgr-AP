@@ -1784,13 +1784,43 @@ body.theme-light-landing .section-eyebrow::before {
   border-left: 2px solid #1F1B16;
 }
 
+/* Sticky-pin shell. The bullets + anchor card stay pinned in the
+   viewport while the user scrolls through a multi-viewport-tall
+   scroll-track. Each bullet gets ~70vh of natural scroll-distance
+   to be active, so transitions happen at reading pace, not scroll
+   pace. Single coherent motion through the section rather than a
+   flurry of state changes flying past. */
+.runtime__scroll-track {
+  position: relative;
+  /* 4 bullets × 70vh of scroll each, plus 30vh head/tail breathing
+     so the first/last bullet activations don't feel clipped. */
+  height: 310vh;
+}
+
+.runtime__sticky-frame {
+  position: sticky;
+  top: 105px;
+  height: calc(100vh - 105px);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
 .runtime__layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 64px;
   align-items: start;
+  width: 100%;
 }
 @media (max-width: 900px) {
+  .runtime__scroll-track { height: auto; }
+  .runtime__sticky-frame {
+    position: static;
+    height: auto;
+    overflow: visible;
+    display: block;
+  }
   .runtime__layout {
     grid-template-columns: 1fr;
     gap: 48px;
@@ -1908,16 +1938,14 @@ body.theme-light-landing .section-eyebrow::before {
   color: rgba(31, 27, 22, 0.32);
 }
 
-/* ── Anchor visual: typed-record card, sticky-pinned ────────── */
-
+/* ── Anchor visual: typed-record card ───────────────────────── */
+/* Pinned indirectly via the parent .runtime__sticky-frame; no
+   need for its own sticky positioning. */
 .runtime__anchor {
-  position: sticky;
-  top: 100px;
   align-self: start;
 }
 @media (max-width: 900px) {
   .runtime__anchor {
-    position: static;
     justify-self: center;
     width: 100%;
     max-width: 360px;
