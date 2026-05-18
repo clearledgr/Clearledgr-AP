@@ -430,10 +430,28 @@ extended to read/write them).
   the three new columns; `list_api_keys` + `get_api_key` SELECTs
   include them.
 
-### Step 11 — Developer docs
+### Step 11 — Developer docs ✅ SHIPPED
 
-**Files:** new [soldenai-landing/docs/](soldenai-landing/docs/)
-section (in-repo for v1 per the Decisions section).
+**Files:** new [docs/v1/](docs/v1/) section. Five focused docs that
+cover what customers actually read (mental model, walkthrough,
+reference, webhook verification, recipes) — not the bloated
+per-endpoint-file shape that nobody navigates:
+
+- [README.md](docs/v1/README.md) — mental model + endpoint index +
+  concepts (idempotency, rate limits, HMAC signatures, scope grammar).
+- [quickstart.md](docs/v1/quickstart.md) — 0-to-approving-invoices in
+  under 5 minutes. Bash walk-through (issue key → confirm /me → list
+  records → preview → execute with `Idempotency-Key` → subscribe to
+  events) plus a Python end-to-end script.
+- [api-reference.md](docs/v1/api-reference.md) — every endpoint, every
+  query parameter, every response field, plus the full event-name
+  taxonomy.
+- [webhooks.md](docs/v1/webhooks.md) — signature verification snippets
+  in Python / Node / Ruby, idempotency-on-the-receiver pattern, retry
+  semantics, secret rotation playbook, checklist.
+- [recipes.md](docs/v1/recipes.md) — idempotency patterns,
+  rate-limit-aware retry loop, full error-code catalogue, scope
+  grammar table, pagination, auditing-your-agent recipe.
 
 - Reference for each endpoint (request/response shape, errors).
 - Authentication walkthrough.
