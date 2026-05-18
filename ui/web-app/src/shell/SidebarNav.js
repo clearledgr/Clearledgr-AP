@@ -19,6 +19,7 @@ export const NAV_ITEMS = [
   { path: '/reports', label: 'Reports', group: 'ops' },
   { path: '/rules', label: 'Approval rules', group: 'ops' },
   { path: '/connections', label: 'Connections', group: 'ops' },
+  { path: '/api-keys', label: 'API keys', group: 'ops' },
   { path: '/settings', label: 'Settings', group: 'ops' },
 ];
 

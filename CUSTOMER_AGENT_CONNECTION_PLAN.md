@@ -399,19 +399,36 @@ tables).
   over the JSON body. Retries are inherited from the existing
   `webhook_delivery` pipeline.
 
-### Step 10 — API keys management page in workspace
+### Step 10 — API keys management page in workspace ✅ SHIPPED
 
 **Files:** new
-[ui/web-app/src/routes/pages/ApiKeysPage.js](ui/web-app/src/routes/pages/ApiKeysPage.js),
-new backend route `/api/workspace/api-keys/*`.
+[ui/web-app/src/routes/pages/ApiKeysPage.js](ui/web-app/src/routes/pages/ApiKeysPage.js)
++ [ApiKeysRoute.js](ui/web-app/src/routes/pages/ApiKeysRoute.js);
+backend `/api/workspace/api-keys/*` was already in place — extended
+in this commit to accept `agent_id`, `agent_version`, `expires_at`
+on create + rotate, and to surface those fields plus `revoked_at`
+in the list / get responses (migration 86 had shipped the columns
+already; the store SELECT + INSERT statements just hadn't been
+extended to read/write them).
 
-- Page lists existing keys (masked except prefix), shows `agent_id`,
-  `scopes`, `created_at`, `last_used_at`, `revoked_at`.
-- "Issue new key" modal: capture `agent_id`, `agent_version` (optional),
-  `scopes` (checkboxes), `expires_at` (optional). Shows the full secret
-  once on success; copy-to-clipboard.
-- "Revoke" button per key.
-- Admin-only route (uses existing role check).
+- Page lives at `/api-keys`, registered in the sidebar under OPERATE.
+- Lists existing keys with `key_prefix`, `agent_id`, `agent_version`
+  badges, `scopes` chips, `created_at`, `last_used_at`,
+  `expires_at` (with "expires soon" amber chip when <7d out),
+  `revoked_at`. "Show revoked" toggle for the historical view.
+- "Issue new key" modal: required `label`; optional `agent_id`,
+  `agent_version`, `expires_at`; scope checkboxes grouped by new
+  noun:verb vocab (default) vs legacy verb:noun (collapsed
+  `<details>`). Submit disabled until label + at least one scope.
+- Secret reveal: after create or rotate, a warning banner shows the
+  raw key with a copy-to-clipboard button. Customer dismisses
+  manually — the value isn't re-fetchable.
+- Per-row Rotate / Revoke with confirmation prompts that warn about
+  immediate breakage. Rotate carries `agent_id`/`agent_version`/
+  `expires_at` across (swap secret, keep identity).
+- Backend store changes: `auth_store.create_api_key` now persists
+  the three new columns; `list_api_keys` + `get_api_key` SELECTs
+  include them.
 
 ### Step 11 — Developer docs
 

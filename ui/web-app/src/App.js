@@ -28,6 +28,7 @@ import { ConnectionsRoute } from './routes/pages/ConnectionsRoute.js';
 import { SettingsRoute } from './routes/pages/SettingsRoute.js';
 import { HealthRoute } from './routes/pages/HealthRoute.js';
 import { PlanRoute } from './routes/pages/PlanRoute.js';
+import { ApiKeysRoute } from './routes/pages/ApiKeysRoute.js';
 
 export function App() {
   return html`
@@ -65,6 +66,7 @@ export function App() {
                     <${Route} path="/settings/:section">
                       ${(params) => html`<${SettingsRoute} routeId=${params.section} />`}
                     <//>
+                    <${Route} path="/api-keys"><${ApiKeysRoute} /><//>
                     <${Route} path="/health"><${HealthRoute} /><//>
                     <${Route} path="/status"><${StatusPage} /><//>
                     <${Route} path="/items/:id">

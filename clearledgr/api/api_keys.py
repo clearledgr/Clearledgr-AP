@@ -105,6 +105,13 @@ _SCOPE_CATALOG: List[str] = [
 class APIKeyCreateRequest(BaseModel):
     label: str = Field("", max_length=120)
     scopes: Optional[List[str]] = Field(default=None, max_length=64)
+    # Agent attribution — every audit row written by a runtime built
+    # from this key inherits these so "which agent did this?" stays
+    # answerable years later.
+    agent_id: Optional[str] = Field(default=None, max_length=120)
+    agent_version: Optional[str] = Field(default=None, max_length=64)
+    # ISO-8601 timestamp. None = never expires (legacy default).
+    expires_at: Optional[str] = Field(default=None, max_length=64)
 
 
 def _validate_scopes(scopes: Optional[List[str]]) -> List[str]:
@@ -167,6 +174,9 @@ def create_api_key(
         raw_key=raw_key,
         label=body.label or "",
         scopes=scopes,
+        agent_id=body.agent_id,
+        agent_version=body.agent_version,
+        expires_at=body.expires_at,
     )
     # Echo the raw key in the response — this is the only chance the
     # caller has to capture it. The next list/get call will only
@@ -246,6 +256,12 @@ def rotate_api_key(
         raw_key=raw_key,
         label=existing.get("label") or "",
         scopes=prior_scopes,
+        # Carry the agent attribution + expiry across rotation — the
+        # rotate semantic is "swap secret, keep identity", not "change
+        # who this key represents". To change those, DELETE + create.
+        agent_id=existing.get("agent_id"),
+        agent_version=existing.get("agent_version"),
+        expires_at=existing.get("expires_at"),
     )
     record["raw_key"] = raw_key
     record["is_active"] = True

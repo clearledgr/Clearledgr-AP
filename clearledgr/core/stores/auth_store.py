@@ -654,8 +654,18 @@ class AuthStore:
         raw_key: str,
         label: str = "",
         scopes: Optional[List[str]] = None,
+        agent_id: Optional[str] = None,
+        agent_version: Optional[str] = None,
+        expires_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Store a hashed API key with optional scopes (Module 11 spec)."""
+        """Store a hashed API key with optional scopes + agent attribution.
+
+        ``agent_id`` / ``agent_version`` carry through into every
+        ``audit_events`` row written by a runtime built from this key
+        (migration 86 shipped both columns). ``expires_at`` is an ISO-8601
+        timestamp; ``validate_api_key`` filters expired rows the same way
+        it filters revoked ones.
+        """
         self.initialize()
         key_id = str(uuid.uuid4())
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
@@ -664,13 +674,17 @@ class AuthStore:
         scopes_payload = json.dumps(scopes or []) if scopes is not None else None
         sql = (
             """INSERT INTO api_keys
-            (id, organization_id, key_hash, key_prefix, user_id, label, is_active, scopes, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 1, %s::jsonb, %s, %s)"""
+            (id, organization_id, key_hash, key_prefix, user_id, label, is_active,
+             scopes, agent_id, agent_version, expires_at, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, 1, %s::jsonb, %s, %s, %s, %s, %s)"""
         )
         with self.connect() as conn:
             conn.cursor().execute(
                 sql,
-                (key_id, organization_id, key_hash, key_prefix, user_id, label, scopes_payload, now, now),
+                (
+                    key_id, organization_id, key_hash, key_prefix, user_id, label,
+                    scopes_payload, agent_id, agent_version, expires_at, now, now,
+                ),
             )
             conn.commit()
         return {
@@ -680,6 +694,9 @@ class AuthStore:
             "user_id": user_id,
             "label": label,
             "scopes": list(scopes or []),
+            "agent_id": agent_id,
+            "agent_version": agent_version,
+            "expires_at": expires_at,
         }
 
     def list_api_keys(
@@ -696,14 +713,16 @@ class AuthStore:
         if include_revoked:
             sql = (
                 "SELECT id, organization_id, key_prefix, user_id, label, "
-                "is_active, scopes, last_used_at, created_at, updated_at "
+                "is_active, scopes, agent_id, agent_version, expires_at, "
+                "revoked_at, last_used_at, created_at, updated_at "
                 "FROM api_keys WHERE organization_id = %s "
                 "ORDER BY created_at DESC"
             )
         else:
             sql = (
                 "SELECT id, organization_id, key_prefix, user_id, label, "
-                "is_active, scopes, last_used_at, created_at, updated_at "
+                "is_active, scopes, agent_id, agent_version, expires_at, "
+                "revoked_at, last_used_at, created_at, updated_at "
                 "FROM api_keys WHERE organization_id = %s AND is_active = 1 "
                 "ORDER BY created_at DESC"
             )
@@ -725,7 +744,8 @@ class AuthStore:
         self.initialize()
         sql = (
             "SELECT id, organization_id, key_prefix, user_id, label, "
-            "is_active, last_used_at, created_at, updated_at "
+            "is_active, scopes, agent_id, agent_version, expires_at, "
+            "revoked_at, last_used_at, created_at, updated_at "
             "FROM api_keys WHERE id = %s AND organization_id = %s LIMIT 1"
         )
         with self.connect() as conn:
