@@ -1889,8 +1889,13 @@ body.theme-light-landing .section-eyebrow::before {
 }
 
 /* Arrow tip — short filled triangle used where a connector ends
-   at a surface card. The fill makes it read as direction. */
+   at a surface card. The fill makes it read as direction. Used
+   either as a standalone polygon or inside a <marker>. */
 .runtime__glyph .runtime__glyph-tip {
+  fill: rgba(31, 27, 22, 0.78);
+  stroke: none;
+}
+.runtime__glyph .runtime__glyph-arrow {
   fill: rgba(31, 27, 22, 0.78);
   stroke: none;
 }

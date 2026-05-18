@@ -24,7 +24,7 @@
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
     <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css?v=29" />
-    <link rel="stylesheet" href="/manifesto.css?v=60" />
+    <link rel="stylesheet" href="/manifesto.css?v=61" />
   </head>
   <body class="theme-light-landing">
 
@@ -251,6 +251,11 @@
 
               <!-- Glyph 1 — INTAKE: artifacts → typed record -->
               <svg class="runtime__glyph" data-glyph="0" viewBox="0 0 360 460" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arrowG0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                    <path class="runtime__glyph-arrow" d="M 0 0 L 10 5 L 0 10 z"/>
+                  </marker>
+                </defs>
                 <text x="14" y="16" class="runtime__glyph-cap">intake · per workflow</text>
                 <!-- sources column (left) — each with a format chip -->
                 <!-- email -->
@@ -285,17 +290,13 @@
                 <text x="44" y="253" text-anchor="middle" class="runtime__glyph-cap-tiny">UBL</text>
                 <rect class="runtime__glyph-pill" x="14" y="272" width="32" height="10" rx="2"/>
                 <text class="runtime__glyph-pill-text" x="30" y="279.5" text-anchor="middle">xml</text>
-                <!-- flow lines into the record, with arrow tips -->
+                <!-- flow lines into the record, auto-oriented arrow tips -->
                 <g class="runtime__glyph-detail">
-                  <path d="M74 46 Q104 46 130 80"/>
-                  <path d="M74 113 Q104 113 130 120"/>
-                  <path d="M74 182 Q104 182 130 168"/>
-                  <path d="M74 250 Q104 250 130 220"/>
+                  <path d="M74 46 Q104 46 126 78" marker-end="url(#arrowG0)"/>
+                  <path d="M74 113 Q104 113 126 119" marker-end="url(#arrowG0)"/>
+                  <path d="M74 182 Q104 182 126 170" marker-end="url(#arrowG0)"/>
+                  <path d="M74 250 Q104 250 126 222" marker-end="url(#arrowG0)"/>
                 </g>
-                <polygon class="runtime__glyph-tip" points="130,77 122,73 124,82"/>
-                <polygon class="runtime__glyph-tip" points="130,120 122,116 122,124"/>
-                <polygon class="runtime__glyph-tip" points="130,168 122,164 124,172"/>
-                <polygon class="runtime__glyph-tip" points="130,220 124,217 124,224"/>
                 <!-- record card (right) -->
                 <rect x="130" y="30" width="220" height="310" rx="4"/>
                 <line x1="130" y1="52" x2="350" y2="52"/>
@@ -337,6 +338,11 @@
 
               <!-- Glyph 2 — CASCADE: rule gates evaluate -->
               <svg class="runtime__glyph" data-glyph="1" viewBox="0 0 360 460" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arrowG1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                    <path class="runtime__glyph-arrow" d="M 0 0 L 10 5 L 0 10 z"/>
+                  </marker>
+                </defs>
                 <text x="14" y="16" class="runtime__glyph-cap">cascade · policy v23</text>
                 <!-- record (left) -->
                 <rect x="14" y="110" width="94" height="120" rx="3"/>
@@ -353,17 +359,13 @@
                 </g>
                 <rect class="runtime__glyph-pill" x="14" y="212" width="46" height="12" rx="2"/>
                 <text class="runtime__glyph-pill-text" x="37" y="220.5" text-anchor="middle">routed</text>
-                <!-- connectors with arrow tips -->
+                <!-- connectors with auto-oriented arrow tips -->
                 <g class="runtime__glyph-detail">
-                  <path d="M108 140 Q124 140 134 70"/>
-                  <path d="M108 160 Q124 160 134 158"/>
-                  <path d="M108 180 Q124 180 134 246"/>
-                  <path d="M108 200 Q124 200 134 334"/>
+                  <path d="M108 140 Q124 140 130 78" marker-end="url(#arrowG1)"/>
+                  <path d="M108 160 Q124 160 130 158" marker-end="url(#arrowG1)"/>
+                  <path d="M108 180 Q124 180 130 240" marker-end="url(#arrowG1)"/>
+                  <path d="M108 200 Q124 200 130 320" marker-end="url(#arrowG1)"/>
                 </g>
-                <polygon class="runtime__glyph-tip" points="134,70 126,66 128,74"/>
-                <polygon class="runtime__glyph-tip" points="134,158 126,154 126,162"/>
-                <polygon class="runtime__glyph-tip" points="134,246 126,242 128,250"/>
-                <polygon class="runtime__glyph-tip" points="134,334 126,330 128,338"/>
                 <!-- 4 gate cards stacked on right -->
                 <!-- gate 1: 3-way match -->
                 <rect x="134" y="40" width="216" height="72" rx="3"/>
@@ -427,20 +429,27 @@
 
               <!-- Glyph 3 — SURFACES: record renders to approver tools -->
               <svg class="runtime__glyph" data-glyph="2" viewBox="0 0 360 460" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arrowG2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                    <path class="runtime__glyph-arrow" d="M 0 0 L 10 5 L 0 10 z"/>
+                  </marker>
+                </defs>
                 <text x="14" y="16" class="runtime__glyph-cap">surfaces · one record</text>
-                <!-- connectors first (drawn under cards), with arrow tips at the surface end -->
+                <!-- connectors from record (center) to each surface, terminating at
+                     the inside edge of the surface card so the auto-oriented arrow
+                     tip lands cleanly on the card border. -->
                 <g class="runtime__glyph-detail">
-                  <path d="M160 180 Q110 130 60 80"/>
-                  <path d="M180 168 Q180 124 180 88"/>
-                  <path d="M200 180 Q250 130 300 80"/>
-                  <path d="M160 240 Q110 290 60 340"/>
-                  <path d="M200 240 Q250 290 300 340"/>
+                  <!-- NW Gmail -->
+                  <path d="M158 178 Q120 148 100 118" marker-end="url(#arrowG2)"/>
+                  <!-- N Slack -->
+                  <path d="M180 168 Q180 130 180 94" marker-end="url(#arrowG2)"/>
+                  <!-- NE Teams -->
+                  <path d="M202 178 Q240 148 260 118" marker-end="url(#arrowG2)"/>
+                  <!-- SW NetSuite -->
+                  <path d="M158 238 Q120 268 100 292" marker-end="url(#arrowG2)"/>
+                  <!-- SE SAP -->
+                  <path d="M202 238 Q240 268 260 292" marker-end="url(#arrowG2)"/>
                 </g>
-                <polygon class="runtime__glyph-tip" points="60,80 68,82 64,74"/>
-                <polygon class="runtime__glyph-tip" points="180,88 176,96 184,96"/>
-                <polygon class="runtime__glyph-tip" points="300,80 296,74 292,82"/>
-                <polygon class="runtime__glyph-tip" points="60,340 64,346 68,338"/>
-                <polygon class="runtime__glyph-tip" points="300,340 292,338 296,346"/>
                 <g class="runtime__glyph-ghost">
                   <path d="M204 210 Q252 218 300 230"/>
                 </g>
@@ -539,6 +548,11 @@
 
               <!-- Glyph 4 — AUDIT: hash chain seals every move -->
               <svg class="runtime__glyph" data-glyph="3" viewBox="0 0 360 460" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arrowG3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                    <path class="runtime__glyph-arrow" d="M 0 0 L 10 5 L 0 10 z"/>
+                  </marker>
+                </defs>
                 <text x="14" y="16" class="runtime__glyph-cap">audit chain · sha256</text>
                 <!-- 4 hash blocks vertically stacked, linked by 'prev' arrows.
                      Each block: state + timestamp + hash string + signer pill. -->
@@ -549,12 +563,11 @@
                 <text x="290" y="46" class="runtime__glyph-cap-tiny">t+00:00</text>
                 <text x="28" y="64" class="runtime__glyph-mono">hash · 9c4f2a · d3e8b1 · 7a2c</text>
                 <text x="28" y="78" class="runtime__glyph-mono">prev · genesis</text>
-                <rect class="runtime__glyph-pill" x="28" y="84" width="60" height="14" rx="2"/>
-                <text class="runtime__glyph-pill-text" x="58" y="93.5" text-anchor="middle">signer · system</text>
-                <text x="98" y="94" class="runtime__glyph-mono">ingest svc · v8.2</text>
-                <line x1="180" y1="106" x2="180" y2="122"/>
-                <path d="M174 116 L180 122 L186 116"/>
-                <text x="192" y="118" class="runtime__glyph-cap-tiny">prev</text>
+                <rect class="runtime__glyph-pill" x="28" y="84" width="42" height="14" rx="2"/>
+                <text class="runtime__glyph-pill-text" x="49" y="93.5" text-anchor="middle">system</text>
+                <text x="78" y="94" class="runtime__glyph-mono">ingest svc · v8.2</text>
+                <line x1="180" y1="106" x2="180" y2="120" marker-end="url(#arrowG3)"/>
+                <text x="186" y="118" class="runtime__glyph-cap-tiny">prev</text>
                 <!-- block 2: validated -->
                 <rect x="20" y="122" width="320" height="74" rx="3"/>
                 <line x1="20" y1="140" x2="340" y2="140"/>
@@ -562,12 +575,11 @@
                 <text x="290" y="136" class="runtime__glyph-cap-tiny">t+00:08</text>
                 <text x="28" y="154" class="runtime__glyph-mono">hash · 1b8e07 · 4f2a9d · c61a</text>
                 <text x="28" y="168" class="runtime__glyph-mono">prev · 9c4f2a</text>
-                <rect class="runtime__glyph-pill" x="28" y="174" width="60" height="14" rx="2"/>
-                <text class="runtime__glyph-pill-text" x="58" y="183.5" text-anchor="middle">signer · agent</text>
-                <text x="98" y="184" class="runtime__glyph-mono">runtime · policy v23</text>
-                <line x1="180" y1="196" x2="180" y2="212"/>
-                <path d="M174 206 L180 212 L186 206"/>
-                <text x="192" y="208" class="runtime__glyph-cap-tiny">prev</text>
+                <rect class="runtime__glyph-pill" x="28" y="174" width="42" height="14" rx="2"/>
+                <text class="runtime__glyph-pill-text" x="49" y="183.5" text-anchor="middle">agent</text>
+                <text x="78" y="184" class="runtime__glyph-mono">runtime · policy v23</text>
+                <line x1="180" y1="196" x2="180" y2="210" marker-end="url(#arrowG3)"/>
+                <text x="186" y="208" class="runtime__glyph-cap-tiny">prev</text>
                 <!-- block 3: decided -->
                 <rect x="20" y="212" width="320" height="74" rx="3"/>
                 <line x1="20" y1="230" x2="340" y2="230"/>
@@ -575,12 +587,11 @@
                 <text x="290" y="226" class="runtime__glyph-cap-tiny">t+04:12</text>
                 <text x="28" y="244" class="runtime__glyph-mono">hash · 7e3d51 · a09b22 · f8c4</text>
                 <text x="28" y="258" class="runtime__glyph-mono">prev · 1b8e07</text>
-                <rect class="runtime__glyph-pill" x="28" y="264" width="60" height="14" rx="2"/>
-                <text class="runtime__glyph-pill-text" x="58" y="273.5" text-anchor="middle">signer · user</text>
-                <text x="98" y="274" class="runtime__glyph-mono">m.osei · slack approve</text>
-                <line x1="180" y1="286" x2="180" y2="302"/>
-                <path d="M174 296 L180 302 L186 296"/>
-                <text x="192" y="298" class="runtime__glyph-cap-tiny">prev</text>
+                <rect class="runtime__glyph-pill" x="28" y="264" width="42" height="14" rx="2"/>
+                <text class="runtime__glyph-pill-text" x="49" y="273.5" text-anchor="middle">user</text>
+                <text x="78" y="274" class="runtime__glyph-mono">m.osei · slack approve</text>
+                <line x1="180" y1="286" x2="180" y2="300" marker-end="url(#arrowG3)"/>
+                <text x="186" y="298" class="runtime__glyph-cap-tiny">prev</text>
                 <!-- block 4: posted -->
                 <rect x="20" y="302" width="320" height="74" rx="3"/>
                 <line x1="20" y1="320" x2="340" y2="320"/>
@@ -588,16 +599,15 @@
                 <text x="290" y="316" class="runtime__glyph-cap-tiny">t+04:13</text>
                 <text x="28" y="334" class="runtime__glyph-mono">hash · 4a91c2 · 0e7f38 · b59d</text>
                 <text x="28" y="348" class="runtime__glyph-mono">prev · 7e3d51</text>
-                <rect class="runtime__glyph-pill" x="28" y="354" width="60" height="14" rx="2"/>
-                <text class="runtime__glyph-pill-text" x="58" y="363.5" text-anchor="middle">signer · system</text>
-                <text x="98" y="364" class="runtime__glyph-mono">netsuite · bill #4827</text>
-                <line x1="180" y1="376" x2="180" y2="394"/>
-                <path d="M174 388 L180 394 L186 388"/>
+                <rect class="runtime__glyph-pill" x="28" y="354" width="42" height="14" rx="2"/>
+                <text class="runtime__glyph-pill-text" x="49" y="363.5" text-anchor="middle">system</text>
+                <text x="78" y="364" class="runtime__glyph-mono">netsuite · bill #4827</text>
+                <line x1="180" y1="376" x2="180" y2="392" marker-end="url(#arrowG3)"/>
                 <!-- seal medallion -->
-                <circle cx="180" cy="418" r="20"/>
-                <circle cx="180" cy="418" r="14"/>
-                <path d="M170 418 L177 425 L190 411"/>
-                <text x="180" y="452" text-anchor="middle" class="runtime__glyph-cap-tiny">sealed · tamper-evident</text>
+                <circle cx="180" cy="416" r="20"/>
+                <circle cx="180" cy="416" r="14"/>
+                <path d="M170 416 L177 423 L190 409"/>
+                <text x="180" y="450" text-anchor="middle" class="runtime__glyph-cap-tiny">sealed · tamper-evident</text>
               </svg>
 
             </div>
