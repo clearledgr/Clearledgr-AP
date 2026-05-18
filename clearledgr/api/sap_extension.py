@@ -43,10 +43,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import create_access_token, decode_token, _token_data_from_payload
 from clearledgr.core.database import get_db as _get_db
 from clearledgr.core.http_client import get_http_client
+from clearledgr.core.org_utils import require_org
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +415,7 @@ def get_ap_item_by_sap_invoice(
             status_code=404,
             detail={"reason": "no_clearledgr_item_for_invoice", "composite_key": composite_key},
         )
-    verify_org_access(item.get("organization_id") or "default", user)
+    require_org(user, requested=item.get("organization_id"))
     ap_item_id = str(item.get("id") or "").strip()
 
     timeline: list = []
@@ -526,7 +526,7 @@ async def _dispatch_sap_panel_action(
             status_code=404,
             detail={"reason": "no_clearledgr_item_for_invoice", "composite_key": composite_key},
         )
-    verify_org_access(item.get("organization_id") or "default", user)
+    require_org(user, requested=item.get("organization_id"))
     ap_item_id = str(item.get("id") or "").strip()
 
     actor_id = user.user_id or user.email or "sap_fiori"

@@ -6,9 +6,9 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import require_org
 from clearledgr.services.ap_operator_audit import normalize_operator_audit_events
 
 
@@ -46,7 +46,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 
 @router.get("/audit/recent")
 def get_recent_ap_audit(
-    organization_id: str = Query(default="default"),
+    organization_id: Optional[str] = Query(default=None),
     limit: int = Query(default=30, ge=1, le=500),
     since_ts: Optional[str] = Query(
         default=None,
@@ -62,7 +62,7 @@ def get_recent_ap_audit(
     ),
     _user: Any = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    verify_org_access(organization_id, _user)
+    organization_id = require_org(_user, requested=organization_id)
     db = get_db()
 
     # §13 Agent Activity feed retention — Starter 30 days, Pro/Enterprise

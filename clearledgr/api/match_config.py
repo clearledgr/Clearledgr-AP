@@ -133,7 +133,7 @@ def get_match_config(
     matters (an AP clerk wondering why a match failed should be able
     to see the configured tolerance), but only admins can change it.
     """
-    org_id = str(user.organization_id or "").strip() or "default"
+    org_id = require_org(user)
     return _read_config(org_id)
 
 
@@ -150,7 +150,7 @@ def update_match_config(
     from the caller's perspective (two version rows are written; the
     next match operation sees both).
     """
-    org_id = str(user.organization_id or "").strip() or "default"
+    org_id = require_org(user)
     actor = str(getattr(user, "user_id", "") or "system").strip() or "system"
 
     svc = PolicyService(org_id)

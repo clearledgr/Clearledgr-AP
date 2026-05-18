@@ -50,10 +50,7 @@ def _resolve_org_id_for_user(user: TokenData, organization_id: str) -> str:
     cross-tenant access; previous implementation let any admin of
     any org access any other org by specifying organization_id.
     """
-    org_id = str(organization_id or user.organization_id or "default").strip() or "default"
-    if org_id != str(getattr(user, "organization_id", "") or "").strip():
-        raise HTTPException(status_code=403, detail="org_mismatch")
-    return org_id
+    return require_org(user, requested=organization_id)
 
 
 # ==================== REQUEST MODELS ====================

@@ -27,6 +27,7 @@ from clearledgr.core.auth import (
     get_current_user,
 )
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import require_org
 from clearledgr.services import saml_sso
 from clearledgr.services.saml_validator import SAMLValidationError
 
@@ -47,10 +48,7 @@ def _require_admin(user: TokenData) -> None:
 
 
 def _resolve_org_id(user: TokenData, requested: Optional[str]) -> str:
-    org_id = str(requested or user.organization_id or "default").strip() or "default"
-    if org_id != str(user.organization_id or "").strip():
-        raise HTTPException(status_code=403, detail="org_access_denied")
-    return org_id
+    return require_org(user, requested=requested)
 
 
 def _audit_saml(

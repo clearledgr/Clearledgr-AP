@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from clearledgr.core.auth import TokenData, get_current_user
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import require_org
 from clearledgr.core.stores.rules_store import VALID_RULE_STATUSES, VALID_WORKFLOWS
 from clearledgr.services import rule_engine
 
@@ -121,7 +122,7 @@ def seed_default_rules(
     creates each as an active rule on the org.
     """
     db = get_db()
-    org_id = getattr(user, "organization_id", None) or "default"
+    org_id = require_org(user)
 
     existing = db.list_workspace_rules(org_id, include_inactive=True) if hasattr(db, "list_workspace_rules") else []
     if existing:

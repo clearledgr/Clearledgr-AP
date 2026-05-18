@@ -30,6 +30,7 @@ from clearledgr.core.auth import (
     has_admin_access,
 )
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import require_org
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,7 @@ _VALID_STATUS = {"active", "blocked", "archived"}
 
 def _resolve_org_id(user: TokenData, requested: Optional[str]) -> str:
     """Tenant gate: clamp to the caller's organization."""
-    org_id = str(requested or user.organization_id or "default").strip() or "default"
-    if org_id != str(user.organization_id or "").strip():
-        raise HTTPException(status_code=403, detail="org_access_denied")
-    return org_id
+    return require_org(user, requested=requested)
 
 
 def _require_admin(user: TokenData) -> None:
@@ -337,9 +335,7 @@ def verify_vendor_registration(
     state without re-querying.
     """
     from clearledgr.services.opencorporates_verifier import verify_vendor_registration as _verify
-    org_id = getattr(user, "organization_id", None) or "default"
-    if organization_id and organization_id != org_id:
-        raise HTTPException(status_code=403, detail="org_access_denied")
+    org_id = require_org(user, requested=organization_id)
 
     db = get_db()
     profile = db.get_vendor_profile(org_id, vendor_name) if hasattr(db, "get_vendor_profile") else None

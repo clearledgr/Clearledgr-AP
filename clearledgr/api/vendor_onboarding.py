@@ -47,6 +47,7 @@ from clearledgr.core.auth import (
     require_financial_controller,
 )
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import require_org
 from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ ops_router = APIRouter(
 
 @ops_router.get("/sessions")
 def list_vendor_onboarding_sessions(
-    organization_id: str = Query("default"),
+    organization_id: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     state: Optional[str] = Query(None, description="Comma-separated list of states to filter"),
     _user: TokenData = Depends(get_current_user),
@@ -79,6 +80,7 @@ def list_vendor_onboarding_sessions(
     Default scope: pre-active sessions (anything not yet activated in the
     ERP). Pass ?state=active,escalated to slice differently.
     """
+    organization_id = require_org(_user, requested=organization_id)
     db = get_db()
     states = None
     if state:
@@ -383,7 +385,7 @@ def reject_onboarding(
 @router.post("/import/csv")
 async def import_vendors_csv(
     request: Request,
-    organization_id: str = Query(default="default"),
+    organization_id: Optional[str] = Query(default=None),
     user=Depends(require_financial_controller),
 ):
     """§3 Migration: Import vendors from CSV with column mapping.
@@ -393,6 +395,7 @@ async def import_vendors_csv(
     - column_map: mapping from CSV column names to vendor fields
       e.g. {"Company Name": "vendor_name", "VAT": "vat_number", ...}
     """
+    organization_id = require_org(user, requested=organization_id)
 
     try:
         body = await request.json()

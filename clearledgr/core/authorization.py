@@ -208,7 +208,7 @@ def emit_authorization_denied_audit(
                 "box_id": box_id,
                 "actor_type": actor_type,
                 "actor_id": actor_id or "unknown",
-                "organization_id": organization_id or "default",
+                "organization_id": organization_id or "_unknown",
                 "source": "authorization",
                 "tool_scope": tool_scope,
                 "payload_json": {

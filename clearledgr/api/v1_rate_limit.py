@@ -298,7 +298,7 @@ def emit_rate_limit_exceeded_audit(exc: RateLimitExceeded) -> None:
                 "box_id": exc.organization_id or "unknown",
                 "actor_type": "agent",
                 "actor_id": exc.actor_id or "unknown",
-                "organization_id": exc.organization_id or "default",
+                "organization_id": exc.organization_id or "_unknown",
                 "source": "v1_rate_limit",
                 "tool_scope": exc.tool_scope,
                 "payload_json": {

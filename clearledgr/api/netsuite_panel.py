@@ -43,9 +43,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import TokenData
 from clearledgr.core.database import get_db as _get_db
+from clearledgr.core.org_utils import require_org
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ def get_ap_item_by_netsuite_bill(
             status_code=404,
             detail={"reason": "no_clearledgr_item_for_bill", "ns_internal_id": ns_internal_id},
         )
-    verify_org_access(item.get("organization_id") or "default", user)
+    require_org(user, requested=item.get("organization_id"))
     ap_item_id = str(item.get("id") or "").strip()
 
     timeline = []
@@ -365,7 +365,7 @@ async def _dispatch_netsuite_panel_action(
             status_code=404,
             detail={"reason": "no_clearledgr_item_for_bill", "ns_internal_id": ns_internal_id},
         )
-    verify_org_access(item.get("organization_id") or "default", user)
+    require_org(user, requested=item.get("organization_id"))
     ap_item_id = str(item.get("id") or "").strip()
 
     actor_id = user.user_id or user.email or "netsuite_panel"

@@ -61,7 +61,7 @@ class GLSuggestionRequest(BaseModel):
     vendor_name: str
     amount: Optional[float] = None
     description: Optional[str] = None
-    organization_id: Optional[str] = "default"
+    organization_id: Optional[str] = None
 
 
 class VendorSuggestionRequest(BaseModel):
@@ -69,7 +69,7 @@ class VendorSuggestionRequest(BaseModel):
     sender_name: Optional[str] = None
     subject: Optional[str] = None
     extracted_vendor: Optional[str] = None
-    organization_id: Optional[str] = "default"
+    organization_id: Optional[str] = None
 
 
 @router.post("/suggestions/gl-code")
@@ -101,7 +101,7 @@ async def suggest_vendor(
 async def validate_amount(
     vendor_name: str = Body(...),
     amount: float = Body(...),
-    organization_id: str = Body("default"),
+    organization_id: Optional[str] = Body(None),
     _user=Depends(get_current_user),
 ):
     resolve_org_id_for_user(_user, organization_id)
@@ -111,7 +111,7 @@ async def validate_amount(
 @router.get("/suggestions/form-prefill/{email_id}")
 async def get_form_prefill(
     email_id: str,
-    organization_id: str = "default",
+    organization_id: Optional[str] = None,
     _user=Depends(get_current_user),
 ):
     org_id = resolve_org_id_for_user(_user, organization_id)
@@ -140,7 +140,7 @@ class SidebarQueryRequest(BaseModel):
     scope, conversation memory, streaming answer. §6.8."""
     query: str
     ap_item_id: Optional[str] = None
-    organization_id: Optional[str] = "default"
+    organization_id: Optional[str] = None
     history: Optional[List[SidebarQueryTurn]] = None
 
 
@@ -454,7 +454,7 @@ class FeedbackRequest(BaseModel):
     message: str
     kind: Optional[str] = "bug"  # bug | suggestion | praise | other
     ap_item_id: Optional[str] = None
-    organization_id: Optional[str] = "default"
+    organization_id: Optional[str] = None
     page: Optional[str] = None  # e.g. "sidebar", "home", "pipeline"
     user_agent: Optional[str] = None
 

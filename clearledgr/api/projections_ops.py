@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from clearledgr.api.deps import verify_org_access
 from clearledgr.core.auth import get_current_user
+from clearledgr.core.org_utils import require_org
 from clearledgr.services.box_projection import (
     get_vendor_summary_row,
     list_registered_projectors,
@@ -38,12 +39,12 @@ ops_router = APIRouter(prefix="/api/ops/projections", tags=["ops-projections"])
 
 @vendors_router.get("/summary")
 def list_vendor_summary_rows(
-    organization_id: str = Query(default="default"),
+    organization_id: Optional[str] = Query(default=None),
     order_by: str = Query(default="last_activity_at"),
     limit: int = Query(default=100, ge=1, le=500),
     user=Depends(get_current_user),
 ) -> Dict[str, Any]:
-    verify_org_access(organization_id, user)
+    organization_id = require_org(user, requested=organization_id)
     rows = list_vendor_summaries(
         organization_id, order_by=order_by, limit=limit,
     )
@@ -57,10 +58,10 @@ def list_vendor_summary_rows(
 @vendors_router.get("/{vendor_name}/summary")
 def get_vendor_summary(
     vendor_name: str,
-    organization_id: str = Query(default="default"),
+    organization_id: Optional[str] = Query(default=None),
     user=Depends(get_current_user),
 ) -> Dict[str, Any]:
-    verify_org_access(organization_id, user)
+    organization_id = require_org(user, requested=organization_id)
     row = get_vendor_summary_row(organization_id, vendor_name)
     if row is None:
         raise HTTPException(
