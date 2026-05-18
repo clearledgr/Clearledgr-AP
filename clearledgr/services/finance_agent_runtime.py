@@ -532,7 +532,15 @@ class FinanceAgentRuntime:
         if not item:
             raise LookupError("ap_item_not_found")
         if str(item.get("organization_id") or self.organization_id) != self.organization_id:
-            raise PermissionError("organization_mismatch")
+            from clearledgr.core.authorization import OrganizationMismatch
+
+            raise OrganizationMismatch(
+                actor_id=self.organization_id,
+                resource_type="ap_item",
+                resource_id=str(item.get("id") or "unknown"),
+                organization_id=self.organization_id,
+                attempted_action="resolve_ap_item",
+            )
         return item
 
     def _resolve_ap_item_from_payload(

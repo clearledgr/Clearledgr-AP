@@ -36,10 +36,12 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -198,6 +200,10 @@ from clearledgr.api.vendor_match import router as vendor_match_router
 # can't accidentally re-mount; revival is a clean re-add.
 from clearledgr.api.vendor_status import router as vendor_status_router
 from clearledgr.api.workspace_shell import router as workspace_shell_router
+from clearledgr.core.authorization import (
+    AuthorizationDenied,
+    emit_authorization_denied_audit,
+)
 from clearledgr.core.errors import safe_error
 from clearledgr.services.auth import get_api_key_optional
 from clearledgr.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
@@ -1312,6 +1318,132 @@ async def clearledgr_exception_handler(request: Request, exc: ClearledgrError):
         status_code=status_code,
         content=exc.to_dict()
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Authorization-denial exception handlers
+#
+# Every authorisation decision — including denied ones — has to land in
+# the audit chain. Three handlers funnel into a single audit emission:
+#
+#   1. AuthorizationDenied (typed) — structured context from the call
+#      site; richest record.
+#   2. HTTPException with status 401/403 — covers existing raw raises
+#      across ~22 sites that haven't yet migrated to the typed form.
+#   3. PermissionError — service-layer fallback for raises that don't
+#      always reach FastAPI through the normal request path.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _resolve_request_actor(request: Request) -> tuple[Optional[str], Optional[str]]:
+    """Best-effort: pull (actor_id, organization_id) from the request.
+
+    Tries the Bearer token, then the X-API-Key header. Never raises;
+    returns ``(None, None)`` if no credential is present or decode fails.
+    Cost: one token decode or one DB read for the API-key path. Acceptable
+    on a 401/403 path because it runs at most once per denial.
+    """
+    try:
+        from clearledgr.core.auth import _token_data_from_payload, decode_token
+
+        auth_header = request.headers.get("Authorization", "") or ""
+        if auth_header.startswith("Bearer "):
+            try:
+                token = auth_header[7:]
+                payload = decode_token(token)
+                user = _token_data_from_payload(payload)
+                return (
+                    getattr(user, "email", None) or getattr(user, "user_id", None),
+                    getattr(user, "organization_id", None),
+                )
+            except Exception:
+                pass
+
+        api_key = request.headers.get("X-API-Key")
+        if api_key:
+            from clearledgr.core.database import get_db
+
+            db = get_db()
+            key_record = db.validate_api_key(api_key)
+            if key_record:
+                return (
+                    key_record.get("user_id") or "api_user",
+                    key_record.get("organization_id"),
+                )
+    except Exception:
+        pass
+    return (None, None)
+
+
+@app.exception_handler(AuthorizationDenied)
+async def _authorization_denied_handler(
+    request: Request, exc: AuthorizationDenied
+):
+    """Emit audit + return the typed 401/403 response."""
+    from fastapi.responses import JSONResponse
+
+    resolved_actor, resolved_org = _resolve_request_actor(request)
+    emit_authorization_denied_audit(
+        denial_reason=exc.denial_reason,
+        actor_type=exc.actor_type,
+        actor_id=exc.actor_id or resolved_actor,
+        resource_type=exc.resource_type,
+        resource_id=exc.resource_id,
+        organization_id=exc.organization_id or resolved_org,
+        attempted_action=exc.attempted_action,
+        request_path=str(request.url.path),
+        request_method=request.method,
+        http_status=exc.http_status,
+    )
+    return JSONResponse(
+        status_code=exc.http_status, content={"detail": exc.http_detail}
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_audit_then_default(
+    request: Request, exc: StarletteHTTPException
+):
+    """Catch every HTTPException; audit the 401/403 ones; delegate.
+
+    For 401/403 responses we emit an ``authorization_denied`` row before
+    handing back to FastAPI's default HTTPException response renderer.
+    Other status codes pass through untouched.
+    """
+    if exc.status_code in (401, 403):
+        resolved_actor, resolved_org = _resolve_request_actor(request)
+        detail = exc.detail if isinstance(exc.detail, str) else "forbidden"
+        emit_authorization_denied_audit(
+            denial_reason=detail,
+            actor_type="user",
+            actor_id=resolved_actor,
+            organization_id=resolved_org,
+            attempted_action="api_request",
+            request_path=str(request.url.path),
+            request_method=request.method,
+            http_status=exc.status_code,
+        )
+    return await fastapi_http_exception_handler(request, exc)
+
+
+@app.exception_handler(PermissionError)
+async def _permission_error_handler(request: Request, exc: PermissionError):
+    """Service-layer PermissionError fallback. Audit then 403."""
+    from fastapi.responses import JSONResponse
+
+    detail = str(exc) or "forbidden"
+    resolved_actor, resolved_org = _resolve_request_actor(request)
+    emit_authorization_denied_audit(
+        denial_reason=detail,
+        actor_type="user",
+        actor_id=resolved_actor,
+        organization_id=resolved_org,
+        attempted_action="service_call",
+        request_path=str(request.url.path),
+        request_method=request.method,
+        http_status=403,
+    )
+    return JSONResponse(status_code=403, content={"detail": detail})
 
 
 # Global exception handler for unhandled exceptions

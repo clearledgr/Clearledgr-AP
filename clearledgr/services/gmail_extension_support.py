@@ -714,7 +714,15 @@ def build_form_prefill_payload(
 
     invoice_org = str(invoice.get("organization_id") or organization_id)
     if invoice_org != organization_id:
-        raise PermissionError("org_mismatch")
+        from clearledgr.core.authorization import OrganizationMismatch
+
+        raise OrganizationMismatch(
+            actor_id=organization_id,
+            resource_type="invoice",
+            resource_id=str(invoice.get("id") or invoice.get("email_id") or "unknown"),
+            organization_id=organization_id,
+            attempted_action="read_invoice_extraction",
+        )
 
     learning = get_finance_learning_service(organization_id)
     vendor_intel = get_vendor_intelligence()
