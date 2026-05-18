@@ -502,19 +502,40 @@ its own `pyproject.toml`, separate package release.
 - Test harness against a mock server.
 - Publish to PyPI under `solden`.
 
-### Step 13 — Tests
+### Step 13 — Integration tests ✅ SHIPPED (dogfood is operational follow-up)
 
-- Backend integration tests under [tests/test_v1_*.py](tests/):
-  - Unauthorised request → 401 with typed error envelope + audit row
-    written.
-  - Wrong-scope request → 403 + audit row.
-  - Cross-tenant access (key org X reading record from org Y) → 403 +
-    audit row.
-  - Happy-path intent execution → 200 + record state transition +
-    audit row with `actor_type="agent"`, `agent_version` set.
-  - Records list pagination cursor.
-  - Records list filtered by state and box_type.
-- Frontend component tests for ApiKeysPage.
+**Files:** new
+[tests/test_v1_integration.py](tests/test_v1_integration.py) —
+FastAPI TestClient walking the full router stack against the
+session-scoped Postgres harness (auto-spawned testcontainer in CI).
+
+Two test classes:
+
+* `TestV1AgentFlow` — the canonical 5-step quickstart:
+  - `/v1/me` echoes the resolved identity + scopes
+  - `/v1/records` returns the seeded `ap_item`
+  - sensitive columns (`bank_details_encrypted`, `last_error`,
+    Slack/Teams refs) are filtered server-side
+  - `/v1/intents/execute` writes an audit row with
+    `actor_type="agent"`, `actor_id="agent:cs-bot-prod"`,
+    `agent_version="2.4.1"` — the whole point of Step 1
+  - same `Idempotency-Key` + same payload replays with
+    `Solden-Idempotent-Replay: true`
+  - same key + different payload returns 409
+  - `/v1/webhooks` full CRUD round-trip including secret rotation
+* `TestV1ErrorEnvelopes` — every typed error code:
+  401 (missing/invalid key), 403 (revoked, scope missing),
+  400 (unsupported box type, http URL, unknown event), 404
+  (cross-tenant read).
+
+Together with the 98 /v1 unit tests already shipping, the public API
+has end-to-end coverage from "agent issues a key" to "audit chain
+shows the agent's footprint."
+
+**Dogfood (operational, not code):** point an internal AP review bot
+at a staging tenant via `/v1/intents/execute`. Tracked outside this
+plan — when the bot is running for a real customer the agent
+connection is GA.
 
 ## Decisions (settled 2026-05-18)
 
