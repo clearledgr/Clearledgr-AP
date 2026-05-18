@@ -368,24 +368,24 @@ body.theme-manifesto-light .btn--primary:hover {
 .lineage-list {
   list-style: none;
   padding: 0;
-  margin: 56px 0 0;
+  margin: 40px 0 0;
   display: flex;
   flex-direction: column;
-  gap: 56px;
+  gap: 32px;
 }
 
 .lineage-entry {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 36px;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 32px;
   align-items: start;
-  padding-bottom: 56px;
+  padding-bottom: 32px;
   border-bottom: 1px solid rgba(31, 27, 22, 0.12);
 }
 .lineage-entry:last-child { border-bottom: 0; padding-bottom: 0; }
 
 @media (max-width: 720px) {
-  .lineage-entry { grid-template-columns: 1fr; gap: 20px; }
+  .lineage-entry { grid-template-columns: 1fr; gap: 16px; }
 }
 
 /* Portrait figure — B&W square framed in the same museum style as
