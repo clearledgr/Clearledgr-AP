@@ -73,6 +73,7 @@ class AuthorizationDenied(Exception):
         attempted_action: Optional[str] = None,
         http_status: int = 403,
         http_detail: Optional[str] = None,
+        tool_scope: Optional[list] = None,
     ) -> None:
         self.denial_reason = denial_reason
         self.actor_type = actor_type
@@ -83,6 +84,13 @@ class AuthorizationDenied(Exception):
         self.attempted_action = attempted_action
         self.http_status = http_status
         self.http_detail = http_detail or denial_reason
+        # Scope set the actor held at the moment of denial — pinned
+        # on the audit row so "they had X scopes when they tried Y"
+        # stays answerable even after a subsequent rotation strips
+        # the key's scope context.
+        self.tool_scope = (
+            list(tool_scope) if tool_scope is not None else None
+        )
         super().__init__(denial_reason)
 
 
@@ -163,6 +171,7 @@ def emit_authorization_denied_audit(
     denial_reason: str,
     actor_type: str = "user",
     actor_id: Optional[str] = None,
+    tool_scope: Optional[list] = None,
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
     organization_id: Optional[str] = None,
@@ -201,6 +210,7 @@ def emit_authorization_denied_audit(
                 "actor_id": actor_id or "unknown",
                 "organization_id": organization_id or "default",
                 "source": "authorization",
+                "tool_scope": tool_scope,
                 "payload_json": {
                     "denial_reason": denial_reason,
                     "attempted_action": attempted_action,

@@ -2184,14 +2184,45 @@ class APStore:
                     box_id, exc,
                 )
 
+        # Migration 88: capability_id / capability_version / tool_scope.
+        # Accepted at the top level of ``payload`` (preferred — caller
+        # is being explicit) OR inside ``payload_json`` (legacy
+        # writers haven't re-threaded yet). Same fallback shape as
+        # governance_verdict above, kept for symmetry.
+        capability_id = payload.get("capability_id")
+        capability_version = payload.get("capability_version")
+        tool_scope = payload.get("tool_scope")
+        if isinstance(payload_json, dict):
+            if capability_id is None:
+                capability_id = payload_json.get("capability_id")
+            if capability_version is None:
+                capability_version = payload_json.get("capability_version")
+            if tool_scope is None:
+                tool_scope = payload_json.get("tool_scope")
+        # tool_scope is persisted as JSON. Accept a list and serialise;
+        # also accept a pre-serialised string for callers that already
+        # did the encode (rare). None stays None so the column stores
+        # SQL NULL.
+        tool_scope_json: Optional[str]
+        if tool_scope is None:
+            tool_scope_json = None
+        elif isinstance(tool_scope, str):
+            tool_scope_json = tool_scope
+        else:
+            try:
+                tool_scope_json = json.dumps(tool_scope, default=str)
+            except (TypeError, ValueError):
+                tool_scope_json = None
+
         sql = """
             INSERT INTO audit_events
             (id, box_id, box_type, event_type, prev_state, new_state,
              actor_type, actor_id, payload_json, external_refs,
              idempotency_key, source, correlation_id, workflow_id, run_id,
              decision_reason, governance_verdict, agent_confidence,
-             organization_id, entity_id, policy_version, agent_version, ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             organization_id, entity_id, policy_version, agent_version,
+             capability_id, capability_version, tool_scope, ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
             with self.connect() as conn:
@@ -2219,6 +2250,9 @@ class APStore:
                     entity_id,
                     policy_version,
                     payload.get("agent_version"),
+                    capability_id,
+                    capability_version,
+                    tool_scope_json,
                     now,
                 ))
                 conn.commit()

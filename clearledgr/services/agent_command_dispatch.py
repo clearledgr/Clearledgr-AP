@@ -89,6 +89,7 @@ def build_channel_runtime(
     fallback_actor: str,
     actor_type: str = "user",
     agent_version: Optional[str] = None,
+    tool_scope: Optional[list] = None,
 ) -> Any:
     """Build a per-channel FinanceAgentRuntime.
 
@@ -97,7 +98,11 @@ def build_channel_runtime(
     default to the workspace/JWT-style ``"user"`` so existing callers
     keep their behaviour. The /v1 router passes ``actor_type="agent"``
     so every audit row written through this runtime carries the
-    agent attribution.
+    agent attribution. ``tool_scope`` lets /v1 callers pin the API
+    key's scope list onto every audit row the runtime writes — the
+    answer to "what was this actor permitted to do at the moment of
+    action?" lives in the audit chain, not in the api_keys row
+    (which can rotate / revoke / expire and lose the context).
     """
     from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
@@ -114,6 +119,7 @@ def build_channel_runtime(
         db=db or get_db(),
         actor_type=actor_type,
         agent_version=agent_version,
+        tool_scope=tool_scope,
     )
 
 

@@ -5115,3 +5115,79 @@ def _v87_intent_responses(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_intent_responses_expires "
         "ON intent_responses (expires_at)"
     )
+
+
+@migration(
+    88,
+    "audit_events: first-class governance columns "
+    "(capability_id, capability_version, tool_scope)",
+)
+def _v88_audit_governance_columns(cur, db):
+    """Promote three governance fields out of ``payload_json`` into
+    first-class columns on ``audit_events``.
+
+    Background: every audit row already carries ``actor_type``,
+    ``actor_id``, ``agent_version``, ``decision_reason``,
+    ``governance_verdict``, ``agent_confidence``, ``policy_version``.
+    What was missing was the answer to three questions a compliance
+    reviewer or 2LoD challenger asks first:
+
+    * Which capability (skill / box-type handler) did this?
+    * What version of that capability's manifest was active at the time?
+    * What authority did the actor hold? (the scope set on the API key,
+      or the role permissions for a JWT caller)
+
+    All three were technically reconstructable by grepping payload_json,
+    but that's not queryable: a 2LoD team can't write
+    ``WHERE capability_id = 'ap_skill' AND capability_version = '2.4.1'``
+    against a JSON blob without indexable extraction. First-class
+    columns make trajectory analysis tractable.
+
+    * ``capability_id`` — stable identifier for the skill / handler
+      that produced this event. Pulled from
+      ``SkillCapabilityManifest.skill_id`` at the canonical runtime
+      emit. NULL for events written by infrastructure (e.g. audit
+      writes from the auth dep itself).
+    * ``capability_version`` — the manifest version
+      (``SkillCapabilityManifest.version``). Lets investigators slice
+      by "what changed when we rolled out v2.4.1?"
+    * ``tool_scope`` — JSONB of the authority the actor held when the
+      action ran. For /v1 callers: the API key's scope list. For JWT
+      callers: the user's role + entity grants. NULL when the source
+      doesn't have an authority concept (system-internal writes).
+
+    Hash chain compatibility: same as migration 86 — the hash-chain
+    trigger canonicalises NULL consistently, so historical rows hash
+    identically before and after the schema change. New rows include
+    the new fields in the chained hash payload, so post-hoc tampering
+    with capability attribution is detectable.
+
+    Re-runnable: every ALTER uses ``ADD COLUMN IF NOT EXISTS``.
+    """
+    cur.execute(
+        "ALTER TABLE audit_events "
+        "ADD COLUMN IF NOT EXISTS capability_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE audit_events "
+        "ADD COLUMN IF NOT EXISTS capability_version TEXT"
+    )
+    # tool_scope is a JSON array of scope tokens (e.g.
+    # ["records:read", "intents:execute"]). JSONB on PG; TEXT on the
+    # SQLite test fallback (rendered as JSON string).
+    cur.execute(
+        "ALTER TABLE audit_events "
+        "ADD COLUMN IF NOT EXISTS tool_scope JSONB"
+    )
+    # Index the two we'll filter by most often. tool_scope is
+    # high-cardinality and intentionally not indexed — full-text
+    # search over JSONB is the right tool when an auditor wants
+    # "every event by a key with scope X".
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_capability "
+        "ON audit_events (organization_id, capability_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_capability_version "
+        "ON audit_events (organization_id, capability_id, capability_version)"
+    )

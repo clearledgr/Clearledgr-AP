@@ -284,6 +284,11 @@ def require_agent_key(scope: Optional[str] = None):
                 attempted_action=f"scope:{scope}",
                 http_status=403,
                 http_detail=f"missing_scope:{scope}",
+                tool_scope=(
+                    list(identity.scopes)
+                    if identity.scopes is not None
+                    else None
+                ),
             )
         # Rate-limit check runs after auth + scope so a 429 is only
         # ever shown to an otherwise-authorised caller. Import here to

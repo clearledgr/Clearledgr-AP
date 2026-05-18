@@ -58,6 +58,20 @@ def list_audit_events(
         default=None,
         description="Filter to a specific event_type.",
     ),
+    capability_id: Optional[str] = Query(
+        default=None,
+        description=(
+            "Filter to events emitted by a specific capability "
+            "(skill id), e.g. 'ap_skill'."
+        ),
+    ),
+    capability_version: Optional[str] = Query(
+        default=None,
+        description=(
+            "Filter to a specific capability manifest version. "
+            "Use with capability_id to slice 'what did ap_skill@2.4.1 do?'"
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     agent: AgentIdentity = Depends(require_agent_key("audit:read")),
 ):
@@ -81,12 +95,19 @@ def list_audit_events(
     if event_type:
         where.append("event_type = %s")
         params.append(event_type)
+    if capability_id:
+        where.append("capability_id = %s")
+        params.append(capability_id)
+    if capability_version:
+        where.append("capability_version = %s")
+        params.append(capability_version)
 
     sql = (
         "SELECT id, box_id, box_type, event_type, prev_state, new_state, "
         "actor_type, actor_id, agent_version, source, organization_id, "
         "decision_reason, governance_verdict, agent_confidence, ts, "
-        "policy_version, payload_json "
+        "policy_version, capability_id, capability_version, tool_scope, "
+        "payload_json "
         "FROM audit_events "
         f"WHERE {' AND '.join(where)} "
         "ORDER BY ts DESC, id DESC LIMIT %s"

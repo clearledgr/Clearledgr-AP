@@ -78,6 +78,7 @@ class RateLimitExceeded(Exception):
         retry_after_seconds: int,
         request_path: Optional[str] = None,
         request_method: Optional[str] = None,
+        tool_scope: Optional[list] = None,
     ) -> None:
         self.scope = scope
         self.identifier = identifier
@@ -89,6 +90,13 @@ class RateLimitExceeded(Exception):
         self.retry_after_seconds = retry_after_seconds
         self.request_path = request_path
         self.request_method = request_method
+        # Scope set the actor held at the moment of the breach.
+        # Pinned on the audit row so post-hoc analysis can answer
+        # "did this key have legitimate access to the endpoints it
+        # was hammering?" without back-pressure on the api_keys row.
+        self.tool_scope: Optional[list] = (
+            list(tool_scope) if tool_scope is not None else None
+        )
         super().__init__(
             f"v1_rate_limit_exceeded:{scope}:{identifier}"
         )
@@ -238,6 +246,9 @@ def enforce_v1_rate_limit(
                 request.url.path if request and request.url else None
             ),
             request_method=request.method if request else None,
+            tool_scope=(
+                list(agent.scopes) if agent.scopes is not None else None
+            ),
         )
 
     # Per-org check (only reached when per-key passed)
@@ -259,6 +270,9 @@ def enforce_v1_rate_limit(
                 request.url.path if request and request.url else None
             ),
             request_method=request.method if request else None,
+            tool_scope=(
+                list(agent.scopes) if agent.scopes is not None else None
+            ),
         )
 
 
@@ -286,6 +300,7 @@ def emit_rate_limit_exceeded_audit(exc: RateLimitExceeded) -> None:
                 "actor_id": exc.actor_id or "unknown",
                 "organization_id": exc.organization_id or "default",
                 "source": "v1_rate_limit",
+                "tool_scope": exc.tool_scope,
                 "payload_json": {
                     "scope": exc.scope,
                     "key_id": exc.key_id,

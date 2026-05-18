@@ -1393,6 +1393,7 @@ async def _authorization_denied_handler(
         denial_reason=exc.denial_reason,
         actor_type=exc.actor_type,
         actor_id=exc.actor_id or resolved_actor,
+        tool_scope=getattr(exc, "tool_scope", None),
         resource_type=exc.resource_type,
         resource_id=exc.resource_id,
         organization_id=exc.organization_id or resolved_org,

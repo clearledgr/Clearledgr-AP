@@ -105,6 +105,7 @@ class FinanceAgentRuntime:
         is_platform: bool = False,
         actor_type: str = "user",
         agent_version: Optional[str] = None,
+        tool_scope: Optional[List[str]] = None,
     ) -> None:
         # Per-tenant isolation is the core invariant of the finance
         # product. A silent fallback to "default" leaks one customer's
@@ -145,6 +146,17 @@ class FinanceAgentRuntime:
         # transition signed by "cs-bot-prod v2.4.1"). NULL for non-agent
         # callers.
         self.agent_version = agent_version
+        # tool_scope is the authority set the actor held when the action
+        # ran — the scope list on the API key for /v1 callers, the role
+        # + entity grants for JWT callers. Stored as JSON on every audit
+        # row so an auditor can answer "what was this actor permitted
+        # to do at the moment of action?" without back-pressure on the
+        # api_keys row (which can be revoked/rotated/expired and lose
+        # its scope context post-hoc). None when the source has no
+        # authority concept (system-internal writes).
+        self.tool_scope: Optional[List[str]] = (
+            list(tool_scope) if tool_scope is not None else None
+        )
         self.db = db or get_db()
         self.is_platform = bool(is_platform)
         if self.is_platform:
@@ -1197,6 +1209,21 @@ class FinanceAgentRuntime:
             evidence_refs=resolved_evidence_refs,
         )
         metadata_payload.setdefault("canonical_audit_event", canonical_event.to_dict())
+        # Migration 88: resolve capability_id + capability_version.
+        # capability_id is the skill id we already resolved above
+        # (resolved_skill_id); capability_version comes from the
+        # registered skill's manifest when we have one in scope.
+        # Falls back to None for unknown skills so the column stores
+        # SQL NULL rather than a guess.
+        capability_version: Optional[str] = None
+        skill_lookup = self._skills.get(resolved_skill_id)
+        if skill_lookup is not None:
+            try:
+                manifest = skill_lookup.manifest
+                capability_version = getattr(manifest, "version", None)
+            except Exception:
+                capability_version = None
+
         audit_payload = {
             "ap_item_id": ap_item_id,
             "event_type": event_type,
@@ -1208,6 +1235,9 @@ class FinanceAgentRuntime:
             "source": "finance_agent_runtime",
             "correlation_id": correlation_id,
             "idempotency_key": idempotency_key,
+            "capability_id": resolved_skill_id if resolved_skill_id != "unknown" else None,
+            "capability_version": capability_version,
+            "tool_scope": self.tool_scope,
         }
         if self.agent_version:
             audit_payload["agent_version"] = self.agent_version

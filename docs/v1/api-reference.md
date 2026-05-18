@@ -181,12 +181,14 @@ key's org — no parameter can widen the result beyond that boundary.
 
 Query parameters:
 
-| Name        | Required | Description                              |
-|-------------|----------|------------------------------------------|
-| `box_id`    | no       | Filter to events about a specific Box id |
-| `box_type`  | no       | Filter to events about a Box type        |
-| `event_type`| no       | Filter to a specific event_type          |
-| `limit`     | no       | 1–500, default 100                       |
+| Name                  | Required | Description                                                       |
+|-----------------------|----------|-------------------------------------------------------------------|
+| `box_id`              | no       | Filter to events about a specific Box id                          |
+| `box_type`            | no       | Filter to events about a Box type                                 |
+| `event_type`          | no       | Filter to a specific event_type                                   |
+| `capability_id`       | no       | Filter to events emitted by a specific capability (e.g. `ap_skill`) |
+| `capability_version`  | no       | Filter to a specific manifest version (use with capability_id)    |
+| `limit`               | no       | 1–500, default 100                                                |
 
 Response:
 
@@ -210,6 +212,9 @@ Response:
       "agent_confidence": 0.94,
       "ts": "2026-05-18T10:14:22Z",
       "policy_version": "p17",
+      "capability_id": "ap_skill",
+      "capability_version": "2.4.1",
+      "tool_scope": ["records:read", "intents:execute"],
       "payload_json": {…}
     }
   ],

@@ -109,8 +109,10 @@ def _runtime_for_agent(agent: AgentIdentity) -> Any:
 
     Goes through the canonical ``build_channel_runtime`` helper
     (also used by Slack, Teams, NetSuite, SAP), with
-    ``actor_type="agent"`` and the key's ``agent_version`` set so
-    every audit row this runtime writes carries the agent attribution.
+    ``actor_type="agent"``, the key's ``agent_version``, and the
+    key's ``scopes`` set so every audit row this runtime writes
+    carries the full agent attribution (who, which version, what
+    authority).
     """
     actor_label = agent.actor_label
     return build_channel_runtime(
@@ -120,6 +122,7 @@ def _runtime_for_agent(agent: AgentIdentity) -> Any:
         fallback_actor="agent",
         actor_type="agent",
         agent_version=agent.agent_version,
+        tool_scope=list(agent.scopes) if agent.scopes is not None else None,
     )
 
 
