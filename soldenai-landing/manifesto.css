@@ -189,7 +189,6 @@ body.theme-manifesto-light .btn--primary:hover {
   margin: 0;
   padding: 28px 0 0;
   border-top: 1px solid rgba(31, 27, 22, 0.18);
-  max-width: 480px;
 }
 .essay__epigraph p {
   margin: 0 0 12px;
