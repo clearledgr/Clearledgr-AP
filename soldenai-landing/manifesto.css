@@ -236,12 +236,12 @@ body.theme-manifesto-light .btn--primary:hover {
 
 .essay__h3 {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.25;
   font-weight: 600;
   font-style: italic;
   color: #1F1B16;
-  margin: 36px 0 10px;
+  margin: 22px 0 6px;
 }
 
 .essay p {
@@ -336,22 +336,22 @@ body.theme-manifesto-light .btn--primary:hover {
 .essay__defs {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  margin: 16px 0 32px;
+  gap: 16px;
+  margin: 12px 0 24px;
 }
 .essay__def dt {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 600;
   font-style: italic;
   letter-spacing: -0.008em;
   color: #1F1B16;
-  margin: 0 0 8px;
+  margin: 0 0 3px;
 }
 .essay__def dd {
   margin: 0;
-  font-size: 17px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 1.5;
   color: rgba(31, 27, 22, 0.82);
 }
 .essay__def dd em { color: #1F1B16; }
