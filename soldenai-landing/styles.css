@@ -716,18 +716,18 @@ body:not(.theme-dark) .footer-cta {
    so it scales with the viewport. */
 .footer__wordmark {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: clamp(96px, 22vw, 320px);
-  line-height: 0.85;
-  letter-spacing: -0.03em;
+  font-size: clamp(128px, 28vw, 440px);
+  line-height: 0.82;
+  letter-spacing: -0.034em;
   font-weight: 500;
-  color: rgba(31, 27, 22, 0.08);
+  color: rgba(31, 27, 22, 0.1);
   margin: 0;
   user-select: none;
   pointer-events: none;
   text-align: center;
 }
 
-/* Legal strip: tiny mark + copyright */
+/* Legal strip: socials on the left, copyright on the right */
 .footer__legal {
   display: flex;
   justify-content: space-between;
@@ -736,15 +736,22 @@ body:not(.theme-dark) .footer-cta {
   border-top: 1px solid rgba(31, 27, 22, 0.1);
   font-family: var(--font-mono);
   font-size: 11.5px;
-  letter-spacing: 0.02em;
-  color: rgba(31, 27, 22, 0.5);
+  letter-spacing: 0.04em;
+  color: rgba(31, 27, 22, 0.55);
 }
-.footer__mark {
-  height: 22px;
-  width: 22px;
-  display: block;
-  opacity: 0.6;
+.footer__social {
+  display: flex;
+  gap: 18px;
 }
+.footer__social a {
+  color: rgba(31, 27, 22, 0.6);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  transition: color 0.15s ease;
+}
+.footer__social a:hover { color: #1F1B16; }
 @media (max-width: 600px) {
   .footer__legal { flex-direction: column; gap: 12px; align-items: flex-start; }
 }
