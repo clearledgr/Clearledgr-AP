@@ -361,22 +361,43 @@ typed exception handler that emits the audit row and returns 429.
   through (for incident response when limits themselves are the
   problem).
 
-### Step 9 — Webhooks (`/v1/webhooks/*`)
+### Step 9 — Webhooks (`/v1/webhooks/*`) ✅ SHIPPED
 
-**Files:** new [clearledgr/api/v1_webhooks.py](clearledgr/api/v1_webhooks.py),
-[clearledgr/services/webhook_dispatcher.py](clearledgr/services/webhook_dispatcher.py)
-(likely already exists for migration 52's `webhook_deliveries`
-table; extend for the public-API event payloads).
+**Files:** [clearledgr/api/v1_webhooks.py](clearledgr/api/v1_webhooks.py)
+holds the public CRUD. Reuses the battle-tested
+[clearledgr/services/webhook_delivery.py](clearledgr/services/webhook_delivery.py)
+(retry queue, HMAC computation) and
+[clearledgr/core/stores/webhook_store.py](clearledgr/core/stores/webhook_store.py)
+(persistence, tenant-pinned reads/writes — migrations 3 + 52
+already shipped the `webhook_subscriptions` + `webhook_deliveries`
+tables).
 
 - `POST /v1/webhooks` — register `{url, event_types, description}`.
-  Returns `{id, signing_secret}` once. Scope: `webhooks:manage`.
-- `GET /v1/webhooks` — list subscriptions for the caller's org.
-- `DELETE /v1/webhooks/{id}` — revoke.
-- Outbound: every event matching a subscription's `event_types`
-  filter is POSTed to the URL with `Solden-Signature: t=<ts>,
-  v1=<hmac-sha256>` header. Retries: 1s, 5s, 30s, 5m, 1h (5
-  attempts total).
-- Event payload shape published in docs.
+  Server generates the signing secret (`whsec_<43-char-token-urlsafe>`,
+  Stripe shape) and returns it **once** in `secret`. Scope:
+  `webhooks:manage`. URL must be `https://`; event names checked
+  against an allowlist (`invoice.*`, `payment.*`,
+  `billing.llm_budget_exceeded`, `webhook.test`, plus `*` wildcard).
+- `GET /v1/webhooks` — list subscriptions for the caller's org;
+  every read shows `secret_preview` (last 4 chars only), never the
+  full secret.
+- `GET /v1/webhooks/{id}` — read one. 404 on missing-or-wrong-tenant
+  (the two cases are indistinguishable by design).
+- `PATCH /v1/webhooks/{id}` — update url / event_types / description
+  / is_active. Secret is not updateable here — use rotate-secret.
+- `DELETE /v1/webhooks/{id}` — revoke. 204 on success.
+- `POST /v1/webhooks/{id}/rotate-secret` — generate a fresh secret,
+  invalidate the old one immediately, return the new one once.
+- `POST /v1/webhooks/{id}/test` — fire a `webhook.test` event
+  through the real delivery pipeline so the customer can verify
+  their signature check before live events arrive.
+- `GET /v1/webhooks/{id}/deliveries` — recent attempt log from
+  `webhook_deliveries` (status, response code, latency).
+- Outbound delivery sends both `X-Solden-Signature` (canonical) and
+  `X-Clearledgr-Signature` (legacy — for the deprecation window) on
+  every webhook. Both carry the same `sha256=<hex>` value computed
+  over the JSON body. Retries are inherited from the existing
+  `webhook_delivery` pipeline.
 
 ### Step 10 — API keys management page in workspace
 

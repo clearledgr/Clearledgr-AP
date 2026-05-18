@@ -188,6 +188,7 @@ from clearledgr.api.user_preferences import router as user_preferences_router
 from clearledgr.api.v1 import router as v1_router
 from clearledgr.api.v1_intents import router as v1_intents_router
 from clearledgr.api.v1_records import router as v1_records_router
+from clearledgr.api.v1_webhooks import router as v1_webhooks_router
 from clearledgr.api.vat import router as vat_router
 from clearledgr.api.vendor_domains import router as vendor_domains_router
 from clearledgr.api.vendor_inquiry import (
@@ -1022,6 +1023,7 @@ STRICT_PROFILE_ACTIVE = bool(_runtime_surface_contract().get("strict_effective")
 app.include_router(v1_router)
 app.include_router(v1_intents_router)
 app.include_router(v1_records_router)
+app.include_router(v1_webhooks_router)
 app.include_router(gmail_extension_router)
 app.include_router(netsuite_panel_router)
 app.include_router(sap_extension_router)
