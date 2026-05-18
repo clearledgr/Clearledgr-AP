@@ -87,7 +87,18 @@ def build_channel_runtime(
     actor_email: Optional[str],
     db: Any = None,
     fallback_actor: str,
+    actor_type: str = "user",
+    agent_version: Optional[str] = None,
 ) -> Any:
+    """Build a per-channel FinanceAgentRuntime.
+
+    Called by Slack, Teams, NetSuite, SAP, and the /v1 customer-agent
+    surface. ``actor_type`` and ``agent_version`` are additive and
+    default to the workspace/JWT-style ``"user"`` so existing callers
+    keep their behaviour. The /v1 router passes ``actor_type="agent"``
+    so every audit row written through this runtime carries the
+    agent attribution.
+    """
     from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
 
     normalized_org = str(organization_id or "").strip()
@@ -101,6 +112,8 @@ def build_channel_runtime(
         actor_id=str(actor_id or fallback_actor),
         actor_email=str(actor_email or actor_id or fallback_actor),
         db=db or get_db(),
+        actor_type=actor_type,
+        agent_version=agent_version,
     )
 
 

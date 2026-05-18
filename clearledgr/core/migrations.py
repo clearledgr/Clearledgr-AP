@@ -5007,7 +5007,7 @@ def _v85_bank_match_boxes(cur, db):
 
 @migration(
     86,
-    "customer-side agent connection: api_keys.scopes/agent_id/agent_version/"
+    "customer-side agent connection: api_keys.agent_id/agent_version/"
     "expires_at/revoked_at + audit_events.agent_version (plan §Step 1)",
 )
 def _v86_customer_agent_connection(cur, db):
@@ -5015,25 +5015,16 @@ def _v86_customer_agent_connection(cur, db):
 
     See CUSTOMER_AGENT_CONNECTION_PLAN.md §Step 1.
 
-    Adds five columns to ``api_keys`` so a key can carry the agent
-    identity, scope set, expiry, and revocation timestamp the public
-    ``/v1`` surface needs. Adds one column to ``audit_events`` so the
+    Adds four columns to ``api_keys`` so a key can carry the agent
+    identity, expiry, and revocation timestamp the public ``/v1``
+    surface needs. Adds one column to ``audit_events`` so the
     sha256-chained row can record the agent version that authored the
-    intent — closing the audit-row shape promised in the plan's
-    "Contract" section.
+    intent.
 
-    Backfill policy:
-
-    * ``api_keys.scopes``: existing keys are effectively all-powerful
-      today. Backfill to the canonical v1 set
-      ``["intents:execute","records:read","audit:read"]`` so their
-      behaviour does not change when scope enforcement turns on.
-    * ``api_keys.agent_id``: NULL for existing keys (they're human-
-      issued today; we'll prompt the operator to bind an agent
-      identity in the management UI in a follow-up step).
-    * ``audit_events.agent_version``: NULL for historical rows;
-      populated going forward whenever the public ``/v1`` surface
-      handles the call.
+    ``api_keys.scopes`` already exists from migration 74 (as ``JSONB``).
+    The migration-74 contract is: ``NULL = legacy full-access``,
+    ``[] = no permissions``, ``[<tokens>] = explicit allow-list``. The
+    /v1 auth dep (Step 2) honours that contract — no backfill needed.
 
     Hash chain compatibility:
 
@@ -5043,16 +5034,11 @@ def _v86_customer_agent_connection(cur, db):
     a new column does not break existing hashes because the column is
     NULL for historical rows and NULL serializes consistently. New
     rows include the new field in the hash payload, so tampering with
-    ``agent_version`` after the fact will be caught.
+    ``agent_version`` after the fact is detectable.
 
-    Re-runnable: every ALTER uses ``ADD COLUMN IF NOT EXISTS``, and
-    the backfill is idempotent (only updates rows where ``scopes IS
-    NULL``).
+    Re-runnable: every ALTER uses ``ADD COLUMN IF NOT EXISTS``.
     """
-    # ── api_keys: agent identity + scopes + lifecycle ──
-    cur.execute(
-        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes TEXT"
-    )
+    # ── api_keys: agent identity + lifecycle (scopes already shipped in v74) ──
     cur.execute(
         "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_id TEXT"
     )
@@ -5064,13 +5050,6 @@ def _v86_customer_agent_connection(cur, db):
     )
     cur.execute(
         "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS revoked_at TEXT"
-    )
-
-    # Backfill ``scopes`` for existing keys so behaviour does not change
-    # the moment scope enforcement turns on in the auth dep.
-    cur.execute(
-        "UPDATE api_keys SET scopes = %s WHERE scopes IS NULL",
-        ('["intents:execute","records:read","audit:read"]',),
     )
 
     # ── audit_events: agent version stamp ──
