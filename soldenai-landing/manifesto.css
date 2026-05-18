@@ -2255,3 +2255,47 @@ body.theme-light-landing .section-eyebrow::before {
   margin: 24px 0 0;
   letter-spacing: 0.005em;
 }
+
+/* ═════════════════════════════════════════════════════════════
+   PRIVACY PAGE — declarative posture page, same column system
+   as the manifesto body. Short sections, mono caps headings.
+   ───────────────────────────────────────────────────────────── */
+
+.privacy {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 0 32px;
+}
+.privacy__section {
+  margin: 0 0 32px;
+}
+.privacy__section:last-child {
+  margin-bottom: 0;
+}
+.privacy__h {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(31, 27, 22, 0.55);
+  margin: 0 0 10px;
+}
+.privacy p {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 16px;
+  line-height: 1.65;
+  color: rgba(31, 27, 22, 0.85);
+  margin: 0 0 10px;
+}
+.privacy p:last-child { margin-bottom: 0; }
+.privacy a {
+  color: #1F1B16;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(31, 27, 22, 0.4);
+}
+.privacy a:hover {
+  text-decoration-color: #1F1B16;
+}
