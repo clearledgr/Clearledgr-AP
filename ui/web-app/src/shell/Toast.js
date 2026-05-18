@@ -36,6 +36,21 @@ export function ToastProvider({ children }) {
     timersRef.current.clear();
   }, []);
 
+  // Listen for global action errors dispatched by useAction. Without
+  // this, a 4xx/5xx from any action-wrapped call surfaces as a silent
+  // no-op (the route-helpers shape used to swallow rejections). Now
+  // every failure raises a red toast so the user sees what went wrong.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handler = (event) => {
+      const detail = event?.detail || {};
+      const message = detail.message || 'Action failed';
+      toast(message, { variant: 'error' });
+    };
+    window.addEventListener('clearledgr:action-error', handler);
+    return () => window.removeEventListener('clearledgr:action-error', handler);
+  }, [toast]);
+
   return html`
     <${ToastContext.Provider} value=${toast}>
       ${children}

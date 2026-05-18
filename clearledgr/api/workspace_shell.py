@@ -951,7 +951,17 @@ class OrgSettingsPatchRequest(BaseModel):
 class TeamInviteCreateRequest(BaseModel):
     organization_id: Optional[str] = None
     email: EmailStr
-    role: str = Field(default="member", pattern="^(admin|member|viewer|user)$")
+    # Role validation happens inside the handler via
+    # ``normalize_user_role`` + ``ROLE_RANK`` rather than a Pydantic
+    # regex — the canonical thesis vocabulary (ap_clerk, ap_manager,
+    # financial_controller, cfo, read_only) coexists with legacy
+    # tokens (admin/member/viewer/user/operator) that the SPA may
+    # still send from older builds, and the normalizer handles both.
+    # Hardcoding a regex here was a stale shim from Phase 1 that
+    # silently 422'd every SPA invite after the role taxonomy
+    # migration. ``default="member"`` is intentional — it normalises
+    # to ``ap_clerk`` if the caller omits the field.
+    role: str = Field(default="member")
     expires_in_days: int = Field(default=7, ge=1, le=30)
     # Module 6 Pass D — optional restriction to specific legal entities.
     # On invite accept the auth handler writes one user_entity_roles
@@ -3752,12 +3762,28 @@ def create_team_invite(
 ):
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
+
+    # Role normalisation: matches the contract used by
+    # /api/auth/users/invite (auth.py:599). normalize_user_role()
+    # upgrades legacy tokens (member→ap_clerk, admin→financial_controller,
+    # etc.) to the canonical thesis vocabulary; unknown tokens stay
+    # unknown and fail the ROLE_RANK membership check below. ``owner``
+    # is reserved for the org creator and cannot be granted via invite.
+    from clearledgr.core.auth import ROLE_RANK, normalize_user_role
+
+    normalized_role = normalize_user_role(request.role)
+    if not normalized_role or normalized_role not in ROLE_RANK or normalized_role == "owner":
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": "invalid_role", "role": request.role},
+        )
+
     expires_at = (_utcnow() + timedelta(days=request.expires_in_days)).isoformat()
     db = get_db()
     invite = db.create_team_invite(
         organization_id=org_id,
         email=request.email,
-        role=request.role,
+        role=normalized_role,
         created_by=user.user_id,
         expires_at=expires_at,
         entity_restrictions=request.entity_restrictions,

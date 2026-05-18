@@ -122,8 +122,54 @@ export function useAction(fn) {
   const exec = useCallback(async (...args) => {
     if (pending) return;
     setPending(true);
-    try { await fn(...args); }
-    finally { setPending(false); }
+    try {
+      await fn(...args);
+    } catch (err) {
+      // Surface failures instead of swallowing them. The earlier
+      // shape had no catch, which meant every 4xx/5xx from the
+      // wrapped api() call disappeared with zero UI feedback — the
+      // button looked like a no-op even when the server returned
+      // a real validation error. Always log; dispatch a global
+      // toast event the AppShell listens for so the user sees the
+      // failure even if the call site forgot a try/catch.
+      // eslint-disable-next-line no-console
+      console.error('useAction error:', err);
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('clearledgr:action-error', {
+              detail: {
+                message: _errorMessage(err),
+                status: err?.status ?? null,
+                payload: err?.payload ?? null,
+              },
+            }),
+          );
+        } catch { /* old browsers / no-op */ }
+      }
+      // Re-throw so call sites that DO have their own try/catch
+      // still see the error and can take action on it.
+      throw err;
+    } finally {
+      setPending(false);
+    }
   }, [fn, pending]);
   return [exec, pending];
+}
+
+function _errorMessage(err) {
+  if (!err) return 'Something went wrong.';
+  // ApiError shape (see ui/web-app/src/api/client.js): the parsed
+  // JSON body lives on .payload, status code on .status. FastAPI
+  // detail can be a string or a structured object — handle both.
+  const payload = err.payload;
+  if (payload && typeof payload === 'object') {
+    if (typeof payload.detail === 'string') return payload.detail;
+    if (payload.detail && typeof payload.detail === 'object') {
+      if (typeof payload.detail.reason === 'string') return payload.detail.reason;
+      if (typeof payload.detail.message === 'string') return payload.detail.message;
+    }
+    if (typeof payload.message === 'string') return payload.message;
+  }
+  return err.message || String(err);
 }
