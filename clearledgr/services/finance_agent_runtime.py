@@ -103,6 +103,8 @@ class FinanceAgentRuntime:
         actor_email: Optional[str] = None,
         db: Any = None,
         is_platform: bool = False,
+        actor_type: str = "user",
+        agent_version: Optional[str] = None,
     ) -> None:
         # Per-tenant isolation is the core invariant of the finance
         # product. A silent fallback to "default" leaks one customer's
@@ -129,6 +131,20 @@ class FinanceAgentRuntime:
         self.organization_id = normalized_org
         self.actor_id = str(actor_id or "system")
         self.actor_email = str(actor_email or actor_id or "system")
+        # actor_type is the canonical Solden actor taxonomy:
+        #   "human"  - a person (logged in via SSO, JWT, or workspace UI)
+        #   "agent"  - a customer-side agent calling /v1/* with an API key
+        #   "service" - an internal Solden service (planner, coordinator,
+        #               match engine, etc.) operating without a human seat
+        #   "system" - automated platform action with no specific actor
+        # Default "user" preserves existing JWT-callpath behaviour. The
+        # /v1 surface always passes actor_type="agent".
+        self.actor_type = str(actor_type or "user")
+        # agent_version is recorded on every audit row so post-hoc analysis
+        # can attribute behaviour to a specific agent build (e.g. find every
+        # transition signed by "cs-bot-prod v2.4.1"). NULL for non-agent
+        # callers.
+        self.agent_version = agent_version
         self.db = db or get_db()
         self.is_platform = bool(is_platform)
         if self.is_platform:
@@ -1181,20 +1197,21 @@ class FinanceAgentRuntime:
             evidence_refs=resolved_evidence_refs,
         )
         metadata_payload.setdefault("canonical_audit_event", canonical_event.to_dict())
-        audit_row = self.db.append_audit_event(
-            {
-                "ap_item_id": ap_item_id,
-                "event_type": event_type,
-                "actor_type": "user",
-                "actor_id": self.actor_email,
-                "reason": reason,
-                "metadata": metadata_payload,
-                "organization_id": self.organization_id,
-                "source": "finance_agent_runtime",
-                "correlation_id": correlation_id,
-                "idempotency_key": idempotency_key,
-            }
-        )
+        audit_payload = {
+            "ap_item_id": ap_item_id,
+            "event_type": event_type,
+            "actor_type": self.actor_type,
+            "actor_id": self.actor_email,
+            "reason": reason,
+            "metadata": metadata_payload,
+            "organization_id": self.organization_id,
+            "source": "finance_agent_runtime",
+            "correlation_id": correlation_id,
+            "idempotency_key": idempotency_key,
+        }
+        if self.agent_version:
+            audit_payload["agent_version"] = self.agent_version
+        audit_row = self.db.append_audit_event(audit_payload)
         self._sync_agent_memory(
             ap_item_id=ap_item_id,
             event_type=event_type,

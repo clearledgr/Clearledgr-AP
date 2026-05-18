@@ -400,8 +400,9 @@ class APStore:
                     """INSERT INTO audit_events
                     (id, box_id, box_type, event_type, prev_state, new_state,
                      actor_type, actor_id, payload_json, source, correlation_id,
-                     workflow_id, run_id, decision_reason, organization_id, ts)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                     workflow_id, run_id, decision_reason, organization_id,
+                     agent_version, ts)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
                 )
                 audit_payload: Dict[str, Any] = {
                     "column_updates": {
@@ -462,6 +463,10 @@ class APStore:
                         run_id,
                         decision_reason,
                         org_id,
+                        # agent_version is None for non-/v1 callers; the
+                        # canonical runtime intent row written separately
+                        # carries the version for /v1 calls.
+                        kwargs.get("agent_version"),
                         now,
                     ),
                 )
@@ -2185,8 +2190,8 @@ class APStore:
              actor_type, actor_id, payload_json, external_refs,
              idempotency_key, source, correlation_id, workflow_id, run_id,
              decision_reason, governance_verdict, agent_confidence,
-             organization_id, entity_id, policy_version, ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             organization_id, entity_id, policy_version, agent_version, ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
             with self.connect() as conn:
@@ -2213,6 +2218,7 @@ class APStore:
                     payload.get("organization_id"),
                     entity_id,
                     policy_version,
+                    payload.get("agent_version"),
                     now,
                 ))
                 conn.commit()
@@ -2329,8 +2335,8 @@ class APStore:
              actor_type, actor_id, payload_json, external_refs,
              idempotency_key, source, correlation_id, workflow_id, run_id,
              decision_reason, governance_verdict, agent_confidence,
-             organization_id, entity_id, policy_version, ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             organization_id, entity_id, policy_version, agent_version, ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
             with self.connect() as conn:
@@ -2360,6 +2366,7 @@ class APStore:
                     organization_id,
                     entity_id,
                     CURRENT_AP_POLICY_VERSION,
+                    None,  # agent_version — owner_changed is rarely driven by an agent today
                     now,
                 ))
                 conn.commit()

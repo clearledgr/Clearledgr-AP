@@ -5003,3 +5003,77 @@ def _v85_bank_match_boxes(cur, db):
         msg = str(exc).lower()
         if "already exists" not in msg and "duplicate" not in msg:
             raise
+
+
+@migration(
+    86,
+    "customer-side agent connection: api_keys.scopes/agent_id/agent_version/"
+    "expires_at/revoked_at + audit_events.agent_version (plan §Step 1)",
+)
+def _v86_customer_agent_connection(cur, db):
+    """Additive migration for the customer-side agent connection surface.
+
+    See CUSTOMER_AGENT_CONNECTION_PLAN.md §Step 1.
+
+    Adds five columns to ``api_keys`` so a key can carry the agent
+    identity, scope set, expiry, and revocation timestamp the public
+    ``/v1`` surface needs. Adds one column to ``audit_events`` so the
+    sha256-chained row can record the agent version that authored the
+    intent — closing the audit-row shape promised in the plan's
+    "Contract" section.
+
+    Backfill policy:
+
+    * ``api_keys.scopes``: existing keys are effectively all-powerful
+      today. Backfill to the canonical v1 set
+      ``["intents:execute","records:read","audit:read"]`` so their
+      behaviour does not change when scope enforcement turns on.
+    * ``api_keys.agent_id``: NULL for existing keys (they're human-
+      issued today; we'll prompt the operator to bind an agent
+      identity in the management UI in a follow-up step).
+    * ``audit_events.agent_version``: NULL for historical rows;
+      populated going forward whenever the public ``/v1`` surface
+      handles the call.
+
+    Hash chain compatibility:
+
+    The audit_events hash-chain trigger (see
+    ``_install_audit_hash_chain_trigger``) hashes a deterministic
+    canonical-JSON representation of the row's content fields. Adding
+    a new column does not break existing hashes because the column is
+    NULL for historical rows and NULL serializes consistently. New
+    rows include the new field in the hash payload, so tampering with
+    ``agent_version`` after the fact will be caught.
+
+    Re-runnable: every ALTER uses ``ADD COLUMN IF NOT EXISTS``, and
+    the backfill is idempotent (only updates rows where ``scopes IS
+    NULL``).
+    """
+    # ── api_keys: agent identity + scopes + lifecycle ──
+    cur.execute(
+        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_version TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS revoked_at TEXT"
+    )
+
+    # Backfill ``scopes`` for existing keys so behaviour does not change
+    # the moment scope enforcement turns on in the auth dep.
+    cur.execute(
+        "UPDATE api_keys SET scopes = %s WHERE scopes IS NULL",
+        ('["intents:execute","records:read","audit:read"]',),
+    )
+
+    # ── audit_events: agent version stamp ──
+    cur.execute(
+        "ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS agent_version TEXT"
+    )
