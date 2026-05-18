@@ -73,7 +73,12 @@ class Plan:
     event_type: str
     actions: List[Action]
     box_id: Optional[str] = None
-    organization_id: str = "default"
+    # organization_id has no default — every Plan is tenant-bound and a
+    # missing org silently routed work to the legacy "default" tenant
+    # pre-M19. Callers MUST supply a real org id; the canonical resolver
+    # is require_org(user, requested=...) at the API boundary or
+    # assert_org_id(...) at service entry points.
+    organization_id: str = ""
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -111,13 +116,22 @@ class Plan:
 
     @classmethod
     def from_json(cls, data: str) -> "Plan":
-        """Deserialize from ``pending_plan`` column."""
+        """Deserialize from ``pending_plan`` column.
+
+        ``organization_id`` is asserted — a serialised Plan without an
+        org is a producer bug (the column is tenant-pinned by the table
+        itself). Fail loud at read time so the corrupt row is visible.
+        """
+        from clearledgr.core.org_utils import assert_org_id
+
         d = json.loads(data)
         return cls(
             event_type=d.get("event_type", "resumed"),
             actions=[Action.from_dict(a) for a in d.get("actions", [])],
             box_id=d.get("box_id"),
-            organization_id=d.get("organization_id", "default"),
+            organization_id=assert_org_id(
+                d.get("organization_id"), context="Plan.from_json"
+            ),
             created_at=d.get("created_at", ""),
             correlation_id=d.get("correlation_id"),
         )

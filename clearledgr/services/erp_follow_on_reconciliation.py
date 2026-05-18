@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import ClearledgrDB, get_db
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def _parse_meta(raw: Any) -> dict:
 def reconcile_erp_follow_on_state(
     db: Optional[ClearledgrDB] = None,
     *,
-    organization_id: str = "default",
+    organization_id: str,
     limit: int = 500,
 ) -> Dict[str, Any]:
     """Scan non-invoice AP items with follow-on status and repair mismatches.
@@ -46,6 +47,9 @@ def reconcile_erp_follow_on_state(
     Returns a summary dict with counts of items checked, mismatches found,
     and repairs applied.
     """
+    organization_id = assert_org_id(
+        organization_id, context="reconcile_erp_follow_on_state"
+    )
     db = db or get_db()
     checked = 0
     mismatches: List[Dict[str, str]] = []
@@ -180,8 +184,11 @@ def reconcile_erp_follow_on_state(
 
 
 async def run_erp_follow_on_reconciliation_check(
-    organization_id: str = "default",
+    organization_id: str,
 ) -> int:
     """Async entry point for startup registration. Returns count of items checked."""
+    organization_id = assert_org_id(
+        organization_id, context="run_erp_follow_on_reconciliation_check"
+    )
     result = reconcile_erp_follow_on_state(organization_id=organization_id)
     return result["checked"]

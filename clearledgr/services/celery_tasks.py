@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.services.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -1118,7 +1119,10 @@ def generate_audit_export(self, export_id: str) -> dict:
             if not cursor:
                 break
 
-        org_id = str(export.get("organization_id") or "default")
+        org_id = assert_org_id(
+            export.get("organization_id"),
+            context="generate_audit_export",
+        )
         date_part = started_at.replace(":", "").replace("-", "")[:15]
         export_format = str(export.get("export_format") or "csv").lower()
         if export_format == "pdf":

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from clearledgr.core.database import ClearledgrDB
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.services.ap_projection import build_worklist_items
 from clearledgr.services.policy_compliance import get_approval_automation_policy
 
@@ -231,7 +232,12 @@ def _load_org_settings_for_item(db: ClearledgrDB, organization_id: Any) -> Dict[
 
 
 def _approval_followup_policy(organization_id: str) -> Dict[str, Any]:
-    return get_approval_automation_policy(organization_id=organization_id or "default")
+    return get_approval_automation_policy(
+        organization_id=assert_org_id(
+            organization_id,
+            context="_approval_followup_policy",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

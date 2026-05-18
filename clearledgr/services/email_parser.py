@@ -17,6 +17,7 @@ import base64
 import io
 import logging
 
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.core.utils import safe_float
 
 logger = logging.getLogger(__name__)
@@ -2332,7 +2333,7 @@ def parse_email(
     sender: str,
     attachments: List[Dict] = None,
     *,
-    organization_id: str = "default",
+    organization_id: str,
     thread_id: str = None,
 ) -> Dict[str, Any]:
     """Parse an email and extract financial data.
@@ -2340,10 +2341,11 @@ def parse_email(
     Primary path: LLMEmailParser (Claude Haiku for text, Sonnet for vision).
     Automatic fallback: regex EmailParser when Claude is unavailable or fails.
 
-    When organization_id and thread_id are provided, extraction includes
-    vendor history, past corrections, and thread context — making each
-    extraction smarter than the last.
+    organization_id is required — vendor history / past corrections /
+    thread context all key off it, and a missing org would silently
+    bind extracted invoices to the legacy ``default`` tenant.
     """
+    organization_id = assert_org_id(organization_id, context="parse_email")
     from clearledgr.services.llm_email_parser import parse_email_with_llm
     return parse_email_with_llm(
         subject, body, sender, attachments,

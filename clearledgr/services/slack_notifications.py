@@ -8,6 +8,7 @@ Following the spec: Exception-only notifications with one-click approval.
 import os
 import logging
 from clearledgr.core.http_client import get_http_client
+from clearledgr.core.org_utils import assert_org_id
 from typing import Dict, Any, Optional, List
 from clearledgr.services.slack_api import resolve_slack_runtime
 
@@ -1416,9 +1417,15 @@ async def send_approval_reminder(
     vendor = ap_item.get("vendor_name") or "Unknown vendor"
     amount = ap_item.get("amount") or 0
     invoice_num = ap_item.get("invoice_number") or "N/A"
-    org_id = organization_id or ap_item.get("organization_id") or os.getenv("DEFAULT_ORGANIZATION_ID", "default")
-    if org_id == "default":
-        logger.warning("organization_id resolved to 'default' in send_approval_followup_dm (ap_item=%s)", ap_item.get("id"))
+    # M19: AP-item follow-up DMs are per-tenant; resolve strictly from
+    # the explicit org or the AP item's binding. No env-var "default"
+    # fallback — a missing org here means the caller routed the item
+    # without a tenant binding, which would silently DM the platform
+    # workspace.
+    org_id = assert_org_id(
+        organization_id or ap_item.get("organization_id"),
+        context="send_approval_followup_dm",
+    )
     metadata = ap_item.get("metadata") if isinstance(ap_item.get("metadata"), dict) else {}
     runtime = resolve_slack_runtime(org_id)
 

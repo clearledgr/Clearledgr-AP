@@ -14,14 +14,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 
 class DisputeService:
     """Manage disputes for a single tenant."""
 
-    def __init__(self, organization_id: str = "default") -> None:
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str) -> None:
+        self.organization_id = assert_org_id(
+            organization_id, context="DisputeService"
+        )
         from clearledgr.core.database import get_db
         self.db = get_db()
 

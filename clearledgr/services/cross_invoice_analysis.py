@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 import re
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +216,10 @@ class CrossInvoiceAnalyzer:
     DUPLICATE_DAYS_WINDOW = 7  # Look for duplicates within 7 days
     ANOMALY_AMOUNT_THRESHOLD = 0.30  # 30% deviation is anomalous
 
-    def __init__(self, organization_id: str = "default"):
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str):
+        self.organization_id = assert_org_id(
+            organization_id, context="CrossInvoiceAnalyzer"
+        )
         self.db = get_db()
         # Velocity thresholds derived from the org's fraud_controls config.
         # Loaded lazily on first use to avoid import-time DB dependencies.
@@ -554,6 +557,10 @@ class CrossInvoiceAnalyzer:
 
 
 # Convenience function
-def get_cross_invoice_analyzer(organization_id: str = "default") -> CrossInvoiceAnalyzer:
+def get_cross_invoice_analyzer(organization_id: str) -> CrossInvoiceAnalyzer:
     """Get a cross-invoice analyzer instance."""
-    return CrossInvoiceAnalyzer(organization_id=organization_id)
+    return CrossInvoiceAnalyzer(
+        organization_id=assert_org_id(
+            organization_id, context="get_cross_invoice_analyzer"
+        )
+    )

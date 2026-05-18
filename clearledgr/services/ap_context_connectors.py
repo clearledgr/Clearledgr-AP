@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.core.utils import safe_float
 from clearledgr.services.purchase_orders import get_purchase_order_service
 
@@ -332,7 +333,10 @@ def _collect_procurement_context(
         "connector_available": False,
     }
 
-    organization_id = _normalize_text(item.get("organization_id") or "default")
+    organization_id = assert_org_id(
+        item.get("organization_id"),
+        context="_collect_procurement_context",
+    )
     po_number = _normalize_text(
         metadata.get("po_number")
         or metadata.get("purchase_order_number")

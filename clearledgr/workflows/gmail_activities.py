@@ -49,10 +49,16 @@ def _compact_attachment_evidence(raw_attachments: Any) -> List[Dict[str, Any]]:
 
 
 def _org_id(payload: Dict[str, Any]) -> str:
-    _raw = payload.get("organization_id")
-    if not _raw:
-        logger.warning("organization_id missing in gmail activity payload, falling back to 'default'")
-    return str(_raw or "default")
+    """Extract organization_id from a Temporal activity payload, fail loud.
+
+    Pre-M19 this silently bound missing-org payloads to the legacy
+    ``"default"`` tenant. Every activity is dispatched with the verified
+    org by the parent workflow — a missing value is a producer bug,
+    not a runtime fallback case.
+    """
+    from clearledgr.core.org_utils import assert_org_id
+
+    return assert_org_id(payload.get("organization_id"), context="gmail_activity")
 
 
 def _normalize_confidence_pct(value: Any) -> float:

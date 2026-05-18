@@ -17,6 +17,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 # Default thresholds (overridable via env vars)
@@ -88,8 +90,10 @@ def alert_cs_team(
 class MonitoringService:
     """Runs health checks and emits alerts on threshold breaches."""
 
-    def __init__(self, organization_id: str = "default") -> None:
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str) -> None:
+        self.organization_id = assert_org_id(
+            organization_id, context="MonitoringService"
+        )
         from clearledgr.core.database import get_db
         self.db = get_db()
 
@@ -532,8 +536,11 @@ class MonitoringService:
         }
 
 
-async def run_monitoring_checks(organization_id: str = "default") -> Dict[str, Any]:
+async def run_monitoring_checks(organization_id: str) -> Dict[str, Any]:
     """Run all monitoring checks and emit alerts for breaches."""
+    organization_id = assert_org_id(
+        organization_id, context="run_monitoring_checks"
+    )
     service = MonitoringService(organization_id)
     result = service.run_all_checks()
 

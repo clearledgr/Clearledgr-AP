@@ -139,7 +139,7 @@ _M19_OR_DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     #
     # The 2026-05-10 disk corruption caught the M19 Phase B (services/)
     # and Phase C (core/ + workflows/) source sweeps mid-flight. The
-    # 80 files below still carry ``organization_id: str = "default"``
+    # files below still carry ``organization_id: str = "default"``
     # parameter defaults and similar shapes. Tracked as deferred
     # follow-up: each entry is removed as the corresponding function
     # signature is rewritten to require an explicit org id (which
@@ -148,46 +148,17 @@ _M19_OR_DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     # and the application layer (require_org / assert_org_id) — this
     # allowlist holds the punchlist visible so the sweep resumes
     # without losing track of which files still need work.
-    "clearledgr/core/ap_confidence.py",
-    "clearledgr/core/events.py",
-    "clearledgr/core/finance_contracts.py",
-    "clearledgr/core/llm_gateway.py",
-    "clearledgr/core/plan.py",
-    "clearledgr/core/sla_tracker.py",
-    "clearledgr/integrations/erp_router.py",
-    "clearledgr/services/adaptive_thresholds.py",
-    "clearledgr/services/agent_background.py",
     "clearledgr/services/agent_memory.py",
     "clearledgr/services/agent_reasoning.py",
-    "clearledgr/services/ap_aging_report.py",
-    "clearledgr/services/ap_context_connectors.py",
-    "clearledgr/services/ap_decision.py",
     "clearledgr/services/ap_item_service.py",
-    "clearledgr/services/ap_vendor_analysis.py",
-    "clearledgr/services/approval_delegation.py",
     "clearledgr/services/audit_trail.py",
-    "clearledgr/services/box_projection.py",
-    "clearledgr/services/budget_awareness.py",
-    "clearledgr/services/celery_tasks.py",
-    "clearledgr/services/confidence_calibration.py",
-    "clearledgr/services/conversational_agent.py",
     "clearledgr/services/correction_learning.py",
-    "clearledgr/services/cross_invoice_analysis.py",
-    "clearledgr/services/dispute_service.py",
-    "clearledgr/services/email_parser.py",
     "clearledgr/services/erp/contracts.py",
-    "clearledgr/services/erp_follow_on_reconciliation.py",
-    "clearledgr/services/finance_agent_runtime.py",
     "clearledgr/services/finance_learning.py",
     "clearledgr/services/finance_skills/ap_intent_handlers.py",
-    "clearledgr/services/gl_correction.py",
-    "clearledgr/services/gmail_autopilot.py",
-    "clearledgr/services/learning.py",
     "clearledgr/services/learning_calibration.py",
     "clearledgr/services/llm_email_parser.py",
-    "clearledgr/services/monitoring.py",
     "clearledgr/services/outbox.py",
-    "clearledgr/services/outlook_autopilot.py",
     "clearledgr/services/payment_request.py",
     "clearledgr/services/period_close.py",
     "clearledgr/services/policy_compliance.py",
@@ -198,14 +169,10 @@ _M19_OR_DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     "clearledgr/services/rate_limit.py",
     "clearledgr/services/scheduled_reports.py",
     "clearledgr/services/shadow_mode.py",
-    "clearledgr/services/sheets_export.py",
-    "clearledgr/services/single_pass_processor.py",
-    "clearledgr/services/slack_notifications.py",
     "clearledgr/services/spend_analysis.py",
     "clearledgr/services/tax_compliance.py",
     "clearledgr/services/vendor_dedup.py",
     "clearledgr/services/vendor_statement_recon.py",
-    "clearledgr/workflows/gmail_activities.py",
 })
 
 

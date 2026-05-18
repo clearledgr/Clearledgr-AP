@@ -16,9 +16,9 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from clearledgr.core.org_utils import coerce_org_id
 
-DEFAULT_ORG_ID = os.getenv("DEFAULT_ORGANIZATION_ID", "default")
+logger = logging.getLogger(__name__)
 SLACK_CHANNEL = (
     os.getenv("SLACK_APPROVAL_CHANNEL")
     or os.getenv("SLACK_DEFAULT_CHANNEL")
@@ -31,13 +31,18 @@ _override_window_reaper_task = None
 
 
 def _active_org_ids() -> List[str]:
-    """Return the orgs that should receive background automation."""
+    """Return the orgs that should receive background automation.
+
+    M19: the background loop iterates per-tenant; if no orgs are
+    discoverable we return an empty list so callers skip the iteration
+    rather than falling back to a synthetic ``"default"`` tenant.
+    """
     try:
         from clearledgr.core.database import get_db
 
         db = get_db()
     except Exception:
-        return [DEFAULT_ORG_ID]
+        return []
 
     org_ids: List[str] = []
     if hasattr(db, "list_organizations_with_ap_items"):
@@ -66,12 +71,12 @@ def _active_org_ids() -> List[str]:
     normalized: List[str] = []
     seen = set()
     for org_id in org_ids:
-        token = str(org_id or "").strip()
+        token = coerce_org_id(org_id)
         if not token or token in seen:
             continue
         seen.add(token)
         normalized.append(token)
-    return normalized or [DEFAULT_ORG_ID]
+    return normalized
 
 
 def _parse_task_datetime(raw: Any) -> Optional[datetime]:
@@ -103,7 +108,10 @@ def _normalize_task_for_ap_summary(task: Dict[str, Any]) -> Dict[str, Any]:
         amount_value = 0.0
     return {
         "task_id": task.get("task_id"),
-        "organization_id": task.get("organization_id") or DEFAULT_ORG_ID,
+        # M19: leave None if the task isn't bound to a tenant; the
+        # caller is responsible for filtering before this summary
+        # surfaces in a per-tenant alert.
+        "organization_id": coerce_org_id(task.get("organization_id")),
         "vendor_name": task.get("related_vendor") or task.get("source_email_sender") or task.get("title") or "Unknown task",
         "amount": amount_value,
         "due_date": due_at.date().isoformat() if due_at else (task.get("due_date") or "?"),
@@ -143,14 +151,23 @@ def _collect_org_overdue_and_stale_tasks(
 
 
 async def _slack_alert(text: str, blocks=None, organization_id: Optional[str] = None):
-    """Send an alert to the configured Slack channel."""
+    """Send an alert to the configured Slack channel.
+
+    M19: alerts are per-tenant; if the caller didn't pass a real org id
+    we skip the send rather than routing to a synthetic ``"default"``
+    tenant (which under M10 also unlocks platform-runtime privileges).
+    """
+    org_token = coerce_org_id(organization_id)
+    if not org_token:
+        logger.debug("Slack alert skipped: no organization_id supplied")
+        return
     try:
         from ui.slack.app import send_message
         await send_message(
             SLACK_CHANNEL,
             text,
             blocks=blocks,
-            organization_id=str(organization_id or DEFAULT_ORG_ID).strip() or DEFAULT_ORG_ID,
+            organization_id=org_token,
         )
     except Exception as e:
         logger.error("Slack alert failed: %s", e)
@@ -891,7 +908,19 @@ async def _drain_erp_post_retry_queue():
             job_id = str(job.get("id") or "").strip()
             if not job_id:
                 continue
-            job_org_id = str(job.get("organization_id") or DEFAULT_ORG_ID).strip()
+            job_org_id = coerce_org_id(job.get("organization_id"))
+            if not job_org_id:
+                # M19: never coerce missing org to a synthetic "default"
+                # tenant — dead-letter so an operator can route the job
+                # back to a real tenant.
+                db.complete_agent_retry_job(
+                    job_id,
+                    status="dead_letter",
+                    last_error="missing_organization_id",
+                    result={"error": "missing_organization_id"},
+                )
+                summary["dead_letter"] += 1
+                continue
             claimed = db.claim_agent_retry_job(
                 job_id,
                 worker_id=f"agent_background:{job_org_id}",

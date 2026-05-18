@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.services.slack_api import SlackAPIClient, get_slack_client
 
 logger = logging.getLogger(__name__)
@@ -149,8 +150,10 @@ class ConversationalAgent:
         agent.handle_response(question_id, response_value)
     """
     
-    def __init__(self, organization_id: str = "default"):
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str):
+        self.organization_id = assert_org_id(
+            organization_id, context="ConversationalAgent"
+        )
         self.db = get_db()
         self._slack_client: Optional[SlackAPIClient] = None
         self._conversations: Dict[str, ConversationState] = {}
@@ -533,6 +536,10 @@ class ConversationalAgent:
 
 
 # Convenience function
-def get_conversational_agent(organization_id: str = "default") -> ConversationalAgent:
+def get_conversational_agent(organization_id: str) -> ConversationalAgent:
     """Get a conversational agent instance."""
-    return ConversationalAgent(organization_id=organization_id)
+    return ConversationalAgent(
+        organization_id=assert_org_id(
+            organization_id, context="get_conversational_agent"
+        )
+    )

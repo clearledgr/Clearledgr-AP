@@ -35,6 +35,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.llm_gateway import LLMAction, get_llm_gateway
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ async def process_invoice_single_pass(
     attachment_text: str = "",
     has_visual_attachments: bool = False,
     visual_attachments: Optional[List[Dict[str, Any]]] = None,
-    organization_id: str = "default",
+    organization_id: str,
     thread_id: Optional[str] = None,
     vendor_context: str = "",
     thread_context: str = "",
@@ -96,6 +97,9 @@ async def process_invoice_single_pass(
     ``use_cache=False`` to bypass — useful in tests that want to
     exercise the LLM call path on every invocation.
     """
+    organization_id = assert_org_id(
+        organization_id, context="process_invoice_single_pass"
+    )
     content_hash: Optional[str] = None
     if use_cache:
         try:

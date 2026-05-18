@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import coerce_org_id
 from clearledgr.services.gmail_api import GmailAPIClient, GmailWatchService, token_store, PUBSUB_TOPIC
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,22 @@ class GmailAutopilot:
             from clearledgr.api.gmail_webhooks import process_single_email
 
             organization_id = self._resolve_org_id(token.user_id)
+            if not organization_id:
+                # M19: never bind unprovisioned users to a synthetic
+                # "default" tenant — log + skip so the user shows up
+                # in the operator dashboard as unbound rather than
+                # silently leaking email into a shared bucket.
+                logger.warning(
+                    "Autopilot: skipping user %s — no organization binding",
+                    token.user_id,
+                )
+                self._db.save_gmail_autopilot_state(
+                    user_id=token.user_id,
+                    email=token.email,
+                    last_scan_at=now.isoformat(),
+                    last_error="missing_organization_id",
+                )
+                return
 
             # D1: Check subscription limits before processing emails
             try:
@@ -283,14 +300,21 @@ class GmailAutopilot:
                 last_error=f"poll_failed: {exc}",
             )
 
-    def _resolve_org_id(self, user_id: str) -> str:
+    def _resolve_org_id(self, user_id: str) -> Optional[str]:
+        """Resolve the tenant id for a Gmail-connected user.
+
+        M19: returns ``None`` rather than the legacy ``"default"``
+        fallback when a user has no organization binding — the autopilot
+        caller skips processing for unbound users instead of leaking
+        their email into a synthetic shared tenant.
+        """
         try:
             user = self._db.get_user(user_id)
         except Exception:
             user = None
-        if user and user.get("organization_id"):
-            return str(user["organization_id"])
-        return "default"
+        if not user:
+            return None
+        return coerce_org_id(user.get("organization_id"))
 
 
 def _parse_watch_expiration(value: Optional[str]) -> Optional[str]:

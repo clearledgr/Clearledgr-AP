@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from clearledgr.core.http_client import get_http_client
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,20 @@ async def export_report_to_sheets(
     user_id: str,
     spreadsheet_id: str,
     report_type: str,
-    organization_id: str = "default",
+    organization_id: str,
     period_days: int = 30,
 ) -> Dict[str, Any]:
     """Generate a report and write it to a Google Sheet tab.
 
     Creates/overwrites a tab named after the report type.
     Returns {ok, sheet_name, rows_written, spreadsheet_id}.
+
+    organization_id is required — the report scope keys off it and
+    a missing value would silently export another tenant's data.
     """
+    organization_id = assert_org_id(
+        organization_id, context="export_report_to_sheets"
+    )
     from clearledgr.services.sheets_api import SheetsAPIClient
     from clearledgr.services.report_export import generate_report
 

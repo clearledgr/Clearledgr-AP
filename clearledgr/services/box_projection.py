@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -310,10 +312,9 @@ class BoxSummaryProjector:
 
         now = datetime.now(timezone.utc).isoformat()
         state = item.get("state") or context.new_state or "unknown"
-        organization_id = (
-            context.organization_id
-            or item.get("organization_id")
-            or "default"
+        organization_id = assert_org_id(
+            context.organization_id or item.get("organization_id"),
+            context="BoxSummaryProjection.project",
         )
 
         upserted = self._upsert_summary(
@@ -552,10 +553,9 @@ class VendorSummaryProjector:
         if not vendor_name:
             return ProjectionResult(skip_reason="no_vendor_name")
 
-        organization_id = (
-            context.organization_id
-            or item.get("organization_id")
-            or "default"
+        organization_id = assert_org_id(
+            context.organization_id or item.get("organization_id"),
+            context="VendorRollupProjection.project",
         )
         normalized = self._normalize(vendor_name)
 

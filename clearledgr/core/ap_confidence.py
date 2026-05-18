@@ -524,7 +524,7 @@ def evaluate_critical_field_confidence(
             len(decisions),
             len(blockers),
             len(advisories),
-            (profile.get("id") if isinstance(profile, dict) else None) or "default",
+            (profile.get("id") if isinstance(profile, dict) else None) or "default",  # noqa: org-default (confidence profile id, not org id)
             extra={
                 "confidence_gate": {
                     "decisions": decisions,

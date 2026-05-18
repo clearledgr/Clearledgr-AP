@@ -116,14 +116,35 @@ async def run_deferred_startup(app: Any) -> None:
     # (populated at construction time, not via runtime registration).
 
     try:
+        from clearledgr.services.agent_background import _active_org_ids
         from clearledgr.services.erp_follow_on_reconciliation import (
             run_erp_follow_on_reconciliation_check,
         )
 
-        checked = await asyncio.wait_for(run_erp_follow_on_reconciliation_check(), timeout=10.0)
-        logger.info("ERP follow-on reconciliation check completed (%d items checked)", checked)
-    except asyncio.TimeoutError:
-        logger.warning("ERP follow-on reconciliation check timed out (10s) — skipping")
+        # M19: reconciliation is per-tenant; iterate over active orgs
+        # instead of running against a synthetic "default" tenant.
+        total_checked = 0
+        for org_id in _active_org_ids():
+            try:
+                checked = await asyncio.wait_for(
+                    run_erp_follow_on_reconciliation_check(organization_id=org_id),
+                    timeout=10.0,
+                )
+                total_checked += int(checked or 0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "ERP follow-on reconciliation check timed out (10s) for org=%s",
+                    org_id,
+                )
+            except Exception as inner_exc:  # noqa: BLE001
+                logger.warning(
+                    "ERP follow-on reconciliation check failed for org=%s: %s",
+                    org_id, inner_exc,
+                )
+        logger.info(
+            "ERP follow-on reconciliation check completed (%d items checked across all orgs)",
+            total_checked,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ERP follow-on reconciliation check not started: %s", exc)
 

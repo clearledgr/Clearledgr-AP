@@ -92,8 +92,10 @@ class SkillRequest:
         correlation_id: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> "SkillRequest":
+        from clearledgr.core.org_utils import assert_org_id
+
         return cls(
-            org_id=str(org_id or "default"),
+            org_id=assert_org_id(org_id, context="SkillRequest.from_intent"),
             skill_id=str(skill_id or "unknown"),
             task_type=str(task_type or "").strip().lower(),
             entity_id=str(entity_id or "").strip(),

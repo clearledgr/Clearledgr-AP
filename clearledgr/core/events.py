@@ -111,15 +111,28 @@ class AgentEvent:
 
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> AgentEvent:
-        """Deserialize from Redis Streams."""
+        """Deserialize from Redis Streams.
+
+        ``organization_id`` is asserted via ``assert_org_id`` because
+        every event in the stream is tenant-bound — a missing org
+        means the producer didn't tag the event correctly, and silently
+        binding to a sentinel would lose the tenant attribution. Fail
+        loud at deserialisation so the producer is forced to fix the
+        write side rather than the consumer absorbing the bug.
+        """
         import json
+
+        from clearledgr.core.org_utils import assert_org_id
 
         return cls(
             id=data.get("id", f"EVT-{uuid.uuid4().hex[:12]}"),
             type=AgentEventType(data["type"]),
             source=data.get("source", "unknown"),
             payload=json.loads(data.get("payload", "{}")),
-            organization_id=data.get("organization_id", "default"),
+            organization_id=assert_org_id(
+                data.get("organization_id"),
+                context="AgentEvent.from_dict",
+            ),
             created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
             priority=data.get("priority", "standard"),
             idempotency_key=data.get("idempotency_key") or None,

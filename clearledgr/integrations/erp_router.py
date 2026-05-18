@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from clearledgr.core.database import get_db as _canonical_get_db
 from clearledgr.core.http_client import get_http_client
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -1334,7 +1335,7 @@ async def reverse_bill(
     Clearledgr auto-post with confidence — the human escape hatch makes
     autonomous posting safe.
     """
-    org_id = str(organization_id or "").strip() or "default"
+    org_id = assert_org_id(organization_id, context="erp_router")
     ref = str(erp_reference or "").strip()
     if not ref:
         return {
@@ -2040,7 +2041,7 @@ async def verify_bill_posted(
     the caller can route to a delayed re-check or operator alert
     instead of treating an unverified post as confirmed.
     """
-    org_id = str(organization_id or "").strip() or "default"
+    org_id = assert_org_id(organization_id, context="erp_router")
     inv_num = str(invoice_number or "").strip()
     if not inv_num:
         return {"verified": False, "bill": None, "erp_type": None, "reason": "no_invoice_number"}
@@ -2386,7 +2387,7 @@ async def get_chart_of_accounts(
 
     Returns an empty list on any error so the caller is never blocked.
     """
-    org_id = str(organization_id or "").strip() or "default"
+    org_id = assert_org_id(organization_id, context="erp_router")
 
     # Check cache first (unless force_refresh)
     if not force_refresh:
@@ -2580,7 +2581,7 @@ async def list_all_vendors(
 
     Returns an empty list on any error so the caller is never blocked.
     """
-    org_id = str(organization_id or "").strip() or "default"
+    org_id = assert_org_id(organization_id, context="erp_router")
 
     # Check cache first (unless force_refresh)
     if not force_refresh:

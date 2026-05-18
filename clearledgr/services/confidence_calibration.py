@@ -17,14 +17,18 @@ import json
 import logging
 from typing import Dict
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 
 class ConfidenceCalibrator:
     """Calibrate extraction confidence based on actual correction rates."""
 
-    def __init__(self, organization_id: str = "default") -> None:
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str) -> None:
+        self.organization_id = assert_org_id(
+            organization_id, context="ConfidenceCalibrator"
+        )
         from clearledgr.core.database import get_db
         self.db = get_db()
 
@@ -121,5 +125,9 @@ class ConfidenceCalibrator:
         self.db.upsert_vendor_profile(self.organization_id, vendor_name, metadata=meta)
 
 
-def get_confidence_calibrator(organization_id: str = "default") -> ConfidenceCalibrator:
-    return ConfidenceCalibrator(organization_id=organization_id)
+def get_confidence_calibrator(organization_id: str) -> ConfidenceCalibrator:
+    return ConfidenceCalibrator(
+        organization_id=assert_org_id(
+            organization_id, context="get_confidence_calibrator"
+        )
+    )

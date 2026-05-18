@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import coerce_org_id
 from clearledgr.services.outlook_api import (
     OutlookAPIClient,
     outlook_token_store,
@@ -162,6 +163,22 @@ class OutlookAutopilot:
             from clearledgr.services.outlook_email_processor import process_outlook_email
 
             organization_id = self._resolve_org_id(token.user_id)
+            if not organization_id:
+                # M19: never bind unprovisioned users to a synthetic
+                # "default" tenant — log + skip so the user surfaces
+                # in the operator dashboard as unbound rather than
+                # silently leaking email into a shared bucket.
+                logger.warning(
+                    "Outlook autopilot: skipping user %s — no organization binding",
+                    token.user_id,
+                )
+                self._db.save_outlook_autopilot_state(
+                    user_id=token.user_id,
+                    email=token.email,
+                    last_scan_at=now.isoformat(),
+                    last_error="missing_organization_id",
+                )
+                return
 
             # Subscription limits check
             try:
@@ -210,14 +227,21 @@ class OutlookAutopilot:
                 last_error=f"poll_failed: {exc}",
             )
 
-    def _resolve_org_id(self, user_id: str) -> str:
+    def _resolve_org_id(self, user_id: str) -> Optional[str]:
+        """Resolve the tenant id for an Outlook-connected user.
+
+        M19: returns ``None`` rather than the legacy ``"default"``
+        fallback when a user has no organization binding — the autopilot
+        caller skips processing for unbound users instead of leaking
+        their email into a synthetic shared tenant.
+        """
         try:
             user = self._db.get_user(user_id)
         except Exception:
             user = None
-        if user and user.get("organization_id"):
-            return user["organization_id"]
-        return "default"
+        if not user:
+            return None
+        return coerce_org_id(user.get("organization_id"))
 
 
 # ---------------------------------------------------------------------------

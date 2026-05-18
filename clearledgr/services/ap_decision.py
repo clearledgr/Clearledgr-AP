@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.core.utils import safe_float_or_none
 
 logger = logging.getLogger(__name__)
@@ -750,7 +751,10 @@ class APDecisionService:
         try:
             from clearledgr.services.adaptive_thresholds import get_adaptive_threshold_service
             auto_threshold = get_adaptive_threshold_service(
-                org_config.get("organization_id", "default")
+                assert_org_id(
+                    org_config.get("organization_id"),
+                    context="APDecisionService._decide",
+                )
             ).get_threshold_for_vendor(invoice.vendor_name)
         except Exception as adaptive_exc:
             # Failure here silently downgrades us to the static threshold.

@@ -88,14 +88,22 @@ class SLATracker:
         latency_ms: int,
         *,
         ap_item_id: Optional[str] = None,
-        organization_id: str = "default",
+        organization_id: Optional[str] = None,
         breached: Optional[bool] = None,
     ) -> None:
         """Record a latency measurement for an SLA step.
 
         §11: Breach detection uses the workspace's tier (starter/enterprise).
         Enterprise workspaces have tighter targets than Starter.
+
+        ``organization_id`` is required — SLA metrics are per-tenant, and a
+        missing org used to silently bind to the legacy ``"default"`` bucket.
         """
+        from clearledgr.core.org_utils import assert_org_id
+
+        organization_id = assert_org_id(
+            organization_id, context="SLATracker.record"
+        )
         db = self._get_db()
         if not db:
             return
@@ -193,13 +201,17 @@ def track_step(
     step_name: str,
     *,
     ap_item_id: Optional[str] = None,
-    organization_id: str = "default",
+    organization_id: Optional[str] = None,
 ):
     """Context manager to time an SLA step.
 
     Usage:
         with track_step("classification", ap_item_id="AP-123", organization_id="org-1"):
             result = classify_email(...)
+
+    ``organization_id`` is asserted by the underlying ``record()`` call,
+    so a missing org raises at the ``__exit__`` boundary rather than
+    silently logging to a sentinel bucket.
     """
     start = time.monotonic()
     try:

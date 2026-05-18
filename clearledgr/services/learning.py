@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,9 +69,11 @@ class LearningService:
     - Backed by database for persistence
     """
     
-    def __init__(self, organization_id: str = "default"):
-        self.organization_id = organization_id
-        
+    def __init__(self, organization_id: str):
+        self.organization_id = assert_org_id(
+            organization_id, context="LearningService"
+        )
+
         # Vendor → GL patterns (most common mapping wins)
         # Key: normalized vendor name, Value: dict of gl_code → VendorPattern
         self.vendor_patterns: Dict[str, Dict[str, VendorPattern]] = defaultdict(dict)
@@ -353,8 +357,11 @@ class LearningService:
 _learning_services: Dict[str, LearningService] = {}
 
 
-def get_learning_service(organization_id: str = "default") -> LearningService:
+def get_learning_service(organization_id: str) -> LearningService:
     """Get or create learning service for an organization."""
+    organization_id = assert_org_id(
+        organization_id, context="get_learning_service"
+    )
     if organization_id not in _learning_services:
         _learning_services[organization_id] = LearningService(organization_id)
     return _learning_services[organization_id]

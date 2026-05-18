@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from clearledgr.core.org_utils import assert_org_id
+
 logger = logging.getLogger(__name__)
 
 # Default auto-approve confidence threshold
@@ -35,8 +37,10 @@ MAX_THRESHOLD = 0.99
 class AdaptiveThresholdService:
     """Learn auto-approve thresholds from operator feedback."""
 
-    def __init__(self, organization_id: str = "default") -> None:
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str) -> None:
+        self.organization_id = assert_org_id(
+            organization_id, context="AdaptiveThresholdService"
+        )
         from clearledgr.core.database import get_db
         self.db = get_db()
 
@@ -166,5 +170,9 @@ class AdaptiveThresholdService:
             return DEFAULT_THRESHOLD
 
 
-def get_adaptive_threshold_service(organization_id: str = "default") -> AdaptiveThresholdService:
-    return AdaptiveThresholdService(organization_id=organization_id)
+def get_adaptive_threshold_service(organization_id: str) -> AdaptiveThresholdService:
+    return AdaptiveThresholdService(
+        organization_id=assert_org_id(
+            organization_id, context="get_adaptive_threshold_service"
+        )
+    )

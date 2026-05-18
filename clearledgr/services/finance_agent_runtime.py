@@ -2193,7 +2193,7 @@ _PLATFORM_RUNTIME_CACHE_LOCK = threading.Lock()
 _PLATFORM_RUNTIME_CACHE_MAX = 512
 
 
-def get_platform_finance_runtime(organization_id: str = "default") -> FinanceAgentRuntime:
+def get_platform_finance_runtime(organization_id: str) -> FinanceAgentRuntime:
     """Process-level singleton runtime used by startup/background AP flows.
 
     Reject empty / None ``organization_id`` rather than silently
@@ -2218,7 +2218,7 @@ def get_platform_finance_runtime(organization_id: str = "default") -> FinanceAge
     if not org_id:
         raise ValueError(
             "organization_id is required for get_platform_finance_runtime; "
-            "pass 'default' explicitly for the platform runtime"
+            "platform callers must pass an explicit tenant id"
         )
 
     with _PLATFORM_RUNTIME_CACHE_LOCK:

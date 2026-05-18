@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import uuid
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import assert_org_id
 from clearledgr.services.finance_learning import get_finance_learning_service
 
 logger = logging.getLogger(__name__)
@@ -128,8 +129,10 @@ class GLCorrectionService:
     - Provide GL account suggestions
     """
     
-    def __init__(self, organization_id: str = "default"):
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str):
+        self.organization_id = assert_org_id(
+            organization_id, context="GLCorrectionService"
+        )
         self.db = get_db()
         self._corrections: Dict[str, GLCorrection] = {}
         self._gl_accounts: List[GLAccount] = list(DEFAULT_GL_ACCOUNTS)
@@ -469,8 +472,11 @@ class GLCorrectionService:
 _gl_correction_services: Dict[str, GLCorrectionService] = {}
 
 
-def get_gl_correction(organization_id: str = "default") -> GLCorrectionService:
+def get_gl_correction(organization_id: str) -> GLCorrectionService:
     """Get GL correction service for an organization."""
+    organization_id = assert_org_id(
+        organization_id, context="get_gl_correction"
+    )
     if organization_id not in _gl_correction_services:
         _gl_correction_services[organization_id] = GLCorrectionService(organization_id)
     return _gl_correction_services[organization_id]

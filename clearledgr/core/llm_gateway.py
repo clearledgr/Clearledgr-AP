@@ -706,7 +706,7 @@ class LLMGateway:
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Dict[str, Any]] = None,
-        organization_id: str = "default",
+        organization_id: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens_override: Optional[int] = None,
         model_override: Optional[str] = None,
@@ -750,6 +750,11 @@ class LLMGateway:
         # guard (catches bugs, retry loops, prompt injection), not a
         # pricing tier. Override via customer CFO endpoint or ops
         # endpoint clears the tombstone.
+        from clearledgr.core.org_utils import assert_org_id
+
+        organization_id = assert_org_id(
+            organization_id, context="LLMGateway.call"
+        )
         self._enforce_budget_cap(organization_id)
 
         config = ACTION_REGISTRY[action]
@@ -990,7 +995,7 @@ class LLMGateway:
         messages: List[Dict[str, Any]],
         *,
         system_prompt: Optional[str] = None,
-        organization_id: str = "default",
+        organization_id: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens_override: Optional[int] = None,
         model_override: Optional[str] = None,
@@ -1016,6 +1021,12 @@ class LLMGateway:
         """
         if action not in ACTION_REGISTRY:
             raise ValueError(f"Action {action!r} is not registered in the LLM Gateway.")
+
+        from clearledgr.core.org_utils import assert_org_id
+
+        organization_id = assert_org_id(
+            organization_id, context="LLMGateway.stream"
+        )
 
         config = ACTION_REGISTRY[action]
         model = model_override or self._resolve_model(config)

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from clearledgr.core.database import get_db
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -214,8 +215,10 @@ class BudgetAwarenessService:
         print(f"Overall: {report.overall_status.value}")
     """
     
-    def __init__(self, organization_id: str = "default"):
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str):
+        self.organization_id = assert_org_id(
+            organization_id, context="BudgetAwarenessService"
+        )
         self.db = get_db()
         self.budgets = self._load_budgets()
         
@@ -501,6 +504,10 @@ class BudgetAwarenessService:
 
 
 # Convenience function
-def get_budget_awareness(organization_id: str = "default") -> BudgetAwarenessService:
+def get_budget_awareness(organization_id: str) -> BudgetAwarenessService:
     """Get a budget awareness service instance."""
-    return BudgetAwarenessService(organization_id=organization_id)
+    return BudgetAwarenessService(
+        organization_id=assert_org_id(
+            organization_id, context="get_budget_awareness"
+        )
+    )

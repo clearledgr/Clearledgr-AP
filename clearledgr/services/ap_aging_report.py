@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from clearledgr.core.money import ZERO, money_sum, money_to_float, to_decimal
+from clearledgr.core.org_utils import assert_org_id
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,10 @@ class APAgingReport:
         "posted_to_erp",
     )
 
-    def __init__(self, organization_id: str = "default") -> None:
-        self.organization_id = organization_id
+    def __init__(self, organization_id: str) -> None:
+        self.organization_id = assert_org_id(
+            organization_id, context="APAgingReport"
+        )
         from clearledgr.core.database import get_db
         self.db = get_db()
 
@@ -348,6 +351,10 @@ class APAgingReport:
             return None
 
 
-def get_ap_aging_report(organization_id: str = "default") -> APAgingReport:
+def get_ap_aging_report(organization_id: str) -> APAgingReport:
     """Factory — returns a new APAgingReport for the given org."""
-    return APAgingReport(organization_id=organization_id)
+    return APAgingReport(
+        organization_id=assert_org_id(
+            organization_id, context="get_ap_aging_report"
+        )
+    )
