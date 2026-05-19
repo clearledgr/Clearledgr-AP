@@ -332,67 +332,84 @@
   margin: 12px 0 20px;
 }
 
-/* Auth shell */
+/* Auth shell — Linear-inspired: pale-gray bg, no card chrome, pill
+   buttons, generous whitespace, centred composition. The visual
+   reference is linear.app/login + linear.app/signup. */
 
 .cl-auth-shell {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 32px 16px;
-  background: var(--cl-bg);
+  padding: 48px 16px;
+  background: #FAFAFA;
 }
 
 .cl-auth-card {
   width: 100%;
-  max-width: 380px;
-  padding: 36px 32px;
-  background: var(--cl-surface);
-  border: 1px solid var(--cl-border);
-  border-radius: var(--cl-radius-lg);
-  box-shadow: var(--cl-shadow);
+  max-width: 320px;
+  /* No bg, border, shadow — elements float on the page bg.
+     The "card" class is preserved only for layout (width + padding)
+     so existing class names keep their meaning. */
+  padding: 8px 0;
 }
 
 .cl-auth-brand {
   display: flex;
   align-items: center;
-  margin-bottom: 24px;
+  justify-content: center;
+  margin-bottom: 20px;
 }
 
 .cl-auth-title {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin: 0 0 28px;
+  text-align: center;
+  letter-spacing: -0.01em;
+  color: var(--cl-ink-primary);
 }
 
 .cl-auth-sub {
-  margin: 0 0 24px;
+  margin: -20px 0 24px;
   color: var(--cl-ink-secondary);
+  text-align: center;
+  font-size: 13px;
 }
 
 .cl-auth-error {
   margin-bottom: 16px;
-  padding: 10px 12px;
+  padding: 10px 14px;
   background: rgba(220, 38, 38, 0.06);
   color: var(--cl-danger);
   border: 1px solid rgba(220, 38, 38, 0.2);
-  border-radius: var(--cl-radius-sm);
+  border-radius: 12px;
   font-size: 13px;
+  text-align: center;
 }
 
 .cl-auth-btn {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   width: 100%;
-  padding: 11px 14px;
-  border-radius: var(--cl-radius-sm);
+  height: 46px;
+  padding: 0 18px;
+  /* Pill shape — fully rounded ends, matches Linear. */
+  border-radius: 999px;
   border: 1px solid transparent;
+  font-family: inherit;
   font-size: 14px;
   font-weight: 500;
   text-align: center;
   text-decoration: none;
-  transition: background 0.12s, border-color 0.12s;
-  margin-bottom: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+  margin-bottom: 10px;
 }
+
+.cl-auth-btn:active { transform: scale(0.99); }
 
 .cl-auth-btn-primary {
   background: var(--cl-navy);
@@ -401,11 +418,14 @@
 .cl-auth-btn-primary:hover { background: #14233e; }
 
 .cl-auth-btn-secondary {
-  background: var(--cl-surface);
+  background: #fff;
   color: var(--cl-ink-primary);
-  border-color: var(--cl-border);
+  border-color: rgba(10, 31, 68, 0.12);
 }
-.cl-auth-btn-secondary:hover { border-color: var(--cl-border-strong); }
+.cl-auth-btn-secondary:hover {
+  border-color: rgba(10, 31, 68, 0.24);
+  background: #fff;
+}
 
 .cl-auth-divider {
   position: relative;
@@ -422,34 +442,38 @@
   top: 50%;
   width: calc(50% - 28px);
   height: 1px;
-  background: var(--cl-border);
+  background: rgba(10, 31, 68, 0.12);
 }
 .cl-auth-divider::before { left: 0; }
 .cl-auth-divider::after { right: 0; }
 
 .cl-auth-divider span {
-  background: var(--cl-surface);
-  padding: 0 8px;
+  background: #FAFAFA;
+  padding: 0 10px;
   position: relative;
+  color: var(--cl-ink-muted);
 }
 
 .cl-auth-fineprint {
   font-size: 12px;
   color: var(--cl-ink-muted);
-  margin: 16px 0 0;
+  margin: 18px 0 0;
   text-align: center;
+  line-height: 1.5;
 }
 
 .cl-auth-loading {
   padding: 40px;
   text-align: center;
   color: var(--cl-ink-muted);
+  background: #FAFAFA;
+  min-height: 100vh;
 }
 
 .cl-auth-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   margin-top: 4px;
 }
 
@@ -472,11 +496,13 @@
 }
 
 .cl-auth-field input {
-  height: 38px;
-  padding: 0 12px;
-  background: var(--cl-surface);
-  border: 1px solid var(--cl-border);
-  border-radius: var(--cl-radius-sm);
+  height: 46px;
+  padding: 0 16px;
+  background: #fff;
+  border: 1px solid rgba(10, 31, 68, 0.12);
+  /* Pill inputs match the button shape so the whole form reads
+     as one consistent pill-shaped vocabulary. */
+  border-radius: 999px;
   font-family: inherit;
   font-size: 14px;
   color: var(--cl-ink-primary);
@@ -485,12 +511,12 @@
 
 .cl-auth-field input:focus {
   outline: none;
-  border-color: var(--cl-mint-strong);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+  border-color: var(--cl-navy);
+  box-shadow: 0 0 0 3px rgba(10, 31, 68, 0.08);
 }
 
 .cl-auth-form .cl-auth-btn {
-  margin-top: 4px;
+  margin-top: 6px;
   margin-bottom: 0;
 }
 

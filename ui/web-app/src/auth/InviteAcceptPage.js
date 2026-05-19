@@ -3,7 +3,6 @@ import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { api, ApiError } from '../api/client.js';
 import { logout, refreshSession, useSession } from './useSession.js';
-import { BrandMark } from '../shell/BrandMark.js';
 import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
 
 /**
@@ -73,7 +72,10 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
+          <div class="cl-auth-brand">
+            <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+                 style="display:block;width:36px;height:36px" />
+          </div>
           <h1 class="cl-auth-title">Invite link incomplete</h1>
           <p class="cl-auth-sub">
             The invite token is missing from this URL. Open the link
@@ -93,7 +95,10 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
+          <div class="cl-auth-brand">
+            <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+                 style="display:block;width:36px;height:36px" />
+          </div>
           <h1 class="cl-auth-title">Invite unavailable</h1>
           <p class="cl-auth-sub">${previewError}</p>
         </div>
@@ -108,7 +113,10 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
+          <div class="cl-auth-brand">
+            <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+                 style="display:block;width:36px;height:36px" />
+          </div>
           <h1 class="cl-auth-title">Invite ${preview.status}</h1>
           <p class="cl-auth-sub">${message}</p>
         </div>
@@ -146,7 +154,10 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
+          <div class="cl-auth-brand">
+            <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+                 style="display:block;width:36px;height:36px" />
+          </div>
           <h1 class="cl-auth-title">Welcome to ${orgLabel}</h1>
           <p class="cl-auth-sub">
             You're already signed in as <strong>${inviteEmail}</strong>.
@@ -179,7 +190,10 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
+          <div class="cl-auth-brand">
+            <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+                 style="display:block;width:36px;height:36px" />
+          </div>
           <h1 class="cl-auth-title">This invite is for someone else</h1>
           <p class="cl-auth-sub">
             The invite was sent to <strong>${inviteEmail}</strong>, but
@@ -250,7 +264,10 @@ export function InviteAcceptPage() {
   return html`
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
-        <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+        <div class="cl-auth-brand">
+          <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+               style="display:block;width:36px;height:36px" />
+        </div>
         <h1 class="cl-auth-title">Join ${orgLabel}</h1>
         <p class="cl-auth-sub">
           You've been invited as <strong>${inviteEmail}</strong>. Pick
@@ -259,30 +276,20 @@ export function InviteAcceptPage() {
 
         ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
 
-        <div class="cl-auth-providers" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
-          <a
-            class="cl-auth-btn cl-auth-btn-secondary"
-            href=${googleStart}
-            style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
-            <${GoogleMark} />
-            <span>Continue with Google</span>
-          </a>
-          <a
-            class="cl-auth-btn cl-auth-btn-secondary"
-            href=${microsoftStart}
-            style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
-            <${MicrosoftMark} />
-            <span>Continue with Microsoft</span>
-          </a>
-        </div>
+        <a
+          class="cl-auth-btn cl-auth-btn-primary"
+          href=${googleStart}>
+          <${GoogleMark} />
+          <span>Continue with Google</span>
+        </a>
+        <a
+          class="cl-auth-btn cl-auth-btn-secondary"
+          href=${microsoftStart}>
+          <${MicrosoftMark} />
+          <span>Continue with Microsoft</span>
+        </a>
 
-        <div
-          aria-hidden="true"
-          style="display:flex;align-items:center;gap:10px;margin:6px 0 16px;color:var(--muted, #5a6b80);font-size:12px">
-          <span style="flex:1;height:1px;background:currentColor;opacity:0.2"></span>
-          <span>or set a password</span>
-          <span style="flex:1;height:1px;background:currentColor;opacity:0.2"></span>
-        </div>
+        <div class="cl-auth-divider"><span>or</span></div>
 
         <form class="cl-auth-form" onSubmit=${submit} autoComplete="on">
           <label class="cl-auth-field">

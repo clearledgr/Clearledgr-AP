@@ -3,7 +3,6 @@ import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { useSession, refreshSession } from './useSession.js';
 import { api, ApiError } from '../api/client.js';
-import { BrandMark } from '../shell/BrandMark.js';
 import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
@@ -91,18 +90,17 @@ export function LoginPage() {
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
         <div class="cl-auth-brand">
-          <${BrandMark} height=${28} />
+          <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
+               style="display:block;width:36px;height:36px" />
         </div>
-        <h1 class="cl-auth-title">Sign in</h1>
-        <p class="cl-auth-sub">Coordination layer for finance teams.</p>
+        <h1 class="cl-auth-title">Sign in to Solden</h1>
 
         ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
 
         <button
           class="cl-auth-btn cl-auth-btn-primary"
           onClick=${startGoogle}
-          disabled=${submitting}
-          style="display:flex;align-items:center;justify-content:center;gap:10px">
+          disabled=${submitting}>
           <${GoogleMark} />
           <span>Continue with Google</span>
         </button>
@@ -110,8 +108,7 @@ export function LoginPage() {
         <button
           class="cl-auth-btn cl-auth-btn-secondary"
           onClick=${startMicrosoft}
-          disabled=${submitting}
-          style="display:flex;align-items:center;justify-content:center;gap:10px">
+          disabled=${submitting}>
           <${MicrosoftMark} />
           <span>Continue with Microsoft</span>
         </button>
