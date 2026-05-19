@@ -63,7 +63,20 @@ _PUBLIC_BASE_URL_KNOWN_SUFFIXES = (".soldenai.com", ".clearledgr.com")
 def _request_origin_base_url(request: Optional["Request"]) -> Optional[str]:
     if request is None:
         return None
-    host = (getattr(request.url, "hostname", None) or "").lower()
+    # The workspace SPA reverse-proxies /auth, /api/*, /slack etc to
+    # the api service with changeOrigin:true + xfwd:true (see
+    # ui/web-app/server.js). After the proxy hop the Host header on
+    # the upstream request is the api host (api.soldenai.com), but the
+    # *original* host the user's browser is talking to lives in
+    # X-Forwarded-Host. Honouring it means we generate OAuth redirect
+    # URIs that match where the user actually is, not where the proxy
+    # forwarded the request to — so OAuth round-trips happen entirely
+    # on workspace.soldenai.com and the user never sees the api
+    # subdomain flash in the URL bar.
+    forwarded_host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip().lower()
+    )
+    host = forwarded_host or (getattr(request.url, "hostname", None) or "").lower()
     if not host:
         return None
     for suffix in _PUBLIC_BASE_URL_KNOWN_SUFFIXES:

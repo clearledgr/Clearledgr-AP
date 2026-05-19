@@ -146,8 +146,20 @@ def _google_oauth_redirect_uri(request: Optional[Request] = None) -> str:
     # redirect URI from THAT host so the OAuth round-trip lands the
     # user back on the same brand they started on. Otherwise honour
     # the static env override (used in local dev + custom deployments).
+    #
+    # X-Forwarded-Host wins over the Host header. The workspace SPA
+    # proxies /auth/* to the api service with changeOrigin:true (which
+    # rewrites Host to the api host) + xfwd:true (which preserves the
+    # original host in X-Forwarded-Host). Reading the forwarded value
+    # means redirect URIs are generated for workspace.soldenai.com (the
+    # host the user is actually on) rather than api.soldenai.com (the
+    # upstream the proxy is pointing at) — so the OAuth round-trip
+    # happens entirely on the product domain.
     if request is not None:
-        host = (getattr(request.url, "hostname", None) or "").lower()
+        forwarded_host = (
+            request.headers.get("x-forwarded-host", "").split(",")[0].strip().lower()
+        )
+        host = forwarded_host or (getattr(request.url, "hostname", None) or "").lower()
         for suffix in _GOOGLE_OAUTH_KNOWN_HOST_SUFFIXES:
             apex = suffix.lstrip(".")
             if host == apex or host.endswith(suffix):
