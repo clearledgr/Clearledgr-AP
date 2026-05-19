@@ -30,7 +30,7 @@ def tmp_db(postgres_test_db):
     # (postgres_test_db fixture in conftest.py) and rely on per-test
     # TRUNCATE for isolation. Behaviour is equivalent to the prior
     # per-test temp-file pattern, just with one engine instead of two.
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     db = get_db()
     db.initialize()
@@ -68,14 +68,14 @@ def _backdate_activation(db, org_id, days_ago):
 class TestDaysSince:
 
     def test_valid_timestamp(self):
-        from clearledgr.services.trust_arc import _days_since
+        from solden.services.trust_arc import _days_since
         two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
         d = _days_since(two_days_ago)
         assert d is not None
         assert 1.9 <= d <= 2.1
 
     def test_none_returns_none(self):
-        from clearledgr.services.trust_arc import _days_since
+        from solden.services.trust_arc import _days_since
         assert _days_since(None) is None
         assert _days_since("") is None
 
@@ -88,7 +88,7 @@ class TestDaysSince:
 class TestActivation:
 
     def test_auto_activates_when_invoices_exist(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
+        from solden.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
 
         org_id = _seed_org(tmp_db)
         # Create an AP item so the org has activity.
@@ -101,7 +101,7 @@ class TestActivation:
 
         # Mock Slack so banner doesn't crash.
         monkeypatch.setattr(
-            "clearledgr.services.trust_arc._send_slack_message",
+            "solden.services.trust_arc._send_slack_message",
             AsyncMock(return_value=True),
         )
 
@@ -111,7 +111,7 @@ class TestActivation:
         assert arc.get("activated_at") is not None
 
     def test_no_activation_without_invoices(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
+        from solden.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
 
         _seed_org(tmp_db)
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
@@ -128,13 +128,13 @@ class TestActivation:
 class TestWeek1Banner:
 
     def test_fires_within_first_7_days(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
+        from solden.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
 
         org_id = _seed_org(tmp_db)
         _backdate_activation(tmp_db, org_id, days_ago=2)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
         assert result.week1_banners == 1
@@ -148,13 +148,13 @@ class TestWeek1Banner:
         assert arc["override_window_override_minutes"] == 30
 
     def test_idempotent_on_re_tick(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         _backdate_activation(tmp_db, org_id, days_ago=2)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         asyncio.run(run_trust_arc_tick(db=tmp_db))
         asyncio.run(run_trust_arc_tick(db=tmp_db))
@@ -170,7 +170,7 @@ class TestWeek1Banner:
 class TestDay14Baseline:
 
     def test_fires_at_day_14(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=15)
@@ -178,7 +178,7 @@ class TestDay14Baseline:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
         assert result.day14_baselines == 1
@@ -186,7 +186,7 @@ class TestDay14Baseline:
         assert "two weeks" in call_text.lower() or "invoices" in call_text.lower()
 
     def test_does_not_fire_before_day_14(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=10)
@@ -194,7 +194,7 @@ class TestDay14Baseline:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
         assert result.day14_baselines == 0
@@ -208,7 +208,7 @@ class TestDay14Baseline:
 class TestDay30Expansion:
 
     def test_fires_at_day_30(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
+        from solden.services.trust_arc import run_trust_arc_tick, _get_trust_arc_state
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=31)
@@ -217,7 +217,7 @@ class TestDay30Expansion:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
         assert result.day30_expansions == 1
@@ -227,7 +227,7 @@ class TestDay30Expansion:
         assert "override_window_override_minutes" not in updated_arc
 
     def test_does_not_fire_before_day_30(self, tmp_db, monkeypatch):
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=25)
@@ -236,7 +236,7 @@ class TestDay30Expansion:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         result = asyncio.run(run_trust_arc_tick(db=tmp_db))
         assert result.day30_expansions == 0
@@ -250,8 +250,8 @@ class TestDay30Expansion:
 class TestWeeklySignal:
 
     def test_fires_on_monday_post_day_30(self, tmp_db, monkeypatch):
-        from clearledgr.services import trust_arc as arc_mod
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services import trust_arc as arc_mod
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=35)
@@ -261,7 +261,7 @@ class TestWeeklySignal:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         # Force today to be a Monday.
         real_now = datetime.now(timezone.utc)
@@ -280,8 +280,8 @@ class TestWeeklySignal:
         assert result.weekly_signals == 1
 
     def test_does_not_fire_on_non_monday(self, tmp_db, monkeypatch):
-        from clearledgr.services import trust_arc as arc_mod
-        from clearledgr.services.trust_arc import run_trust_arc_tick
+        from solden.services import trust_arc as arc_mod
+        from solden.services.trust_arc import run_trust_arc_tick
 
         org_id = _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, org_id, days_ago=35)
@@ -291,7 +291,7 @@ class TestWeeklySignal:
         _set_trust_arc(tmp_db, org_id, arc)
 
         mock_send = AsyncMock(return_value=True)
-        monkeypatch.setattr("clearledgr.services.trust_arc._send_slack_message", mock_send)
+        monkeypatch.setattr("solden.services.trust_arc._send_slack_message", mock_send)
 
         # Force today to be a Wednesday.
         real_now = datetime.now(timezone.utc)
@@ -317,13 +317,13 @@ class TestWeeklySignal:
 class TestGetTrustArcStatus:
 
     def test_not_started(self, tmp_db):
-        from clearledgr.services.trust_arc import get_trust_arc_status
+        from solden.services.trust_arc import get_trust_arc_status
         _seed_org(tmp_db)
         status = get_trust_arc_status(tmp_db, "org_t")
         assert status["status"] == "not_started"
 
     def test_week1_phase(self, tmp_db):
-        from clearledgr.services.trust_arc import get_trust_arc_status
+        from solden.services.trust_arc import get_trust_arc_status
         _seed_org(tmp_db)
         _backdate_activation(tmp_db, "org_t", days_ago=3)
         status = get_trust_arc_status(tmp_db, "org_t")
@@ -331,7 +331,7 @@ class TestGetTrustArcStatus:
         assert 2.5 <= status["days_since_activation"] <= 3.5
 
     def test_baseline_phase(self, tmp_db):
-        from clearledgr.services.trust_arc import get_trust_arc_status
+        from solden.services.trust_arc import get_trust_arc_status
         _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, "org_t", days_ago=16)
         arc["day14_baseline_sent"] = True
@@ -340,7 +340,7 @@ class TestGetTrustArcStatus:
         assert status["status"] == "baseline_established"
 
     def test_ongoing_phase(self, tmp_db):
-        from clearledgr.services.trust_arc import get_trust_arc_status
+        from solden.services.trust_arc import get_trust_arc_status
         _seed_org(tmp_db)
         arc = _backdate_activation(tmp_db, "org_t", days_ago=35)
         arc["week1_banner_sent"] = True

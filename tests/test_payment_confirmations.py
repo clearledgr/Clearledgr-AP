@@ -35,11 +35,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.stores.payment_confirmations_store import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.stores.payment_confirmations_store import (  # noqa: E402
     PaymentConfirmationConflict,
 )
-from clearledgr.services.payment_tracking import (  # noqa: E402
+from solden.services.payment_tracking import (  # noqa: E402
     PaymentConfirmationResult,
     record_payment_confirmation,
 )

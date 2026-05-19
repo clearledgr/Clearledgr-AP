@@ -20,8 +20,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.core.launch_controls import (
+from solden.core.database import get_db
+from solden.core.launch_controls import (
     get_channel_action_block_reason,
     get_erp_posting_block_reason,
     get_rollback_controls,

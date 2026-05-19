@@ -27,13 +27,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.vendor_status import router as vendor_status_router  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import (  # noqa: E402
+from solden.api.vendor_status import router as vendor_status_router  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import (  # noqa: E402
     ROLE_AP_CLERK,
     get_current_user,
 )
-from clearledgr.services.vendor_csv_import import (  # noqa: E402
+from solden.services.vendor_csv_import import (  # noqa: E402
     MAX_CSV_BYTES,
     commit_rows,
     parse_and_validate,

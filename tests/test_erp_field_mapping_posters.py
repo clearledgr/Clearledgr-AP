@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.integrations.erp_router import (  # noqa: E402
+from solden.integrations.erp_router import (  # noqa: E402
     Bill,
     _dimension_field_name,
     _get_org_field_mappings,
@@ -87,7 +87,7 @@ def test_workflow_resolver_pulls_state_box_id_from_ap_item():
         "approver_email": "approver@acme.test",
         "correlation_id": "corr-xyz",
     }
-    with patch("clearledgr.integrations.erp_router._get_db", return_value=fake_db):
+    with patch("solden.integrations.erp_router._get_db", return_value=fake_db):
         out = _resolve_workflow_custom_fields(
             field_mappings={
                 "state_field": "custbody_acme_state",
@@ -109,7 +109,7 @@ def test_workflow_resolver_pulls_state_box_id_from_ap_item():
 def test_workflow_resolver_skips_keys_without_value():
     fake_db = MagicMock()
     fake_db.get_ap_item.return_value = {"id": "ap-1", "state": "approved"}
-    with patch("clearledgr.integrations.erp_router._get_db", return_value=fake_db):
+    with patch("solden.integrations.erp_router._get_db", return_value=fake_db):
         out = _resolve_workflow_custom_fields(
             field_mappings={
                 "state_field": "custbody_state",
@@ -126,7 +126,7 @@ def test_workflow_resolver_swallows_db_errors():
     """A DB hiccup must not block bill posting — return {} instead."""
     fake_db = MagicMock()
     fake_db.get_ap_item.side_effect = RuntimeError("db down")
-    with patch("clearledgr.integrations.erp_router._get_db", return_value=fake_db):
+    with patch("solden.integrations.erp_router._get_db", return_value=fake_db):
         out = _resolve_workflow_custom_fields(
             field_mappings={"state_field": "x"},
             organization_id="org_1",
@@ -146,7 +146,7 @@ def test_get_org_field_mappings_round_trip():
             }
         }
     }
-    with patch("clearledgr.integrations.erp_router._get_db", return_value=fake_db):
+    with patch("solden.integrations.erp_router._get_db", return_value=fake_db):
         ns = _get_org_field_mappings("org_1", "netsuite")
         sap = _get_org_field_mappings("org_1", "sap")
         qb = _get_org_field_mappings("org_1", "quickbooks")
@@ -163,7 +163,7 @@ def test_get_org_field_mappings_round_trip():
 @pytest.mark.asyncio
 async def test_netsuite_stamps_custom_fields_at_top_level():
     """Workflow fields land as flat keys on the Vendor Bill body."""
-    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+    from solden.integrations.erp_netsuite import post_bill_to_netsuite
 
     bill = Bill(
         vendor_id="V1",
@@ -194,8 +194,8 @@ async def test_netsuite_stamps_custom_fields_at_top_level():
     fake_client = MagicMock()
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
-    with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=fake_client), \
-         patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
+    with patch("solden.integrations.erp_netsuite.get_http_client", return_value=fake_client), \
+         patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
         await post_bill_to_netsuite(
             connection, bill,
             custom_fields={
@@ -210,7 +210,7 @@ async def test_netsuite_stamps_custom_fields_at_top_level():
 @pytest.mark.asyncio
 async def test_netsuite_renames_dimension_fields_per_line():
     """field_mappings rewrites department→department_2 on each line."""
-    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+    from solden.integrations.erp_netsuite import post_bill_to_netsuite
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -242,8 +242,8 @@ async def test_netsuite_renames_dimension_fields_per_line():
     fake_client = MagicMock()
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
-    with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=fake_client), \
-         patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
+    with patch("solden.integrations.erp_netsuite.get_http_client", return_value=fake_client), \
+         patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
         await post_bill_to_netsuite(
             connection, bill,
             field_mappings={
@@ -269,7 +269,7 @@ async def test_netsuite_renames_dimension_fields_per_line():
 
 @pytest.mark.asyncio
 async def test_sap_stamps_custom_fields_on_document():
-    from clearledgr.integrations.erp_sap import post_bill_to_sap
+    from solden.integrations.erp_sap import post_bill_to_sap
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -298,8 +298,8 @@ async def test_sap_stamps_custom_fields_on_document():
     async def _fake_session(*args, **kwargs):
         return {"status": "success", "headers": {"Cookie": "B1SESSION=x"}}
 
-    with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=fake_client), \
-         patch("clearledgr.integrations.erp_sap._open_sap_service_layer_session", side_effect=_fake_session):
+    with patch("solden.integrations.erp_sap.get_http_client", return_value=fake_client), \
+         patch("solden.integrations.erp_sap._open_sap_service_layer_session", side_effect=_fake_session):
         await post_bill_to_sap(
             connection, bill,
             custom_fields={
@@ -313,7 +313,7 @@ async def test_sap_stamps_custom_fields_on_document():
 
 @pytest.mark.asyncio
 async def test_sap_renames_cost_center_per_line():
-    from clearledgr.integrations.erp_sap import post_bill_to_sap
+    from solden.integrations.erp_sap import post_bill_to_sap
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -346,8 +346,8 @@ async def test_sap_renames_cost_center_per_line():
     async def _fake_session(*args, **kwargs):
         return {"status": "success", "headers": {}}
 
-    with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=fake_client), \
-         patch("clearledgr.integrations.erp_sap._open_sap_service_layer_session", side_effect=_fake_session):
+    with patch("solden.integrations.erp_sap.get_http_client", return_value=fake_client), \
+         patch("solden.integrations.erp_sap._open_sap_service_layer_session", side_effect=_fake_session):
         await post_bill_to_sap(
             connection, bill,
             field_mappings={"cost_center_field": "U_ZZ_CC"},
@@ -364,7 +364,7 @@ async def test_sap_renames_cost_center_per_line():
 
 @pytest.mark.asyncio
 async def test_quickbooks_stamps_custom_fields_as_array():
-    from clearledgr.integrations.erp_quickbooks import post_bill_to_quickbooks
+    from solden.integrations.erp_quickbooks import post_bill_to_quickbooks
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -387,7 +387,7 @@ async def test_quickbooks_stamps_custom_fields_as_array():
     fake_client = MagicMock()
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
-    with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=fake_client):
+    with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=fake_client):
         await post_bill_to_quickbooks(
             connection, bill,
             custom_fields={"1": "approved", "2": "ap-qb-1"},
@@ -404,7 +404,7 @@ async def test_quickbooks_stamps_custom_fields_as_array():
 
 @pytest.mark.asyncio
 async def test_xero_stamps_tracking_categories_per_line():
-    from clearledgr.integrations.erp_xero import post_bill_to_xero
+    from solden.integrations.erp_xero import post_bill_to_xero
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -431,7 +431,7 @@ async def test_xero_stamps_tracking_categories_per_line():
     fake_client = MagicMock()
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
-    with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=fake_client):
+    with patch("solden.integrations.erp_xero.get_http_client", return_value=fake_client):
         await post_bill_to_xero(
             connection, bill,
             field_mappings={
@@ -453,7 +453,7 @@ async def test_xero_stamps_tracking_categories_per_line():
 async def test_xero_appends_workflow_marker_to_reference():
     """Xero has no per-bill custom-field API — workflow markers go in
     the Reference field as a fallback."""
-    from clearledgr.integrations.erp_xero import post_bill_to_xero
+    from solden.integrations.erp_xero import post_bill_to_xero
 
     bill = Bill(
         vendor_id="V1", vendor_name="Acme", amount=500.0,
@@ -475,7 +475,7 @@ async def test_xero_appends_workflow_marker_to_reference():
     fake_client = MagicMock()
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
-    with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=fake_client):
+    with patch("solden.integrations.erp_xero.get_http_client", return_value=fake_client):
         await post_bill_to_xero(
             connection, bill,
             custom_fields={"state": "approved", "box_id": "ap-xero-1"},

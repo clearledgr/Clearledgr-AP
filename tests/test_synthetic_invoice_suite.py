@@ -105,7 +105,7 @@ class TestExtractionFromFixtures:
     )
     def test_happy_path_extraction_fields(self, happy_path_invoices):
         """Happy path invoices should extract all expected fields."""
-        from clearledgr.services.email_parser import parse_email
+        from solden.services.email_parser import parse_email
 
         for inv in happy_path_invoices:
             email = inv["email"]
@@ -140,7 +140,7 @@ class TestExtractionFromFixtures:
 
     def test_exception_invoices_have_issues(self, exception_invoices):
         """Exception invoices should have detectable problems."""
-        from clearledgr.services.email_parser import parse_email
+        from solden.services.email_parser import parse_email
 
         for inv in exception_invoices:
             email = inv["email"]
@@ -163,7 +163,7 @@ class TestValidationGateFromFixtures:
 
     def _build_invoice_data(self, fixture):
         """Convert a fixture to InvoiceData for validation."""
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_models import InvoiceData
 
         email = fixture["email"]
         expected = fixture["expected"]

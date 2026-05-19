@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from clearledgr.services.subscription import UsageStats
+from solden.services.subscription import UsageStats
 
 
 def test_usage_stats_from_dict_accepts_legacy_ai_extractions_key():

@@ -23,9 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.gmail_webhooks import _process_label_changes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.events import AgentEvent, AgentEventType  # noqa: E402
+from solden.api.gmail_webhooks import _process_label_changes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.events import AgentEvent, AgentEventType  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

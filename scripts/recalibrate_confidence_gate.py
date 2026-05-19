@@ -58,13 +58,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from clearledgr.core.ap_confidence import (
+from solden.core.ap_confidence import (
     SEVERITY_ADVISORY,
     SEVERITY_CRITICAL,
     SEVERITY_IMPORTANT,
     evaluate_critical_field_confidence,
 )
-from clearledgr.core.database import get_db
+from solden.core.database import get_db
 
 
 logger = logging.getLogger("recalibrate_confidence_gate")

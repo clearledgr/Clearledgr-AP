@@ -18,7 +18,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from clearledgr.services.proactive_insights import Insight, narrate_insights
+from solden.services.proactive_insights import Insight, narrate_insights
 
 
 def _make_insight(insight_id="spike_acme", **kwargs):
@@ -44,7 +44,7 @@ class TestNarrationFallbacks:
         original = _make_insight()
         fake_gateway = SimpleNamespace(call=AsyncMock(side_effect=RuntimeError("no api key")))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(narrate_insights([original]))
         assert len(out) == 1
@@ -57,7 +57,7 @@ class TestNarrationFallbacks:
         fake_resp = SimpleNamespace(content="absolutely not json")
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(narrate_insights([original]))
         assert out[0].title == original.title
@@ -68,7 +68,7 @@ class TestNarrationFallbacks:
         fake_resp = SimpleNamespace(content="")
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(narrate_insights([original]))
         assert out[0].title == original.title
@@ -92,7 +92,7 @@ class TestNarrationHappyPath:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(narrate_insights([original]))
@@ -115,7 +115,7 @@ class TestNarrationHappyPath:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(narrate_insights([original]))
         assert out[0].title == "T"
@@ -134,7 +134,7 @@ class TestNarrationHappyPath:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(narrate_insights([i1, i2, i3]))
@@ -153,7 +153,7 @@ class TestNarrationHappyPath:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(narrate_insights([original]))
@@ -163,7 +163,7 @@ class TestNarrationHappyPath:
 
 class TestActionRegistryEntry:
     def test_narrate_insight_action_registered(self):
-        from clearledgr.core.llm_gateway import ACTION_REGISTRY, LLMAction
+        from solden.core.llm_gateway import ACTION_REGISTRY, LLMAction
 
         assert LLMAction.NARRATE_INSIGHT in ACTION_REGISTRY
         cfg = ACTION_REGISTRY[LLMAction.NARRATE_INSIGHT]

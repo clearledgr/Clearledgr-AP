@@ -62,7 +62,7 @@ services:
 
   worker:
     build: .
-    command: ["celery", "-A", "clearledgr.services.celery_app", "worker", "-l", "info", "-c", "4"]
+    command: ["celery", "-A", "solden.services.celery_app", "worker", "-l", "info", "-c", "4"]
     environment:
       - CLEARLEDGR_PROCESS_ROLE=worker
       - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
@@ -105,7 +105,7 @@ services:
   # Celery Beat scheduler (§11.2.1: timer_fired events)
   beat:
     build: .
-    command: ["celery", "-A", "clearledgr.services.celery_app", "beat", "-l", "info"]
+    command: ["celery", "-A", "solden.services.celery_app", "beat", "-l", "info"]
     environment:
       - DATABASE_URL=postgresql://clearledgr:clearledgr@db:5432/clearledgr
       - REDIS_URL=redis://redis:6379/0

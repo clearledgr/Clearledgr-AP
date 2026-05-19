@@ -30,14 +30,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.integrations.erp_sap import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.integrations.erp_sap import (  # noqa: E402
     is_sap_s4hana_connection,
 )
-from clearledgr.integrations.erp_sap_s4hana_intake_adapter import (  # noqa: E402
+from solden.integrations.erp_sap_s4hana_intake_adapter import (  # noqa: E402
     SapS4HanaIntakeAdapter,
 )
-from clearledgr.services.erp_payment_dispatcher import (  # noqa: E402
+from solden.services.erp_payment_dispatcher import (  # noqa: E402
     _parse_sap_s4hana_payment_envelope,
     dispatch_sap_s4hana_payment_webhook,
     poll_sap_b1_payments,
@@ -111,7 +111,7 @@ def test_is_s4hana_handles_empty_base_url():
 
 
 def test_get_payment_status_s4hana_invalid_key():
-    from clearledgr.integrations.erp_sap import (
+    from solden.integrations.erp_sap import (
         get_payment_status_sap_s4hana,
     )
     import asyncio
@@ -125,7 +125,7 @@ def test_get_payment_status_s4hana_invalid_key():
 
 
 def test_get_payment_status_s4hana_cleared():
-    from clearledgr.integrations.erp_sap import (
+    from solden.integrations.erp_sap import (
         get_payment_status_sap_s4hana,
     )
     import asyncio
@@ -158,7 +158,7 @@ def test_get_payment_status_s4hana_cleared():
 
     fake_client = SimpleNamespace(get=fake_get)
     with patch(
-        "clearledgr.integrations.erp_sap.get_http_client",
+        "solden.integrations.erp_sap.get_http_client",
         return_value=fake_client,
     ):
         result = asyncio.run(get_payment_status_sap_s4hana(
@@ -171,7 +171,7 @@ def test_get_payment_status_s4hana_cleared():
 
 
 def test_get_payment_status_s4hana_cancelled():
-    from clearledgr.integrations.erp_sap import (
+    from solden.integrations.erp_sap import (
         get_payment_status_sap_s4hana,
     )
     import asyncio
@@ -195,7 +195,7 @@ def test_get_payment_status_s4hana_cancelled():
         return FakeResponse()
 
     with patch(
-        "clearledgr.integrations.erp_sap.get_http_client",
+        "solden.integrations.erp_sap.get_http_client",
         return_value=SimpleNamespace(get=fake_get),
     ):
         result = asyncio.run(get_payment_status_sap_s4hana(
@@ -227,10 +227,10 @@ def test_b1_poller_routes_to_s4hana_when_url_not_b1(db):
         }
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=s4_conn,
     ), patch(
-        "clearledgr.services.erp_payment_dispatcher.poll_sap_s4hana_payments",
+        "solden.services.erp_payment_dispatcher.poll_sap_s4hana_payments",
         new=fake_s4_poll,
     ):
         asyncio.run(poll_sap_b1_payments(organization_id="orgA", db=db))
@@ -267,10 +267,10 @@ def test_poll_s4hana_dispatches_cleared_payment(db):
         }
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=s4_conn,
     ), patch(
-        "clearledgr.integrations.erp_sap.get_payment_status_sap_s4hana",
+        "solden.integrations.erp_sap.get_payment_status_sap_s4hana",
         new=fake_status,
     ):
         result = asyncio.run(poll_sap_s4hana_payments(
@@ -298,10 +298,10 @@ def test_poll_s4hana_skips_items_without_composite_key(db):
     s4_conn = _conn(base_url="https://my-s4.api.sap")
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=s4_conn,
     ), patch(
-        "clearledgr.integrations.erp_sap.get_payment_status_sap_s4hana",
+        "solden.integrations.erp_sap.get_payment_status_sap_s4hana",
         new=AsyncMock(side_effect=AssertionError("should not be called")),
     ):
         result = asyncio.run(poll_sap_s4hana_payments(
@@ -321,7 +321,7 @@ def test_intake_adapter_paid_no_longer_short_circuits():
     + remittance + bank-rec) fires properly. derive_state_update
     should now return target_state=None for paid events."""
     import asyncio
-    from clearledgr.services.intake_adapter import IntakeEnvelope
+    from solden.services.intake_adapter import IntakeEnvelope
 
     adapter = SapS4HanaIntakeAdapter()
     envelope = IntakeEnvelope(

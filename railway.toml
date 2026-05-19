@@ -36,7 +36,7 @@ healthcheckTimeout = 30
 # Worker service configuration — override in Railway UI:
 #
 #   Start Command:
-#     celery -A clearledgr.services.celery_app worker -l info -c ${CELERY_CONCURRENCY:-4}
+#     celery -A solden.services.celery_app worker -l info -c ${CELERY_CONCURRENCY:-4}
 #
 #   Environment:
 #     CLEARLEDGR_PROCESS_ROLE=worker
@@ -51,7 +51,7 @@ healthcheckTimeout = 30
 # Beat service configuration — override in Railway UI:
 #
 #   Start Command:
-#     celery -A clearledgr.services.celery_app beat -l info
+#     celery -A solden.services.celery_app beat -l info
 #
 #   Replicas: EXACTLY 1 (running multiple Beat instances causes duplicate timers)
 #

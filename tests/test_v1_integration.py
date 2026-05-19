@@ -110,7 +110,7 @@ def client():
 @pytest.fixture()
 def db():
     """Shorthand for ``get_db()`` so tests can seed rows directly."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     return get_db()
 

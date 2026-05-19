@@ -32,17 +32,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import sanctions as sanctions_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.onboarding.complyadvantage_provider import (  # noqa: E402
+from solden.api import sanctions as sanctions_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.onboarding.complyadvantage_provider import (  # noqa: E402
     ComplyAdvantageProvider,
 )
-from clearledgr.services.onboarding.kyc_provider import KYCCheckResult  # noqa: E402
-from clearledgr.services.payment_tracking import (  # noqa: E402
+from solden.services.onboarding.kyc_provider import KYCCheckResult  # noqa: E402
+from solden.services.payment_tracking import (  # noqa: E402
     record_payment_confirmation,
 )
-from clearledgr.services.sanctions_screening import (  # noqa: E402
+from solden.services.sanctions_screening import (  # noqa: E402
     SanctionsBlockedError,
     gate_payment_against_sanctions,
     screen_vendor,
@@ -214,7 +214,7 @@ def test_provider_hit_payload_filters_to_sanctions():
         }
     }
     with patch(
-        "clearledgr.services.onboarding.complyadvantage_provider._post_search",
+        "solden.services.onboarding.complyadvantage_provider._post_search",
         new=AsyncMock(return_value=fake_search),
     ):
         sanctions = asyncio.run(p.sanctions_screen(
@@ -234,7 +234,7 @@ def test_provider_clear_payload():
     p = ComplyAdvantageProvider(api_key="test-key")
     fake_search = {"content": {"data": {"hits": []}}}
     with patch(
-        "clearledgr.services.onboarding.complyadvantage_provider._post_search",
+        "solden.services.onboarding.complyadvantage_provider._post_search",
         new=AsyncMock(return_value=fake_search),
     ):
         result = asyncio.run(p.sanctions_screen(
@@ -261,7 +261,7 @@ def test_provider_company_registry_inconclusive():
 def _stub_provider_call(returned: KYCCheckResult):
     """Patch sanctions_screen on whatever provider get_kyc_provider
     returns so the service layer behaves end-to-end without real HTTP."""
-    from clearledgr.services.onboarding import kyc_provider as _kp
+    from solden.services.onboarding import kyc_provider as _kp
     return patch.object(
         _kp.NotConfiguredKYCProvider,
         "sanctions_screen",

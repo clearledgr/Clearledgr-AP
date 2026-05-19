@@ -79,7 +79,7 @@ def _seed_field_review_record(
 
 @pytest.fixture
 def db(postgres_test_db):
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     db = get_db()
     db.initialize()

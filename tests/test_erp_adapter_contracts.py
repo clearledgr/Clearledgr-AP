@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
-from clearledgr.integrations.erp_router import Bill
-from clearledgr.integrations.erp_router import ERPConnection, set_erp_connection
-from clearledgr.services.erp.contracts import get_erp_bill_adapter
-from clearledgr.core import database as db_module
+from solden.integrations.erp_router import Bill
+from solden.integrations.erp_router import ERPConnection, set_erp_connection
+from solden.services.erp.contracts import get_erp_bill_adapter
+from solden.core import database as db_module
 import pytest
 
 

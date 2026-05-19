@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services.multi_invoice_intake import (  # noqa: E402
+from solden.services.multi_invoice_intake import (  # noqa: E402
     IntakeUnit,
     split_email_attachments,
 )
@@ -54,7 +54,7 @@ class TestSplitEmailAttachments:
     def test_single_pdf_with_one_invoice_returns_one_unit(self):
         # Splitter returns invoice_count=1 → no fan-out.
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
         ) as mock_split:
             mock_split.return_value = type("R", (), {
                 "invoice_count": 1, "split_pdfs": [], "boundaries": [],
@@ -72,7 +72,7 @@ class TestSplitEmailAttachments:
         boundary_b = type("B", (), {"invoice_number": "INV-002", "total_amount_text": "$200"})()
         boundary_c = type("B", (), {"invoice_number": "INV-003", "total_amount_text": "$300"})()
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
         ) as mock_split:
             mock_split.return_value = type("R", (), {
                 "invoice_count": 3,
@@ -95,7 +95,7 @@ class TestSplitEmailAttachments:
 
     def test_multiple_pdfs_each_with_one_invoice_fan_out_per_pdf(self):
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
         ) as mock_split:
             mock_split.return_value = type("R", (), {
                 "invoice_count": 1, "split_pdfs": [], "boundaries": [],
@@ -114,7 +114,7 @@ class TestSplitEmailAttachments:
         # Two PDFs + one text attachment. The text rides on the
         # primary unit so it isn't lost.
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
         ) as mock_split:
             mock_split.return_value = type("R", (), {
                 "invoice_count": 1, "split_pdfs": [], "boundaries": [],
@@ -136,7 +136,7 @@ class TestSplitEmailAttachments:
         # Splitter raises → fallback: keep the original PDF as one
         # unit so the AP item still gets created.
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
             side_effect=RuntimeError("pdfplumber crashed"),
         ):
             units = split_email_attachments([
@@ -149,7 +149,7 @@ class TestSplitEmailAttachments:
         # Attachment with no data field → splitter can't process →
         # fall back to keeping it as one unit.
         with patch(
-            "clearledgr.services.multi_invoice_splitter.split_pdf_by_invoices",
+            "solden.services.multi_invoice_splitter.split_pdf_by_invoices",
         ) as mock_split:
             mock_split.return_value = type("R", (), {
                 "invoice_count": 1, "split_pdfs": [], "boundaries": [],
@@ -173,17 +173,17 @@ class TestTriageMultiInvoiceFanout:
     async def test_single_invoice_returns_no_multi_invoice_field(self):
         # Single PDF, single invoice → no fan-out, no
         # multi_invoice_results field on the result.
-        from clearledgr.services.gmail_triage_service import run_inline_gmail_triage
+        from solden.services.gmail_triage_service import run_inline_gmail_triage
 
         with patch(
-            "clearledgr.services.multi_invoice_intake.split_email_attachments",
+            "solden.services.multi_invoice_intake.split_email_attachments",
         ) as mock_split, patch(
-            "clearledgr.services.gmail_triage_service._try_single_pass",
+            "solden.services.gmail_triage_service._try_single_pass",
         ) as mock_sp:
             mock_split.return_value = [IntakeUnit(attachments=[{"filename": "a.pdf"}], is_primary=True)]
             mock_sp.return_value = None  # force fall-through to multi-call path
             with patch(
-                "clearledgr.services.gmail_triage_service.classify_email_activity",
+                "solden.services.gmail_triage_service.classify_email_activity",
             ) as mock_classify:
                 mock_classify.return_value = {"type": "noise"}
                 result = await run_inline_gmail_triage(
@@ -197,7 +197,7 @@ class TestTriageMultiInvoiceFanout:
 
     @pytest.mark.asyncio
     async def test_three_invoices_fan_out_into_three_results(self):
-        from clearledgr.services.gmail_triage_service import run_inline_gmail_triage
+        from solden.services.gmail_triage_service import run_inline_gmail_triage
 
         units = [
             IntakeUnit(attachments=[{"filename": "stack.split-1.pdf"}], hint_invoice_number="INV-001", is_primary=True),
@@ -206,13 +206,13 @@ class TestTriageMultiInvoiceFanout:
         ]
 
         with patch(
-            "clearledgr.services.multi_invoice_intake.split_email_attachments",
+            "solden.services.multi_invoice_intake.split_email_attachments",
             return_value=units,
         ), patch(
-            "clearledgr.services.gmail_triage_service._try_single_pass",
+            "solden.services.gmail_triage_service._try_single_pass",
             return_value=None,
         ), patch(
-            "clearledgr.services.gmail_triage_service.classify_email_activity",
+            "solden.services.gmail_triage_service.classify_email_activity",
             return_value={"type": "noise"},
         ):
             result = await run_inline_gmail_triage(
@@ -255,10 +255,10 @@ class TestTriageMultiInvoiceFanout:
             },
         ]
         with patch(
-            "clearledgr.services.multi_invoice_intake.split_email_attachments",
+            "solden.services.multi_invoice_intake.split_email_attachments",
             return_value=units,
         ), patch(
-            "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+            "solden.services.gmail_triage_service.run_inline_gmail_triage",
             wraps=lambda *a, **kw: sub_results.pop(0) if kw.get("_is_subunit") else None,
         ):
             # The wraps trick is awkward; cleaner: use the real
@@ -269,7 +269,7 @@ class TestTriageMultiInvoiceFanout:
         # This test stays simple: assert the grafting logic works
         # by calling _fan_out_multi_invoice directly with mocked
         # sub-results.
-        from clearledgr.services.gmail_triage_service import _fan_out_multi_invoice
+        from solden.services.gmail_triage_service import _fan_out_multi_invoice
 
         async def _stub_subunit(**kwargs):
             # First call returns extraction without invoice_number
@@ -279,7 +279,7 @@ class TestTriageMultiInvoiceFanout:
             }
 
         with patch(
-            "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+            "solden.services.gmail_triage_service.run_inline_gmail_triage",
             side_effect=_stub_subunit,
         ):
             primary = await _fan_out_multi_invoice(

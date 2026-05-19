@@ -32,7 +32,7 @@ import pytest
 def test_invoice_data_gmail_path_unchanged():
     """Gmail callers don't have to set source_type — defaults preserve
     backward compatibility."""
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(gmail_id="msg-abc", subject="x", sender="y", vendor_name="V", amount=100)
     assert inv.gmail_id == "msg-abc"
     assert inv.source_type == "gmail"
@@ -41,7 +41,7 @@ def test_invoice_data_gmail_path_unchanged():
 
 
 def test_invoice_data_netsuite_synthesises_gmail_id():
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(
         source_type="netsuite", source_id="5135",
         subject="x", sender="y", vendor_name="V", amount=100,
@@ -55,7 +55,7 @@ def test_invoice_data_netsuite_synthesises_gmail_id():
 
 
 def test_invoice_data_sap_synthesises_gmail_id():
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(
         source_type="sap_s4hana", source_id="1010/5105600123/2026",
         subject="x", sender="y", vendor_name="V", amount=100,
@@ -73,7 +73,7 @@ async def test_gmail_label_observer_skips_non_gmail():
     """ERP-native state transitions must NOT call the Gmail labels API
     — the synthetic gmail_id like 'netsuite-bill:5135' isn't a real
     Gmail message, so calling Gmail would 404 every time."""
-    from clearledgr.services.state_observers import (
+    from solden.services.state_observers import (
         GmailLabelObserver, StateTransitionEvent,
     )
     db = MagicMock()
@@ -94,7 +94,7 @@ async def test_gmail_label_observer_skips_non_gmail():
 @pytest.mark.asyncio
 async def test_gmail_label_observer_runs_for_gmail():
     """Sanity: the observer does fire for genuine Gmail events."""
-    from clearledgr.services.state_observers import (
+    from solden.services.state_observers import (
         GmailLabelObserver, StateTransitionEvent,
     )
     db = MagicMock()
@@ -109,7 +109,7 @@ async def test_gmail_label_observer_runs_for_gmail():
     )
     # It will try to get_invoice_status; we don't care if Gmail-API
     # call after that fails, only that the early-return guard didn't fire.
-    with patch("clearledgr.services.gmail_api.GmailAPIClient") as fake_client_cls:
+    with patch("solden.services.gmail_api.GmailAPIClient") as fake_client_cls:
         fake_client = MagicMock()
         fake_client.ensure_authenticated = AsyncMock(return_value=False)
         fake_client_cls.return_value = fake_client
@@ -121,7 +121,7 @@ async def test_gmail_label_observer_runs_for_gmail():
 async def test_vendor_domain_tracking_observer_skips_erp_native():
     """The synthetic ERP-native sender ('<netsuite@erp-native>') must
     not poison the trusted-domain TOFU set."""
-    from clearledgr.services.state_observers import (
+    from solden.services.state_observers import (
         StateTransitionEvent, VendorDomainTrackingObserver,
     )
     db = MagicMock()
@@ -143,8 +143,8 @@ async def test_vendor_domain_tracking_observer_skips_erp_native():
 async def test_post_to_erp_short_circuits_for_erp_native():
     """ERP-native bills must not trigger a real ERP write — a duplicate
     bill in the customer's ERP would be a serious bug."""
-    from clearledgr.services.invoice_models import InvoiceData
-    from clearledgr.services.invoice_posting import InvoicePostingMixin
+    from solden.services.invoice_models import InvoiceData
+    from solden.services.invoice_posting import InvoicePostingMixin
 
     invoice = InvoiceData(
         source_type="netsuite", source_id="5135", erp_native=True,
@@ -166,10 +166,10 @@ async def test_post_to_erp_short_circuits_for_erp_native():
     mixin = _FakeMixin()
     # Spy on the actual ERP-write path. If our short-circuit works,
     # post_bill_to_* is never called.
-    with patch("clearledgr.integrations.erp_router.post_bill_to_quickbooks", new_callable=AsyncMock) as qb_post, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_xero", new_callable=AsyncMock) as xero_post, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_sap", new_callable=AsyncMock) as sap_post, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_netsuite", new_callable=AsyncMock) as ns_post:
+    with patch("solden.integrations.erp_router.post_bill_to_quickbooks", new_callable=AsyncMock) as qb_post, \
+         patch("solden.integrations.erp_router.post_bill_to_xero", new_callable=AsyncMock) as xero_post, \
+         patch("solden.integrations.erp_router.post_bill_to_sap", new_callable=AsyncMock) as sap_post, \
+         patch("solden.integrations.erp_router.post_bill_to_netsuite", new_callable=AsyncMock) as ns_post:
         result = await mixin._post_to_erp(invoice)
 
     assert result["status"] == "success"
@@ -186,20 +186,20 @@ async def test_post_to_erp_short_circuits_for_erp_native():
 
 
 def test_approval_link_gmail_path():
-    from clearledgr.services.approval_card_builder import (
+    from solden.services.approval_card_builder import (
         _build_source_link, _source_link_label,
     )
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(gmail_id="msg-abc", subject="x", sender="y", vendor_name="V", amount=100)
     assert _build_source_link(inv) == "https://mail.google.com/mail/u/0/#search/msg-abc"
     assert _source_link_label(inv) == "Open in Gmail"
 
 
 def test_approval_link_netsuite_full_metadata():
-    from clearledgr.services.approval_card_builder import (
+    from solden.services.approval_card_builder import (
         _build_source_link, _source_link_label,
     )
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(
         source_type="netsuite", source_id="5135", erp_native=True,
         subject="x", sender="y", vendor_name="V", amount=100,
@@ -212,10 +212,10 @@ def test_approval_link_netsuite_full_metadata():
 
 
 def test_approval_link_sap_full_metadata():
-    from clearledgr.services.approval_card_builder import (
+    from solden.services.approval_card_builder import (
         _build_source_link, _source_link_label,
     )
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(
         source_type="sap_s4hana", source_id="1010/5135/2026", erp_native=True,
         subject="x", sender="y", vendor_name="V", amount=100,
@@ -239,10 +239,10 @@ def test_approval_link_falls_back_to_clearledgr_when_metadata_missing(monkeypatc
     Railway env has it set to.
     """
     monkeypatch.setenv("APP_BASE_URL", "https://workspace.clearledgr.com")
-    from clearledgr.services.approval_card_builder import (
+    from solden.services.approval_card_builder import (
         _build_source_link, _source_link_label,
     )
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     inv = InvoiceData(
         source_type="netsuite", source_id="5135", erp_native=True,
         subject="x", sender="y", vendor_name="V", amount=100,
@@ -262,7 +262,7 @@ def test_approval_link_falls_back_to_clearledgr_when_metadata_missing(monkeypatc
 @pytest.mark.asyncio
 async def test_sap_adapter_normalizes_cloudevents_shape():
     import json
-    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    from solden.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
     adapter = SapS4HanaIntakeAdapter()
     raw = json.dumps({
         "type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Created.v1",
@@ -297,7 +297,7 @@ async def test_sap_adapter_normalizes_cloudevents_shape():
 async def test_sap_adapter_normalizes_abap_shape():
     """ABAP BAdI senders use UPPER_SNAKE field names (BUKRS, BELNR, GJAHR)."""
     import json
-    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    from solden.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
     adapter = SapS4HanaIntakeAdapter()
     raw = json.dumps({
         "event_type": "supplier_invoice.posted",
@@ -323,7 +323,7 @@ async def test_sap_adapter_paid_event_handed_off_to_payment_lifecycle():
     the bank-rec match link.
     """
     import json
-    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    from solden.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
     adapter = SapS4HanaIntakeAdapter()
     raw = json.dumps({
         "type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Paid.v1",
@@ -341,7 +341,7 @@ async def test_sap_adapter_paid_event_handed_off_to_payment_lifecycle():
 @pytest.mark.asyncio
 async def test_sap_adapter_missing_composite_key_returns_empty_source_id():
     import json
-    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
+    from solden.integrations.erp_sap_s4hana_intake_adapter import SapS4HanaIntakeAdapter
     adapter = SapS4HanaIntakeAdapter()
     raw = json.dumps({"type": "sap.s4.beh.supplierinvoice.v1.SupplierInvoice.Created.v1", "data": {"CompanyCode": "1010"}}).encode()
     env = await adapter.parse_envelope(raw, {}, "org-1")
@@ -354,7 +354,7 @@ async def test_sap_adapter_missing_composite_key_returns_empty_source_id():
 @pytest.mark.asyncio
 async def test_netsuite_adapter_state_from_paid_bill():
     import json
-    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    from solden.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
     adapter = NetSuiteIntakeAdapter()
     raw = json.dumps({
         "event_type": "vendorbill.update",
@@ -368,7 +368,7 @@ async def test_netsuite_adapter_state_from_paid_bill():
 @pytest.mark.asyncio
 async def test_netsuite_adapter_state_from_payment_hold():
     import json
-    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    from solden.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
     adapter = NetSuiteIntakeAdapter()
     raw = json.dumps({
         "event_type": "vendorbill.update",
@@ -382,7 +382,7 @@ async def test_netsuite_adapter_state_from_payment_hold():
 @pytest.mark.asyncio
 async def test_netsuite_adapter_state_from_open_bill():
     import json
-    from clearledgr.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
+    from solden.integrations.erp_netsuite_intake_adapter import NetSuiteIntakeAdapter
     adapter = NetSuiteIntakeAdapter()
     raw = json.dumps({
         "event_type": "vendorbill.update",
@@ -399,7 +399,7 @@ async def test_netsuite_adapter_state_from_open_bill():
 def test_upsert_netsuite_po_idempotent_on_replay():
     """Replays of the same SuiteScript event must not create
     duplicate POs."""
-    from clearledgr.services.erp_intake_po_sync import upsert_netsuite_po
+    from solden.services.erp_intake_po_sync import upsert_netsuite_po
 
     fake_po_payload = {"id": "12345", "tranId": "PO-NS-001", "entity": {"id": "v1", "refName": "Acme"}}
     fake_po_lines = [{"line_id": "L1", "description": "widget", "quantity": 10, "unit_price": 100, "amount": 1000}]
@@ -429,7 +429,7 @@ def test_upsert_netsuite_po_idempotent_on_replay():
             captured_po["create_called"] += 1
             captured_po.update(kwargs)
             shared_state["po_inserted"] = True
-            from clearledgr.services.purchase_orders import PurchaseOrder
+            from solden.services.purchase_orders import PurchaseOrder
             po = PurchaseOrder(
                 vendor_id=kwargs.get("vendor_id"),
                 vendor_name=kwargs.get("vendor_name"),
@@ -443,7 +443,7 @@ def test_upsert_netsuite_po_idempotent_on_replay():
         def create_goods_receipt(self, **kwargs):
             return MagicMock()
 
-    with patch("clearledgr.services.erp_intake_po_sync.PurchaseOrderService", FakeService):
+    with patch("solden.services.erp_intake_po_sync.PurchaseOrderService", FakeService):
         # First call: creates the PO
         po_id_1 = upsert_netsuite_po(
             organization_id="org-1",
@@ -468,7 +468,7 @@ def test_upsert_netsuite_po_idempotent_on_replay():
 
 
 def test_sap_xsuaa_resolver_matches_correct_tenant():
-    from clearledgr.api.sap_extension import _resolve_xsuaa_config_for_issuer
+    from solden.api.sap_extension import _resolve_xsuaa_config_for_issuer
 
     class MockDB:
         def list_organizations(self):
@@ -494,7 +494,7 @@ def test_sap_xsuaa_resolver_matches_correct_tenant():
 def test_sap_xsuaa_resolver_rejects_unknown_issuer():
     """Forged JWT with an issuer we've never seen should not match any
     tenant — falls through to the env-var fallback (or 503)."""
-    from clearledgr.api.sap_extension import _resolve_xsuaa_config_for_issuer
+    from solden.api.sap_extension import _resolve_xsuaa_config_for_issuer
 
     class MockDB:
         def list_organizations(self):
@@ -518,9 +518,9 @@ async def test_handle_intake_event_routes_through_full_pipeline_for_netsuite():
     handle_intake_event should call workflow.process_new_invoice —
     NOT db.create_ap_item directly. The pipeline owns Box creation."""
     import json
-    import clearledgr.services.intake_adapter as adapter_mod
+    import solden.services.intake_adapter as adapter_mod
     # Ensure adapter is registered
-    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    import solden.integrations.erp_netsuite_intake_adapter  # noqa: F401
 
     fake_db = MagicMock()
     fake_db.get_ap_item_by_erp_reference.return_value = None
@@ -549,10 +549,10 @@ async def test_handle_intake_event_routes_through_full_pipeline_for_netsuite():
     }).encode()
 
     with patch.object(adapter_mod, "get_db", return_value=fake_db), \
-         patch("clearledgr.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
-         patch("clearledgr.integrations.erp_netsuite_intake.fetch_intake_context", new_callable=AsyncMock, return_value=fake_intake), \
-         patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
-         patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
+         patch("solden.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
+         patch("solden.integrations.erp_netsuite_intake.fetch_intake_context", new_callable=AsyncMock, return_value=fake_intake), \
+         patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
+         patch("solden.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
         result = await adapter_mod.handle_intake_event(
             source_type="netsuite",
             organization_id="org-1",
@@ -579,8 +579,8 @@ async def test_handle_intake_event_falls_back_to_thin_intake_without_connection(
     InvoiceData built from the envelope alone — pipeline still runs,
     just without the enrichment data."""
     import json
-    import clearledgr.services.intake_adapter as adapter_mod
-    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    import solden.services.intake_adapter as adapter_mod
+    import solden.integrations.erp_netsuite_intake_adapter  # noqa: F401
 
     fake_db = MagicMock()
     fake_db.get_ap_item_by_erp_reference.return_value = None
@@ -596,9 +596,9 @@ async def test_handle_intake_event_falls_back_to_thin_intake_without_connection(
     }).encode()
 
     with patch.object(adapter_mod, "get_db", return_value=fake_db), \
-         patch("clearledgr.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
-         patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
-         patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
+         patch("solden.integrations.erp_netsuite_intake_adapter.get_db", return_value=fake_db), \
+         patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=fake_workflow), \
+         patch("solden.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=True):
         result = await adapter_mod.handle_intake_event(
             source_type="netsuite",
             organization_id="org-1",
@@ -623,10 +623,10 @@ async def test_handle_intake_event_falls_back_to_thin_intake_without_connection(
 async def test_handle_intake_event_rejects_invalid_signature():
     """Forged webhook → handler returns ok=False, reason=signature_invalid."""
     import json
-    import clearledgr.services.intake_adapter as adapter_mod
-    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    import solden.services.intake_adapter as adapter_mod
+    import solden.integrations.erp_netsuite_intake_adapter  # noqa: F401
     raw = json.dumps({"event_type": "vendorbill.create", "bill": {"ns_internal_id": "5135"}}).encode()
-    with patch("clearledgr.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=False):
+    with patch("solden.integrations.erp_netsuite_intake_adapter.verify_netsuite_signature", return_value=False):
         result = await adapter_mod.handle_intake_event(
             source_type="netsuite", organization_id="org-1",
             raw=raw, headers={}, secret="any-secret",
@@ -637,7 +637,7 @@ async def test_handle_intake_event_rejects_invalid_signature():
 
 @pytest.mark.asyncio
 async def test_handle_intake_event_rejects_unknown_source():
-    import clearledgr.services.intake_adapter as adapter_mod
+    import solden.services.intake_adapter as adapter_mod
     result = await adapter_mod.handle_intake_event(
         source_type="not_a_real_erp", organization_id="org-1",
         raw=b"{}", headers={}, secret="any-secret",
@@ -648,8 +648,8 @@ async def test_handle_intake_event_rejects_unknown_source():
 
 @pytest.mark.asyncio
 async def test_handle_intake_event_rejects_missing_secret():
-    import clearledgr.services.intake_adapter as adapter_mod
-    import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
+    import solden.services.intake_adapter as adapter_mod
+    import solden.integrations.erp_netsuite_intake_adapter  # noqa: F401
     result = await adapter_mod.handle_intake_event(
         source_type="netsuite", organization_id="org-1",
         raw=b"{}", headers={}, secret=None,

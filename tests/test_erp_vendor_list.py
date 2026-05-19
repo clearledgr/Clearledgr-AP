@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
-from clearledgr.integrations.erp_router import (
+from solden.core import database as db_module
+from solden.core.auth import TokenData
+from solden.integrations.erp_router import (
     ERPConnection,
     list_all_vendors,
     list_all_vendors_quickbooks,
@@ -130,7 +130,7 @@ class TestListVendorsQuickBooks:
             }
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(list_all_vendors_quickbooks(_qb_connection()))
 
         assert len(result) == 1
@@ -149,7 +149,7 @@ class TestListVendorsQuickBooks:
         page2 = {"QueryResponse": {"Vendor": [{"Id": "1001", "DisplayName": "V1001", "Active": True}]}}
 
         mock_client = _mock_async_client(_ok_response(page1), _ok_response(page2))
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(list_all_vendors_quickbooks(_qb_connection()))
 
         assert len(result) == 1001
@@ -162,7 +162,7 @@ class TestListVendorsQuickBooks:
         resp = _ok_response({}, status_code=401)
         resp.status_code = 401
         mock_client = _mock_async_client(resp)
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(list_all_vendors_quickbooks(_qb_connection()))
         assert result == []
 
@@ -193,7 +193,7 @@ class TestListVendorsXero:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(list_all_vendors_xero(_xero_connection()))
 
         assert len(result) == 1
@@ -210,7 +210,7 @@ class TestListVendorsXero:
         # Xero pages are 100 contacts; <100 means last page
         contacts = [{"ContactID": str(i), "Name": f"V{i}", "ContactStatus": "ACTIVE"} for i in range(50)]
         mock_client = _mock_async_client(_ok_response({"Contacts": contacts}))
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(list_all_vendors_xero(_xero_connection()))
         assert len(result) == 50
 
@@ -240,8 +240,8 @@ class TestListVendorsNetSuite:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
                 result = asyncio.run(list_all_vendors_netsuite(_netsuite_connection()))
 
         assert len(result) == 1
@@ -256,8 +256,8 @@ class TestListVendorsNetSuite:
     def test_inactive_vendor_detected(self):
         payload = {"items": [{"id": 1, "companyName": "Dead Vendor", "isInactive": "T"}]}
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth ..."):
                 result = asyncio.run(list_all_vendors_netsuite(_netsuite_connection()))
 
         assert result[0]["active"] is False
@@ -291,8 +291,8 @@ class TestListVendorsSAP:
             ]
         }
         mock_client = _mock_async_client(_ok_response(vendor_payload))
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
                 result = asyncio.run(list_all_vendors_sap(_sap_connection()))
 
         assert len(result) == 1
@@ -308,8 +308,8 @@ class TestListVendorsSAP:
         session_resp = {"status": "success", "headers": {"Cookie": "sess=abc"}}
         vendor_payload = {"value": [{"CardCode": "S1", "CardName": "Old Vendor", "Valid": "tNO"}]}
         mock_client = _mock_async_client(_ok_response(vendor_payload))
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
                 result = asyncio.run(list_all_vendors_sap(_sap_connection()))
 
         assert result[0]["active"] is False
@@ -317,8 +317,8 @@ class TestListVendorsSAP:
     def test_empty_on_session_failure(self):
         session_resp = {"status": "error"}
         mock_client = _mock_async_client(_ok_response({}))
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_sap._open_sap_service_layer_session", new_callable=AsyncMock, return_value=session_resp):
                 result = asyncio.run(list_all_vendors_sap(_sap_connection()))
         assert result == []
 
@@ -384,9 +384,9 @@ class TestListAllVendorsRouter:
         mock_vendors = [{"vendor_id": "1", "name": "QB Vendor", "active": True}]
         mock_fetcher = AsyncMock(return_value=mock_vendors)
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_conn:
+        with patch("solden.integrations.erp_router.get_erp_connection") as mock_conn:
             mock_conn.return_value = _qb_connection()
-            with patch.dict("clearledgr.integrations.erp_router._VENDOR_LIST_FETCHERS", {"quickbooks": mock_fetcher}):
+            with patch.dict("solden.integrations.erp_router._VENDOR_LIST_FETCHERS", {"quickbooks": mock_fetcher}):
                 result = asyncio.run(list_all_vendors("qb-org"))
 
         assert len(result) == 1
@@ -394,7 +394,7 @@ class TestListAllVendorsRouter:
         mock_fetcher.assert_called_once()
 
     def test_returns_empty_when_no_connection(self, db):
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=None):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             result = asyncio.run(list_all_vendors("no-erp-org"))
         assert result == []
 
@@ -403,7 +403,7 @@ class TestListAllVendorsRouter:
         _save_vendor_list_cache("cached-org", [{"vendor_id": "c1", "name": "Cached"}], "xero")
 
         # Should NOT call the fetcher — cache hit
-        with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_conn:
+        with patch("solden.integrations.erp_router.get_erp_connection") as mock_conn:
             result = asyncio.run(list_all_vendors("cached-org"))
             mock_conn.assert_not_called()
 
@@ -416,9 +416,9 @@ class TestListAllVendorsRouter:
         fresh_vendors = [{"vendor_id": "new", "name": "New", "active": True}]
         mock_fetcher = AsyncMock(return_value=fresh_vendors)
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_conn:
+        with patch("solden.integrations.erp_router.get_erp_connection") as mock_conn:
             mock_conn.return_value = _sap_connection()
-            with patch.dict("clearledgr.integrations.erp_router._VENDOR_LIST_FETCHERS", {"sap": mock_fetcher}):
+            with patch.dict("solden.integrations.erp_router._VENDOR_LIST_FETCHERS", {"sap": mock_fetcher}):
                 result = asyncio.run(list_all_vendors("refresh-org", force_refresh=True))
 
         assert len(result) == 1
@@ -434,7 +434,7 @@ class TestERPVendorsEndpoint:
     def client(self, db, monkeypatch):
         monkeypatch.setenv("WORKSPACE_SHELL_ENABLED", "true")
         from main import app
-        from clearledgr.api import workspace_shell as ws_module
+        from solden.api import workspace_shell as ws_module
 
         def _fake_user():
             return TokenData(
@@ -454,7 +454,7 @@ class TestERPVendorsEndpoint:
     def _patch_list(self, vendors):
         """Patch the lazy import inside workspace_shell's endpoint."""
         return patch(
-            "clearledgr.integrations.erp_router.list_all_vendors",
+            "solden.integrations.erp_router.list_all_vendors",
             new_callable=AsyncMock,
             return_value=vendors,
         )

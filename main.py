@@ -24,7 +24,7 @@ Run Instructions:
      -H "Content-Type: application/json" \
      -d '{"intent":"read_ap_workflow_health","input":{"limit":25},"organization_id":"default"}'
 """
-import clearledgr._envboot  # noqa: F401  -- side-effect: load .env before any other import
+import solden._envboot  # noqa: F401  -- side-effect: load .env before any other import
 
 import os
 import re
@@ -48,172 +48,172 @@ from starlette.requests import Request
 # Eager-import the IntakeAdapter implementations so the registry is
 # populated before any webhook fires. Each module calls
 # `register_adapter(...)` at import time.
-import clearledgr.integrations.erp_netsuite_intake_adapter  # noqa: F401
-import clearledgr.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401
+import solden.integrations.erp_netsuite_intake_adapter  # noqa: F401
+import solden.integrations.erp_sap_s4hana_intake_adapter  # noqa: F401
 
 # Eager-import the MatchEngine implementations (Gap 3) so the
 # registry is populated before any matching call.
-import clearledgr.services.match_engines  # noqa: F401
+import solden.services.match_engines  # noqa: F401
 
 # Eager-import state_observers (Gap 4) so the outbox observer-prefix
 # handler is registered before the OutboxWorker starts polling. The
 # worker process needs this even though it doesn't construct an
 # InvoiceWorkflowService.
-import clearledgr.services.state_observers  # noqa: F401
+import solden.services.state_observers  # noqa: F401
 
 # Eager-import annotation targets (Gap 5) so the annotation-prefix
 # handler is registered + every target instance is in the registry
 # before any annotation outbox row is processed.
-import clearledgr.services.annotation_targets  # noqa: F401
+import solden.services.annotation_targets  # noqa: F401
 
 # Eager-import box projection (Gap 6) so the projection-prefix
 # outbox handler is registered + BoxSummaryProjector +
 # VendorSummaryProjector are in the projector registry before the
 # OutboxWorker drains its first projection row.
-import clearledgr.services.box_projection  # noqa: F401
+import solden.services.box_projection  # noqa: F401
 
-from clearledgr.api.agent_intents import router as agent_intents_router
-from clearledgr.api.accrual_journal_entry import (
+from solden.api.agent_intents import router as agent_intents_router
+from solden.api.accrual_journal_entry import (
     router as accrual_je_router,
 )
-from clearledgr.api.africa_einvoice import (
+from solden.api.africa_einvoice import (
     router as africa_einvoice_router,
 )
-from clearledgr.api.ap_audit import router as ap_audit_router
-from clearledgr.api.audit_chain import router as audit_chain_router
-from clearledgr.api.ap_items import router as ap_items_router
-from clearledgr.api.ap_policies import router as ap_policies_router
-from clearledgr.api.auth import router as auth_router
-from clearledgr.api.bank_statements import router as bank_statements_router
-from clearledgr.api.box_exceptions_admin import router as box_exceptions_admin_router
-from clearledgr.api.cycle_time_metrics import (
+from solden.api.ap_audit import router as ap_audit_router
+from solden.api.audit_chain import router as audit_chain_router
+from solden.api.ap_items import router as ap_items_router
+from solden.api.ap_policies import router as ap_policies_router
+from solden.api.auth import router as auth_router
+from solden.api.bank_statements import router as bank_statements_router
+from solden.api.box_exceptions_admin import router as box_exceptions_admin_router
+from solden.api.cycle_time_metrics import (
     router as cycle_time_metrics_router,
 )
-from clearledgr.api.dispute_reopen import (
+from solden.api.dispute_reopen import (
     router as dispute_reopen_router,
 )
-from clearledgr.api.dual_approval import router as dual_approval_router
-from clearledgr.api.erp_connection_ops import (
+from solden.api.dual_approval import router as dual_approval_router
+from solden.api.erp_connection_ops import (
     router as erp_connection_ops_router,
 )
-from clearledgr.api.erp_webhooks import router as erp_webhooks_router
-from clearledgr.api.fraud_controls import router as fraud_controls_router
-from clearledgr.api.match_config import router as match_config_router
-from clearledgr.api.gdpr import router as gdpr_router
-from clearledgr.api.gmail_extension import router as gmail_extension_router
+from solden.api.erp_webhooks import router as erp_webhooks_router
+from solden.api.fraud_controls import router as fraud_controls_router
+from solden.api.match_config import router as match_config_router
+from solden.api.gdpr import router as gdpr_router
+from solden.api.gmail_extension import router as gmail_extension_router
 # gmail_schedule_router removed: the /api/gmail/schedule-send endpoint
 # scheduled operator-composed vendor emails via the gmail.send OAuth
 # scope. Per the 2026-05-02 second-pass dormant-vendor-emails decision,
 # Solden sends zero email to vendors and authors zero vendor-facing
 # body text. Operators use Gmail's native Schedule send UI directly.
-from clearledgr.api.gmail_webhooks import router as gmail_webhooks_router
-from clearledgr.api.iban_verification import router as iban_verification_router
-from clearledgr.api.journal_entry_preview import (
+from solden.api.gmail_webhooks import router as gmail_webhooks_router
+from solden.api.iban_verification import router as iban_verification_router
+from solden.api.journal_entry_preview import (
     router as journal_entry_preview_router,
 )
-from clearledgr.api.leads import router as leads_router
-from clearledgr.api.multi_invoice_split import (
+from solden.api.leads import router as leads_router
+from solden.api.multi_invoice_split import (
     router as multi_invoice_split_router,
 )
-from clearledgr.api.netsuite_panel import router as netsuite_panel_router
-from clearledgr.api.ops import router as ops_router
-from clearledgr.api.outbox_ops import router as outbox_ops_router
-from clearledgr.api.outlook_routes import router as outlook_router
-from clearledgr.api.bank_match_routes import router as bank_match_router
-from clearledgr.api.box_export import router as box_export_router
-from clearledgr.api.box_owner_routes import router as box_owner_router
-from clearledgr.api.box_revert_routes import router as box_revert_router
-from clearledgr.api.payment_confirmations import router as payment_confirmations_router
-from clearledgr.api.peppol import router as peppol_router
-from clearledgr.api.pipelines import (
+from solden.api.netsuite_panel import router as netsuite_panel_router
+from solden.api.ops import router as ops_router
+from solden.api.outbox_ops import router as outbox_ops_router
+from solden.api.outlook_routes import router as outlook_router
+from solden.api.bank_match_routes import router as bank_match_router
+from solden.api.box_export import router as box_export_router
+from solden.api.box_owner_routes import router as box_owner_router
+from solden.api.box_revert_routes import router as box_revert_router
+from solden.api.payment_confirmations import router as payment_confirmations_router
+from solden.api.peppol import router as peppol_router
+from solden.api.pipelines import (
     router as pipelines_router,
     saved_views_router,
     box_links_router,
 )
-from clearledgr.api.policies import router as policies_router
-from clearledgr.api.projections_ops import (
+from solden.api.policies import router as policies_router
+from solden.api.projections_ops import (
     ops_router as projections_ops_router,
     vendors_router as projections_vendors_router,
 )
-from clearledgr.api.reclassification_je import (
+from solden.api.reclassification_je import (
     router as reclassification_je_router,
 )
-from clearledgr.api.saml import (
+from solden.api.saml import (
     saml_admin_router as _saml_admin_router,
     saml_public_router as _saml_public_router,
 )
-from clearledgr.api.sanctions import router as sanctions_router
-from clearledgr.api.sap_extension import router as sap_extension_router
-from clearledgr.api.settings import router as settings_router
-from clearledgr.api.slack_invoices import (
+from solden.api.sanctions import router as sanctions_router
+from solden.api.sap_extension import router as sap_extension_router
+from solden.api.settings import router as settings_router
+from solden.api.slack_invoices import (
     legacy_router as slack_legacy_router,
     router as slack_invoices_router,
 )
-from clearledgr.api.teams_invoices import router as teams_invoices_router
-from clearledgr.api.api_keys import router as api_keys_router
-from clearledgr.api.paddle_billing import (
+from solden.api.teams_invoices import router as teams_invoices_router
+from solden.api.api_keys import router as api_keys_router
+from solden.api.paddle_billing import (
     router as paddle_billing_router,
     webhook_router as paddle_webhook_router,
 )
-from clearledgr.api.ap_item_detail import router as ap_item_detail_router
-from clearledgr.api.escalation_policies import (
+from solden.api.ap_item_detail import router as ap_item_detail_router
+from solden.api.escalation_policies import (
     router as escalation_policies_router,
 )
-from clearledgr.api.notification_preferences import (
+from solden.api.notification_preferences import (
     router as notification_preferences_router,
 )
-from clearledgr.api.dashboard import router as dashboard_router
-from clearledgr.api.fx_rates import router as fx_rates_router
-from clearledgr.api.sample_data import router as sample_data_router
-from clearledgr.api.team_offboarding import (
+from solden.api.dashboard import router as dashboard_router
+from solden.api.fx_rates import router as fx_rates_router
+from solden.api.sample_data import router as sample_data_router
+from solden.api.team_offboarding import (
     router as team_offboarding_router,
 )
-from clearledgr.api.workspace_rules import (
+from solden.api.workspace_rules import (
     router as workspace_rules_router,
 )
-from clearledgr.api.three_way_match import (
+from solden.api.three_way_match import (
     router as three_way_match_router,
 )
-from clearledgr.api.report_subscriptions import (
+from solden.api.report_subscriptions import (
     router as report_subscriptions_router,
 )
-from clearledgr.api.workspace_reports import (
+from solden.api.workspace_reports import (
     router as workspace_reports_router,
 )
-from clearledgr.api.threshold_policy import (
+from solden.api.threshold_policy import (
     router as threshold_policy_router,
 )
-from clearledgr.api.ui_perf import router as ui_perf_router
-from clearledgr.api.user_preferences import router as user_preferences_router
-from clearledgr.api.v1 import router as v1_router
-from clearledgr.api.v1_intents import router as v1_intents_router
-from clearledgr.api.v1_records import router as v1_records_router
-from clearledgr.api.v1_webhooks import router as v1_webhooks_router
-from clearledgr.api.vat import router as vat_router
-from clearledgr.api.vendor_domains import router as vendor_domains_router
-from clearledgr.api.vendor_inquiry import (
+from solden.api.ui_perf import router as ui_perf_router
+from solden.api.user_preferences import router as user_preferences_router
+from solden.api.v1 import router as v1_router
+from solden.api.v1_intents import router as v1_intents_router
+from solden.api.v1_records import router as v1_records_router
+from solden.api.v1_webhooks import router as v1_webhooks_router
+from solden.api.vat import router as vat_router
+from solden.api.vendor_domains import router as vendor_domains_router
+from solden.api.vendor_inquiry import (
     router as vendor_inquiry_router,
 )
-from clearledgr.api.vendor_kyc import router as vendor_kyc_router
-from clearledgr.api.vendor_match import router as vendor_match_router
+from solden.api.vendor_kyc import router as vendor_kyc_router
+from solden.api.vendor_match import router as vendor_match_router
 # Vendor onboarding + magic-link portal are dormant per the
 # 2026-04-30 product call (memory: project_vendor_onboarding_subordinate.md).
 # Solden does NOT onboard vendors — AP gates on the ERP master and the
 # customer adds vendors in their ERP. Imports stay out so the surfaces
 # can't accidentally re-mount; revival is a clean re-add.
-from clearledgr.api.vendor_status import router as vendor_status_router
-from clearledgr.api.workspace_shell import router as workspace_shell_router
-from clearledgr.core.authorization import (
+from solden.api.vendor_status import router as vendor_status_router
+from solden.api.workspace_shell import router as workspace_shell_router
+from solden.core.authorization import (
     AuthorizationDenied,
     emit_authorization_denied_audit,
 )
-from clearledgr.core.errors import safe_error
-from clearledgr.services.auth import get_api_key_optional
-from clearledgr.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
-from clearledgr.services.errors import SoldenError
-from clearledgr.services.logging import log_request, log_error, logger
-from clearledgr.services.metrics import record_request, record_error, get_metrics
-from clearledgr.services.rate_limit import RateLimitMiddleware
+from solden.core.errors import safe_error
+from solden.services.auth import get_api_key_optional
+from solden.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
+from solden.services.errors import SoldenError
+from solden.services.logging import log_request, log_error, logger
+from solden.services.metrics import record_request, record_error, get_metrics
+from solden.services.rate_limit import RateLimitMiddleware
 
 # psycopg_pool logs WARNING "rolling back returned connection" on every
 # in-tx connection returned to the pool. With ~30 such warnings per
@@ -251,7 +251,7 @@ async def app_lifespan(app: FastAPI):
     async def _warm_db_in_background():
         import asyncio
         try:
-            from clearledgr.core.database import get_db
+            from solden.core.database import get_db
             await asyncio.to_thread(get_db().initialize)
             logger.info("Database schema initialized (background)")
         except Exception as exc:
@@ -270,13 +270,13 @@ async def app_lifespan(app: FastAPI):
     finally:
         await cancel_deferred_startup(app)
         try:
-            from clearledgr.services.gmail_autopilot import stop_gmail_autopilot
+            from solden.services.gmail_autopilot import stop_gmail_autopilot
             await stop_gmail_autopilot(app)
         except Exception as e:
             logger.warning(f"Gmail autopilot stop failed: {e}")
 
         try:
-            from clearledgr.services.agent_background import stop_agent_background
+            from solden.services.agent_background import stop_agent_background
 
             await stop_agent_background()
         except Exception as e:
@@ -285,7 +285,7 @@ async def app_lifespan(app: FastAPI):
         try:
             # Drain the shared httpx pool cleanly so in-flight requests
             # finish and keep-alive sockets close gracefully on exit.
-            from clearledgr.core.http_client import close_http_client
+            from solden.core.http_client import close_http_client
 
             await close_http_client()
         except Exception as e:
@@ -359,7 +359,7 @@ if _sentry_dsn:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
-        from clearledgr.core.sentry_config import build_sentry_before_send
+        from solden.core.sentry_config import build_sentry_before_send
 
         sentry_sdk.init(
             dsn=_sentry_dsn,
@@ -933,7 +933,7 @@ _TEAMS_GATED_PREFIXES = ("/teams/invoices",)
 
 
 def _is_strict_profile_allowed_path(path: str) -> bool:
-    from clearledgr.core.feature_flags import is_outlook_enabled, is_teams_enabled
+    from solden.core.feature_flags import is_outlook_enabled, is_teams_enabled
 
     normalized = path if path.startswith("/") else f"/{path}"
 
@@ -1358,7 +1358,7 @@ def _resolve_request_actor(request: Request) -> tuple[Optional[str], Optional[st
     on a 401/403 path because it runs at most once per denial.
     """
     try:
-        from clearledgr.core.auth import _token_data_from_payload, decode_token
+        from solden.core.auth import _token_data_from_payload, decode_token
 
         auth_header = request.headers.get("Authorization", "") or ""
         if auth_header.startswith("Bearer "):
@@ -1375,7 +1375,7 @@ def _resolve_request_actor(request: Request) -> tuple[Optional[str], Optional[st
 
         api_key = request.headers.get("X-API-Key")
         if api_key:
-            from clearledgr.core.database import get_db
+            from solden.core.database import get_db
 
             db = get_db()
             key_record = db.validate_api_key(api_key)
@@ -1465,7 +1465,7 @@ async def _permission_error_handler(request: Request, exc: PermissionError):
 # inside `require_agent_key`. Emits one `rate_limit_exceeded` audit row
 # (so "why did my agent stop at 14:03 UTC?" stays answerable forever)
 # then 429s with Retry-After.
-from clearledgr.api.v1_rate_limit import (  # noqa: E402
+from solden.api.v1_rate_limit import (  # noqa: E402
     RateLimitExceeded,
     emit_rate_limit_exceeded_audit,
 )
@@ -1633,7 +1633,7 @@ app.include_router(auth_router)
 
 # Organization Config API — not mounted in strict AP-v1 profile
 if not STRICT_PROFILE_ACTIVE:
-    from clearledgr.api.org_config import router as org_config_router
+    from solden.api.org_config import router as org_config_router
     app.include_router(org_config_router)
 
 # Fraud Controls API — CFO-gated writes of architectural fraud params
@@ -1687,7 +1687,7 @@ app.include_router(outlook_router)
 # ERP Connections API (OAuth flows). Strict profile exposes only the
 # OAuth-callback completion routes; full profile exposes the whole router.
 if STRICT_PROFILE_ACTIVE:
-    from clearledgr.api.erp_connections import (
+    from solden.api.erp_connections import (
         quickbooks_callback,
         xero_callback,
         get_gl_account_map,
@@ -1720,7 +1720,7 @@ if STRICT_PROFILE_ACTIVE:
         tags=["ERP Connections"],
     )
 else:
-    from clearledgr.api.erp_connections import router as erp_connections_router
+    from solden.api.erp_connections import router as erp_connections_router
     app.include_router(erp_connections_router)
 
 # Inbound ERP webhook endpoints (HMAC-signed; QBO/Xero/NetSuite/SAP).
@@ -1988,7 +1988,7 @@ async def health():
     Returns API status, version, and detailed health checks.
     No authentication required.
     """
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     checks: Dict[str, Dict[str, Any]] = {}
     status = "healthy"
@@ -2026,7 +2026,7 @@ async def health():
         "prod", "production", "staging", "stage",
     }
     try:
-        from clearledgr.core.event_queue import get_event_queue
+        from solden.core.event_queue import get_event_queue
         queue = get_event_queue()
         pinging = False
         try:

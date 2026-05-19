@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from clearledgr.core import feature_flags
+from solden.core import feature_flags
 
 
 class TestFlagResolution:
@@ -167,7 +167,7 @@ class TestStrictProfileAllowlist:
 class TestBootstrapTeamsStatus:
     def test_teams_status_reports_disabled_in_v1(self, monkeypatch):
         monkeypatch.delenv("FEATURE_TEAMS_ENABLED", raising=False)
-        from clearledgr.api.workspace_shell import _teams_status_for_org
+        from solden.api.workspace_shell import _teams_status_for_org
 
         result = _teams_status_for_org("org-test")
         assert result["status"] == "disabled_in_v1"
@@ -178,7 +178,7 @@ class TestBootstrapTeamsStatus:
 
     def test_teams_status_reflects_real_state_when_enabled(self, monkeypatch):
         monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
-        from clearledgr.api.workspace_shell import _teams_status_for_org
+        from solden.api.workspace_shell import _teams_status_for_org
 
         # With the flag on, the function falls through to the real DB
         # lookup. No webhook configured → connected=False but the
@@ -192,7 +192,7 @@ class TestTeamsCardSkipping:
         monkeypatch.delenv("FEATURE_TEAMS_ENABLED", raising=False)
         # Minimal stub — we only need _send_teams_budget_card to
         # check the flag and short-circuit.
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         svc = InvoiceWorkflowService.__new__(InvoiceWorkflowService)
         svc.organization_id = "org-test"
         # Attribute accesses after the flag check won't happen, so
@@ -211,7 +211,7 @@ class TestOutlookAutopilotGating:
         monkeypatch.delenv("FEATURE_OUTLOOK_ENABLED", raising=False)
         # Make start_outlook_autopilot a spy — if the flag skip fires,
         # the import (and therefore the spy) is never reached.
-        import clearledgr.services.app_startup as app_startup_mod
+        import solden.services.app_startup as app_startup_mod
         from unittest.mock import AsyncMock, MagicMock
 
         spy = AsyncMock()
@@ -223,7 +223,7 @@ class TestOutlookAutopilotGating:
         # called.
         with patch.dict(
             "sys.modules",
-            {"clearledgr.services.outlook_autopilot": fake_module},
+            {"solden.services.outlook_autopilot": fake_module},
         ):
             # Swallow any exceptions from unrelated sibling tasks in
             # run_deferred_startup — each is wrapped in its own

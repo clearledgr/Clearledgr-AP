@@ -11,8 +11,8 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+from solden.core import database as db_module
+from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
 
 class _LearningStub:
@@ -60,8 +60,8 @@ def service(db, monkeypatch):
     svc = InvoiceWorkflowService(organization_id="org-test", auto_approve_threshold=0.95)
     svc.db = db
 
-    monkeypatch.setattr("clearledgr.services.invoice_workflow.get_learning_service", lambda _org: _LearningStub())
-    monkeypatch.setattr("clearledgr.services.invoice_workflow.get_budget_awareness", lambda _org: _BudgetStub())
+    monkeypatch.setattr("solden.services.invoice_workflow.get_learning_service", lambda _org: _LearningStub())
+    monkeypatch.setattr("solden.services.invoice_workflow.get_budget_awareness", lambda _org: _BudgetStub())
 
     async def _noop_async(*_args, **_kwargs):
         return None
@@ -235,11 +235,11 @@ def test_workflow_state_transition_audits_share_single_correlation_id_across_int
 
 def test_process_new_invoice_routes_to_review_on_low_confidence_critical_field(service, db, monkeypatch):
     monkeypatch.setattr(
-        "clearledgr.services.invoice_workflow.get_policy_compliance",
+        "solden.services.invoice_workflow.get_policy_compliance",
         lambda _org: _PolicyServiceStub(),
     )
     monkeypatch.setattr(
-        "clearledgr.services.invoice_workflow.get_purchase_order_service",
+        "solden.services.invoice_workflow.get_purchase_order_service",
         lambda _org: _POServiceStub(),
     )
 

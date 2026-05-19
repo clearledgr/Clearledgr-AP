@@ -2,7 +2,7 @@
 
 The vendor portal is the only unauthenticated surface that accepts
 user input. These tests lock in the allowlist for every field
-:mod:`clearledgr.core.portal_input` guards, so a future refactor
+:mod:`solden.core.portal_input` guards, so a future refactor
 that loosens the regex has an audible failure signal.
 
 Threat model covered:
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core.portal_input import (  # noqa: E402
+from solden.core.portal_input import (  # noqa: E402
     PortalInputError,
     validate_account_holder_name,
     validate_bank_name,

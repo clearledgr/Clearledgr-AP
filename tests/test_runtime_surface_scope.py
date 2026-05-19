@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from solden.services.finance_agent_runtime import FinanceAgentRuntime
 
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
 

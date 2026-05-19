@@ -1,4 +1,4 @@
-"""Tests for clearledgr.services.slack_notifications — delivery + retry queue."""
+"""Tests for solden.services.slack_notifications — delivery + retry queue."""
 
 import asyncio
 import json
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.services.slack_notifications import (
+from solden.services.slack_notifications import (
     _post_slack_blocks,
     _retry_slack_response_url,
     send_with_retry,
@@ -36,7 +36,7 @@ class TestPostSlackBlocks:
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
-        with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
+        with patch("solden.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
             with patch("httpx.AsyncClient") as MockClient:
                 instance = AsyncMock()
                 instance.post = AsyncMock(return_value=mock_response)
@@ -50,7 +50,7 @@ class TestPostSlackBlocks:
     def test_no_delivery_method_returns_false(self, monkeypatch, mock_runtime):
         monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
-        with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
+        with patch("solden.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
             result = _run(_post_slack_blocks([{"type": "section"}], "test"))
             assert result is False
 
@@ -63,7 +63,7 @@ class TestPostSlackBlocks:
         second_response = MagicMock(status_code=200, content=b'{"ok": true}')
         second_response.json.return_value = {"ok": True}
 
-        with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=runtime):
+        with patch("solden.services.slack_notifications.resolve_slack_runtime", return_value=runtime):
             with patch("httpx.AsyncClient") as MockClient:
                 instance = AsyncMock()
                 instance.post = AsyncMock(side_effect=[first_response, second_response])
@@ -99,8 +99,8 @@ class TestSendWithRetry:
         mock_db = MagicMock()
         mock_db.enqueue_notification = MagicMock()
 
-        with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
-            with patch("clearledgr.core.database.get_db", return_value=mock_db):
+        with patch("solden.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
+            with patch("solden.core.database.get_db", return_value=mock_db):
                 result = _run(send_with_retry(
                     [{"type": "section"}], "test", ap_item_id="ap-1", organization_id="acme",
                 ))
@@ -166,9 +166,9 @@ class TestSendApprovalReminder:
             return_value={"delivery_ids": [], "mentions": [], "labels": [], "unresolved": []}
         )
 
-        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+        with patch("solden.services.slack_api.get_slack_client", return_value=instance):
             with patch(
-                "clearledgr.services.slack_notifications._post_slack_blocks",
+                "solden.services.slack_notifications._post_slack_blocks",
                 new=AsyncMock(return_value=True),
             ) as post_blocks:
                 result = _run(
@@ -206,7 +206,7 @@ class TestSendApprovalReminder:
             return_value={"delivery_ids": ["U123"], "mentions": ["<@U123>"], "labels": ["U123"], "unresolved": []}
         )
 
-        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+        with patch("solden.services.slack_api.get_slack_client", return_value=instance):
             result = _run(
                 send_approval_reminder(
                     ap_item={
@@ -248,9 +248,9 @@ class TestSendApprovalReminder:
             }
         )
 
-        with patch("clearledgr.services.slack_api.get_slack_client", return_value=instance):
+        with patch("solden.services.slack_api.get_slack_client", return_value=instance):
             with patch(
-                "clearledgr.services.slack_notifications._post_slack_blocks",
+                "solden.services.slack_notifications._post_slack_blocks",
                 new=AsyncMock(return_value=True),
             ) as post_blocks:
                 result = _run(
@@ -309,14 +309,14 @@ class TestProcessRetryQueue:
         ]
         mock_db.mark_notification_failed = MagicMock()
 
-        with patch("clearledgr.core.database.get_db", return_value=mock_db):
-            with patch("clearledgr.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
+        with patch("solden.core.database.get_db", return_value=mock_db):
+            with patch("solden.services.slack_notifications.resolve_slack_runtime", return_value=mock_runtime):
                 count = _run(process_retry_queue())
                 assert count >= 0
 
     def test_empty_queue(self):
         mock_db = MagicMock()
         mock_db.get_pending_notifications.return_value = []
-        with patch("clearledgr.core.database.get_db", return_value=mock_db):
+        with patch("solden.core.database.get_db", return_value=mock_db):
             count = _run(process_retry_queue())
             assert count == 0

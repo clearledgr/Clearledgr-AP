@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.integrations.erp_router import (
+from solden.core import database as db_module
+from solden.integrations.erp_router import (
     ERPConnection,
     find_bill_quickbooks,
     find_bill_xero,
@@ -96,7 +96,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-100"))
 
         assert result is not None
@@ -113,7 +113,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-999"))
 
         assert result is None
@@ -124,7 +124,7 @@ class TestFindBillQuickBooks:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_quickbooks(_qb_connection(), "INV-100"))
 
         assert result is None
@@ -152,7 +152,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-200"))
 
         assert result is not None
@@ -168,7 +168,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-999"))
 
         assert result is None
@@ -179,7 +179,7 @@ class TestFindBillXero:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_xero(_xero_connection(), "INV-200"))
 
         assert result is None
@@ -201,8 +201,8 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
-             patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
+             patch("solden.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-300"))
 
         assert result is not None
@@ -218,8 +218,8 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
-             patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
+             patch("solden.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-999"))
 
         assert result is None
@@ -230,8 +230,8 @@ class TestFindBillNetSuite:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
-             patch("clearledgr.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client), \
+             patch("solden.integrations.erp_router.build_netsuite_oauth_header", return_value="OAuth ..."):
             result = asyncio.run(find_bill_netsuite(_netsuite_connection(), "INV-300"))
 
         assert result is None
@@ -253,7 +253,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-400"))
 
         assert result is not None
@@ -269,7 +269,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-999"))
 
         assert result is None
@@ -280,7 +280,7 @@ class TestFindBillSAP:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
             result = asyncio.run(find_bill_sap(_sap_connection(), "INV-400"))
 
         assert result is None
@@ -293,7 +293,7 @@ class TestFindBillSAP:
 class TestERPPreflightCheck:
     def test_no_erp_connection(self, db):
         """No ERP configured → all checks None, erp_available=False."""
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=None):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             result = asyncio.run(erp_preflight_check("org_1", vendor_name="Acme"))
 
         assert result["erp_available"] is False
@@ -306,8 +306,8 @@ class TestERPPreflightCheck:
         """Vendor lookup returns None → vendor_exists=False."""
         conn = _qb_connection()
         mock_finder = AsyncMock(return_value=None)
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._VENDOR_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._VENDOR_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(erp_preflight_check("org_1", vendor_name="Unknown Corp"))
 
         assert result["erp_available"] is True
@@ -321,8 +321,8 @@ class TestERPPreflightCheck:
         conn = _qb_connection()
         vendor_result = {"vendor_id": "V42", "name": "Acme Inc", "email": "a@acme.com"}
         mock_finder = AsyncMock(return_value=vendor_result)
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._VENDOR_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._VENDOR_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(erp_preflight_check("org_1", vendor_name="Acme Inc"))
 
         assert result["vendor_exists"] is True
@@ -333,8 +333,8 @@ class TestERPPreflightCheck:
         conn = _xero_connection()
         bill_result = {"bill_id": "xero-123", "doc_number": "INV-500", "amount": 1000.0, "erp": "xero"}
         mock_finder = AsyncMock(return_value=bill_result)
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"xero": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"xero": mock_finder}):
             result = asyncio.run(erp_preflight_check("org_1", invoice_number="INV-500"))
 
         assert result["bill_exists"] is True
@@ -345,8 +345,8 @@ class TestERPPreflightCheck:
         """Bill not found → bill_exists=False."""
         conn = _xero_connection()
         mock_finder = AsyncMock(return_value=None)
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"xero": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"xero": mock_finder}):
             result = asyncio.run(erp_preflight_check("org_1", invoice_number="INV-NEW"))
 
         assert result["bill_exists"] is False
@@ -356,8 +356,8 @@ class TestERPPreflightCheck:
         """GL codes not in org mapping → gl_valid=False."""
         conn = _qb_connection()
         gl_map = {"expenses": "6000", "revenue": "4000"}
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch("clearledgr.integrations.erp_router._get_org_gl_map", return_value=gl_map):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch("solden.integrations.erp_router._get_org_gl_map", return_value=gl_map):
             result = asyncio.run(erp_preflight_check("org_1", gl_codes=["9999"]))
 
         assert result["gl_valid"] is False
@@ -368,8 +368,8 @@ class TestERPPreflightCheck:
         """GL codes in org mapping → gl_valid=True."""
         conn = _qb_connection()
         gl_map = {"expenses": "6000", "revenue": "4000"}
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch("clearledgr.integrations.erp_router._get_org_gl_map", return_value=gl_map):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch("solden.integrations.erp_router._get_org_gl_map", return_value=gl_map):
             result = asyncio.run(erp_preflight_check("org_1", gl_codes=["6000"]))
 
         assert result["gl_valid"] is True
@@ -380,9 +380,9 @@ class TestERPPreflightCheck:
         conn = _netsuite_connection()
         mock_vendor_finder = AsyncMock(side_effect=Exception("timeout"))
         mock_bill_finder = AsyncMock(side_effect=Exception("timeout"))
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._VENDOR_FINDERS", {"netsuite": mock_vendor_finder}), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"netsuite": mock_bill_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._VENDOR_FINDERS", {"netsuite": mock_vendor_finder}), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"netsuite": mock_bill_finder}):
             result = asyncio.run(erp_preflight_check(
                 "org_1", vendor_name="Acme", invoice_number="INV-1"
             ))
@@ -400,7 +400,7 @@ class TestValidationGateERPPreflight:
     """Test that ERP pre-flight results flow into the validation gate correctly."""
 
     def _make_invoice(self):
-        from clearledgr.services.invoice_workflow import InvoiceData
+        from solden.services.invoice_workflow import InvoiceData
         return InvoiceData(
             gmail_id="msg_1",
             subject="Invoice",
@@ -413,7 +413,7 @@ class TestValidationGateERPPreflight:
 
     def test_gate_erp_duplicate_blocks(self, db):
         """erp_duplicate_bill should appear in reason_codes when bill exists in ERP."""
-        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        from solden.services.invoice_workflow import get_invoice_workflow
         wf = get_invoice_workflow("org_test")
         invoice = self._make_invoice()
 
@@ -429,7 +429,7 @@ class TestValidationGateERPPreflight:
             "checks_run": ["vendor_lookup", "bill_lookup"],
         }
 
-        with patch("clearledgr.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, return_value=preflight_result):
+        with patch("solden.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, return_value=preflight_result):
             gate = asyncio.run(wf._evaluate_deterministic_validation(invoice))
 
         assert "erp_duplicate_bill" in gate["reason_codes"]
@@ -438,7 +438,7 @@ class TestValidationGateERPPreflight:
 
     def test_gate_erp_vendor_warning_passes(self, db):
         """erp_vendor_not_found is a warning — gate should still pass (no errors)."""
-        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        from solden.services.invoice_workflow import get_invoice_workflow
         wf = get_invoice_workflow("org_test")
         invoice = self._make_invoice()
 
@@ -454,7 +454,7 @@ class TestValidationGateERPPreflight:
             "checks_run": ["vendor_lookup", "bill_lookup"],
         }
 
-        with patch("clearledgr.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, return_value=preflight_result):
+        with patch("solden.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, return_value=preflight_result):
             gate = asyncio.run(wf._evaluate_deterministic_validation(invoice))
 
         # vendor_not_found is severity=warning, so gate should pass
@@ -466,11 +466,11 @@ class TestValidationGateERPPreflight:
 
     def test_gate_erp_unavailable_no_block(self, db):
         """If ERP pre-flight raises, gate should still pass normally."""
-        from clearledgr.services.invoice_workflow import get_invoice_workflow
+        from solden.services.invoice_workflow import get_invoice_workflow
         wf = get_invoice_workflow("org_test")
         invoice = self._make_invoice()
 
-        with patch("clearledgr.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, side_effect=Exception("ERP down")):
+        with patch("solden.integrations.erp_router.erp_preflight_check", new_callable=AsyncMock, side_effect=Exception("ERP down")):
             gate = asyncio.run(wf._evaluate_deterministic_validation(invoice))
 
         # No ERP-related reason codes — pre-flight failure is non-blocking

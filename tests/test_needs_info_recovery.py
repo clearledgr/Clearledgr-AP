@@ -25,7 +25,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from clearledgr.services.needs_info_recovery import (
+from solden.services.needs_info_recovery import (
     RECOVERY_ACTION_WHITELIST,
     RecoveryPlan,
     RecoveryStep,
@@ -73,7 +73,7 @@ class TestGatewayFailures:
     def test_returns_none_when_gateway_raises(self, monkeypatch):
         fake_gateway = SimpleNamespace(call=AsyncMock(side_effect=RuntimeError("no key")))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert out is None
@@ -82,7 +82,7 @@ class TestGatewayFailures:
         fake_resp = SimpleNamespace(content="not actually json {{")
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert out is None
@@ -91,7 +91,7 @@ class TestGatewayFailures:
         fake_resp = SimpleNamespace(content='{"steps": []}')
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert out is None
@@ -113,7 +113,7 @@ class TestPlanShape:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
@@ -136,7 +136,7 @@ class TestPlanShape:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert plan is not None
@@ -158,7 +158,7 @@ class TestActionWhitelist:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
@@ -176,7 +176,7 @@ class TestActionWhitelist:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         out = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert out is None
@@ -205,7 +205,7 @@ class TestNormalizers:
         fake_resp = SimpleNamespace(content=f'{{"summary": "Long","steps": [{steps}]}}')
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert plan is not None
@@ -219,7 +219,7 @@ class TestNormalizers:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert plan is not None
@@ -234,7 +234,7 @@ class TestNormalizers:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
         plan = asyncio.run(propose_recovery_plan(_make_invoice(), _make_decision()))
         assert plan is not None

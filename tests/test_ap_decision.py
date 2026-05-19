@@ -18,7 +18,7 @@ import pytest
 
 def _make_db(tmp_path) -> Any:
     """Create and initialise a real SoldenDB backed by a temp file."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
     db = get_db()
     db.initialize()
     return db
@@ -26,7 +26,7 @@ def _make_db(tmp_path) -> Any:
 
 def _make_invoice(**kwargs) -> Any:
     """Build a minimal InvoiceData for tests."""
-    from clearledgr.services.invoice_workflow import InvoiceData
+    from solden.services.invoice_workflow import InvoiceData
     defaults = dict(
         gmail_id="gmail_test_001",
         subject="Invoice INV-001 from Test Vendor",
@@ -57,7 +57,7 @@ class TestAPDecisionService:
 
     def test_approve_trusted_vendor(self, tmp_path):
         """Vendor with clean history and high confidence → approve."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
         org_id = "org_test"
@@ -91,7 +91,7 @@ class TestAPDecisionService:
 
     def test_escalate_bank_details_recently_changed(self, tmp_path):
         """Bank details changed within 30 days → escalate (fraud signal)."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
         org_id = "org_test"
@@ -118,7 +118,7 @@ class TestAPDecisionService:
 
     def test_needs_info_missing_po_required(self, tmp_path):
         """PO required but missing → needs_info with a question."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         db = _make_db(tmp_path)
         org_id = "org_test"
@@ -144,7 +144,7 @@ class TestAPDecisionService:
 
     def test_approve_when_confidence_meets_threshold(self, tmp_path):
         """Passing gate and confidence >= threshold → approve."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService()
@@ -158,7 +158,7 @@ class TestAPDecisionService:
 
     def test_escalate_low_confidence(self, tmp_path):
         """Low confidence below threshold → escalate."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.72)
         svc = APDecisionService()
@@ -172,7 +172,7 @@ class TestAPDecisionService:
 
     def test_escalate_under_strict_human_feedback_bias(self):
         """Strict feedback signals operator skepticism → escalate even on high confidence."""
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97, vendor_name="Feedback Vendor")
         svc = APDecisionService()
@@ -201,7 +201,7 @@ class TestSinglePassHintsConsumption:
     """
 
     def test_high_fraud_risk_hint_downgrades_approve_to_escalate(self):
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService()
@@ -221,7 +221,7 @@ class TestSinglePassHintsConsumption:
         assert "fraud" in (decision.reasoning or "").lower()
 
     def test_duplicate_hint_downgrades_approve_to_escalate(self):
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97, invoice_number="INV-100")
         svc = APDecisionService()
@@ -244,7 +244,7 @@ class TestSinglePassHintsConsumption:
         # Cascade returned approve; hint says medium fraud risk with a
         # signal. Recommendation stays approve (medium isn't enough to
         # block) but the signal surfaces in risk_flags for audit visibility.
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService()
@@ -264,7 +264,7 @@ class TestSinglePassHintsConsumption:
     def test_hints_never_upgrade_a_decision(self):
         # Cascade says escalate (low confidence). Hint says fraud_risk=none.
         # Decision stays escalate — hints never push toward approval.
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.60)
         svc = APDecisionService()
@@ -282,7 +282,7 @@ class TestSinglePassHintsConsumption:
     def test_no_hints_means_cascade_unchanged(self):
         # Backwards-compat: existing callers that don't pass hints get
         # exactly the same cascade result they always have.
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService()
@@ -421,7 +421,7 @@ class TestRuleMatchToDecision:
     arms were identical, swallowing the distinction."""
 
     def test_dual_approval_action_returns_escalate(self):
-        from clearledgr.services.ap_decision import _rule_match_to_decision
+        from solden.services.ap_decision import _rule_match_to_decision
         invoice = _make_invoice()
         rule = {"id": "rule_1", "name": "Two-eyes for >$10k"}
         actions = [{"type": "require_dual_approval"}]
@@ -434,7 +434,7 @@ class TestRuleMatchToDecision:
         assert "rule_action:dual_approval" in decision.risk_flags
 
     def test_require_n_approvals_returns_escalate(self):
-        from clearledgr.services.ap_decision import _rule_match_to_decision
+        from solden.services.ap_decision import _rule_match_to_decision
         invoice = _make_invoice()
         rule = {"id": "rule_2", "name": "Three approvers"}
         actions = [{"type": "require_n_approvals", "n": 3}]
@@ -445,7 +445,7 @@ class TestRuleMatchToDecision:
         assert "rule_action:require_3_approvals" in decision.risk_flags
 
     def test_route_to_role_returns_needs_info(self):
-        from clearledgr.services.ap_decision import _rule_match_to_decision
+        from solden.services.ap_decision import _rule_match_to_decision
         invoice = _make_invoice()
         rule = {"id": "rule_3", "name": "AP routes to legal"}
         actions = [{"type": "route_to_role", "role": "legal"}]
@@ -472,7 +472,7 @@ class TestVendorRiskScoringIntegration:
         """A new vendor (zero history) with an above-threshold first
         invoice must surface ``new_vendor`` and ``new_vendor_high_amount``
         risk flags via the AP decision pipeline."""
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         db = _make_db(tmp_path)
         org_id = "org_risk_new_vendor"
 

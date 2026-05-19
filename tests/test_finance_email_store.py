@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from clearledgr.core import database as db_module
-from clearledgr.core.models import FinanceEmail
+from solden.core import database as db_module
+from solden.core.models import FinanceEmail
 
 
 def _db(tmp_path, monkeypatch):

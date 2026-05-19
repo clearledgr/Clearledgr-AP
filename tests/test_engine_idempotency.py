@@ -33,11 +33,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.coordination_engine import CoordinationEngine  # noqa: E402
-from clearledgr.core.events import AgentEvent, AgentEventType  # noqa: E402
-from clearledgr.core.plan import Action, Plan  # noqa: E402
-from clearledgr.core.planning_engine import get_planning_engine  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.coordination_engine import CoordinationEngine  # noqa: E402
+from solden.core.events import AgentEvent, AgentEventType  # noqa: E402
+from solden.core.plan import Action, Plan  # noqa: E402
+from solden.core.planning_engine import get_planning_engine  # noqa: E402
 
 
 @pytest.fixture()
@@ -305,7 +305,7 @@ class TestPostBillIdempotency:
             return {"status": "posted", "reference_id": "EXT-NEW"}
 
         with patch(
-            "clearledgr.services.invoice_workflow.InvoiceWorkflowService._post_to_erp",
+            "solden.services.invoice_workflow.InvoiceWorkflowService._post_to_erp",
             new=fake_post_to_erp,
         ):
             result = asyncio.run(

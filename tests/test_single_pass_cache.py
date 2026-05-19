@@ -25,13 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services.single_pass_cache import (  # noqa: E402
+from solden.services.single_pass_cache import (  # noqa: E402
     _reset_for_testing,
     compute_content_hash,
     get_cached_result,
     set_cached_result,
 )
-from clearledgr.services.single_pass_processor import (  # noqa: E402
+from solden.services.single_pass_processor import (  # noqa: E402
     process_invoice_single_pass,
 )
 
@@ -213,7 +213,7 @@ class TestEndToEndCaching:
         fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ):
             r1 = await process_invoice_single_pass(
@@ -248,7 +248,7 @@ class TestEndToEndCaching:
         fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ):
             await process_invoice_single_pass(
@@ -270,7 +270,7 @@ class TestEndToEndCaching:
         fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ):
             await process_invoice_single_pass(
@@ -293,7 +293,7 @@ class TestEndToEndCaching:
         fake_gateway.call = AsyncMock(return_value=_fake_llm_response(json.dumps(drifted)))
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ):
             r1 = await process_invoice_single_pass(

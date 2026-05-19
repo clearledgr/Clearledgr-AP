@@ -30,19 +30,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import workspace_shell as ws  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import (  # noqa: E402
+from solden.api import workspace_shell as ws  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import (  # noqa: E402
     ROLE_AP_CLERK,
     ROLE_AP_MANAGER,
     ROLE_READ_ONLY,
     get_current_user,
 )
-from clearledgr.core.permissions import (  # noqa: E402
+from solden.core.permissions import (  # noqa: E402
     PERMISSION_APPROVE_INVOICES,
     PERMISSION_VIEW_AUDIT_LOG,
 )
-from clearledgr.services.role_resolver import (  # noqa: E402
+from solden.services.role_resolver import (  # noqa: E402
     can_approve,
     resolve_role,
 )

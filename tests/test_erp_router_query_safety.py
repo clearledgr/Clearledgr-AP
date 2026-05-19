@@ -1,12 +1,12 @@
 import asyncio
 import re
 
-from clearledgr.integrations import erp_router
+from solden.integrations import erp_router
 # httpx now lives in the per-vendor modules (erp_router was refactored
 # to use the get_http_client singleton). Tests monkey-patch
 # ``<module>.httpx.AsyncClient`` where the actual import lives.
-from clearledgr.integrations import erp_quickbooks, erp_netsuite, erp_xero, erp_sap
-from clearledgr.integrations.erp_router import (
+from solden.integrations import erp_quickbooks, erp_netsuite, erp_xero, erp_sap
+from solden.integrations.erp_router import (
     ERPConnection,
     find_vendor_credit_quickbooks,
     find_credit_note_sap,

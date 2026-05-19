@@ -19,10 +19,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from clearledgr.api import gmail_webhooks
-from clearledgr.core.events import AgentEvent, AgentEventType
-from clearledgr.core.planning_engine import DeterministicPlanningEngine
-from clearledgr.services.gmail_labels import (
+from solden.api import gmail_webhooks
+from solden.core.events import AgentEvent, AgentEventType
+from solden.core.planning_engine import DeterministicPlanningEngine
+from solden.services.gmail_labels import (
     LABEL_TO_INTENT,
     intent_for_label,
 )

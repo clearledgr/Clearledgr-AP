@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from clearledgr.integrations.erp_router import (
+from solden.integrations.erp_router import (
     ERPConnection,
     reverse_bill,
     reverse_bill_from_netsuite,
@@ -113,16 +113,16 @@ def _patch_httpx(monkeypatch, responses: List[FakeResponse]) -> FakeAsyncClient:
 
     monkeypatch.setattr("httpx.AsyncClient", _factory)
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_quickbooks.get_http_client", _factory
+        "solden.integrations.erp_quickbooks.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_xero.get_http_client", _factory
+        "solden.integrations.erp_xero.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_netsuite.get_http_client", _factory
+        "solden.integrations.erp_netsuite.get_http_client", _factory
     )
     monkeypatch.setattr(
-        "clearledgr.integrations.erp_sap.get_http_client", _factory
+        "solden.integrations.erp_sap.get_http_client", _factory
     )
     return fake
 
@@ -594,7 +594,7 @@ class TestReverseSAP:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_sap._open_sap_service_layer_session",
+            "solden.integrations.erp_sap._open_sap_service_layer_session",
             _fake_session,
         )
 
@@ -714,8 +714,8 @@ class TestReverseSAP:
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     """Fresh temp-file DB wired as the singleton."""
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -776,7 +776,7 @@ class TestReverseBillDispatcher:
 
     def test_no_erp_connected_returns_skipped(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: None,
         )
         result = asyncio.run(
@@ -787,7 +787,7 @@ class TestReverseBillDispatcher:
 
     def test_dispatches_to_quickbooks(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _qbo_connection(),
         )
         captured: Dict[str, Any] = {}
@@ -806,7 +806,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_quickbooks",
+            "solden.integrations.erp_router.reverse_bill_from_quickbooks",
             _fake_qbo,
         )
         result = asyncio.run(
@@ -819,7 +819,7 @@ class TestReverseBillDispatcher:
 
     def test_dispatches_to_xero(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _xero_connection(),
         )
 
@@ -833,7 +833,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_xero",
+            "solden.integrations.erp_router.reverse_bill_from_xero",
             _fake_xero,
         )
         result = asyncio.run(
@@ -844,7 +844,7 @@ class TestReverseBillDispatcher:
 
     def test_dispatches_to_netsuite(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _netsuite_connection(),
         )
 
@@ -858,7 +858,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_netsuite",
+            "solden.integrations.erp_router.reverse_bill_from_netsuite",
             _fake_ns,
         )
         result = asyncio.run(
@@ -869,7 +869,7 @@ class TestReverseBillDispatcher:
 
     def test_dispatches_to_sap(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _sap_connection(),
         )
 
@@ -883,7 +883,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_sap",
+            "solden.integrations.erp_router.reverse_bill_from_sap",
             _fake_sap,
         )
         result = asyncio.run(
@@ -894,7 +894,7 @@ class TestReverseBillDispatcher:
 
     def test_unknown_erp_type_returns_error(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: ERPConnection(type="unknown_erp"),
         )
         result = asyncio.run(
@@ -923,11 +923,11 @@ class TestReverseBillDispatcher:
             return {"status": "error", "reason": "should_not_reach_erp"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_quickbooks",
+            "solden.integrations.erp_router.reverse_bill_from_quickbooks",
             _should_not_be_called,
         )
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _qbo_connection(),
         )
 
@@ -971,11 +971,11 @@ class TestReverseBillDispatcher:
             return {"status": "error", "reason": "should_not_reach_erp"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_xero",
+            "solden.integrations.erp_router.reverse_bill_from_xero",
             _should_not_be_called,
         )
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _xero_connection(),
         )
 
@@ -995,7 +995,7 @@ class TestReverseBillDispatcher:
         """First call returns needs_reauth, dispatcher refreshes token and
         retries once; second call succeeds."""
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _qbo_connection(),
         )
 
@@ -1022,16 +1022,16 @@ class TestReverseBillDispatcher:
             return "new-access-token"
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_quickbooks",
+            "solden.integrations.erp_router.reverse_bill_from_quickbooks",
             _fake_qbo,
         )
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.refresh_quickbooks_token",
+            "solden.integrations.erp_router.refresh_quickbooks_token",
             _fake_refresh,
         )
         # set_erp_connection is called after refresh — stub to a no-op
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.set_erp_connection",
+            "solden.integrations.erp_router.set_erp_connection",
             lambda org_id, conn: None,
         )
 
@@ -1043,7 +1043,7 @@ class TestReverseBillDispatcher:
 
     def test_audit_event_emitted_on_success(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _xero_connection(),
         )
 
@@ -1057,7 +1057,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_xero",
+            "solden.integrations.erp_router.reverse_bill_from_xero",
             _fake_xero,
         )
 
@@ -1092,7 +1092,7 @@ class TestReverseBillDispatcher:
 
     def test_audit_event_emitted_on_failure(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _xero_connection(),
         )
 
@@ -1107,7 +1107,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_xero",
+            "solden.integrations.erp_router.reverse_bill_from_xero",
             _fake_xero,
         )
 
@@ -1133,7 +1133,7 @@ class TestReverseBillDispatcher:
 
     def test_reversal_reference_persisted_on_ap_item(self, tmp_db, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _qbo_connection(),
         )
 
@@ -1147,7 +1147,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_quickbooks",
+            "solden.integrations.erp_router.reverse_bill_from_quickbooks",
             _fake_qbo,
         )
 
@@ -1180,7 +1180,7 @@ class TestReverseBillDispatcher:
         erp_sync_token from the AP item's metadata and forward it to
         the connector so no refetch is needed."""
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id, entity_id=None: _qbo_connection(),
         )
 
@@ -1197,7 +1197,7 @@ class TestReverseBillDispatcher:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill_from_quickbooks",
+            "solden.integrations.erp_router.reverse_bill_from_quickbooks",
             _fake_qbo,
         )
 

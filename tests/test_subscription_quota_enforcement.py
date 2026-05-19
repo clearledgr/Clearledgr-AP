@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 
-from clearledgr.services.subscription import PlanLimits, PlanTier
+from solden.services.subscription import PlanLimits, PlanTier
 
 
 class TestPlanLimits:
@@ -41,20 +41,20 @@ class TestSavedViewQuotaEnforcement:
     """Integration-level: POST /api/saved-views enforces the per-tier cap."""
 
     def test_starter_fourth_saved_view_rejected_with_402(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         # Reset the subscription-service singleton so it binds to the
         # per-test DB rather than carrying the old reference from
         # whatever test ran before this one.
-        import clearledgr.services.subscription as sub_mod
+        import solden.services.subscription as sub_mod
         sub_mod._subscription_service = None
 
         from main import app
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
 
         db = db_module.get_db()
         db.initialize()
         # Seed a Starter subscription
-        from clearledgr.services.subscription import (
+        from solden.services.subscription import (
             get_subscription_service, PlanTier as _PT,
         )
         sub_svc = get_subscription_service()
@@ -116,7 +116,7 @@ class TestAuditEventRetentionFilter:
     """
 
     def _seed_events(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
@@ -198,7 +198,7 @@ class TestAuditEventRetentionFilter:
 
 class TestReadOnlySeatExpiry:
     def test_reap_expired_read_only_seats(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 

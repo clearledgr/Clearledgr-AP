@@ -35,14 +35,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.saml import (  # noqa: E402
+from solden.api.saml import (  # noqa: E402
     saml_admin_router,
     saml_public_router,
 )
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services import saml_sso  # noqa: E402
-from clearledgr.services.saml_validator import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services import saml_sso  # noqa: E402
+from solden.services.saml_validator import (  # noqa: E402
     SAMLValidationError,
     parse_and_validate_saml_response,
 )

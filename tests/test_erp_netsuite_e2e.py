@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from clearledgr.integrations.erp_netsuite import (
+from solden.integrations.erp_netsuite import (
     post_bill_to_netsuite,
     preflight_netsuite,
 )
-from clearledgr.integrations.erp_router import ERPConnection
+from solden.integrations.erp_router import ERPConnection
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +116,8 @@ class TestPreflightNetsuite:
         }
         client = _fake_http_client(responses)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(preflight_netsuite(_ns_connection()))
 
         assert result["critical_ok"] is True
@@ -142,8 +142,8 @@ class TestPreflightNetsuite:
         }
         client = _fake_http_client(responses)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(preflight_netsuite(_ns_connection()))
 
         assert result["critical_ok"] is False
@@ -164,8 +164,8 @@ class TestPreflightNetsuite:
         }
         client = _fake_http_client(responses)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(preflight_netsuite(_ns_connection()))
 
         assert result["critical_ok"] is True  # all three probes passed
@@ -202,8 +202,8 @@ class TestPostBillToNetsuite:
 
         client.post.side_effect = _fake_post
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(post_bill_to_netsuite(_ns_connection(), _FakeBill()))
 
         assert result["status"] == "success"
@@ -228,8 +228,8 @@ class TestPostBillToNetsuite:
 
         client.post.side_effect = _fake_post
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(post_bill_to_netsuite(
                     _ns_connection(subsidiary_id="7"),
                     _FakeBill(invoice_number="INV-002"),
@@ -256,8 +256,8 @@ class TestPostBillToNetsuite:
         error_response = _mock_response(400, dup_error)
         client = _fake_http_client({"POST": [error_response]})
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(post_bill_to_netsuite(_ns_connection(), _FakeBill()))
 
         assert result["status"] == "error"
@@ -270,8 +270,8 @@ class TestPostBillToNetsuite:
         auth_err = _mock_response(401, {"title": "Unauthorized"})
         client = _fake_http_client({"POST": [auth_err]})
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(post_bill_to_netsuite(_ns_connection(), _FakeBill()))
 
         assert result["status"] == "error"
@@ -298,8 +298,8 @@ class TestPostBillToNetsuite:
             tax_amount=75.0,
         )
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(post_bill_to_netsuite(_ns_connection(), bill))
 
         assert result["status"] == "success"
@@ -324,8 +324,8 @@ class TestPostBillToNetsuite:
         client.post.side_effect = _fake_post
         bill = _FakeBill(tax_amount=75.0)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 asyncio.run(post_bill_to_netsuite(_ns_connection(), bill))
 
         assert captured["body"]["taxTotal"] == 75.0
@@ -346,8 +346,8 @@ class TestPostBillToNetsuite:
         bill = _FakeBill(currency="NGN")
         gl_map = {"expenses": "67", "currency_id_NGN": "42"}
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 asyncio.run(post_bill_to_netsuite(_ns_connection(), bill, gl_map=gl_map))
 
         # Internal ID wins when provided.
@@ -358,7 +358,7 @@ class TestPostBillToNetsuite:
         lived in ``_attach_to_netsuite`` since inception. The function
         should call ``_oauth_header(connection, "POST", url)``, compose
         the full header dict, and POST successfully."""
-        from clearledgr.integrations.erp_netsuite import _attach_to_netsuite
+        from solden.integrations.erp_netsuite import _attach_to_netsuite
 
         captured: Dict[str, Any] = {}
 
@@ -371,8 +371,8 @@ class TestPostBillToNetsuite:
         client = MagicMock()
         client.post = AsyncMock(side_effect=_fake_post)
 
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake") as mock_hdr:
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake") as mock_hdr:
                 result = asyncio.run(_attach_to_netsuite(
                     _ns_connection(), "BILL-1", b"hello", "invoice.pdf",
                 ))

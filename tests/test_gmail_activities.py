@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from clearledgr.workflows.gmail_activities import send_slack_notification_activity
+from solden.workflows.gmail_activities import send_slack_notification_activity
 
 
 def _run(coro):
@@ -71,14 +71,14 @@ def test_send_slack_notification_activity_threads_existing_escalations_and_norma
         return_value=SimpleNamespace(channel="C-APPROVALS", ts="171.456", thread_ts="170.123")
     )
 
-    with patch("clearledgr.workflows.gmail_activities.get_db", return_value=db):
+    with patch("solden.workflows.gmail_activities.get_db", return_value=db):
         with patch(
-            "clearledgr.workflows.gmail_activities.resolve_slack_runtime",
+            "solden.workflows.gmail_activities.resolve_slack_runtime",
             return_value={"bot_token": "xoxb-live", "approval_channel": "cl-finance-ap"},
         ):
-            with patch("clearledgr.workflows.gmail_activities.SlackAPIClient", return_value=fake_client):
+            with patch("solden.workflows.gmail_activities.SlackAPIClient", return_value=fake_client):
                 with patch(
-                    "clearledgr.workflows.gmail_activities.send_with_retry",
+                    "solden.workflows.gmail_activities.send_with_retry",
                     new=AsyncMock(return_value=False),
                 ) as fallback_send:
                     result = _run(
@@ -128,12 +128,12 @@ def test_send_slack_notification_activity_dedupes_recent_escalations_in_existing
     fake_client = MagicMock()
     fake_client.send_message = AsyncMock()
 
-    with patch("clearledgr.workflows.gmail_activities.get_db", return_value=db):
+    with patch("solden.workflows.gmail_activities.get_db", return_value=db):
         with patch(
-            "clearledgr.workflows.gmail_activities.resolve_slack_runtime",
+            "solden.workflows.gmail_activities.resolve_slack_runtime",
             return_value={"bot_token": "xoxb-live", "approval_channel": "cl-finance-ap"},
         ):
-            with patch("clearledgr.workflows.gmail_activities.SlackAPIClient", return_value=fake_client):
+            with patch("solden.workflows.gmail_activities.SlackAPIClient", return_value=fake_client):
                 result = _run(
                     send_slack_notification_activity(
                         {

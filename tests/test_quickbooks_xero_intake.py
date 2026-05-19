@@ -27,10 +27,10 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 # Importing the adapter modules registers them via side-effect.
-from clearledgr.integrations.erp_quickbooks_intake_adapter import (  # noqa: E402
+from solden.integrations.erp_quickbooks_intake_adapter import (  # noqa: E402
     QuickBooksIntakeAdapter,
 )
-from clearledgr.integrations.erp_xero_intake_adapter import (  # noqa: E402
+from solden.integrations.erp_xero_intake_adapter import (  # noqa: E402
     XeroIntakeAdapter,
 )
 
@@ -169,7 +169,7 @@ class TestQuickBooksEnrich:
             staticmethod(lambda org_id: connection),
         )
         with patch(
-            "clearledgr.core.http_client.get_http_client",
+            "solden.core.http_client.get_http_client",
             return_value=fake_client,
         ):
             invoice = await adapter.enrich("org-1", env)
@@ -225,7 +225,7 @@ class TestQuickBooksEnrich:
             staticmethod(lambda org_id: connection),
         )
         with patch(
-            "clearledgr.core.http_client.get_http_client",
+            "solden.core.http_client.get_http_client",
             return_value=fake_client,
         ):
             invoice = await adapter.enrich("org-1", env)
@@ -241,7 +241,7 @@ class TestQuickBooksDeriveStateUpdate:
             {}, "org-1",
         )
         update = await adapter.derive_state_update("org-1", env)
-        from clearledgr.core.ap_states import APState
+        from solden.core.ap_states import APState
         assert update.target_state == APState.CLOSED.value
 
     @pytest.mark.asyncio
@@ -327,7 +327,7 @@ class TestXeroEnrich:
             staticmethod(lambda org_id: connection),
         )
         with patch(
-            "clearledgr.core.http_client.get_http_client",
+            "solden.core.http_client.get_http_client",
             return_value=fake_client,
         ):
             invoice = await adapter.enrich("org-1", env)
@@ -375,7 +375,7 @@ class TestXeroEnrich:
             staticmethod(lambda org_id: connection),
         )
         with patch(
-            "clearledgr.core.http_client.get_http_client",
+            "solden.core.http_client.get_http_client",
             return_value=fake_client,
         ):
             invoice = await adapter.enrich("org-1", env)
@@ -403,7 +403,7 @@ class TestXeroEnrich:
             staticmethod(lambda org_id: connection),
         )
         with patch(
-            "clearledgr.core.http_client.get_http_client",
+            "solden.core.http_client.get_http_client",
             return_value=fake_client,
         ):
             invoice = await adapter.enrich("org-1", env)
@@ -422,7 +422,7 @@ class TestXeroDeriveStateUpdate:
             {}, "org-1",
         )
         update = await adapter.derive_state_update("org-1", env)
-        from clearledgr.core.ap_states import APState
+        from solden.core.ap_states import APState
         assert update.target_state == APState.CLOSED.value
 
     @pytest.mark.asyncio
@@ -449,7 +449,7 @@ def test_qb_and_xero_adapters_registered():
     """Both adapters register on import. Without this, the universal
     handler returns ``no_adapter`` and the webhook silently drops
     intake events."""
-    from clearledgr.services.intake_adapter import list_registered_sources
+    from solden.services.intake_adapter import list_registered_sources
     sources = list_registered_sources()
     assert "quickbooks" in sources
     assert "xero" in sources
@@ -467,11 +467,11 @@ class TestDispatcherSkipsNotABill:
         # (ACCREC sales invoice), _dispatch_create_like must skip
         # process_new_invoice — otherwise we'd mint a phantom AP
         # item for a customer invoice.
-        from clearledgr.services.intake_adapter import (
+        from solden.services.intake_adapter import (
             IntakeEnvelope,
             _dispatch_create_like,
         )
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_models import InvoiceData
 
         envelope = IntakeEnvelope(
             source_type="xero",
@@ -505,10 +505,10 @@ class TestDispatcherSkipsNotABill:
         fake_db.get_ap_item_by_erp_reference = MagicMock(return_value=None)
 
         with patch(
-            "clearledgr.services.intake_adapter.get_db",
+            "solden.services.intake_adapter.get_db",
             return_value=fake_db,
         ), patch(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
         ) as mock_get_workflow:
             mock_get_workflow.return_value.process_new_invoice = process_new_invoice
             result = await _dispatch_create_like(adapter, envelope)

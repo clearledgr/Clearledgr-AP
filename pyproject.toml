@@ -22,10 +22,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# `clearledgr/_envboot.py` is a side-effect import that loads .env
+# `solden/_envboot.py` is a side-effect import that loads .env
 # before anything else. Its only consumer is `main.py`, which imports
 # the module purely for the side effect.
-"clearledgr/_envboot.py" = ["F401"]
+"solden/_envboot.py" = ["F401"]
 # Test files commonly use star imports from local fixture modules and
 # capture-then-discard patterns; tighter rules belong in the source tree.
 "tests/conftest.py" = ["E402"]

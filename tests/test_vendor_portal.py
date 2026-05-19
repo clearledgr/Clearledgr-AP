@@ -37,8 +37,8 @@ pytestmark = _vo_skip_pytest.mark.skip(
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -197,7 +197,7 @@ class TestMigrationV18:
             assert col in columns, f"missing column {col}"
 
     def test_migration_v18_idempotent(self, tmp_db):
-        from clearledgr.core.migrations import _MIGRATIONS
+        from solden.core.migrations import _MIGRATIONS
         m18 = next(m for m in _MIGRATIONS if m[0] == 18)
         with tmp_db.connect() as conn:
             conn.autocommit = True
@@ -218,8 +218,8 @@ class TestInviteEndpoint:
     def _make_app(self, tmp_db, monkeypatch):
         from unittest.mock import MagicMock
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_onboarding import router
-        from clearledgr.core.auth import (
+        from solden.api.vendor_onboarding import router
+        from solden.core.auth import (
             get_current_user,
             require_cfo,
             require_financial_controller,
@@ -292,8 +292,8 @@ class TestGetOnboardingSession:
     def test_get_returns_session(self, tmp_db, monkeypatch):
         from unittest.mock import MagicMock
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_onboarding import router
-        from clearledgr.core.auth import get_current_user
+        from solden.api.vendor_onboarding import router
+        from solden.core.auth import get_current_user
         import fastapi
 
         org, vendor, session = _seed(tmp_db)
@@ -321,7 +321,7 @@ class TestPortalShortcutRedirect:
 
     def test_shortcut_redirects_to_portal_path(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import shortcut_router
+        from solden.api.vendor_portal import shortcut_router
         import fastapi
 
         app = fastapi.FastAPI()
@@ -333,7 +333,7 @@ class TestPortalShortcutRedirect:
 
     def test_shortcut_preserves_urlsafe_token_chars(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import shortcut_router
+        from solden.api.vendor_portal import shortcut_router
         import fastapi
 
         app = fastapi.FastAPI()
@@ -350,7 +350,7 @@ class TestPortalGetForm:
 
     def test_get_returns_html_with_vendor_name(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         org, vendor, session = _seed(tmp_db)
@@ -368,7 +368,7 @@ class TestPortalGetForm:
 
     def test_get_with_expired_token_returns_410(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         org, vendor, session = _seed(tmp_db)
@@ -384,7 +384,7 @@ class TestPortalGetForm:
 
     def test_get_with_nonexistent_token_returns_410(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         app = fastapi.FastAPI()
@@ -399,7 +399,7 @@ class TestPortalKycPost:
 
     def test_kyc_post_saves_fields_and_transitions(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         org, vendor, session = _seed(tmp_db)
@@ -435,7 +435,7 @@ class TestPortalBankDetailsPost:
 
     def test_bank_details_post_encrypts_and_transitions(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         org, vendor, session = _seed(tmp_db)
@@ -490,7 +490,7 @@ class TestAccessTracking:
 
     def test_portal_get_increments_access_count(self, tmp_db, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.api.vendor_portal import router
+        from solden.api.vendor_portal import router
         import fastapi
 
         org, vendor, session = _seed(tmp_db)

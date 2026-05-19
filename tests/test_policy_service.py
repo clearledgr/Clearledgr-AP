@@ -27,12 +27,12 @@ import pytest
 
 
 def test_hash_stable_across_key_order():
-    from clearledgr.services.policy_service import _hash_content
+    from solden.services.policy_service import _hash_content
     assert _hash_content({"a": 1, "b": 2}) == _hash_content({"b": 2, "a": 1})
 
 
 def test_hash_distinct_for_distinct_content():
-    from clearledgr.services.policy_service import _hash_content
+    from solden.services.policy_service import _hash_content
     assert _hash_content({"a": 1}) != _hash_content({"a": 2})
 
 
@@ -40,14 +40,14 @@ def test_hash_distinct_for_distinct_content():
 
 
 def test_slice_approval_thresholds():
-    from clearledgr.services.policy_service import _slice_settings_for_kind
+    from solden.services.policy_service import _slice_settings_for_kind
     settings = {"approval_thresholds": [{"min_amount": 0, "max_amount": 1000}]}
     out = _slice_settings_for_kind("approval_thresholds", settings)
     assert out == {"thresholds": [{"min_amount": 0, "max_amount": 1000}]}
 
 
 def test_slice_gl_account_map():
-    from clearledgr.services.policy_service import _slice_settings_for_kind
+    from solden.services.policy_service import _slice_settings_for_kind
     settings = {"gl_account_map": {"expenses": "6100", "ap": "2000"}}
     out = _slice_settings_for_kind("gl_account_map", settings)
     assert out == {"map": {"expenses": "6100", "ap": "2000"}}
@@ -55,13 +55,13 @@ def test_slice_gl_account_map():
 
 def test_slice_confidence_gate_with_default():
     """When no confidence keys are set, returns the default 0.95 floor."""
-    from clearledgr.services.policy_service import _slice_settings_for_kind
+    from solden.services.policy_service import _slice_settings_for_kind
     out = _slice_settings_for_kind("confidence_gate", {})
     assert out == {"critical_field_confidence_threshold": 0.95}
 
 
 def test_slice_confidence_gate_preserves_set_values():
-    from clearledgr.services.policy_service import _slice_settings_for_kind
+    from solden.services.policy_service import _slice_settings_for_kind
     settings = {"critical_field_confidence_threshold": 0.85, "confidence_gate_threshold": 0.80}
     out = _slice_settings_for_kind("confidence_gate", settings)
     assert out["critical_field_confidence_threshold"] == 0.85
@@ -69,7 +69,7 @@ def test_slice_confidence_gate_preserves_set_values():
 
 
 def test_merge_round_trips_for_every_kind():
-    from clearledgr.services.policy_service import (
+    from solden.services.policy_service import (
         _merge_kind_into_settings, _slice_settings_for_kind, POLICY_KINDS,
     )
     fixtures: Dict[str, Dict[str, Any]] = {
@@ -121,7 +121,7 @@ def test_merge_round_trips_for_every_kind():
 
 
 def test_unknown_kind_raises():
-    from clearledgr.services.policy_service import PolicyKindError, _validate_kind
+    from solden.services.policy_service import PolicyKindError, _validate_kind
     with pytest.raises(PolicyKindError):
         _validate_kind("not_a_real_kind")
 
@@ -130,7 +130,7 @@ def test_unknown_kind_raises():
 
 
 def test_match_threshold_band_picks_first_matching_rule():
-    from clearledgr.services.policy_service import _match_threshold_band
+    from solden.services.policy_service import _match_threshold_band
     thresholds = [
         {"min_amount": 0, "max_amount": 1000, "label": "small"},
         {"min_amount": 1000, "max_amount": 10000, "label": "mid"},
@@ -142,7 +142,7 @@ def test_match_threshold_band_picks_first_matching_rule():
 
 
 def test_match_threshold_band_respects_vendor_filter():
-    from clearledgr.services.policy_service import _match_threshold_band
+    from solden.services.policy_service import _match_threshold_band
     thresholds = [
         {"min_amount": 0, "max_amount": 10000, "label": "vip", "vendors": ["acme"]},
         {"min_amount": 0, "max_amount": 10000, "label": "org-test"},
@@ -157,7 +157,7 @@ def test_match_threshold_band_respects_vendor_filter():
 def test_replay_approval_thresholds_flags_band_changes():
     """A bill currently routed under the 'small' band would route
     under 'mid' if the threshold ceiling moved from 1000 → 100."""
-    from clearledgr.services.policy_service import _replay_approval_thresholds
+    from solden.services.policy_service import _replay_approval_thresholds
 
     # Target version's thresholds: ceiling moved from 1000 to 100
     target_content = {"thresholds": [
@@ -188,7 +188,7 @@ def test_replay_approval_thresholds_flags_band_changes():
 def test_replay_approval_thresholds_metadata_as_string():
     """Metadata stored as a JSON string (Postgres TEXT) is also handled."""
     import json
-    from clearledgr.services.policy_service import _replay_approval_thresholds
+    from solden.services.policy_service import _replay_approval_thresholds
     target_content = {"thresholds": [
         {"min_amount": 0, "max_amount": 100, "label": "tiny"},
         {"min_amount": 100, "label": "rest"},
@@ -209,7 +209,7 @@ def test_replay_approval_thresholds_metadata_as_string():
 def test_replay_gl_account_map_flags_account_changes():
     """An item posted under '6100' that would have gone to '7000' under
     the target map shows up as a delta."""
-    from clearledgr.services.policy_service import _replay_gl_account_map
+    from solden.services.policy_service import _replay_gl_account_map
     target_content = {"map": {"expenses": "7000"}}
     ap_items = [
         # State == posted_to_erp + GL was 6100 → would change to 7000
@@ -325,7 +325,7 @@ def _make_mock_db():
 def test_policy_service_lazy_migration_on_first_read():
     """First read for an org+kind that has no row creates v1 from
     settings_json."""
-    from clearledgr.services.policy_service import PolicyService
+    from solden.services.policy_service import PolicyService
     db = _make_mock_db()
     db.get_organization.return_value = {
         "id": "org-1",
@@ -333,7 +333,7 @@ def test_policy_service_lazy_migration_on_first_read():
             "approval_thresholds": [{"min_amount": 0, "max_amount": 1000, "label": "small"}],
         },
     }
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         version = service.get_active("approval_thresholds")
     assert version.version_number == 1
@@ -343,9 +343,9 @@ def test_policy_service_lazy_migration_on_first_read():
 
 
 def test_policy_service_set_creates_new_version():
-    from clearledgr.services.policy_service import PolicyService
+    from solden.services.policy_service import PolicyService
     db = _make_mock_db()
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         v1 = service.set_policy(
             kind="approval_thresholds",
@@ -368,10 +368,10 @@ def test_policy_service_set_creates_new_version():
 
 def test_policy_service_set_idempotent_on_duplicate_content():
     """Saving the same content twice doesn't inflate version_number."""
-    from clearledgr.services.policy_service import PolicyService
+    from solden.services.policy_service import PolicyService
     db = _make_mock_db()
     content = {"thresholds": [{"min_amount": 0, "label": "any"}]}
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         v1 = service.set_policy(kind="approval_thresholds", content=content, actor="alice")
         v2 = service.set_policy(kind="approval_thresholds", content=content, actor="alice")
@@ -384,9 +384,9 @@ def test_policy_service_set_idempotent_on_duplicate_content():
 def test_policy_service_rollback_creates_new_version_linking_to_target():
     """Rollback never mutates old rows; creates a new version with
     is_rollback=True and parent_version_id pointing at the target."""
-    from clearledgr.services.policy_service import PolicyService
+    from solden.services.policy_service import PolicyService
     db = _make_mock_db()
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         v1 = service.set_policy(
             kind="approval_thresholds",
@@ -409,9 +409,9 @@ def test_policy_service_rollback_creates_new_version_linking_to_target():
 
 
 def test_policy_service_unknown_kind_raises():
-    from clearledgr.services.policy_service import PolicyKindError, PolicyService
+    from solden.services.policy_service import PolicyKindError, PolicyService
     db = _make_mock_db()
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         with pytest.raises(PolicyKindError):
             service.get_active("not_a_real_kind")
@@ -420,9 +420,9 @@ def test_policy_service_unknown_kind_raises():
 
 
 def test_policy_service_replay_unknown_version_raises():
-    from clearledgr.services.policy_service import PolicyService, PolicyVersionNotFound
+    from solden.services.policy_service import PolicyService, PolicyVersionNotFound
     db = _make_mock_db()
-    with patch("clearledgr.services.policy_service.get_db", return_value=db):
+    with patch("solden.services.policy_service.get_db", return_value=db):
         service = PolicyService("org-1")
         with pytest.raises(PolicyVersionNotFound):
             service.replay_against("PV-doesnotexist")

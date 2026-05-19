@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from clearledgr.core.ap_states import APState
-from clearledgr.core.database import get_db
+from solden.core.ap_states import APState
+from solden.core.database import get_db
 
 
 def _seed_ap_item_with_metadata(db, *, ap_item_id: str = "AP-DC-1") -> str:

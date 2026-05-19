@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
-from clearledgr.services.monitoring import MonitoringService, run_monitoring_checks
+from solden.core import database as db_module
+from solden.core.auth import TokenData
+from solden.services.monitoring import MonitoringService, run_monitoring_checks
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +370,7 @@ class TestRunMonitoringChecks:
                 user_id=f"alert-{i}", email=f"a{i}@t.com", last_error="auth_failed",
             )
 
-        with patch("clearledgr.services.monitoring._alert_channels", return_value=["log"]):
+        with patch("solden.services.monitoring._alert_channels", return_value=["log"]):
             result = asyncio.run(run_monitoring_checks("org-test"))
 
         assert result["alert_count"] >= 1
@@ -404,7 +404,7 @@ class TestMonitoringEndpoint:
     @pytest.fixture()
     def client(self, db):
         from main import app
-        from clearledgr.api.ops import get_current_user
+        from solden.api.ops import get_current_user
 
         def _fake_user():
             return TokenData(
@@ -437,8 +437,8 @@ class TestMonitoringEndpoint:
 
 class TestBackgroundWiring:
     def test_monitoring_function_exists(self, db):
-        from clearledgr.services.agent_background import _run_monitoring_checks
-        with patch("clearledgr.services.monitoring.run_monitoring_checks", new_callable=AsyncMock) as mock_run:
+        from solden.services.agent_background import _run_monitoring_checks
+        with patch("solden.services.monitoring.run_monitoring_checks", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = {"alert_count": 0, "healthy": True}
             asyncio.run(_run_monitoring_checks("org-test"))
             mock_run.assert_called_once_with(organization_id="org-test")

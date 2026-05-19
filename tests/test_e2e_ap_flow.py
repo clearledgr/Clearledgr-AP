@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from clearledgr.core.ap_states import IllegalTransitionError
-from clearledgr.core.database import get_db
+from solden.core.ap_states import IllegalTransitionError
+from solden.core.database import get_db
 
 
 # ---------------------------------------------------------------------------

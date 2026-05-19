@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.services.ap_item_service import _build_vendor_detail_payload, _build_vendor_summary_rows
+from solden.core import database as db_module
+from solden.services.ap_item_service import _build_vendor_detail_payload, _build_vendor_summary_rows
 
 
 @pytest.fixture()

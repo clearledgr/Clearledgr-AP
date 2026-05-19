@@ -12,8 +12,8 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import _apply_runtime_surface_profile, app  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import create_access_token  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import create_access_token  # noqa: E402
 
 
 def _item_payload(item_id: str, org_id: str) -> dict:
@@ -68,9 +68,9 @@ def client(db):
     # Professional (7-year window) to avoid coupling the suite to
     # the retention filter. Retention itself is covered in
     # test_subscription_quota_enforcement.
-    import clearledgr.services.subscription as sub_mod
+    import solden.services.subscription as sub_mod
     sub_mod._subscription_service = None
-    from clearledgr.services.subscription import get_subscription_service, PlanTier
+    from solden.services.subscription import get_subscription_service, PlanTier
     sub_svc = get_subscription_service()
     for org_id in ("org-alpha", "org-beta"):
         sub_svc.upgrade_plan(org_id, tier=PlanTier.PROFESSIONAL)

@@ -1,0 +1,2459 @@
+"""Internal AP workflow machinery used behind the finance runtime contract.
+
+This module contains the implementation substrate for invoice lifecycle work
+such as validation, approval routing, and ERP posting. User-facing API
+surfaces should enter through ``FinanceAgentRuntime``; this workflow service is
+an internal execution detail behind that contract boundary.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import uuid
+from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone, timedelta
+
+from solden.core.database import get_db
+from solden.services.slack_api import SlackAPIClient, get_slack_client
+try:
+    from solden.services.teams_api import TeamsAPIClient
+except Exception as e:  # pragma: no cover - optional integration in some local builds
+    logging.getLogger(__name__).info("TeamsAPIClient not available: %s", e)
+    TeamsAPIClient = None  # type: ignore[assignment]
+from solden.services.budget_awareness import get_budget_awareness  # noqa: F401 — re-export for test patch targets + back-compat
+from solden.services.policy_compliance import get_policy_compliance  # noqa: F401 — re-export for test patch targets + back-compat
+from solden.services.purchase_orders import get_purchase_order_service  # noqa: F401 — re-export for test patch targets + back-compat
+from solden.services.finance_learning import get_finance_learning_service
+from solden.services.approval_card_builder import (
+    humanize_reason_code,
+    dedupe_reason_lines,
+    build_approval_surface_copy,
+    build_approval_blocks,
+)
+from solden.services.invoice_models import InvoiceData  # noqa: F401 — re-export
+from solden.services.invoice_validation import InvoiceValidationMixin
+from solden.services.invoice_posting import InvoicePostingMixin
+
+logger = logging.getLogger(__name__)
+
+# Backward-compatible import alias for older tests/monkeypatch targets.
+get_learning_service = get_finance_learning_service
+
+
+class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
+    """
+    Internal implementation for AP workflow execution.
+    
+    Usage:
+        service = InvoiceWorkflowService(organization_id="acme")
+        
+        # When invoice detected in Gmail
+        result = await service.process_new_invoice(invoice_data)
+        
+        # When approved in Slack
+        result = await service.approve_invoice(gmail_id, approved_by="user@acme.com")
+        
+        # When rejected in Slack
+        result = await service.reject_invoice(gmail_id, reason="Duplicate", rejected_by="user@acme.com")
+    """
+    
+    def __init__(
+        self,
+        organization_id: str,
+        slack_channel: Optional[str] = None,
+        auto_approve_threshold: float = 0.95,
+    ):
+        self.organization_id = organization_id
+        self._slack_channel = slack_channel
+        self._auto_approve_threshold = auto_approve_threshold
+        self.db = get_db()
+        self._slack_client: Optional[SlackAPIClient] = None
+        self._teams_client: Optional[Any] = None
+        self._settings_loaded = False
+        self._settings: Optional[Dict] = None
+
+        from solden.services.state_observers import (
+            AuditTrailObserver,
+            GmailLabelObserver,
+            NotificationObserver,
+            OverrideWindowObserver,
+            StateObserverRegistry,
+            VendorDomainTrackingObserver,
+            VendorFeedbackObserver,
+            register_observer_for_outbox_dispatch,
+        )
+        # Gap 5: AnnotationDispatchObserver replaces the legacy
+        # GmailLabelObserver in the live registry. The Gmail label
+        # writer now runs as one of several annotation targets
+        # (gmail_label / netsuite_custom_field / sap_z_field /
+        # customer_webhook / slack_card_update). The legacy class is
+        # still registered with the outbox dispatch table so any
+        # in-flight outbox rows targeting it directly still resolve.
+        from solden.services.annotation_targets.base import AnnotationDispatchObserver
+        # Eager-import the targets so each one's register_target() runs
+        # before any annotation outbox row is processed.
+        import solden.services.annotation_targets  # noqa: F401
+        # Gap 6: eager-import box_projection so the projection-prefix
+        # outbox handler is registered + the default projectors are
+        # in the registry before BoxProjectionObserver enqueues anything.
+        import solden.services.box_projection  # noqa: F401
+        from solden.services.box_projection import BoxProjectionObserver
+
+        self._observer_registry = StateObserverRegistry()
+        legacy_gmail_observer = GmailLabelObserver(self.db)
+        observers = [
+            AuditTrailObserver(self.db),
+            VendorFeedbackObserver(self.db),
+            NotificationObserver(self.db),
+            AnnotationDispatchObserver(self.db),
+            # Phase 1.4: open an override window + post the Slack undo
+            # card whenever an AP item transitions into posted_to_erp.
+            OverrideWindowObserver(self.db),
+            # Phase 2.2: record the vendor's sender domain as trusted on
+            # first successful post (TOFU bootstrap for the domain lock).
+            VendorDomainTrackingObserver(self.db),
+            # Gap 6: read-side projections — fans out to BoxSummaryProjector
+            # and VendorSummaryProjector via outbox so admin/Gmail/Slack
+            # reads land on materialised rollups instead of live joins.
+            BoxProjectionObserver(self.db, box_type="ap_item"),
+        ]
+        for obs in observers:
+            self._observer_registry.register(obs)
+            # Gap 4: also register with the outbox dispatch registry
+            # so the worker process can resolve target='observer:<Cls>'
+            # to the right callable. Idempotent.
+            register_observer_for_outbox_dispatch(obs)
+        # Back-compat: keep the legacy GmailLabelObserver in the
+        # outbox-dispatch table for any rows enqueued before this
+        # commit shipped.
+        register_observer_for_outbox_dispatch(legacy_gmail_observer)
+
+    def _load_settings(self):
+        """Load organization settings if not already loaded."""
+        if self._settings_loaded:
+            return
+        
+        try:
+            org = self.db.get_organization(self.organization_id)
+            if org:
+                settings = org.get("settings", {})
+                if isinstance(settings, str):
+                    settings = json.loads(settings) if settings else {}
+                self._settings = settings
+        except Exception as e:
+            logger.warning("Failed to load org settings for %s: %s", self.organization_id, e)
+            self._settings = {}
+        
+        self._settings_loaded = True
+
+    # ------------------------------------------------------------------
+    # §6 Box State Management (Agent Design Specification)
+    # ------------------------------------------------------------------
+
+    def set_waiting_condition(
+        self, ap_item_id: str, condition_type: str,
+        expected_by: Optional[str] = None, context: Optional[Dict] = None,
+    ) -> None:
+        """Record that the agent is waiting for a condition before proceeding."""
+        condition = {
+            "type": condition_type,
+            "expected_by": expected_by,
+            "context": context or {},
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.db.update_ap_item(ap_item_id, waiting_condition=condition)
+
+    def clear_waiting_condition(self, ap_item_id: str) -> None:
+        """Clear the waiting condition when the condition is met."""
+        self.db.update_ap_item(ap_item_id, waiting_condition=None)
+
+    def set_pending_plan(self, ap_item_id: str, plan: List[Dict]) -> None:
+        """Persist the current plan for resumption after interruption."""
+        self.db.update_ap_item(ap_item_id, pending_plan=plan)
+
+    def clear_pending_plan(self, ap_item_id: str) -> None:
+        """Clear the pending plan when execution completes."""
+        self.db.update_ap_item(ap_item_id, pending_plan=None)
+
+    # Tunables. Hoisted from inline literals so two callers of the
+    # same constant can't drift apart on the next edit.
+    _FRAUD_FLAG_CAS_ATTEMPTS = 5
+    _ORG_SETTINGS_CACHE_TTL_SECONDS = 300   # process-local org-settings cache
+    _APPROVAL_WAIT_HOURS = 4                # how long the agent waits on an approval before it surfaces as "stale"
+    _APPROVAL_CONTEXT_SCAN_LIMIT = 5000     # max ap_items scanned to build the approval context
+
+    # ── Approval-dispatch outbox ────────────────────────────────────
+    #
+    # ``_send_for_approval`` writes a small outbox row on the AP item's
+    # metadata before calling Slack and flips it to "dispatched" only
+    # after the post-delivery DB writes succeed. Crash-recovery + a
+    # per-box advisory lock together turn the previously fail-safe-by-
+    # accident wide try/except into an explicit state machine:
+    #
+    #   pending  — intent recorded, Slack call may or may not have run
+    #   dispatched — Slack delivered AND state transition committed
+    #   failed   — Slack delivery itself errored (no message in flight)
+    #   orphan   — Slack delivered but post-delivery DB write failed;
+    #              operator must reconcile (logged at CRITICAL with
+    #              the slack_ts so the breadcrumb is grep-able)
+    #
+    # Idempotent re-entry: a second call after status=dispatched
+    # returns the cached thread_ts without touching Slack.
+
+    def _read_approval_dispatch(
+        self, ap_item_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """Return the current ``approval_dispatch`` outbox blob for an
+        AP item, or ``{}`` if none is recorded.
+        """
+        if not ap_item_id:
+            return {}
+        try:
+            row = self.db.get_ap_item(ap_item_id)
+        except Exception:
+            return {}
+        if not row:
+            return {}
+        meta_raw = row.get("metadata") or {}
+        if isinstance(meta_raw, str):
+            try:
+                meta_raw = json.loads(meta_raw) if meta_raw.strip() else {}
+            except Exception:
+                meta_raw = {}
+        dispatch = (meta_raw or {}).get("approval_dispatch") or {}
+        return dispatch if isinstance(dispatch, dict) else {}
+
+    def _write_approval_dispatch(
+        self, ap_item_id: Optional[str], payload: Dict[str, Any],
+    ) -> None:
+        """Merge a dispatch payload into ``ap_item.metadata.approval_dispatch``.
+        Best-effort: a failure to write the outbox row is logged but
+        does not unwind the dispatch — the caller has either a Slack
+        message-in-hand (success path) or a reconcilable state (orphan
+        path) regardless.
+        """
+        if not ap_item_id:
+            return
+        try:
+            self._update_ap_item_metadata(ap_item_id, {"approval_dispatch": payload})
+        except Exception as exc:
+            logger.warning(
+                "[ApprovalDispatch] outbox write failed for ap_item=%s: %s",
+                ap_item_id, exc,
+            )
+
+    def add_fraud_flag(self, ap_item_id: str, flag_type: str) -> None:
+        """Add a fraud flag to the Box.
+
+        Uses ``update_ap_item``'s ``_expected_updated_at`` optimistic-lock
+        check to fix the read-modify-write race between concurrent
+        flag additions: without it, two intake pipelines flagging the
+        same box at the same instant would each read the same prior
+        list, append separately, and one of the two flags would be
+        silently lost on the second write.
+        """
+        for _attempt in range(self._FRAUD_FLAG_CAS_ATTEMPTS):
+            item = self.db.get_ap_item(ap_item_id)
+            if not item:
+                return
+            flags = item.get("fraud_flags") or []
+            if isinstance(flags, str):
+                flags = json.loads(flags) if flags else []
+            flags.append({
+                "flag_type": flag_type,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+            })
+            ok = self.db.update_ap_item(
+                ap_item_id,
+                fraud_flags=flags,
+                _expected_updated_at=item.get("updated_at"),
+            )
+            if ok:
+                return
+        logger.warning(
+            "[InvoiceWorkflow] add_fraud_flag exhausted CAS retries for "
+            "ap_item=%s flag=%s; flag may be lost under contention",
+            ap_item_id, flag_type,
+        )
+
+    def resolve_fraud_flag(self, ap_item_id: str, flag_type: str, resolved_by: str) -> None:
+        """Mark a fraud flag as resolved.
+
+        Same CAS pattern as ``add_fraud_flag`` so resolving and adding
+        a flag concurrently can't lose the resolution timestamp.
+        """
+        for _attempt in range(self._FRAUD_FLAG_CAS_ATTEMPTS):
+            item = self.db.get_ap_item(ap_item_id)
+            if not item:
+                return
+            flags = item.get("fraud_flags") or []
+            if isinstance(flags, str):
+                flags = json.loads(flags) if flags else []
+            for flag in flags:
+                if flag.get("flag_type") == flag_type and not flag.get("resolved_at"):
+                    flag["resolved_at"] = datetime.now(timezone.utc).isoformat()
+                    flag["resolved_by"] = resolved_by
+                    break
+            ok = self.db.update_ap_item(
+                ap_item_id,
+                fraud_flags=flags,
+                _expected_updated_at=item.get("updated_at"),
+            )
+            if ok:
+                return
+        logger.warning(
+            "[InvoiceWorkflow] resolve_fraud_flag exhausted CAS retries for "
+            "ap_item=%s flag=%s; resolution may be lost under contention",
+            ap_item_id, flag_type,
+        )
+
+    @property
+    def slack_channel(self) -> str:
+        """Get Slack channel, using settings if available."""
+        if self._slack_channel:
+            return self._slack_channel
+        
+        self._load_settings()
+        if self._settings:
+            channels = self._settings.get("slack_channels", {})
+            return channels.get("invoices", "#finance-approvals")
+        env_channel = (
+            os.getenv("SLACK_APPROVAL_CHANNEL")
+            or os.getenv("SLACK_DEFAULT_CHANNEL")
+            or ""
+        ).strip()
+        return env_channel or "#finance-approvals"
+    
+    @property
+    def auto_approve_threshold(self) -> float:
+        """Get auto-approve threshold from settings."""
+        self._load_settings()
+        if self._settings:
+            return self._settings.get("auto_approve_threshold", self._auto_approve_threshold)
+        return self._auto_approve_threshold
+    
+    def get_approval_channel_for_amount(self, amount: float, invoice: Any = None) -> str:
+        """Get appropriate Slack channel based on amount thresholds."""
+        return str(self.get_approval_target_for_amount(amount, invoice=invoice).get("channel") or self.slack_channel)
+
+    def get_approval_target_for_amount(self, amount: float, *, invoice: Any = None) -> Dict[str, Any]:
+        """Return the approval channel and any configured assignees for an amount.
+
+        When *invoice* is provided, GL code / department / vendor / entity
+        filters on the routing rules are evaluated.  Without it the function
+        falls back to amount-only matching (backward compatible).
+        """
+        self._load_settings()
+
+        routing: Dict[str, Any] = {
+            "channel": self.slack_channel,
+            "approvers": [],
+        }
+        if not self._settings:
+            return routing
+
+        thresholds = self._settings.get("approval_thresholds", [])
+
+        # Build invoice context for rule matching
+        if invoice is not None:
+            _gl = getattr(invoice, "gl_code", None) or (getattr(invoice, "vendor_intelligence", None) or {}).get("suggested_gl", "")
+            invoice_gl = str(_gl or "").strip().lower()
+            invoice_dept = str(getattr(invoice, "department", "") or "").strip().lower()
+            invoice_vendor = str(getattr(invoice, "vendor_name", "") or "").strip().lower()
+            invoice_entity = str(getattr(invoice, "entity_code", "") or "").strip().lower()
+        else:
+            invoice_gl = ""
+            invoice_dept = ""
+            invoice_vendor = ""
+            invoice_entity = ""
+
+        for threshold in thresholds:
+            min_amt = threshold.get("min_amount", 0)
+            max_amt = threshold.get("max_amount")
+
+            # Amount filter
+            if not (amount >= min_amt and (max_amt is None or amount < max_amt)):
+                continue
+
+            # GL code filter (if specified in rule)
+            rule_gl = [g.strip().lower() for g in (threshold.get("gl_codes") or []) if g]
+            if rule_gl and invoice_gl and invoice_gl not in rule_gl:
+                continue
+
+            # Department/cost center filter
+            rule_dept = [d.strip().lower() for d in (threshold.get("departments") or []) if d]
+            if rule_dept and invoice_dept and invoice_dept not in rule_dept:
+                continue
+
+            # Vendor filter
+            rule_vendor = [v.strip().lower() for v in (threshold.get("vendors") or []) if v]
+            if rule_vendor and invoice_vendor and invoice_vendor not in rule_vendor:
+                continue
+
+            # Entity filter
+            rule_entity = [e.strip().lower() for e in (threshold.get("entities") or []) if e]
+            if rule_entity and invoice_entity and invoice_entity not in rule_entity:
+                continue
+
+            # Match found — extract routing config
+            raw_approvers = (
+                threshold.get("approvers")
+                or threshold.get("required_approvers")
+                or []
+            )
+            raw_targets = threshold.get("approver_targets") or []
+            if not isinstance(raw_approvers, list):
+                raw_approvers = [raw_approvers] if raw_approvers else []
+            if not isinstance(raw_targets, list):
+                raw_targets = [raw_targets] if raw_targets else []
+            normalized_targets = []
+            for target in raw_targets:
+                if not isinstance(target, dict):
+                    continue
+                email = str(target.get("email") or "").strip()
+                slack_user_id = str(target.get("slack_user_id") or "").strip()
+                display_name = str(target.get("display_name") or target.get("name") or email or slack_user_id).strip()
+                if email or slack_user_id:
+                    normalized_targets.append(
+                        {
+                            "email": email,
+                            "slack_user_id": slack_user_id,
+                            "display_name": display_name,
+                            "slack_resolution": str(target.get("slack_resolution") or "").strip(),
+                        }
+                    )
+            if not normalized_targets:
+                normalized_targets = [
+                    {
+                        "email": str(value).strip(),
+                        "slack_user_id": "",
+                        "display_name": str(value).strip(),
+                        "slack_resolution": "",
+                    }
+                    for value in raw_approvers
+                    if str(value).strip()
+                ]
+            routing["channel"] = (
+                str(
+                    threshold.get("approver_channel")
+                    or threshold.get("channel")
+                    or self.slack_channel
+                ).strip()
+                or self.slack_channel
+            )
+            routing["approvers"] = [
+                str(target.get("email") or target.get("slack_user_id") or "").strip()
+                for target in normalized_targets
+                if str(target.get("email") or target.get("slack_user_id") or "").strip()
+            ]
+            routing["approver_targets"] = normalized_targets
+            routing["approval_type"] = threshold.get("approval_type", "any")
+            routing["matched_rule"] = {
+                "gl_codes": rule_gl or None,
+                "departments": rule_dept or None,
+                "vendors": rule_vendor or None,
+                "entities": rule_entity or None,
+                "amount_range": [min_amt, max_amt],
+            }
+            return routing
+
+        return routing
+    
+    @property
+    def slack_client(self) -> SlackAPIClient:
+        """Lazy-load Slack client."""
+        if self._slack_client is None:
+            self._slack_client = get_slack_client(organization_id=self.organization_id)
+        return self._slack_client
+
+    async def _resolve_approval_assignees(self, assignees: List[Any]) -> Dict[str, List[str]]:
+        normalized_targets: List[Dict[str, str]] = []
+        for value in (assignees or []):
+            if isinstance(value, dict):
+                email = str(value.get("email") or "").strip()
+                display_name = str(value.get("display_name") or value.get("name") or email or "").strip()
+                slack_user_id = str(value.get("slack_user_id") or "").strip()
+                slack_resolution = str(value.get("slack_resolution") or "").strip()
+                if email or slack_user_id:
+                    normalized_targets.append(
+                        {
+                            "email": email,
+                            "display_name": display_name or email or slack_user_id,
+                            "slack_user_id": slack_user_id,
+                            "slack_resolution": slack_resolution,
+                        }
+                    )
+            else:
+                token = str(value).strip()
+                if token:
+                    normalized_targets.append(
+                        {
+                            "email": token if "@" in token else "",
+                            "display_name": token,
+                            "slack_user_id": token if SlackAPIClient.is_probable_user_id(token) else "",
+                            "slack_resolution": "resolved" if SlackAPIClient.is_probable_user_id(token) else "",
+                        }
+                    )
+
+        if not normalized_targets:
+            return {
+                "labels": [],
+                "delivery_ids": [],
+                "mentions": [],
+                "authorization_targets": [],
+            }
+
+        unresolved_inputs = [
+            target.get("slack_user_id") or target.get("email") or target.get("display_name") or ""
+            for target in normalized_targets
+            if not str(target.get("slack_user_id") or "").strip()
+        ]
+        try:
+            resolved = await self.slack_client.resolve_user_targets(unresolved_inputs)
+        except Exception as exc:
+            logger.debug("Slack approver resolution failed for %s: %s", normalized_targets, exc)
+            resolved = {
+                "delivery_ids": [],
+                "mentions": [],
+                "labels": unresolved_inputs,
+                "unresolved": unresolved_inputs,
+            }
+
+        resolved_ids_iter = iter(list(resolved.get("delivery_ids") or []))
+        labels: List[str] = []
+        delivery_ids: List[str] = []
+        mentions: List[str] = []
+        authorization_targets: List[str] = []
+        seen_delivery = set()
+        seen_auth = set()
+
+        for target in normalized_targets:
+            email = str(target.get("email") or "").strip()
+            display_name = str(target.get("display_name") or email or target.get("slack_user_id") or "").strip()
+            slack_user_id = str(target.get("slack_user_id") or "").strip()
+            if not slack_user_id:
+                slack_user_id = str(next(resolved_ids_iter, "")).strip()
+
+            label = display_name or email or slack_user_id
+            if label:
+                labels.append(label)
+
+            if slack_user_id and slack_user_id not in seen_delivery:
+                seen_delivery.add(slack_user_id)
+                delivery_ids.append(slack_user_id)
+                mentions.append(self.slack_client.format_user_mention(slack_user_id))
+
+            for candidate in (email, slack_user_id):
+                token = str(candidate or "").strip()
+                if not token or token in seen_auth:
+                    continue
+                seen_auth.add(token)
+                authorization_targets.append(token)
+
+        return {
+            "labels": labels,
+            "delivery_ids": delivery_ids,
+            "mentions": mentions,
+            "authorization_targets": authorization_targets,
+        }
+
+    @property
+    def teams_client(self) -> Optional[Any]:
+        """Lazy-load Teams client."""
+        if TeamsAPIClient is None:
+            return None
+        if self._teams_client is None:
+            self._teams_client = TeamsAPIClient.from_env(self.organization_id)
+        return self._teams_client
+
+    async def _get_ap_decision(
+        self,
+        invoice: InvoiceData,
+        validation_gate: Dict[str, Any],
+    ):
+        """Assemble vendor context and call APDecisionService. Never raises.
+
+        Returns an APDecision object. APDecisionService is the
+        deterministic 10-step policy cascade (rules decide; the LLM
+        does not get a vote on routing). If the cascade itself fails
+        for any reason the legacy fallback path inside the service
+        reproduces the rule-based routing so the workflow is never
+        blocked.
+        """
+        from solden.services.ap_decision import APDecisionService
+
+        decision_feedback: Dict[str, Any] = {}
+        try:
+            # §3 Multi-entity: use entity-scoped vendor profile when available.
+            # All DB lookups go through asyncio.to_thread to avoid blocking
+            # the event loop on psycopg's sync connection pool — same
+            # pattern as the runtime layer (System A Group 4).
+            _entity_id = getattr(invoice, "_entity_id", None)
+            if _entity_id and hasattr(self.db, "get_vendor_for_entity"):
+                vendor_profile = await asyncio.to_thread(
+                    self.db.get_vendor_for_entity,
+                    self.organization_id, invoice.vendor_name, _entity_id,
+                )
+            elif hasattr(self.db, "get_vendor_profile"):
+                vendor_profile = await asyncio.to_thread(
+                    self.db.get_vendor_profile,
+                    self.organization_id, invoice.vendor_name,
+                )
+            else:
+                vendor_profile = None
+            if hasattr(self.db, "get_vendor_invoice_history"):
+                vendor_history = await asyncio.to_thread(
+                    self.db.get_vendor_invoice_history,
+                    self.organization_id, invoice.vendor_name, limit=6,
+                )
+            else:
+                vendor_history = []
+            if hasattr(self.db, "get_vendor_decision_feedback_summary"):
+                decision_feedback = await asyncio.to_thread(
+                    self.db.get_vendor_decision_feedback_summary,
+                    self.organization_id, invoice.vendor_name, window_days=180,
+                )
+            else:
+                decision_feedback = {}
+
+            # Best-effort correction suggestions
+            suggestions: Dict[str, Any] = {}
+            try:
+                gl_sug = get_finance_learning_service(self.organization_id, db=self.db).suggest_field_correction(
+                    "gl_code",
+                    {"vendor": invoice.vendor_name},
+                )
+                if gl_sug:
+                    suggestions["gl_code"] = gl_sug
+            except Exception as exc:
+                logger.debug("Correction learning suggest failed: %s", exc)
+
+            # ---- Org settings (single fetch, two consumers) ----
+            # ``org_config`` (rule engine) and ``org_thresholds`` (fraud
+            # rules) used to load via two separate ``get_organization``
+            # calls back-to-back. Same row, same parse, twice. Now read
+            # once, parse once, hand the parsed dict to both downstream
+            # consumers.
+            org_config: Dict[str, Any] = {}
+            org_thresholds: Dict[str, Any] = {}
+            try:
+                _org_row = await asyncio.to_thread(
+                    self.db.get_organization, self.organization_id,
+                ) or {}
+                _raw_settings = _org_row.get("settings_json") or _org_row.get("settings") or {}
+                if isinstance(_raw_settings, str):
+                    _raw_settings = json.loads(_raw_settings)
+                if isinstance(_raw_settings, dict):
+                    _cfg = _raw_settings.get("org_config") or {}
+                    if isinstance(_cfg, dict):
+                        org_config = _cfg
+                    _thr = _raw_settings.get("fraud_thresholds") or {}
+                    if isinstance(_thr, dict):
+                        org_thresholds = _thr
+            except Exception as exc:
+                logger.debug("Org settings load failed: %s", exc)
+            # Module 3: ensure organization_id reaches the rule
+            # engine inside APDecisionService.decide. The rules table
+            # is org-scoped; without this the engine has nothing to
+            # query and silently falls back to the legacy cascade.
+            org_config.setdefault("organization_id", self.organization_id)
+
+            # ---- Cross-invoice duplicate/anomaly analysis ----
+            cross_analysis_dict: Optional[Dict[str, Any]] = None
+            try:
+                from solden.services.cross_invoice_analysis import CrossInvoiceAnalyzer
+                analyzer = CrossInvoiceAnalyzer(self.organization_id)
+                cross_result = analyzer.analyze(
+                    vendor=invoice.vendor_name,
+                    amount=invoice.amount,
+                    invoice_number=getattr(invoice, "invoice_number", None),
+                    invoice_date=getattr(invoice, "due_date", None),
+                    # Empty when extraction missed it — analyzer is
+                    # responsible for handling missing currency, not us
+                    # for fabricating one.
+                    currency=getattr(invoice, "currency", "") or "",
+                    gmail_id=invoice.gmail_id,
+                )
+                cross_analysis_dict = cross_result.to_dict() if cross_result else None
+            except Exception as exc:
+                logger.debug("[APDecision] Cross-invoice analysis skipped (non-fatal): %s", exc)
+
+            # ---- Volume anomaly detection ----
+            # Two-layer: rule-based z-score decides if there's an anomaly
+            # (deterministic, owns the boolean used by the cascade); the
+            # LLM augmenter then rewrites the generic "verify data
+            # completeness" suggestion into a context-aware operator
+            # explanation tied to this vendor's actual history. Augment
+            # never gates — failure preserves the rule output verbatim.
+            anomaly_signals: Dict[str, Any] = {}
+            try:
+                from solden.services.agent_anomaly_detection import (
+                    detect_volume_anomalies,
+                    explain_volume_anomaly,
+                )
+                historical_amounts = [
+                    h.get("amount") for h in (vendor_history or [])
+                    if h.get("amount") is not None
+                ]
+                if historical_amounts and invoice.amount is not None:
+                    vol_result = detect_volume_anomalies(invoice.amount, historical_amounts)
+                    if vol_result and vol_result.get("is_anomaly"):
+                        try:
+                            vol_result = await explain_volume_anomaly(
+                                vol_result,
+                                vendor_name=invoice.vendor_name,
+                                invoice_amount=float(invoice.amount or 0.0),
+                                recent_amounts=[float(x) for x in historical_amounts],
+                                currency=str(getattr(invoice, "currency", "") or ""),
+                            )
+                        except Exception as ex_exc:
+                            logger.debug(
+                                "[APDecision] Anomaly explanation skipped: %s", ex_exc,
+                            )
+                        anomaly_signals["volume"] = vol_result
+            except Exception as exc:
+                logger.debug("[APDecision] Volume anomaly detection skipped (non-fatal): %s", exc)
+
+            # ---- Vendor risk score ----
+            # ``org_thresholds`` was loaded above in the single org-
+            # settings fetch — Module 4 fraud rules read it directly.
+            # ``compute_vendor_risk_score`` reads only ``amount`` off
+            # ap_item (Module 4 fraud rules #2/#3 — low-frequency high
+            # amount, new-vendor first-invoice ceiling). The canonical
+            # amount lives on the invoice we're routing, so pass a
+            # synthetic dict instead of a DB roundtrip.
+            vendor_risk: Optional[Dict[str, Any]] = None
+            try:
+                from solden.services.ap_decision import compute_vendor_risk_score
+                vendor_risk = compute_vendor_risk_score(
+                    vendor_profile=vendor_profile,
+                    cross_invoice_analysis=cross_analysis_dict,
+                    anomaly_signals=anomaly_signals,
+                    decision_feedback=decision_feedback,
+                    ap_item={"amount": invoice.amount},
+                    org_thresholds=org_thresholds,
+                )
+            except Exception as exc:
+                logger.debug("[APDecision] Risk score computation skipped (non-fatal): %s", exc)
+
+            # Enrich invoice with risk signals for downstream UX
+            if vendor_risk and vendor_risk.get("flags"):
+                existing_risks = getattr(invoice, "reasoning_risks", None) or []
+                invoice.reasoning_risks = existing_risks + vendor_risk["flags"]
+
+            # §8.1: Build Box Summary for compact LLM-explanation context
+            _box_summary_text = ""
+            try:
+                _ap_id = self._lookup_ap_item_id(
+                    gmail_id=invoice.gmail_id,
+                    vendor_name=invoice.vendor_name,
+                    invoice_number=invoice.invoice_number,
+                )
+                if _ap_id:
+                    from solden.core.box_summary import build_box_summary
+                    _box_summary = build_box_summary(_ap_id, db=self.db)
+                    _box_summary_text = _box_summary.to_prompt_text()
+            except Exception:
+                pass
+
+            # Pull single-pass advisory hints if a single-pass run
+            # produced any. Stored under ``vendor_intelligence`` by
+            # the triage path so the downgrade-only filter in
+            # ``APDecisionService.decide`` can inspect them; absent
+            # for intake paths that don't run single-pass, in which
+            # case the kwarg stays None and the cascade behaves as
+            # it always has.
+            single_pass_hints: Optional[Dict[str, Any]] = None
+            try:
+                vi = getattr(invoice, "vendor_intelligence", None)
+                if isinstance(vi, dict):
+                    raw_hints = vi.get("single_pass_hints")
+                    if isinstance(raw_hints, dict):
+                        single_pass_hints = raw_hints
+            except Exception:
+                single_pass_hints = None
+
+            decision_svc = APDecisionService()
+            decision = await decision_svc.decide(
+                invoice,
+                vendor_profile=vendor_profile,
+                vendor_history=vendor_history,
+                decision_feedback=decision_feedback,
+                correction_suggestions=suggestions,
+                validation_gate=validation_gate,
+                org_config=org_config,
+                cross_invoice_analysis=cross_analysis_dict,
+                anomaly_signals=anomaly_signals,
+                vendor_risk_score=vendor_risk,
+                box_summary=_box_summary_text,
+                single_pass_hints=single_pass_hints,
+            )
+            logger.info(
+                "[APDecision] %s → %s (confidence=%.2f model=%s risk=%s): %s",
+                invoice.vendor_name, decision.recommendation,
+                decision.confidence, decision.model,
+                (vendor_risk or {}).get("level", "n/a"),
+                decision.reasoning[:120],
+            )
+            return decision
+        except Exception as exc:
+            logger.warning("[APDecision] Unexpected error, using conservative fallback: %s", exc)
+            from solden.services.ap_decision import APDecisionService
+            return APDecisionService()._compute_routing_decision(
+                invoice,
+                validation_gate,
+                decision_feedback=decision_feedback,
+            )
+
+    async def process_new_invoice(self, invoice: InvoiceData, ap_decision=None) -> Dict[str, Any]:
+        """
+        Process a newly detected invoice email.
+
+        Flow:
+        1. Save invoice to database with 'received' status
+        2. If confidence >= threshold, auto-approve and post
+        3. Otherwise, send to Slack for approval
+
+        Returns:
+            Dict with status, invoice_id, and action taken
+        """
+        # §11: Track total processing time for SLA compliance
+        import time as _time
+        _total_start = _time.monotonic()
+
+        # §7.8 Circuit breaker: if the override rate is elevated, hold processing
+        try:
+            from solden.services.circuit_breaker import is_circuit_breaker_tripped
+            if is_circuit_breaker_tripped(self.organization_id, db=self.db):
+                logger.warning(
+                    "[InvoiceWorkflow] Circuit breaker tripped for org=%s — holding invoice",
+                    self.organization_id,
+                )
+                return {
+                    "status": "held",
+                    "reason": "circuit_breaker_tripped",
+                    "message": "Invoice processing held due to elevated override rate. Contact engineering.",
+                }
+        except Exception:
+            pass
+
+        # --- L7: lightweight input validation at service boundary ---
+        if not isinstance(invoice, InvoiceData):
+            return {"status": "error", "reason": "invalid_invoice_data"}
+        if not str(invoice.gmail_id or "").strip():
+            return {"status": "error", "reason": "missing_gmail_id"}
+        if not str(invoice.vendor_name or "").strip():
+            return {"status": "error", "reason": "missing_vendor_name"}
+        if not str(invoice.subject or "").strip():
+            return {"status": "error", "reason": "missing_subject"}
+        if not str(invoice.sender or "").strip():
+            return {"status": "error", "reason": "missing_sender"}
+
+        # §6.4 Classification #2: Unknown vendor gate.
+        # "Sender not in vendor master. No Box created until vendor activated."
+        # Gate only runs when vendor_master_gate is enabled in org settings.
+        # Org settings cached on the instance to avoid DB hit per invoice.
+        vendor_profile = None
+        # Org-settings cache stays for downstream consumers (parallel
+        # migration mode, etc.). The vendor-master gate itself runs
+        # post-save below — see the `vendor_master_check` block.
+        if not hasattr(self, "_cached_org_settings"):
+            self._cached_org_settings = None
+            self._cached_org_settings_at = None
+
+        _parallel_mode_from_cache = None
+        try:
+            now_ts = datetime.now(timezone.utc)
+            cache_stale = (
+                self._cached_org_settings is None
+                or self._cached_org_settings_at is None
+                or (now_ts - self._cached_org_settings_at).total_seconds() > self._ORG_SETTINGS_CACHE_TTL_SECONDS
+            )
+            if cache_stale:
+                org = await asyncio.to_thread(
+                    self.db.get_organization, self.organization_id,
+                )
+                org_settings = org.get("settings_json") if org else None
+                if isinstance(org_settings, str):
+                    org_settings = json.loads(org_settings)
+                self._cached_org_settings = org_settings or {}
+                self._cached_org_settings_at = now_ts
+                self._cached_migration_status = (org or {}).get("migration_status")
+            _parallel_mode_from_cache = self._cached_migration_status
+        except Exception:
+            pass
+
+        existing = await asyncio.to_thread(
+            self.db.get_invoice_status, invoice.gmail_id,
+        )
+        if existing:
+            if existing.get("status") == "posted":
+                return {
+                    "status": "already_posted",
+                    "invoice_id": invoice.gmail_id,
+                    "erp_bill_id": existing.get("erp_bill_id"),
+                }
+            if existing.get("status") == "pending_approval" and existing.get("slack_thread_id"):
+                thread = await asyncio.to_thread(
+                    self.db.get_slack_thread, invoice.gmail_id,
+                )
+                return {
+                    "status": "pending_approval",
+                    "invoice_id": invoice.gmail_id,
+                    "slack_channel": thread.get("channel_id") if thread else None,
+                    "slack_ts": thread.get("thread_ts") if thread else None,
+                    "existing": True,
+                }
+            # Resume hook for vendor-master gate. If the AP item is
+            # parked in needs_info because the vendor wasn't in the
+            # ERP master, retry the lookup. If the customer has since
+            # added the vendor, advance the item back to received and
+            # let the rest of the workflow run; otherwise return the
+            # same needs_info status without re-running extraction.
+            existing_state = (existing.get("state") or existing.get("status") or "").lower()
+            existing_exception = (existing.get("exception_code") or "").lower()
+            if existing_state == "needs_info" and existing_exception == "vendor_not_in_erp_master":
+                from solden.services.vendor_master_check import (
+                    check_vendor_in_erp_master,
+                    needs_info_message,
+                    VENDOR_NOT_IN_ERP_MASTER,
+                )
+                resume_status = await check_vendor_in_erp_master(
+                    organization_id=self.organization_id,
+                    vendor_name=invoice.vendor_name,
+                    sender_email=getattr(invoice, "sender", None),
+                )
+                if resume_status == "found":
+                    existing_id = existing.get("id") or invoice.gmail_id
+                    await asyncio.to_thread(
+                        self.db.update_ap_item,
+                        existing_id,
+                        state="received",
+                        exception_code=None,
+                        last_error=None,
+                        _actor_type="agent",
+                        _actor_id="vendor_master_check",
+                    )
+                    logger.info(
+                        "[InvoiceWorkflow] %s found in ERP master on resume — "
+                        "AP item %s back to received.",
+                        invoice.vendor_name, existing_id,
+                    )
+                    # Fall through to the normal save/process flow so
+                    # the rest of the pipeline runs against the now-
+                    # known vendor. save_invoice_status is upsert-shaped
+                    # via the (org_id, invoice_key) UNIQUE constraint.
+                else:
+                    return {
+                        "status": "needs_info",
+                        "reason": VENDOR_NOT_IN_ERP_MASTER,
+                        "invoice_id": existing.get("id") or invoice.gmail_id,
+                        "vendor_name": invoice.vendor_name,
+                        "message": needs_info_message(invoice.vendor_name),
+                        "existing": True,
+                    }
+
+        # Save invoice to database (canonical AP state: received).
+        # Phase 2.1.a: bank_details flow through as a typed kwarg so they
+        # land in the bank_details_encrypted column, not the metadata
+        # blob. The store handles encryption.
+        # field_provenance / field_evidence / erp_metadata propagate the
+        # SoR audit trail (which source produced each value, by what
+        # method) through to ap_items.metadata. The email path covers
+        # this in finance_agent_runtime._persist; this is the parallel
+        # path for ERP-native and PEPPOL UBL intake.
+        invoice_id = await asyncio.to_thread(
+            self.db.save_invoice_status,
+            gmail_id=invoice.gmail_id,
+            status="received",
+            email_subject=invoice.subject,
+            sender=invoice.sender,
+            vendor=invoice.vendor_name,
+            amount=invoice.amount,
+            currency=invoice.currency,
+            invoice_number=invoice.invoice_number,
+            due_date=invoice.due_date,
+            confidence=invoice.confidence,
+            field_confidences=getattr(invoice, "field_confidences", None),
+            field_provenance=getattr(invoice, "field_provenance", None),
+            field_evidence=getattr(invoice, "field_evidence", None),
+            erp_metadata=getattr(invoice, "erp_metadata", None),
+            source_type=getattr(invoice, "source_type", None),
+            organization_id=self.organization_id,
+            user_id=invoice.user_id,
+            bank_details=getattr(invoice, "bank_details", None),
+        )
+
+        # §13: Record invoice processed for metered billing (volume bands)
+        try:
+            from solden.services.subscription import get_subscription_service
+            get_subscription_service().record_invoice_processed(self.organization_id)
+        except Exception:
+            pass
+
+        logger.info(
+            "New invoice detected: %s $%s (confidence: %s)",
+            invoice.vendor_name, invoice.amount, invoice.confidence,
+        )
+
+        # AP-side ERP master-check gate (replaces the deprecated
+        # vendor-onboarding-session lookup). If the vendor isn't in
+        # the customer's ERP master, route to needs_info with a clear
+        # operator message; the customer adds them in their ERP and
+        # the invoice resumes on the next workflow tick. Skipped
+        # outcome (no ERP wired, transient failure) does NOT gate —
+        # AP keeps moving and the resume hook retries later.
+        try:
+            from solden.services.vendor_master_check import (
+                check_vendor_in_erp_master,
+                needs_info_message,
+                VENDOR_NOT_IN_ERP_MASTER,
+            )
+
+            master_status = await check_vendor_in_erp_master(
+                organization_id=self.organization_id,
+                vendor_name=invoice.vendor_name,
+                sender_email=getattr(invoice, "sender", None),
+            )
+            if master_status == "not_found":
+                await asyncio.to_thread(
+                    self.db.update_ap_item,
+                    invoice_id,
+                    state="needs_info",
+                    exception_code=VENDOR_NOT_IN_ERP_MASTER,
+                    last_error=needs_info_message(invoice.vendor_name),
+                    _actor_type="agent",
+                    _actor_id="vendor_master_check",
+                )
+                logger.info(
+                    "[InvoiceWorkflow] %s (%s) not in ERP master — "
+                    "AP item %s gated to needs_info.",
+                    invoice.vendor_name, invoice.sender, invoice_id,
+                )
+                return {
+                    "status": "needs_info",
+                    "reason": VENDOR_NOT_IN_ERP_MASTER,
+                    "invoice_id": invoice_id,
+                    "vendor_name": invoice.vendor_name,
+                    "message": needs_info_message(invoice.vendor_name),
+                }
+        except Exception as exc:
+            # Master-check failure is never fatal — AP advances and
+            # the resume hook retries on workflow re-fire.
+            logger.warning(
+                "[InvoiceWorkflow] vendor_master_check failed (org=%s, vendor=%s): %s",
+                self.organization_id, invoice.vendor_name, exc,
+            )
+
+        # §5.2 Shared Inbox: if email arrived in an individual inbox
+        # (not the shared ap@), notify the team that it's been added
+        try:
+            from solden.services.email_sharing import (
+                share_individual_inbox_email,
+                get_shared_inbox_email,
+            )
+            shared_inbox = get_shared_inbox_email(self.organization_id, db=self.db)
+            await share_individual_inbox_email(
+                ap_item_id=invoice_id,
+                gmail_id=invoice.gmail_id,
+                sender=invoice.sender,
+                vendor_name=invoice.vendor_name,
+                amount=invoice.amount,
+                currency=invoice.currency,
+                recipient_email=invoice.user_id or invoice.sender,
+                shared_inbox_email=shared_inbox,
+                organization_id=self.organization_id,
+                db=self.db,
+            )
+        except Exception:
+            pass  # Non-fatal
+
+        correlation_id = self._ensure_ap_item_correlation_id(
+            ap_item_id=invoice_id,
+            gmail_id=invoice.gmail_id,
+            preferred=invoice.correlation_id,
+        )
+        invoice.correlation_id = correlation_id
+
+        # Deterministic controls always run before confidence-based routing.
+        # §11: Track validation latency
+        _val_start = _time.monotonic()
+        validation_gate = await self._evaluate_deterministic_validation(invoice)
+        try:
+            from solden.core.sla_tracker import get_sla_tracker
+            get_sla_tracker().record(
+                "guardrails", int((_time.monotonic() - _val_start) * 1000),
+                ap_item_id=invoice_id, organization_id=self.organization_id,
+            )
+        except Exception:
+            pass
+        confidence_gate = validation_gate.get("confidence_gate") if isinstance(validation_gate, dict) else None
+        _line_items_meta = {}
+        if isinstance(invoice.line_items, list) and invoice.line_items:
+            _line_items_meta["line_items"] = invoice.line_items
+        _extra_extraction_meta: Dict[str, Any] = {}
+        if invoice.discount_amount is not None:
+            _extra_extraction_meta["discount_amount"] = invoice.discount_amount
+        if invoice.discount_terms:
+            _extra_extraction_meta["discount_terms"] = invoice.discount_terms
+        if invoice.bank_details:
+            _extra_extraction_meta["bank_details"] = invoice.bank_details
+        self._update_ap_item_metadata(
+            invoice_id,
+            {
+                "validation_gate": validation_gate,
+                "confidence_gate": confidence_gate or {},
+                "requires_field_review": bool(
+                    isinstance(confidence_gate, dict) and confidence_gate.get("requires_field_review")
+                ),
+                "confidence_blockers": (
+                    confidence_gate.get("confidence_blockers") if isinstance(confidence_gate, dict) else []
+                ) or [],
+                "field_confidences": invoice.field_confidences or {},
+                "correlation_id": correlation_id,
+                "erp_preflight": invoice.erp_preflight or {},
+                **_line_items_meta,
+                **_extra_extraction_meta,
+            },
+        )
+
+        # §5.5 Agent Columns: persist GRN Reference, Match Status, Exception
+        # Reason as first-class columns on the AP item (not just metadata).
+        gate = validation_gate if isinstance(validation_gate, dict) else {}
+        agent_column_updates = {}
+        # Match Status: derived from gate passed/failed + reason codes
+        reason_codes = gate.get("reason_codes") or []
+        if gate.get("passed"):
+            agent_column_updates["match_status"] = "passed"
+        elif any(c in reason_codes for c in ["no_po_match", "grn_mismatch", "amount_mismatch"]):
+            agent_column_updates["match_status"] = "exception"
+        elif reason_codes:
+            agent_column_updates["match_status"] = "failed"
+        # Exception Reason: first reason in plain language
+        reasons_list = gate.get("reasons") or []
+        if reasons_list and isinstance(reasons_list[0], dict):
+            agent_column_updates["exception_reason"] = reasons_list[0].get("message", "")
+        elif reasons_list and isinstance(reasons_list[0], str):
+            agent_column_updates["exception_reason"] = reasons_list[0]
+        # GRN Reference: from PO match result
+        po_match = invoice.po_match_result or {}
+        if isinstance(po_match, dict) and po_match.get("grn_number"):
+            agent_column_updates["grn_reference"] = po_match["grn_number"]
+        if agent_column_updates and invoice_id:
+            try:
+                await asyncio.to_thread(
+                    self.db.update_ap_item, invoice_id, **agent_column_updates,
+                )
+            except Exception:
+                pass
+
+        # Validation/extraction completed: advance AP item to canonical `validated`
+        # before routing to human approval or auto-posting.
+        self._transition_invoice_state(
+            invoice.gmail_id,
+            "validated",
+            correlation_id=correlation_id,
+            workflow_id="invoice_entry",
+        )
+
+        # --- §3 Migration: parallel mode gate ---
+        # Uses cached org settings from the vendor gate above (5-min TTL).
+        _parallel_mode = _parallel_mode_from_cache == "parallel"
+        if _parallel_mode:
+            logger.info(
+                "[InvoiceWorkflow] Parallel mode active for org=%s — "
+                "autonomous actions suppressed, routing to human review",
+                self.organization_id,
+            )
+
+        # --- AP reasoning layer: rule cascade decides with vendor context ---
+        # If a pre-computed decision was provided (e.g. from the agent planning loop),
+        # skip the internal AP-decision call to avoid a double evaluation.
+        if ap_decision is None:
+            _decision_start = _time.monotonic()
+            ap_decision = await self._get_ap_decision(invoice, validation_gate)
+            # §11: Track classification/decision latency
+            try:
+                from solden.core.sla_tracker import get_sla_tracker
+                get_sla_tracker().record(
+                    "classification", int((_time.monotonic() - _decision_start) * 1000),
+                    ap_item_id=invoice_id, organization_id=self.organization_id,
+                )
+            except Exception:
+                pass
+
+        # §7.7 Shadow mode: run candidate model alongside production (non-blocking)
+        try:
+            if os.environ.get("SHADOW_MODEL"):
+                from solden.services.shadow_mode import run_shadow_decision
+                await run_shadow_decision(
+                    invoice_data={
+                        "invoice": invoice,
+                        "validation_gate": validation_gate,
+                        "vendor_profile": vendor_profile,
+                        "ap_item_id": invoice_id,
+                    },
+                    production_decision={
+                        "recommendation": ap_decision.recommendation if ap_decision else None,
+                        "confidence": ap_decision.confidence if ap_decision else None,
+                    },
+                    organization_id=self.organization_id,
+                    db=self.db,
+                )
+        except Exception:
+            pass  # Shadow mode is non-blocking — never affects production
+
+        # In parallel mode, override any autonomous decision to force human review
+        if _parallel_mode and ap_decision and ap_decision.recommendation == "approve":
+            ap_decision.recommendation = "escalate"
+            ap_decision.reasoning = (
+                (ap_decision.reasoning or "") +
+                " [Parallel mode: autonomous approval suppressed — routed to human review for comparison with existing AP system.]"
+            )
+
+        # DESIGN_THESIS.md §7.6 — defense-in-depth enforcement point.
+        # Whether the decision came from Path A (_get_ap_decision, already enforced)
+        # or Path B (pre-computed via agent planning loop, NOT yet enforced), the
+        # narrow waist before routing must bind the recommendation to the gate.
+        # Re-applying here is idempotent for Path A (already escalated) and closes
+        # the bypass for Path B. Audit trail lives on the APDecision.gate_override flag.
+        from solden.services.ap_decision import enforce_gate_constraint as _enforce_gate_constraint
+        _pre_override_recommendation = ap_decision.recommendation
+        ap_decision = _enforce_gate_constraint(ap_decision, validation_gate)
+        if ap_decision.gate_override and _pre_override_recommendation == "approve":
+            logger.warning(
+                "[InvoiceWorkflow] Gate override applied at routing waist: "
+                "invoice=%s vendor=%s pre-recommendation=%s → escalate "
+                "(gate reason_codes=%s)",
+                invoice.gmail_id,
+                invoice.vendor_name,
+                _pre_override_recommendation,
+                (validation_gate or {}).get("reason_codes") or [],
+            )
+            # Emit structured audit event so SOC/compliance can count these.
+            try:
+                await asyncio.to_thread(
+                    self.db.append_audit_event,
+                    {
+                        "ap_item_id": invoice_id or invoice.gmail_id or "",
+                        "event_type": "llm_gate_override_applied",
+                        "actor_type": "system",
+                        "actor_id": "invoice_workflow.enforce_gate_constraint",
+                        "reason": (
+                            f"LLM recommended '{_pre_override_recommendation}' "
+                            f"but deterministic validation gate failed with reason codes: "
+                            f"{(validation_gate or {}).get('reason_codes') or []}. "
+                            "Forced to 'escalate' per DESIGN_THESIS.md §7.6."
+                        ),
+                        "metadata": {
+                            "pre_override_recommendation": _pre_override_recommendation,
+                            "enforced_recommendation": ap_decision.recommendation,
+                            "gate_reason_codes": (validation_gate or {}).get("reason_codes") or [],
+                            "decision_model": ap_decision.model,
+                            "decision_confidence": ap_decision.confidence,
+                            "original_reasoning": (ap_decision.reasoning or "")[:256],
+                            "correlation_id": correlation_id,
+                        },
+                        "organization_id": self.organization_id,
+                        "source": "invoice_workflow",
+                    },
+                )
+            except Exception as audit_exc:
+                logger.debug("[InvoiceWorkflow] audit log for gate override failed: %s", audit_exc)
+
+        # Populate InvoiceData reasoning fields (surfaced in Slack cards, Gmail sidebar)
+        invoice.reasoning_summary = ap_decision.reasoning
+        invoice.reasoning_risks = ap_decision.risk_flags
+        invoice.vendor_intelligence = {
+            **(invoice.vendor_intelligence or {}),
+            "vendor_context": ap_decision.vendor_context_used,
+            "ap_decision": ap_decision.recommendation,
+            "decision_feedback": {
+                "count": ap_decision.vendor_context_used.get("feedback_count", 0),
+                "override_rate": ap_decision.vendor_context_used.get("feedback_override_rate", 0.0),
+                "strictness_bias": ap_decision.vendor_context_used.get("feedback_strictness_bias", "neutral"),
+            },
+        }
+
+        # Persist the AP decision's reasoning into ap_item metadata so the Gmail sidebar
+        # card can show it proactively (without requiring the "Why?" button click).
+        # Use invoice_id directly — it was returned by save_invoice_status() above,
+        # so we know the row exists. _lookup_ap_item_id would silently return None here.
+        self._update_ap_item_metadata(
+            invoice_id,
+            {
+                "ap_decision_reasoning": ap_decision.reasoning[:1024],  # cap length
+                "ap_decision_recommendation": ap_decision.recommendation,
+                "ap_decision_risk_flags": ap_decision.risk_flags,
+                "ap_decision_model": ap_decision.model,
+                "vendor_intelligence": invoice.vendor_intelligence,
+            },
+        )
+
+        # Needs-info recovery plan — advisory ordered plan from
+        # AGENT_PLANNING. Activates a previously-dormant LLM action.
+        # Persisted to AP item metadata for operator tooling to display;
+        # never executed automatically. Failures are silent (None
+        # return), so the needs_info path keeps its prior single-question
+        # behaviour as a floor.
+        if ap_decision.recommendation == "needs_info":
+            try:
+                from solden.services.needs_info_recovery import (
+                    propose_recovery_plan,
+                )
+
+                vendor_profile_for_plan = invoice.vendor_intelligence.get(
+                    "vendor_context"
+                ) if isinstance(invoice.vendor_intelligence, dict) else None
+                recovery_plan = await propose_recovery_plan(
+                    invoice,
+                    ap_decision,
+                    vendor_profile=vendor_profile_for_plan,
+                )
+                if recovery_plan is not None:
+                    self._update_ap_item_metadata(
+                        invoice_id,
+                        {"agent_recovery_plan": recovery_plan.to_dict()},
+                    )
+                    logger.info(
+                        "[InvoiceWorkflow] %s needs_info — recovery plan: %s (%d steps)",
+                        invoice.vendor_name,
+                        recovery_plan.summary[:80],
+                        len(recovery_plan.steps),
+                    )
+            except Exception as plan_exc:
+                # Recovery planning is purely advisory — never block on it.
+                logger.debug(
+                    "[InvoiceWorkflow] recovery plan generation skipped: %s", plan_exc,
+                )
+
+        # Deterministic gate is a hard guardrail that overrides the AP-decision recommendation.
+        # If it fires, route to human — but use the AP-decision's reasoning as context.
+        if not validation_gate.get("passed", True):
+            self._record_validation_gate_failure(
+                invoice,
+                validation_gate,
+                correlation_id=correlation_id,
+            )
+            logger.info(
+                "Routing invoice %s to approval due to deterministic controls: %s",
+                invoice.gmail_id,
+                ", ".join(validation_gate.get("reason_codes") or []),
+            )
+            # §6.8 Exception Messages: send thesis-structured exception card
+            # with specific statement, resolution options, context thread, and timer
+            try:
+                from solden.services.slack_notifications import send_invoice_exception_notification
+
+                reasons = validation_gate.get("reasons") or []
+                first_reason = reasons[0] if reasons else {}
+                exception_stmt = (
+                    first_reason.get("message")
+                    if isinstance(first_reason, dict)
+                    else str(first_reason)
+                ) if first_reason else f"Match exception on {invoice.vendor_name} — {invoice.currency} {invoice.amount:,.2f}"
+
+                match_detail = ap_decision.reasoning or ""
+                if validation_gate.get("reason_codes"):
+                    match_detail += f"\nReason codes: {', '.join(validation_gate['reason_codes'])}"
+
+                await send_invoice_exception_notification(
+                    invoice_id=invoice_id or invoice.gmail_id,
+                    gmail_thread_id=invoice.gmail_id,
+                    vendor=invoice.vendor_name,
+                    amount=invoice.amount,
+                    exception_statement=exception_stmt,
+                    due_date=invoice.due_date,
+                    organization_id=self.organization_id,
+                    reasoning=ap_decision.reasoning,
+                    match_detail=match_detail,
+                    currency=invoice.currency,
+                )
+            except Exception as exc:
+                logger.debug("[InvoiceWorkflow] exception notification failed: %s", exc)
+
+            result = await self._send_for_approval(
+                invoice,
+                extra_context={
+                    "validation_gate": validation_gate,
+                    "ap_decision": ap_decision.recommendation,
+                    "ap_reasoning": ap_decision.reasoning,
+                    "erp_preflight": validation_gate.get("erp_preflight") if isinstance(validation_gate, dict) else None,
+                },
+            )
+            if isinstance(result, dict):
+                result.setdefault("validation_gate", validation_gate)
+                result.setdefault("reason_codes", validation_gate.get("reason_codes") or [])
+            return result
+
+        # AP decision says needs_info: transition to needs_info state with the exact question.
+        if ap_decision.recommendation == "needs_info" and ap_decision.info_needed:
+            logger.info(
+                "AP decision needs_info for %s: %s",
+                invoice.gmail_id, ap_decision.info_needed[:80],
+            )
+            self._transition_invoice_state(
+                invoice.gmail_id, "needs_info",
+                correlation_id=correlation_id,
+                decision_reason="ap_decision_needs_info",
+            )
+            ap_item_id = self._lookup_ap_item_id(invoice.gmail_id)
+            # Solden no longer authors outbound vendor email bodies (2026-05-02).
+            # Persist the question alone; the operator drafts and sends the
+            # follow-up themselves from their own inbox.
+            self._update_ap_item_metadata(
+                ap_item_id,
+                {
+                    "needs_info_question": ap_decision.info_needed,
+                    "ap_decision_reasoning": ap_decision.reasoning,
+                    "ap_decision_risk_flags": ap_decision.risk_flags,
+                },
+            )
+
+            return {
+                "status": "needs_info",
+                "invoice_id": invoice.gmail_id,
+                "reason": ap_decision.reasoning,
+                "info_needed": ap_decision.info_needed,
+                "risk_flags": ap_decision.risk_flags,
+                "ap_decision": "needs_info",
+            }
+
+        # LEARNING: Check if we have a learned GL code for this vendor
+        try:
+            learning = get_finance_learning_service(self.organization_id, db=self.db)
+            suggestion = learning.suggest_gl_code(
+                vendor=invoice.vendor_name,
+                amount=invoice.amount,
+            )
+            if suggestion and suggestion.get("confidence", 0) > 0.5:
+                logger.info(
+                    "Learning suggested GL %s for %s (confidence: %.2f)",
+                    suggestion.get("gl_code"), invoice.vendor_name,
+                    float(suggestion.get("confidence") or 0),
+                )
+                # Persist the suggestion onto the invoice when extraction
+                # didn't already pick a code, so downstream posting paths
+                # see the learned default.
+                if not getattr(invoice, "gl_code", None):
+                    invoice.gl_code = suggestion.get("gl_code")
+                # Boost confidence if we've seen this vendor before
+                if suggestion.get("confidence", 0) > 0.8:
+                    invoice.confidence = min(0.99, invoice.confidence + 0.1)
+        except Exception as e:
+            logger.warning("Failed to get GL suggestion from learning: %s", e)
+        
+        # Route based on the AP decision's recommendation (gate already passed above).
+        if ap_decision.recommendation == "approve":
+            logger.info(
+                "AP decision approve for %s (confidence=%.2f model=%s)",
+                invoice.gmail_id, ap_decision.confidence, ap_decision.model,
+            )
+            return await self._auto_approve_and_post(
+                invoice, reason="ap_decision_approve"
+            )
+
+        if ap_decision.recommendation == "reject":
+            logger.info(
+                "AP decision reject for %s: %s",
+                invoice.gmail_id, ap_decision.reasoning[:80],
+            )
+            return await self._send_for_approval(
+                invoice,
+                extra_context={
+                    "ap_decision": "reject",
+                    "ap_reasoning": ap_decision.reasoning,
+                    "risk_flags": ap_decision.risk_flags,
+                    "erp_preflight": validation_gate.get("erp_preflight") if isinstance(validation_gate, dict) else None,
+                },
+            )
+
+        # escalate or unrecognised recommendation → send for human approval
+        return await self._send_for_approval(
+            invoice,
+            extra_context={
+                "ap_decision": ap_decision.recommendation,
+                "ap_reasoning": ap_decision.reasoning,
+                "risk_flags": ap_decision.risk_flags,
+                "erp_preflight": validation_gate.get("erp_preflight") if isinstance(validation_gate, dict) else None,
+            },
+        )
+    
+    async def _auto_approve_and_post(
+        self,
+        invoice: InvoiceData,
+        reason: str = "high_confidence",
+    ) -> Dict[str, Any]:
+        """Auto-approve invoice and post to ERP."""
+        existing = await asyncio.to_thread(
+            self.db.get_invoice_status, invoice.gmail_id,
+        )
+        existing_state = self._canonical_invoice_state(existing)
+        if existing_state in {"posted_to_erp", "closed"}:
+            return {
+                "status": "already_posted",
+                "invoice_id": invoice.gmail_id,
+                "erp_bill_id": (existing or {}).get("erp_bill_id") or (existing or {}).get("erp_reference"),
+            }
+        if existing and (existing.get("erp_reference") or existing.get("erp_bill_id")):
+            return {
+                "status": "already_posted",
+                "invoice_id": invoice.gmail_id,
+                "erp_bill_id": existing.get("erp_bill_id") or existing.get("erp_reference"),
+            }
+
+        ap_item_id = self._lookup_ap_item_id(
+            gmail_id=invoice.gmail_id,
+            vendor_name=invoice.vendor_name,
+            invoice_number=invoice.invoice_number,
+        )
+        correlation_id = self._ensure_ap_item_correlation_id(
+            ap_item_id=ap_item_id,
+            gmail_id=invoice.gmail_id,
+            preferred=invoice.correlation_id,
+        )
+        invoice.correlation_id = correlation_id
+
+        field_review_gate = self.evaluate_financial_action_field_review_gate(existing or {})
+        if field_review_gate.get("blocked"):
+            self._persist_financial_action_field_review_gate(ap_item_id, field_review_gate)
+            return {
+                "status": "blocked",
+                "invoice_id": invoice.gmail_id,
+                "reason": "field_review_required",
+                "detail": field_review_gate.get("detail"),
+                "requires_field_review": True,
+                "confidence_blockers": field_review_gate.get("confidence_blockers") or [],
+                "source_conflicts": field_review_gate.get("source_conflicts") or [],
+                "blocking_source_conflicts": field_review_gate.get("blocking_source_conflicts") or [],
+                "blocked_fields": field_review_gate.get("blocked_fields") or [],
+                "exception_code": field_review_gate.get("exception_code"),
+            }
+
+        # Canonical AP path for auto-approval:
+        # validated -> needs_approval -> approved -> ready_to_post
+        approved_by = f"clearledgr-auto:{reason}"
+        approved_at = datetime.now(timezone.utc).isoformat()
+        current_state = existing_state or self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
+
+        if current_state == "received":
+            self._transition_invoice_state(invoice.gmail_id, "validated", correlation_id=correlation_id)
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
+        if current_state == "validated":
+            self._transition_invoice_state(invoice.gmail_id, "needs_approval", correlation_id=correlation_id)
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
+        if current_state in {"needs_approval", "approved"}:
+            self._transition_invoice_state(
+                gmail_id=invoice.gmail_id,
+                target_state="approved",
+                correlation_id=correlation_id,
+                approved_by=approved_by,
+                approved_at=approved_at,
+            )
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
+        if current_state in {"approved", "ready_to_post"}:
+            self._transition_invoice_state(invoice.gmail_id, "ready_to_post", correlation_id=correlation_id)
+            current_state = self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
+        if current_state not in {"ready_to_post"}:
+            return {
+                "status": "error",
+                "invoice_id": invoice.gmail_id,
+                "reason": f"invalid_state_for_auto_post:{current_state or 'unknown'}",
+            }
+        
+        # Post to ERP
+        result = await self._post_to_erp(invoice, correlation_id=correlation_id)
+        post_attempted_at = datetime.now(timezone.utc).isoformat()
+        
+        if result.get("status") == "success":
+            erp_reference = (
+                result.get("erp_reference")
+                or result.get("bill_id")
+                or result.get("reference_id")
+                or result.get("doc_num")
+            )
+
+            # Post-posting verification: confirm bill actually persisted in ERP
+            post_verified = True  # default to trust if verification unavailable
+            try:
+                from solden.integrations.erp_router import verify_bill_posted
+                verification = await verify_bill_posted(
+                    organization_id=self.organization_id,
+                    invoice_number=invoice.invoice_number,
+                    expected_amount=invoice.amount,
+                )
+                post_verified = verification.get("verified", True)
+                if not post_verified:
+                    logger.warning(
+                        "Post-posting verification failed for %s: %s",
+                        invoice.invoice_number,
+                        verification.get("reason"),
+                    )
+            except Exception as ver_exc:
+                logger.warning("Post-posting verification error (non-fatal): %s", ver_exc)
+
+            try:
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="posted_to_erp",
+                    correlation_id=correlation_id,
+                    erp_reference=erp_reference,
+                    erp_posted_at=post_attempted_at,
+                    post_attempted_at=post_attempted_at,
+                    last_error=None,
+                )
+            except Exception as db_exc:
+                # ERP post succeeded but DB state update failed — critical inconsistency.
+                # Log at CRITICAL so operators can recover the ERP reference.
+                logger.critical(
+                    "ERP post succeeded but DB state transition to posted_to_erp FAILED. "
+                    "gmail_id=%s erp_reference=%s correlation_id=%s error=%s",
+                    invoice.gmail_id,
+                    erp_reference,
+                    correlation_id,
+                    db_exc,
+                )
+                # Best-effort: mark AP item with exception code for later
+                # reconciliation. ``ap_item_id`` is already in scope from
+                # the top of the method — reuse it instead of a redundant
+                # DB roundtrip on a hot critical-path branch.
+                try:
+                    if ap_item_id:
+                        await asyncio.to_thread(
+                            self.db.update_ap_item,
+                            ap_item_id,
+                            exception_code="erp_posted_db_update_failed",
+                            exception_severity="critical",
+                            last_error=f"ERP reference {erp_reference} posted but DB update failed: {db_exc}",
+                        )
+                except Exception as patch_exc:
+                    logger.critical(
+                        "Failed to set exception_code on AP item after ERP/DB inconsistency: %s",
+                        patch_exc,
+                    )
+                raise
+
+            # Store verification result in metadata. Reuse ap_item_id.
+            if not post_verified and ap_item_id:
+                self._update_ap_item_metadata(ap_item_id, {"post_verified": False})
+
+            # Phase 1.4: persist ERP sync token + erp_type so the override
+            # window reversal path (reverse_bill_from_quickbooks) can use
+            # the cached SyncToken without an extra REST-GET. Also open
+            # the override window row — the OverrideWindowObserver will
+            # do this via the state transition, but we compute the data
+            # here so the observer has what it needs. Reuse ap_item_id.
+            erp_sync_token = (result or {}).get("sync_token")
+            erp_type_hint = (result or {}).get("erp")
+            if ap_item_id:
+                meta_updates: Dict[str, Any] = {}
+                if erp_sync_token is not None:
+                    meta_updates["erp_sync_token"] = str(erp_sync_token)
+                if erp_type_hint:
+                    meta_updates["erp_type"] = str(erp_type_hint)
+                if meta_updates:
+                    self._update_ap_item_metadata(ap_item_id, meta_updates)
+            
+            # LEARNING: Record auto-approval to learn vendor→GL mappings
+            try:
+                learning = get_finance_learning_service(self.organization_id, db=self.db)
+                learning.record_vendor_gl_approval(
+                    vendor=invoice.vendor_name,
+                    gl_code=result.get("gl_code", ""),
+                    gl_description=result.get("gl_description", "Accounts Payable"),
+                    amount=invoice.amount,
+                    currency=invoice.currency,
+                    was_auto_approved=True,
+                    was_corrected=False,
+                    ap_item_id=ap_item_id,
+                    metadata={"source": "invoice_workflow._auto_approve_and_post"},
+                )
+                logger.info("Recorded auto-approval for learning: %s", invoice.vendor_name)
+            except Exception as e:
+                logger.warning("Failed to record auto-approval for learning: %s", e)
+
+            # ``agent_rec`` is read once, before either of the two
+            # try blocks below, so a failure in the first one (vendor
+            # profile outcome write) does NOT leave ``agent_rec``
+            # unbound for the second (adaptive threshold record).
+            # That latent NameError used to be masked by the bare
+            # ``except Exception`` on the second block — same shape
+            # as the C2 bug fixed in d0c0e69.
+            agent_rec = (invoice.vendor_intelligence or {}).get("ap_decision")
+
+            # VENDOR INTELLIGENCE: Update vendor profile from this outcome.
+            # ``ap_item_id`` was already resolved at the top of this
+            # method; reuse it instead of a redundant DB roundtrip.
+            try:
+                if hasattr(self.db, "update_vendor_profile_from_outcome") and ap_item_id:
+                    await asyncio.to_thread(
+                        self.db.update_vendor_profile_from_outcome,
+                        self.organization_id,
+                        invoice.vendor_name,
+                        ap_item_id=ap_item_id,
+                        final_state="posted_to_erp",
+                        was_approved=True,
+                        approval_override=False,
+                        agent_recommendation=str(agent_rec or "approve"),
+                        human_decision=None,
+                        amount=invoice.amount,
+                        invoice_date=invoice.due_date,
+                    )
+            except Exception as exc:
+                logger.error("[VendorStore] Failed to update vendor profile after auto-post: %s", exc)
+
+            # Record outcome for adaptive threshold learning
+            try:
+                from solden.services.adaptive_thresholds import get_adaptive_threshold_service
+                get_adaptive_threshold_service(self.organization_id).record_decision_outcome(
+                    vendor_name=invoice.vendor_name,
+                    agent_recommendation=str(agent_rec or "approve"),
+                    operator_decision="approved",
+                    confidence=invoice.confidence,
+                )
+            except Exception:
+                pass
+
+            # §4 Principle 04: "Exceptions are the only interruptions."
+            # A successful ERP post generates NO Slack notification.
+            # The override window observer handles the undo card separately
+            # (that's a time-limited safety mechanism, not a notification).
+
+            # M1: Transition posted_to_erp → closed (terminal state).
+            # All post-processing (learning, vendor profile, notifications) is
+            # complete — the AP item lifecycle is finished.
+            try:
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="closed",
+                    correlation_id=correlation_id,
+                )
+            except Exception as close_exc:
+                logger.warning("Failed to transition to closed: %s", close_exc)
+        else:
+            failure_reason = (
+                str(result.get("error_message") or "")
+                or str(result.get("reason") or "")
+                or str(result.get("status") or "")
+                or "erp_post_failed"
+            )
+            self._transition_invoice_state(
+                gmail_id=invoice.gmail_id,
+                target_state="failed_post",
+                correlation_id=correlation_id,
+                post_attempted_at=post_attempted_at,
+                last_error=failure_reason,
+            )
+        
+        return {
+            "status": "auto_approved" if result.get("status") == "success" else "error",
+            "invoice_id": invoice.gmail_id,
+            "reason": reason,
+            "erp_result": result,
+        }
+    
+    async def _send_for_approval(
+        self, 
+        invoice: InvoiceData,
+        extra_context: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Send invoice to Slack for approval."""
+        budget_checks = self._get_invoice_budget_checks(invoice)
+        budget_summary = self._compute_budget_summary(budget_checks)
+        context_payload = dict(extra_context or {})
+        if "budget" not in context_payload:
+            context_payload["budget"] = budget_summary
+        if "budget_impact" not in context_payload:
+            context_payload["budget_impact"] = budget_checks
+        context_payload["approval_context"] = self._build_approval_context(
+            invoice=invoice,
+            context_payload=context_payload,
+        )
+        ap_item_id = self._lookup_ap_item_id(
+            gmail_id=invoice.gmail_id,
+            vendor_name=invoice.vendor_name,
+            invoice_number=invoice.invoice_number,
+        )
+        correlation_id = self._ensure_ap_item_correlation_id(
+            ap_item_id=ap_item_id,
+            gmail_id=invoice.gmail_id,
+            preferred=invoice.correlation_id,
+        )
+        invoice.correlation_id = correlation_id
+        approval_target = self.get_approval_target_for_amount(invoice.amount, invoice=invoice)
+        approval_channel = str(approval_target.get("channel") or self.slack_channel).strip() or self.slack_channel
+        approval_assignee_inputs = list(approval_target.get("approver_targets") or approval_target.get("approvers") or [])
+        approval_assignee_resolution = await self._resolve_approval_assignees(approval_assignee_inputs)
+        approval_delivery_targets = list(approval_assignee_resolution.get("delivery_ids") or [])
+        approval_mentions = list(approval_assignee_resolution.get("mentions") or [])
+        approval_labels = list(approval_assignee_resolution.get("labels") or [])
+        approval_authorization_targets = list(
+            approval_assignee_resolution.get("authorization_targets") or []
+        )
+        if approval_mentions:
+            context_payload["approval_mentions"] = approval_mentions
+        if approval_labels:
+            context_payload["approval_assignee_labels"] = approval_labels
+        approval_requested_at = datetime.now(timezone.utc).isoformat()
+
+        # ── Outbox short-circuit (idempotent re-entry, pre-lock) ────
+        # If a previous call already completed dispatch (Slack delivered
+        # AND post-delivery DB writes committed), short-circuit with
+        # the cached thread_ts. No Slack call, no work. Two readers
+        # racing both see status=dispatched and both return the same
+        # cached response — that's the entire point.
+        existing_dispatch = self._read_approval_dispatch(ap_item_id)
+        if existing_dispatch.get("status") == "dispatched":
+            return {
+                "status": "pending_approval",
+                "invoice_id": invoice.gmail_id,
+                "slack_channel": existing_dispatch.get("channel"),
+                "slack_ts": existing_dispatch.get("thread_ts"),
+                "existing": True,
+                "budget": budget_summary,
+                "teams": existing_dispatch.get("teams") or {},
+                "dispatch_id": existing_dispatch.get("dispatch_id"),
+            }
+
+        # ── Per-box advisory lock ───────────────────────────────────
+        # Serialises concurrent dispatches for the same AP item across
+        # processes. Without this, two intake events firing
+        # _send_for_approval simultaneously would each see the outbox
+        # in a non-dispatched state, both write a fresh dispatch_id,
+        # and both call Slack — duplicate message. Same primitive the
+        # CoordinationEngine uses for plan execution.
+        from solden.core.box_lock import acquire_box_lock, release_box_lock
+        lock_box_id = ap_item_id or invoice.gmail_id or ""
+        lock_conn, lock_status = acquire_box_lock(
+            self.db, self.organization_id, lock_box_id,
+        )
+        if lock_status == "held":
+            # Another worker is mid-dispatch; let it finish.
+            return {
+                "status": "dispatch_in_flight",
+                "invoice_id": invoice.gmail_id,
+                "reason": "another worker holds the per-box dispatch lock",
+            }
+        # ``no_infra`` (test mock, transient pool blip): proceed unguarded.
+        # The post-lock outbox re-check + the existing-thread fallback
+        # still cap the duplicate-work window in the no-infra branch.
+
+        try:
+            # Re-check outbox under the lock — between the pre-lock
+            # read and the lock acquisition, another worker may have
+            # completed dispatch.
+            existing_dispatch = self._read_approval_dispatch(ap_item_id)
+            if existing_dispatch.get("status") == "dispatched":
+                return {
+                    "status": "pending_approval",
+                    "invoice_id": invoice.gmail_id,
+                    "slack_channel": existing_dispatch.get("channel"),
+                    "slack_ts": existing_dispatch.get("thread_ts"),
+                    "existing": True,
+                    "budget": budget_summary,
+                    "teams": existing_dispatch.get("teams") or {},
+                    "dispatch_id": existing_dispatch.get("dispatch_id"),
+                }
+
+            # ── Pre-dispatch state transitions ──────────────────────
+            current_state = self._canonical_invoice_state(
+                await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id)
+            )
+            if current_state == "received":
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="validated",
+                    correlation_id=correlation_id,
+                )
+
+            # ── Existing-thread short-circuit (legacy compat) ───────
+            # Legacy code paths recorded the slack_thread row but not
+            # the outbox. Honour those rows so pre-outbox in-flight
+            # items don't re-fire Slack.
+            existing_thread = await asyncio.to_thread(
+                self.db.get_slack_thread, invoice.gmail_id,
+            )
+            if existing_thread:
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="needs_approval",
+                    slack_thread_id=existing_thread.get("thread_id") or existing_thread.get("thread_ts"),
+                    correlation_id=correlation_id,
+                )
+                self._record_approval_snapshot(
+                    ap_item_id=ap_item_id,
+                    gmail_id=invoice.gmail_id,
+                    channel_id=existing_thread.get("channel_id"),
+                    message_ts=existing_thread.get("thread_ts"),
+                    source_channel="slack",
+                    source_message_ref=invoice.gmail_id,
+                    status="pending",
+                    decision_payload={
+                        "budget": budget_summary,
+                        "budget_impact": budget_checks,
+                        "validation_gate": context_payload.get("validation_gate"),
+                        "approval_context": context_payload.get("approval_context"),
+                    },
+                )
+                teams_status = self._send_teams_budget_card(invoice, budget_summary, context_payload)
+                if isinstance(teams_status, dict):
+                    teams_state = str(teams_status.get("status") or "unknown")
+                    self._update_ap_item_metadata(
+                        ap_item_id,
+                        {
+                            "teams": {
+                                "state": teams_state,
+                                "channel": teams_status.get("channel_id"),
+                                "message_id": teams_status.get("message_id"),
+                                "reason": teams_status.get("reason"),
+                            }
+                        },
+                    )
+                    if teams_state == "sent":
+                        self._record_approval_snapshot(
+                            ap_item_id=ap_item_id,
+                            gmail_id=invoice.gmail_id,
+                            channel_id=str(teams_status.get("channel_id") or "teams"),
+                            message_ts=str(teams_status.get("message_id") or invoice.gmail_id),
+                            source_channel="teams",
+                            source_message_ref=invoice.gmail_id,
+                            status="pending",
+                            decision_payload={
+                                "budget": budget_summary,
+                                "budget_impact": budget_checks,
+                                "validation_gate": context_payload.get("validation_gate"),
+                                "approval_context": context_payload.get("approval_context"),
+                            },
+                        )
+                self._update_ap_item_metadata(
+                    ap_item_id,
+                    {
+                        "approval_requested_at": approval_requested_at,
+                        "approval_sent_to": approval_labels,
+                        "approval_delivery_targets": approval_delivery_targets,
+                        "approval_channel": str(existing_thread.get("channel_id") or approval_channel).strip() or approval_channel,
+                        "approval_next_action": "wait_for_approval",
+                    },
+                )
+                if ap_item_id:
+                    self.set_waiting_condition(
+                        ap_item_id, "approval_response",
+                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=self._APPROVAL_WAIT_HOURS)).isoformat(),
+                        context={"channel": existing_thread.get("channel_id"), "approvers": approval_labels},
+                    )
+
+                return {
+                    "status": "pending_approval",
+                    "invoice_id": invoice.gmail_id,
+                    "slack_channel": existing_thread.get("channel_id"),
+                    "slack_ts": existing_thread.get("thread_ts"),
+                    "existing": True,
+                    "budget": budget_summary,
+                    "teams": teams_status,
+                }
+
+            # ── Update status to needs_approval ─────────────────────
+            self._transition_invoice_state(
+                gmail_id=invoice.gmail_id,
+                target_state="needs_approval",
+                correlation_id=correlation_id,
+            )
+
+            # ── @mentions notification (best-effort, non-fatal) ─────
+            if approval_mentions and ap_item_id:
+                mention_text = ", ".join(f"@{m}" for m in approval_mentions[:3])
+                exception_reason = (context_payload.get("ap_reasoning") or "Requires human review.")[:200]
+                mention_body = (
+                    f"{mention_text} — {invoice.vendor_name} {invoice.currency} {invoice.amount:,.2f} "
+                    f"(INV {invoice.invoice_number or 'N/A'}). {exception_reason} "
+                    f"Match detail in sidebar. One click to override or reject."
+                )
+                try:
+                    await asyncio.to_thread(
+                        self.db.append_ap_item_timeline_entry,
+                        ap_item_id,
+                        {
+                            "event_type": "agent_mention",
+                            "summary": mention_body,
+                            "actor": "agent",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    item = await asyncio.to_thread(self.db.get_ap_item, ap_item_id) or {}
+                    from solden.api.ap_items_action_routes import _dispatch_mention_notifications
+                    _dispatch_mention_notifications(
+                        body=mention_body,
+                        ap_item_id=ap_item_id,
+                        item=item,
+                        actor_id="agent",
+                    )
+                except Exception:
+                    pass  # Non-fatal
+
+            # ── Approval chain record (best-effort, non-fatal) ──────
+            chain_id = None
+            try:
+                from types import SimpleNamespace
+                chain_id = f"chain-{uuid.uuid4().hex[:12]}"
+                chain = SimpleNamespace(
+                    chain_id=chain_id,
+                    organization_id=self.organization_id,
+                    invoice_id=invoice.gmail_id,
+                    vendor_name=invoice.vendor_name,
+                    amount=invoice.amount,
+                    gl_code=None,
+                    department=None,
+                    status="pending",
+                    current_step=0,
+                    requester_id="ap_agent",
+                    requester_name="Solden AP Agent",
+                    created_at=datetime.now(timezone.utc),
+                    completed_at=None,
+                    steps=[SimpleNamespace(
+                        step_id=f"step-{uuid.uuid4().hex[:12]}",
+                        level="L1",
+                        approvers=approval_authorization_targets,
+                        approval_type=str(approval_target.get("approval_type") or "any"),
+                        status="pending",
+                        approved_by=None,
+                        approved_at=None,
+                        rejection_reason=None,
+                        comments="",
+                    )],
+                )
+                await asyncio.to_thread(self.db.db_create_approval_chain, chain)
+                self._update_ap_item_metadata(
+                    ap_item_id,
+                    {
+                        "approval_chain_id": chain_id,
+                        "approval_requested_at": approval_requested_at,
+                        "approval_sent_to": approval_labels,
+                        "approval_delivery_targets": approval_delivery_targets,
+                        "approval_channel": approval_channel,
+                        "approval_next_action": "wait_for_approval",
+                    },
+                )
+            except Exception as chain_exc:
+                logger.debug("Approval chain creation failed (non-fatal): %s", chain_exc)
+                chain_id = None
+
+            blocks = self._build_approval_blocks(invoice, context_payload)
+            mention_suffix = f" · {' '.join(approval_mentions)}" if approval_mentions else ""
+            from solden.services.slack_notifications import deliver_approval_with_routing
+            from types import SimpleNamespace
+            primary_approver_email: Optional[str] = None
+            for candidate in approval_authorization_targets:
+                candidate_str = str(candidate or "").strip()
+                if "@" in candidate_str:
+                    primary_approver_email = candidate_str
+                    break
+
+            # ── SECTION A: pre-write outbox + Slack delivery ────────
+            # Outbox row is recorded BEFORE the Slack call so a crash
+            # between this write and the delivery leaves a recoverable
+            # ``pending`` row a future operator can audit. Failure of
+            # the Slack call itself flips the outbox to ``failed`` and
+            # returns; no orphan, no DB write past this point.
+            dispatch_id = f"disp-{uuid.uuid4().hex[:12]}"
+            dispatch_started_at = datetime.now(timezone.utc).isoformat()
+            self._write_approval_dispatch(ap_item_id, {
+                "dispatch_id": dispatch_id,
+                "status": "pending",
+                "channel": approval_channel,
+                "thread_ts": None,
+                "started_at": dispatch_started_at,
+                "completed_at": None,
+                "error": None,
+            })
+            try:
+                routing_result = await deliver_approval_with_routing(
+                    blocks=blocks,
+                    text=f"Invoice approval needed: {invoice.vendor_name} - ${invoice.amount:,.2f}{mention_suffix}",
+                    approval_channel=approval_channel,
+                    approver_email=primary_approver_email,
+                    amount=float(invoice.amount or 0),
+                    message_type="personal_approval",
+                    organization_id=self.organization_id,
+                )
+                if not routing_result:
+                    raise RuntimeError("slack_delivery_returned_no_result")
+                message = SimpleNamespace(
+                    channel=routing_result.get("channel") or approval_channel,
+                    ts=routing_result.get("ts") or "",
+                    routing_rule=routing_result.get("routing_rule"),
+                    dm_sent=routing_result.get("dm_sent", False),
+                )
+            except Exception as slack_exc:
+                logger.error(
+                    "[ApprovalDispatch] Slack delivery failed for ap_item=%s "
+                    "dispatch_id=%s err=%s",
+                    ap_item_id, dispatch_id, slack_exc,
+                )
+                self._write_approval_dispatch(ap_item_id, {
+                    "dispatch_id": dispatch_id,
+                    "status": "failed",
+                    "channel": approval_channel,
+                    "thread_ts": None,
+                    "started_at": dispatch_started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "error": str(slack_exc),
+                })
+                return {
+                    "status": "error",
+                    "invoice_id": invoice.gmail_id,
+                    "error": str(slack_exc),
+                    "step": "slack_delivery",
+                    "dispatch_id": dispatch_id,
+                }
+
+            # ── SECTION B: critical post-delivery DB writes ─────────
+            # Slack message is now live. The next three writes
+            # (save_slack_thread, state transition, outbox flip) are
+            # all load-bearing — without them we have an orphan Slack
+            # message no one can correlate back to an AP item. If any
+            # fail we log CRITICAL with the slack_ts so the operator
+            # has a grep-able breadcrumb for manual reconciliation.
+            try:
+                thread_id = await asyncio.to_thread(
+                    self.db.save_slack_thread,
+                    invoice_id=invoice.gmail_id,
+                    channel_id=message.channel,
+                    thread_ts=message.ts,
+                    gmail_id=invoice.gmail_id,
+                    organization_id=self.organization_id,
+                )
+                self._transition_invoice_state(
+                    gmail_id=invoice.gmail_id,
+                    target_state="needs_approval",
+                    slack_thread_id=thread_id,
+                    correlation_id=correlation_id,
+                )
+                self._write_approval_dispatch(ap_item_id, {
+                    "dispatch_id": dispatch_id,
+                    "status": "dispatched",
+                    "channel": message.channel,
+                    "thread_ts": message.ts,
+                    "started_at": dispatch_started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "error": None,
+                })
+            except Exception as post_exc:
+                logger.critical(
+                    "[ApprovalDispatch] State transition FAILED after Slack "
+                    "delivery — operator must reconcile. ap_item=%s "
+                    "slack_channel=%s slack_ts=%s dispatch_id=%s err=%s",
+                    ap_item_id, message.channel, message.ts, dispatch_id, post_exc,
+                )
+                self._write_approval_dispatch(ap_item_id, {
+                    "dispatch_id": dispatch_id,
+                    "status": "orphan",
+                    "channel": message.channel,
+                    "thread_ts": message.ts,
+                    "started_at": dispatch_started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "error": f"post_delivery_state_transition_failed: {post_exc}",
+                })
+                return {
+                    "status": "error_orphan_dispatch",
+                    "invoice_id": invoice.gmail_id,
+                    "error": str(post_exc),
+                    "step": "post_delivery_state_transition",
+                    "slack_channel": message.channel,
+                    "slack_ts": message.ts,
+                    "dispatch_id": dispatch_id,
+                }
+
+            # ── SECTION C: best-effort post-dispatch work ──────────
+            # Each step has its own narrow try/except: a failure here
+            # does NOT unwind the dispatch (Slack message is live and
+            # the outbox is dispatched). Failures are logged at warning
+            # so they show up in observability without crashing the
+            # caller's intake flow.
+            try:
+                self._record_approval_snapshot(
+                    ap_item_id=ap_item_id,
+                    gmail_id=invoice.gmail_id,
+                    channel_id=message.channel,
+                    message_ts=message.ts,
+                    source_channel="slack",
+                    source_message_ref=invoice.gmail_id,
+                    status="pending",
+                    decision_payload={
+                        "budget": budget_summary,
+                        "budget_impact": budget_checks,
+                        "validation_gate": context_payload.get("validation_gate"),
+                        "approval_context": context_payload.get("approval_context"),
+                    },
+                )
+            except Exception as snap_exc:
+                logger.warning(
+                    "[ApprovalDispatch] approval snapshot record failed: %s", snap_exc,
+                )
+
+            try:
+                self._update_ap_item_metadata(
+                    ap_item_id,
+                    {
+                        "approval_requested_at": approval_requested_at,
+                        "approval_sent_to": approval_labels,
+                        "approval_delivery_targets": approval_delivery_targets,
+                        "approval_channel": message.channel,
+                        "approval_next_action": "wait_for_approval",
+                    },
+                )
+            except Exception as meta_exc:
+                logger.warning(
+                    "[ApprovalDispatch] approval metadata update failed: %s", meta_exc,
+                )
+
+            teams_status: Dict[str, Any] = {}
+            try:
+                teams_status = self._send_teams_budget_card(invoice, budget_summary, context_payload) or {}
+                if isinstance(teams_status, dict):
+                    teams_state = str(teams_status.get("status") or "unknown")
+                    self._update_ap_item_metadata(
+                        ap_item_id,
+                        {
+                            "teams": {
+                                "state": teams_state,
+                                "channel": teams_status.get("channel_id"),
+                                "message_id": teams_status.get("message_id"),
+                                "reason": teams_status.get("reason"),
+                            }
+                        },
+                    )
+                    if teams_state == "sent":
+                        self._record_approval_snapshot(
+                            ap_item_id=ap_item_id,
+                            gmail_id=invoice.gmail_id,
+                            channel_id=str(teams_status.get("channel_id") or "teams"),
+                            message_ts=str(teams_status.get("message_id") or invoice.gmail_id),
+                            source_channel="teams",
+                            source_message_ref=invoice.gmail_id,
+                            status="pending",
+                            decision_payload={
+                                "budget": budget_summary,
+                                "budget_impact": budget_checks,
+                                "validation_gate": context_payload.get("validation_gate"),
+                                "approval_context": context_payload.get("approval_context"),
+                            },
+                        )
+            except Exception as teams_exc:
+                logger.warning(
+                    "[ApprovalDispatch] teams card delivery failed: %s", teams_exc,
+                )
+                teams_status = {"status": "error", "reason": str(teams_exc)}
+
+            logger.info("[ApprovalDispatch] Sent approval request to Slack: ts=%s dispatch_id=%s", message.ts, dispatch_id)
+
+            # H4: Audit approval request dispatch (PLAN.md §4.7)
+            if ap_item_id:
+                channels_notified = ["slack"]
+                if isinstance(teams_status, dict) and teams_status.get("status") == "sent":
+                    channels_notified.append("teams")
+                try:
+                    await asyncio.to_thread(
+                        self.db.append_audit_event,
+                        {
+                            "ap_item_id": ap_item_id,
+                            "event_type": "approval_requested",
+                            "actor_type": "system",
+                            "actor_id": "invoice_workflow",
+                            "reason": f"Approval request sent to {', '.join(channels_notified)}",
+                            "metadata": {
+                                "channels": channels_notified,
+                                "slack_channel": message.channel,
+                                "slack_ts": message.ts,
+                                "vendor": invoice.vendor_name,
+                                "amount": invoice.amount,
+                                "dispatch_id": dispatch_id,
+                            },
+                            "organization_id": self.organization_id,
+                            "source": "invoice_workflow",
+                        },
+                    )
+                except Exception as audit_exc:
+                    logger.warning(
+                        "[ApprovalDispatch] audit event append failed: %s", audit_exc,
+                    )
+
+            # §6: Set waiting condition — agent is paused until approval_received
+            if ap_item_id:
+                try:
+                    self.set_waiting_condition(
+                        ap_item_id, "approval_response",
+                        expected_by=(datetime.now(timezone.utc) + timedelta(hours=self._APPROVAL_WAIT_HOURS)).isoformat(),
+                        context={"channel": message.channel, "message_ts": message.ts, "approvers": approval_labels},
+                    )
+                except Exception as wait_exc:
+                    logger.warning(
+                        "[ApprovalDispatch] waiting condition set failed: %s", wait_exc,
+                    )
+
+            return {
+                "status": "pending_approval",
+                "invoice_id": invoice.gmail_id,
+                "slack_channel": message.channel,
+                "slack_ts": message.ts,
+                "budget": budget_summary,
+                "teams": teams_status,
+                "dispatch_id": dispatch_id,
+            }
+        finally:
+            if lock_conn is not None:
+                release_box_lock(
+                    self.db, lock_conn, self.organization_id, lock_box_id,
+                )
+
+    def _send_teams_budget_card(
+        self,
+        invoice: InvoiceData,
+        budget_summary: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Best-effort Teams delivery for approval/budget decisions.
+
+        §12 / §6.8 — skipped when Teams is disabled in V1. Returning a
+        structured "skipped" status (not raising) means the Slack
+        approval path runs uninterrupted and the invoice workflow's
+        error handling doesn't treat the absence of a Teams card as a
+        failure.
+        """
+        from solden.core.feature_flags import is_teams_enabled
+        if not is_teams_enabled():
+            return {"status": "skipped", "reason": "teams_disabled_in_v1"}
+
+        client = self.teams_client
+        if client is None:
+            return {"status": "skipped", "reason": "teams_client_unavailable"}
+        try:
+            approval_copy = self._build_approval_surface_copy(
+                invoice=invoice,
+                extra_context=extra_context or {"budget": budget_summary},
+                budget_summary=budget_summary,
+            )
+            result = client.send_invoice_budget_card(
+                email_id=invoice.gmail_id,
+                organization_id=self.organization_id,
+                vendor=invoice.vendor_name,
+                amount=invoice.amount,
+                currency=invoice.currency,
+                invoice_number=invoice.invoice_number,
+                budget=budget_summary,
+                decision_reason_summary=approval_copy.get("why_summary"),
+                next_step_lines=(
+                    ([f"Recommended decision: {approval_copy.get('recommended_action_text')}"] if approval_copy.get("recommended_action_text") else [])
+                    + (approval_copy.get("what_happens_next") or [])
+                ),
+                requested_by_text=approval_copy.get("requested_by_text"),
+                source_of_truth_text=approval_copy.get("source_of_truth_text"),
+                source_url=approval_copy.get("gmail_url"),
+            )
+            if isinstance(result, dict):
+                return result
+            return {"status": "error", "reason": "invalid_teams_response"}
+        except Exception as exc:
+            logger.warning("Failed to send Teams approval card: %s", exc)
+            return {"status": "error", "reason": str(exc)}
+
+    def _build_approval_context(
+        self,
+        invoice: InvoiceData,
+        context_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Build compact cross-system context for approval surfaces."""
+        summary: Dict[str, Any] = {
+            "vendor_name": invoice.vendor_name,
+            "vendor_spend_to_date": 0.0,
+            "vendor_open_invoices": 0,
+            "connected_systems": [],
+            "source_count": 0,
+        }
+        try:
+            if hasattr(self.db, "list_ap_items"):
+                items = self.db.list_ap_items(
+                    self.organization_id, limit=self._APPROVAL_CONTEXT_SCAN_LIMIT,
+                )
+                vendor_key = str(invoice.vendor_name or "").strip().lower()
+                if vendor_key:
+                    vendor_items = [
+                        item
+                        for item in items
+                        if str(item.get("vendor_name") or "").strip().lower() == vendor_key
+                    ]
+                    from solden.core.money import money_sum, money_to_float
+                    summary["vendor_spend_to_date"] = money_to_float(
+                        money_sum(item.get("amount") for item in vendor_items)
+                    )
+                    summary["vendor_open_invoices"] = sum(
+                        1
+                        for item in vendor_items
+                        if str(item.get("state") or "").strip().lower()
+                        in {
+                            "received",
+                            "validated",
+                            "needs_info",
+                            "needs_approval",
+                            "pending_approval",
+                            "approved",
+                            "ready_to_post",
+                        }
+                    )
+        except Exception as e:
+            # Approval flow must not fail due to optional context derivation.
+            # Carry org/vendor breadcrumbs so the warning is correlatable in logs.
+            logger.warning(
+                "Optional context derivation failed (org=%s vendor=%s gmail_id=%s): %s",
+                self.organization_id,
+                getattr(invoice, "vendor_name", None),
+                getattr(invoice, "gmail_id", None),
+                e,
+            )
+
+        multi_system = context_payload.get("multi_system")
+        if isinstance(multi_system, dict):
+            connected = multi_system.get("connected_systems")
+            if isinstance(connected, list):
+                summary["connected_systems"] = [str(system) for system in connected if str(system).strip()]
+
+        email_context = context_payload.get("email")
+        if isinstance(email_context, dict):
+            try:
+                summary["source_count"] = int(email_context.get("source_count") or 0)
+            except (TypeError, ValueError):
+                summary["source_count"] = 0
+        return summary
+
+    @staticmethod
+    def _humanize_reason_code(code: Any) -> str:
+        return humanize_reason_code(code)
+
+    @staticmethod
+    def _dedupe_reason_lines(lines: List[str], limit: int = 3) -> List[str]:
+        return dedupe_reason_lines(lines, limit)
+
+    def _build_approval_surface_copy(
+        self,
+        invoice: InvoiceData,
+        extra_context: Optional[Dict[str, Any]] = None,
+        budget_summary: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return build_approval_surface_copy(invoice, extra_context, budget_summary)
+    
+    def _build_approval_blocks(
+        self,
+        invoice: InvoiceData,
+        extra_context: Optional[Dict] = None,
+    ) -> list:
+        return build_approval_blocks(invoice, extra_context)
+    
+def get_invoice_workflow(
+    organization_id: str,
+    slack_channel: Optional[str] = None,
+) -> InvoiceWorkflowService:
+    """Get the internal workflow service used by runtime-owned AP actions."""
+    return InvoiceWorkflowService(
+        organization_id=organization_id,
+        slack_channel=slack_channel,
+    )

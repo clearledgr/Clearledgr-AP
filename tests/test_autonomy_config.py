@@ -11,7 +11,7 @@ import copy
 from unittest.mock import MagicMock, patch
 
 
-from clearledgr.services.finance_runtime_autonomy import (
+from solden.services.finance_runtime_autonomy import (
     _AUTONOMY_ACTION_THRESHOLDS,
     _load_org_autonomy_thresholds,
     autonomy_action_thresholds,
@@ -45,7 +45,7 @@ def test_no_org_returns_defaults():
     mock_db.get_organization.return_value = None
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = _load_org_autonomy_thresholds("org-missing")
@@ -69,7 +69,7 @@ def test_with_override():
     mock_db = _mock_db_with_settings(settings)
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = _load_org_autonomy_thresholds("org-custom")
@@ -96,7 +96,7 @@ def test_partial_override():
     mock_db = _mock_db_with_settings(settings)
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = _load_org_autonomy_thresholds("org-partial")
@@ -113,7 +113,7 @@ def test_malformed_settings():
     mock_db = _mock_db_with_settings("{{not valid json")
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = _load_org_autonomy_thresholds("org-bad-json")
@@ -128,7 +128,7 @@ def test_settings_not_dict():
     mock_db = _mock_db_with_settings([1, 2, 3])
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = _load_org_autonomy_thresholds("org-list")
@@ -152,7 +152,7 @@ def test_action_thresholds_with_org_id():
     mock_db = _mock_db_with_settings(settings)
 
     with patch(
-        "clearledgr.core.database.get_db",
+        "solden.core.database.get_db",
         return_value=mock_db,
     ):
         result = autonomy_action_thresholds("org-1")

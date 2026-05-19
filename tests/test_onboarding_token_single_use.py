@@ -7,7 +7,7 @@ CLOSED_UNSUCCESSFUL) the link must stop working at the **token
 layer**, not only at the session ``is_active`` guard.
 
 Defense-in-depth: if a future refactor bypasses or weakens the
-``is_active`` check in :func:`clearledgr.core.portal_auth.require_portal_token`,
+``is_active`` check in :func:`solden.core.portal_auth.require_portal_token`,
 the revoked-token guard must still fail the request.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
 
 import pytest as _vo_skip_pytest  # noqa: E402
 

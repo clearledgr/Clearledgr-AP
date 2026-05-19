@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import audit_chain as ac_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import TokenData, get_current_user  # noqa: E402
+from solden.api import audit_chain as ac_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import TokenData, get_current_user  # noqa: E402
 
 
 @pytest.fixture()

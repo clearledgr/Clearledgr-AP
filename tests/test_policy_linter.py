@@ -7,7 +7,7 @@ when a rule regresses.
 """
 from __future__ import annotations
 
-from clearledgr.services import policy_linter as L
+from solden.services import policy_linter as L
 
 
 def _rules(findings):

@@ -1,11 +1,11 @@
-"""Tests for clearledgr.services.cross_invoice_analysis — duplicate/anomaly detection."""
+"""Tests for solden.services.cross_invoice_analysis — duplicate/anomaly detection."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from clearledgr.services.cross_invoice_analysis import (
+from solden.services.cross_invoice_analysis import (
     CrossInvoiceAnalyzer,
 )
 
@@ -37,7 +37,7 @@ def mock_db():
 
 @pytest.fixture
 def analyzer(mock_db):
-    with patch("clearledgr.services.cross_invoice_analysis.get_db", return_value=mock_db):
+    with patch("solden.services.cross_invoice_analysis.get_db", return_value=mock_db):
         return CrossInvoiceAnalyzer("test-org")
 
 

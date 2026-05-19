@@ -80,7 +80,7 @@ async def test_exchange_code_surfaces_google_error_description(monkeypatch, capl
     client = _FakeHttpClient(fake_response)
     # ``clearledgr/services/logging.py`` sets ``propagate=False`` on the
     # ``clearledgr`` logger when imported, which means warnings from
-    # child loggers (``clearledgr.services.gmail_api``) never reach the
+    # child loggers (``solden.services.gmail_api``) never reach the
     # root logger. pytest's ``caplog`` captures via root, so the assertion
     # below would silently fail in any test ordering where that module
     # is already imported. Attach our own list-handler directly to the
@@ -93,8 +93,8 @@ async def test_exchange_code_surfaces_google_error_description(monkeypatch, capl
             captured_records.append(record)
 
     capture = _CaptureHandler(level=_logging.WARNING)
-    with patch("clearledgr.services.gmail_api.get_http_client", return_value=client):
-        from clearledgr.services import gmail_api
+    with patch("solden.services.gmail_api.get_http_client", return_value=client):
+        from solden.services import gmail_api
         gm_logger = _logging.getLogger(gmail_api.__name__)
         prior_level = gm_logger.level
         gm_logger.setLevel(_logging.WARNING)
@@ -137,8 +137,8 @@ async def test_exchange_code_surfaces_redirect_uri_mismatch(monkeypatch):
         },
     )
     client = _FakeHttpClient(fake_response)
-    with patch("clearledgr.services.gmail_api.get_http_client", return_value=client):
-        from clearledgr.services import gmail_api
+    with patch("solden.services.gmail_api.get_http_client", return_value=client):
+        from solden.services import gmail_api
         with pytest.raises(RuntimeError) as exc_info:
             await gmail_api.exchange_code_for_tokens(
                 "fake-code",
@@ -162,8 +162,8 @@ async def test_exchange_code_falls_back_to_response_text_when_body_isnt_json(mon
         text="Bad Gateway: upstream gateway timeout",
     )
     client = _FakeHttpClient(fake_response)
-    with patch("clearledgr.services.gmail_api.get_http_client", return_value=client):
-        from clearledgr.services import gmail_api
+    with patch("solden.services.gmail_api.get_http_client", return_value=client):
+        from solden.services import gmail_api
         with pytest.raises(RuntimeError) as exc_info:
             await gmail_api.exchange_code_for_tokens("fake-code", redirect_uri="https://ext.test/")
     err = str(exc_info.value)
@@ -185,8 +185,8 @@ async def test_exchange_code_sends_redirect_uri_unchanged(monkeypatch):
         body={"error": "invalid_grant", "error_description": "expected"},
     )
     client = _FakeHttpClient(fake_response)
-    with patch("clearledgr.services.gmail_api.get_http_client", return_value=client):
-        from clearledgr.services import gmail_api
+    with patch("solden.services.gmail_api.get_http_client", return_value=client):
+        from solden.services import gmail_api
         with pytest.raises(RuntimeError):
             await gmail_api.exchange_code_for_tokens(
                 "fake-code",

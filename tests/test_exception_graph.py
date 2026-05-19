@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from clearledgr.services.exception_graph import (
+from solden.services.exception_graph import (
     build_exception_graph,
 )
 

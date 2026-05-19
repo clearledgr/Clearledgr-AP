@@ -16,7 +16,7 @@ from decimal import Decimal
 
 import pytest
 
-from clearledgr.core.money import (
+from solden.core.money import (
     Money,
     Q2,
     ZERO,

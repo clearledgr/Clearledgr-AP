@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from clearledgr.core.database import SoldenDB
-from clearledgr.services.finance_learning import FinanceLearningService
+from solden.core.database import SoldenDB
+from solden.services.finance_learning import FinanceLearningService
 
 
 def test_finance_learning_records_outcome_calibration_from_runtime_outcome(tmp_path, monkeypatch):

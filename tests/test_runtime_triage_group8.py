@@ -44,13 +44,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.coordination_engine import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.coordination_engine import (  # noqa: E402
     CoordinationEngine,
     _classify_failure,
 )
-from clearledgr.core.plan import Action, Plan  # noqa: E402
-from clearledgr.core.planning_engine import (  # noqa: E402
+from solden.core.plan import Action, Plan  # noqa: E402
+from solden.core.planning_engine import (  # noqa: E402
     DeterministicPlanningEngine,
     get_planning_engine,
 )
@@ -161,7 +161,7 @@ class TestAttemptSelfRecoveryTrigger:
         skill response on such a box must NOT trigger
         ``resume_workflow`` — that would race with the engine's
         own queued post action."""
-        from clearledgr.services.finance_agent_governance import attempt_self_recovery
+        from solden.services.finance_agent_governance import attempt_self_recovery
 
         runtime = self._make_runtime(db)
         item = {
@@ -172,7 +172,7 @@ class TestAttemptSelfRecoveryTrigger:
         response = {"status": "ok", "ap_item_id": "AP-tri-1"}
 
         with patch(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
         ) as mock_workflow:
             result = asyncio.run(
                 attempt_self_recovery(
@@ -187,7 +187,7 @@ class TestAttemptSelfRecoveryTrigger:
     def test_failed_post_state_still_triggers_recovery(self, db):
         """The genuine failure case: box already in failed_post →
         run resume_workflow as before."""
-        from clearledgr.services.finance_agent_governance import attempt_self_recovery
+        from solden.services.finance_agent_governance import attempt_self_recovery
 
         runtime = self._make_runtime(db)
         item = {"id": "AP-tri-2", "state": "failed_post"}
@@ -200,7 +200,7 @@ class TestAttemptSelfRecoveryTrigger:
         fake_workflow.resume_workflow = fake_resume
 
         with patch(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             return_value=fake_workflow,
         ):
             result = asyncio.run(
@@ -215,7 +215,7 @@ class TestAttemptSelfRecoveryTrigger:
     def test_transient_failure_triggers_recovery(self, db):
         """Response status mentions transient-failure tokens →
         recovery fires regardless of current_state."""
-        from clearledgr.services.finance_agent_governance import attempt_self_recovery
+        from solden.services.finance_agent_governance import attempt_self_recovery
 
         runtime = self._make_runtime(db)
         item = {"id": "AP-tri-3", "state": "approved"}  # not failed_post
@@ -230,7 +230,7 @@ class TestAttemptSelfRecoveryTrigger:
         fake_workflow.resume_workflow = fake_resume
 
         with patch(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             return_value=fake_workflow,
         ):
             result = asyncio.run(
@@ -315,7 +315,7 @@ class TestPostBillErpReferenceBackstop:
             return {"status": "posted", "reference_id": "EXT-BACKSTOP-1"}
 
         with patch(
-            "clearledgr.services.invoice_workflow.InvoiceWorkflowService._post_to_erp",
+            "solden.services.invoice_workflow.InvoiceWorkflowService._post_to_erp",
             new=fake_post_to_erp,
         ):
             plan = Plan(
@@ -376,7 +376,7 @@ class TestPlannerDbReresolves:
 
         # Now simulate a reset: get_db returns a different object.
         sentinel = MagicMock(name="fresh-db-after-reset")
-        with patch("clearledgr.core.database.get_db", return_value=sentinel):
+        with patch("solden.core.database.get_db", return_value=sentinel):
             second_db = engine._get_db()
         assert second_db is sentinel, (
             "_get_db cached the first db; pool reset would leave it on a dead handle"

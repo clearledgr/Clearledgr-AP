@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from clearledgr.core.events import AgentEvent, AgentEventType
-from clearledgr.core.plan import Plan
-from clearledgr.core.planning_engine import DeterministicPlanningEngine
+from solden.core.events import AgentEvent, AgentEventType
+from solden.core.plan import Plan
+from solden.core.planning_engine import DeterministicPlanningEngine
 
 
 @pytest.fixture
@@ -217,8 +217,8 @@ class TestUnknownEventType:
     def test_unknown_event_with_box_id_records_exception(self, engine, tmp_path, monkeypatch):
         """When the event names a Box, the unhandled-event failure is
         recorded as a box exception so it's auditable."""
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
 
         db = get_db()
         db.initialize()

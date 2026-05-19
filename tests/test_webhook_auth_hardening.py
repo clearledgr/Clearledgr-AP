@@ -213,7 +213,7 @@ def test_slack_events_route_requires_signature_verification():
     routes the body through the same primitive ``/interactive``
     already uses.
     """
-    from clearledgr.api import slack_invoices
+    from solden.api import slack_invoices
 
     src_path = slack_invoices.__file__
     with open(src_path, "r") as f:
@@ -249,7 +249,7 @@ def test_slack_interactive_handler_has_team_org_cross_check():
     ``get_slack_installation_by_team`` and refuse with 403
     ``tenant_mismatch`` when the team isn't bound to the AP item's
     org."""
-    from clearledgr.api import slack_invoices
+    from solden.api import slack_invoices
 
     src_path = slack_invoices.__file__
     with open(src_path, "r") as f:
@@ -273,7 +273,7 @@ def test_teams_handler_does_not_trust_organization_id_from_body():
     the org comes from the AP-item resolution. When no AP item
     resolves, the route fails closed with 404 ``ap_item_not_found``.
     """
-    from clearledgr.api import teams_invoices
+    from solden.api import teams_invoices
 
     src_path = teams_invoices.__file__
     with open(src_path, "r") as f:
@@ -305,7 +305,7 @@ def test_qbo_webhook_dispatch_refuses_realm_id_mismatch():
     cross-checks every event's ``realmId`` against the connection's
     expected realm_id and refuses on mismatch.
     """
-    from clearledgr.api import erp_webhooks
+    from solden.api import erp_webhooks
 
     src_path = erp_webhooks.__file__
     with open(src_path, "r") as f:
@@ -322,7 +322,7 @@ def test_qbo_webhook_dispatch_refuses_realm_id_mismatch():
 def test_xero_webhook_dispatch_refuses_tenant_id_mismatch():
     """Pre-fix the Xero webhook accepted any ``tenantId`` in the
     envelope. Now refuses with a logged warning on mismatch."""
-    from clearledgr.api import erp_webhooks
+    from solden.api import erp_webhooks
 
     src_path = erp_webhooks.__file__
     with open(src_path, "r") as f:
@@ -341,7 +341,7 @@ def test_erp_webhook_secret_lookup_distinguishes_db_error_from_not_configured():
     Now raises ``_WebhookSecretLookupFailed`` on DB outage; the
     routes map it to HTTP 500. ``None`` stays as 503 ``not configured``.
     """
-    from clearledgr.api import erp_webhooks
+    from solden.api import erp_webhooks
 
     src_path = erp_webhooks.__file__
     with open(src_path, "r") as f:
@@ -380,7 +380,7 @@ def test_slack_received_lock_short_circuits_concurrent_retry():
     the channel-approval contract tests; this asserts the
     primitive's contract.
     """
-    from clearledgr.api.slack_invoices import _try_acquire_received_lock
+    from solden.api.slack_invoices import _try_acquire_received_lock
 
     # First call: row created with correlation_id "corr-A".
     # Second call: same idempotency_key, different correlation_id "corr-B".
@@ -447,7 +447,7 @@ def test_gmail_webhook_existing_item_initialized_before_inner_try():
     forbids. Initialising to ``None`` before the inner try makes
     the fall-through explicit + correct.
     """
-    from clearledgr.api import gmail_webhooks
+    from solden.api import gmail_webhooks
 
     src_path = gmail_webhooks.__file__
     with open(src_path, "r") as f:
@@ -473,7 +473,7 @@ def test_gmail_push_route_verifies_before_parsing_json():
     a defensive body-size cap (64KB) blocks oversize requests
     before they reach the JSON parse.
     """
-    from clearledgr.api import gmail_webhooks
+    from solden.api import gmail_webhooks
 
     src_path = gmail_webhooks.__file__
     with open(src_path, "r") as f:
@@ -516,7 +516,7 @@ def test_gmail_register_token_refuses_unprovisioned_email():
     domain has no mapped org. Auto-provisioning still works for
     domain-matched emails (legitimate org bootstrap path).
     """
-    from clearledgr.api import gmail_extension
+    from solden.api import gmail_extension
 
     src_path = gmail_extension.__file__
     with open(src_path, "r") as f:
@@ -559,7 +559,7 @@ def test_erp_oauth_routes_never_accept_org_from_url_or_body():
     OAuth state is bound to ``user_id`` and re-checked at callback so a
     leaked state cannot be redeemed by a different session.
     """
-    from clearledgr.api import erp_oauth
+    from solden.api import erp_oauth
 
     src_path = erp_oauth.__file__
     with open(src_path, "r") as f:
@@ -1000,7 +1000,7 @@ def test_finance_runtime_platform_privilege_gated_by_explicit_flag():
       2. Only a runtime with ``is_platform=True`` permits a
          cross-tenant payload to flow through ``_resolve_payload_org``.
     """
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+    from solden.services.finance_agent_runtime import FinanceAgentRuntime
 
     # 1. ``organization_id="default"`` alone does NOT grant privilege.
     tenant_runtime = FinanceAgentRuntime(
@@ -1039,7 +1039,7 @@ def test_finance_runtime_platform_privilege_gated_by_explicit_flag():
 
     # 3. ``get_platform_finance_runtime`` is the sanctioned constructor
     # for the privileged form.
-    from clearledgr.services.finance_agent_runtime import (
+    from solden.services.finance_agent_runtime import (
         get_platform_finance_runtime,
         _reset_platform_finance_runtime_cache,
     )
@@ -1241,7 +1241,7 @@ def test_get_invoice_status_endpoint_scopes_lookup_to_session_org():
     """
     import inspect
     from pathlib import Path
-    from clearledgr.core.stores.ap_store import APStore
+    from solden.core.stores.ap_store import APStore
 
     sig = inspect.signature(APStore.get_invoice_status)
     assert "organization_id" in sig.parameters, (
@@ -1294,7 +1294,7 @@ def test_byid_store_mutations_require_organization_id():
     fails the test immediately.
     """
     import inspect
-    from clearledgr.core.stores import (
+    from solden.core.stores import (
         webhook_store as _webhook_store,
         dispute_store as _dispute_store,
         custom_roles_store as _custom_roles_store,

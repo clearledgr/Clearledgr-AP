@@ -34,9 +34,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from clearledgr.api.sap_extension import router as sap_extension_router
-from clearledgr.core.auth import create_access_token
-from clearledgr.core.database import get_db
+from solden.api.sap_extension import router as sap_extension_router
+from solden.core.auth import create_access_token
+from solden.core.database import get_db
 
 
 _TEST_ORG_ID = "sap-fiori-test-org"

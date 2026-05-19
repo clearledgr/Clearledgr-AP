@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from clearledgr.core.database import SoldenDB, get_db
-from clearledgr.services.ap_item_service import _build_context_payload
-from clearledgr.services.purchase_orders import get_purchase_order_service
+from solden.core.database import SoldenDB, get_db
+from solden.services.ap_item_service import _build_context_payload
+from solden.services.purchase_orders import get_purchase_order_service
 
 
 @pytest.fixture(autouse=True)
@@ -21,9 +21,9 @@ def _isolate_service_singletons(tmp_path: Path, monkeypatch):
     clear the PO service cache so the next construct picks up the
     fresh DB.
     """
-    import clearledgr.core.database as _db_mod
+    import solden.core.database as _db_mod
     _db_mod._DB_INSTANCE = None
-    import clearledgr.services.purchase_orders as _po_mod
+    import solden.services.purchase_orders as _po_mod
     _po_mod._instances.clear()
     yield
 

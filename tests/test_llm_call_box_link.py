@@ -11,11 +11,11 @@ from __future__ import annotations
 
 class TestLLMCallLogLink:
     def test_log_call_persists_box_keys_and_correlation_id(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
-        from clearledgr.core.llm_gateway import LLMGateway, LLMAction
+        from solden.core.llm_gateway import LLMGateway, LLMAction
         gw = LLMGateway.__new__(LLMGateway)
         gw._db = db
 
@@ -64,11 +64,11 @@ class TestLLMCallLogLink:
         """Callers can pass (box_id, box_type) directly for non-AP
         Boxes — vendor onboarding, clawback, etc.
         """
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
-        from clearledgr.core.llm_gateway import LLMGateway, LLMAction
+        from solden.core.llm_gateway import LLMGateway, LLMAction
         gw = LLMGateway.__new__(LLMGateway)
         gw._db = db
 
@@ -114,11 +114,11 @@ class TestLLMCallLogLink:
         classify_email for an email that hasn't yet become a Box)
         may pass nothing — the row records with null box keys.
         """
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
-        from clearledgr.core.llm_gateway import LLMGateway, LLMAction
+        from solden.core.llm_gateway import LLMGateway, LLMAction
         gw = LLMGateway.__new__(LLMGateway)
         gw._db = db
 

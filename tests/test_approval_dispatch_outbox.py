@@ -37,8 +37,8 @@ from unittest.mock import patch
 
 import pytest
 
-from clearledgr.services.invoice_models import InvoiceData
-from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+from solden.services.invoice_models import InvoiceData
+from solden.services.invoice_workflow import InvoiceWorkflowService
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -222,7 +222,7 @@ async def test_idempotent_reentry_returns_cached_thread_without_calling_slack():
         return {"channel": "should-never-fire", "ts": "0"}
 
     with patch(
-        "clearledgr.services.slack_notifications.deliver_approval_with_routing",
+        "solden.services.slack_notifications.deliver_approval_with_routing",
         side_effect=_record_deliver,
     ):
         result = await svc._send_for_approval(_make_invoice())
@@ -255,7 +255,7 @@ async def test_slack_delivery_failure_marks_dispatch_failed_and_returns_error():
         raise RuntimeError("slack workspace unreachable")
 
     with patch(
-        "clearledgr.services.slack_notifications.deliver_approval_with_routing",
+        "solden.services.slack_notifications.deliver_approval_with_routing",
         side_effect=_explode,
     ):
         result = await svc._send_for_approval(_make_invoice())
@@ -299,7 +299,7 @@ async def test_post_delivery_db_failure_marks_dispatch_orphan_with_slack_breadcr
         return {"channel": "C-LIVE", "ts": "1700000000.000999", "routing_rule": "org-test", "dm_sent": False}
 
     with patch(
-        "clearledgr.services.slack_notifications.deliver_approval_with_routing",
+        "solden.services.slack_notifications.deliver_approval_with_routing",
         side_effect=_ok_deliver,
     ):
         result = await svc._send_for_approval(_make_invoice())
@@ -340,7 +340,7 @@ async def test_happy_path_writes_pending_then_dispatched_outbox():
         return {"channel": "C-CHOSEN", "ts": "1700000000.000444", "routing_rule": "org-test", "dm_sent": False}
 
     with patch(
-        "clearledgr.services.slack_notifications.deliver_approval_with_routing",
+        "solden.services.slack_notifications.deliver_approval_with_routing",
         side_effect=_ok_deliver,
     ):
         result = await svc._send_for_approval(_make_invoice())
@@ -384,7 +384,7 @@ async def test_reaper_recovers_orphan_by_replaying_post_delivery_writes(monkeypa
     ``dispatched``. On the next sweep the row is no longer in the
     orphan list (status filter), so recovery is a one-shot.
     """
-    from clearledgr.services.agent_background import reap_orphan_approval_dispatches
+    from solden.services.agent_background import reap_orphan_approval_dispatches
 
     orphan_row = {
         "id": "ap-orphan-1",
@@ -432,7 +432,7 @@ async def test_reaper_recovers_orphan_by_replaying_post_delivery_writes(monkeypa
 
     fake_db = _ReaperFakeDB()
     monkeypatch.setattr(
-        "clearledgr.core.database.get_db", lambda: fake_db,
+        "solden.core.database.get_db", lambda: fake_db,
     )
 
     recovered = await reap_orphan_approval_dispatches()
@@ -467,7 +467,7 @@ async def test_reaper_skips_orphan_rows_missing_channel_or_ts(monkeypatch):
     The reaper logs a warning and skips it; subsequent sweeps will
     see the same row and emit the same warning, surfacing the issue
     in observability instead of silently dropping it."""
-    from clearledgr.services.agent_background import reap_orphan_approval_dispatches
+    from solden.services.agent_background import reap_orphan_approval_dispatches
 
     bad_orphan = {
         "id": "ap-orphan-2",
@@ -509,7 +509,7 @@ async def test_reaper_skips_orphan_rows_missing_channel_or_ts(monkeypatch):
 
     fake_db = _ReaperFakeDB()
     monkeypatch.setattr(
-        "clearledgr.core.database.get_db", lambda: fake_db,
+        "solden.core.database.get_db", lambda: fake_db,
     )
 
     recovered = await reap_orphan_approval_dispatches()

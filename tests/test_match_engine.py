@@ -31,8 +31,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 def test_match_engines_registered_at_import():
     """Importing the package eagerly populates the registry."""
-    import clearledgr.services.match_engines  # noqa: F401
-    from clearledgr.services.match_engine import list_registered_engines, get_match_engine
+    import solden.services.match_engines  # noqa: F401
+    from solden.services.match_engine import list_registered_engines, get_match_engine
     engines = list_registered_engines()
     assert "ap_three_way" in engines
     assert "bank_reconciliation" in engines
@@ -41,7 +41,7 @@ def test_match_engines_registered_at_import():
 
 
 def test_unknown_match_type_returns_none():
-    from clearledgr.services.match_engine import get_match_engine
+    from solden.services.match_engine import get_match_engine
     assert get_match_engine("not_a_real_match_type") is None
 
 
@@ -49,35 +49,35 @@ def test_unknown_match_type_returns_none():
 
 
 def test_date_proximity_same_day_is_max():
-    from clearledgr.services.match_engines.bank_reconciliation import _date_proximity_score
+    from solden.services.match_engines.bank_reconciliation import _date_proximity_score
     assert _date_proximity_score("2026-04-25", "2026-04-25", window_days=3) == 1.0
 
 
 def test_date_proximity_decays_linearly():
-    from clearledgr.services.match_engines.bank_reconciliation import _date_proximity_score
+    from solden.services.match_engines.bank_reconciliation import _date_proximity_score
     score_1d = _date_proximity_score("2026-04-25", "2026-04-26", window_days=3)
     score_2d = _date_proximity_score("2026-04-25", "2026-04-27", window_days=3)
     assert score_1d > score_2d > 0
 
 
 def test_date_proximity_outside_window_is_zero():
-    from clearledgr.services.match_engines.bank_reconciliation import _date_proximity_score
+    from solden.services.match_engines.bank_reconciliation import _date_proximity_score
     assert _date_proximity_score("2026-04-25", "2026-05-01", window_days=3) == 0.0
 
 
 def test_description_reference_exact_match_is_max():
-    from clearledgr.services.match_engines.bank_reconciliation import _description_overlap_score
+    from solden.services.match_engines.bank_reconciliation import _description_overlap_score
     assert _description_overlap_score("foo", "bar", "INV-001", "INV-001") == 1.0
 
 
 def test_description_token_overlap_jaccard():
-    from clearledgr.services.match_engines.bank_reconciliation import _description_overlap_score
+    from solden.services.match_engines.bank_reconciliation import _description_overlap_score
     score = _description_overlap_score("ACME CORP INVOICE", "ACME CORPORATION", None, None)
     assert 0 < score <= 0.7
 
 
 def test_tokenize_drops_short_tokens():
-    from clearledgr.services.match_engines.bank_reconciliation import _tokenize
+    from solden.services.match_engines.bank_reconciliation import _tokenize
     tokens = _tokenize("AB CD EFGH IJKL")
     # 'AB' + 'CD' both <3 chars → dropped
     assert tokens == ["EFGH", "IJKL"]
@@ -88,8 +88,8 @@ def test_tokenize_drops_short_tokens():
 
 @pytest.mark.asyncio
 async def test_bank_recon_decide_matched_on_high_score():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
     engine = BankReconciliationMatchEngine()
     inp = MatchInput(organization_id="org-1", left_type="bank_line", left_id="L-1", payload={})
     candidates = [MatchCandidate(right_type="gl_transaction", right_id="GL-1", score=0.97)]
@@ -101,8 +101,8 @@ async def test_bank_recon_decide_matched_on_high_score():
 
 @pytest.mark.asyncio
 async def test_bank_recon_decide_partial_match_below_high_threshold():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
     engine = BankReconciliationMatchEngine()
     inp = MatchInput(organization_id="org-1", left_type="bank_line", left_id="L-1", payload={})
     candidates = [MatchCandidate(right_type="gl_transaction", right_id="GL-1", score=0.80)]
@@ -113,8 +113,8 @@ async def test_bank_recon_decide_partial_match_below_high_threshold():
 
 @pytest.mark.asyncio
 async def test_bank_recon_decide_exception_on_low_score():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
     engine = BankReconciliationMatchEngine()
     inp = MatchInput(organization_id="org-1", left_type="bank_line", left_id="L-1", payload={})
     candidates = [MatchCandidate(right_type="gl_transaction", right_id="GL-1", score=0.50)]
@@ -125,8 +125,8 @@ async def test_bank_recon_decide_exception_on_low_score():
 
 @pytest.mark.asyncio
 async def test_bank_recon_decide_multiple_matches_on_close_top_two():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
     engine = BankReconciliationMatchEngine()
     inp = MatchInput(organization_id="org-1", left_type="bank_line", left_id="L-1", payload={})
     candidates = [
@@ -141,8 +141,8 @@ async def test_bank_recon_decide_multiple_matches_on_close_top_two():
 
 @pytest.mark.asyncio
 async def test_bank_recon_decide_no_match_on_empty_candidates():
-    from clearledgr.services.match_engine import MatchInput, MatchStatus
-    from clearledgr.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
+    from solden.services.match_engine import MatchInput, MatchStatus
+    from solden.services.match_engines.bank_reconciliation import BankReconciliationMatchEngine
     engine = BankReconciliationMatchEngine()
     inp = MatchInput(organization_id="org-1", left_type="bank_line", left_id="L-1", payload={})
     status, chosen, exceptions = await engine.decide(inp, [])
@@ -156,8 +156,8 @@ async def test_bank_recon_decide_no_match_on_empty_candidates():
 
 @pytest.mark.asyncio
 async def test_ap_three_way_no_match_when_no_pos_for_vendor():
-    from clearledgr.services.match_engine import MatchInput, MatchStatus
-    from clearledgr.services.match_engines.ap_three_way import APThreeWayMatchEngine
+    from solden.services.match_engine import MatchInput, MatchStatus
+    from solden.services.match_engines.ap_three_way import APThreeWayMatchEngine
     engine = APThreeWayMatchEngine()
     inp = MatchInput(
         organization_id="org-1", left_type="ap_item", left_id="AP-1",
@@ -170,8 +170,8 @@ async def test_ap_three_way_no_match_when_no_pos_for_vendor():
 
 @pytest.mark.asyncio
 async def test_ap_three_way_decide_matched_within_price_tolerance():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.ap_three_way import APThreeWayMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.ap_three_way import APThreeWayMatchEngine
     engine = APThreeWayMatchEngine()
     inp = MatchInput(
         organization_id="org-1", left_type="ap_item", left_id="AP-1",
@@ -182,7 +182,7 @@ async def test_ap_three_way_decide_matched_within_price_tolerance():
         right_type="purchase_order", right_id="PO-1",
         score=0.99, variance={"amount_variance_pct": 1.0},
     )
-    with patch("clearledgr.services.match_engine.get_tolerance_for", return_value=2.0):
+    with patch("solden.services.match_engine.get_tolerance_for", return_value=2.0):
         status, chosen, exceptions = await engine.decide(inp, [candidate])
     assert status == MatchStatus.MATCHED
     assert chosen.right_id == "PO-1"
@@ -190,8 +190,8 @@ async def test_ap_three_way_decide_matched_within_price_tolerance():
 
 @pytest.mark.asyncio
 async def test_ap_three_way_decide_partial_match_above_tolerance():
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.ap_three_way import APThreeWayMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.ap_three_way import APThreeWayMatchEngine
     engine = APThreeWayMatchEngine()
     inp = MatchInput(
         organization_id="org-1", left_type="ap_item", left_id="AP-1",
@@ -202,7 +202,7 @@ async def test_ap_three_way_decide_partial_match_above_tolerance():
         right_type="purchase_order", right_id="PO-1",
         score=0.90, variance={"amount_variance_pct": 10.0},
     )
-    with patch("clearledgr.services.match_engine.get_tolerance_for", return_value=2.0):
+    with patch("solden.services.match_engine.get_tolerance_for", return_value=2.0):
         status, _, exceptions = await engine.decide(inp, [candidate])
     assert status == MatchStatus.PARTIAL_MATCH
     assert "amount_variance_above_tolerance" in exceptions
@@ -211,8 +211,8 @@ async def test_ap_three_way_decide_partial_match_above_tolerance():
 @pytest.mark.asyncio
 async def test_ap_three_way_decide_exception_on_currency_mismatch():
     """A 0.0-score candidate (e.g., currency mismatch) routes to EXCEPTION."""
-    from clearledgr.services.match_engine import MatchCandidate, MatchInput, MatchStatus
-    from clearledgr.services.match_engines.ap_three_way import APThreeWayMatchEngine
+    from solden.services.match_engine import MatchCandidate, MatchInput, MatchStatus
+    from solden.services.match_engines.ap_three_way import APThreeWayMatchEngine
     engine = APThreeWayMatchEngine()
     inp = MatchInput(
         organization_id="org-1", left_type="ap_item", left_id="AP-1",
@@ -232,7 +232,7 @@ async def test_ap_three_way_decide_exception_on_currency_mismatch():
 
 def test_get_tolerance_falls_back_to_default_when_no_policy():
     """When no PolicyService config exists, returns the supplied default."""
-    from clearledgr.services.match_engine import get_tolerance_for
+    from solden.services.match_engine import get_tolerance_for
     # Can't reach a real DB in this test — the lookup raises internally
     # and falls through. The default propagates.
     val = get_tolerance_for(
@@ -254,8 +254,8 @@ async def test_run_match_persists_record_and_returns_it():
     """run_match orchestrates the engine and returns a persisted
     MatchRecord. Verified by patching get_db + the persistence
     helpers; we check the orchestration flow + idempotency."""
-    import clearledgr.services.match_engine as match_module
-    from clearledgr.services.match_engine import (
+    import solden.services.match_engine as match_module
+    from solden.services.match_engine import (
         MatchCandidate, MatchInput, MatchStatus, run_match,
     )
 
@@ -297,8 +297,8 @@ async def test_run_match_persists_record_and_returns_it():
 async def test_run_match_idempotent_returns_existing_non_overridden():
     """If a MatchRecord already exists for (org, left, type) and isn't
     overridden, run_match returns it without re-running the engine."""
-    import clearledgr.services.match_engine as match_module
-    from clearledgr.services.match_engine import MatchInput, MatchRecord, run_match
+    import solden.services.match_engine as match_module
+    from solden.services.match_engine import MatchInput, MatchRecord, run_match
 
     existing = MatchRecord(
         id="MR-old", organization_id="org-1", match_type="test_engine",
@@ -333,8 +333,8 @@ async def test_run_match_idempotent_returns_existing_non_overridden():
 async def test_run_match_reruns_when_existing_is_overridden():
     """A previous OVERRIDDEN match record is treated as not-existing —
     run_match re-evaluates."""
-    import clearledgr.services.match_engine as match_module
-    from clearledgr.services.match_engine import (
+    import solden.services.match_engine as match_module
+    from solden.services.match_engine import (
         MatchCandidate, MatchInput, MatchRecord, MatchStatus, run_match,
     )
 
@@ -381,7 +381,7 @@ async def test_run_match_reruns_when_existing_is_overridden():
 
 @pytest.mark.asyncio
 async def test_run_match_unknown_engine_raises():
-    from clearledgr.services.match_engine import MatchInput, run_match
+    from solden.services.match_engine import MatchInput, run_match
     with pytest.raises(ValueError):
         await run_match(
             match_type="not_a_real_engine",

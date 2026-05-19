@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import clearledgr.api.agent_intents as agent_intents_module
+import solden.api.agent_intents as agent_intents_module
 
-from clearledgr.api.agent_intents import router
-from clearledgr.core.auth import TokenData, get_current_user, require_ops_user
+from solden.api.agent_intents import router
+from solden.core.auth import TokenData, get_current_user, require_ops_user
 
 
 def _fake_user() -> TokenData:

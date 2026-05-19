@@ -25,9 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services import ap_vendor_analysis  # noqa: E402
-from clearledgr.services.vendor_risk import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services import ap_vendor_analysis  # noqa: E402
+from solden.services.vendor_risk import (  # noqa: E402
     VendorRiskScoreService,
     compute_risk_from_profile,
 )

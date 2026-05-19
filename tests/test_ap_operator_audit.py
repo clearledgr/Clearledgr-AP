@@ -1,4 +1,4 @@
-from clearledgr.services.ap_operator_audit import (
+from solden.services.ap_operator_audit import (
     normalize_operator_audit_event,
     normalize_operator_audit_events,
 )

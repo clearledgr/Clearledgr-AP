@@ -248,21 +248,21 @@ class _FakeProjectionDB:
 
 
 def test_default_projectors_registered_at_import():
-    import clearledgr.services.box_projection  # noqa: F401
-    from clearledgr.services.box_projection import list_registered_projectors
+    import solden.services.box_projection  # noqa: F401
+    from solden.services.box_projection import list_registered_projectors
     names = list_registered_projectors()
     assert "box_summary" in names
     assert "vendor_summary" in names
 
 
 def test_projection_outbox_handler_registered():
-    import clearledgr.services.box_projection  # noqa: F401
-    from clearledgr.services.outbox import list_handlers
+    import solden.services.box_projection  # noqa: F401
+    from solden.services.outbox import list_handlers
     assert "projection" in list_handlers()
 
 
 def test_default_projectors_satisfy_protocol():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxProjector, BoxSummaryProjector, VendorSummaryProjector,
     )
     db = _FakeProjectionDB()
@@ -271,7 +271,7 @@ def test_default_projectors_satisfy_protocol():
 
 
 def test_register_projector_idempotent_for_same_instance():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         register_projector, _PROJECTOR_REGISTRY,
     )
 
@@ -293,7 +293,7 @@ def test_register_projector_idempotent_for_same_instance():
 
 
 def test_register_projector_rejects_collision():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         register_projector, _PROJECTOR_REGISTRY,
     )
 
@@ -326,7 +326,7 @@ def test_register_projector_rejects_collision():
 
 @pytest.mark.asyncio
 async def test_box_summary_projector_upserts_and_appends_history():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -363,7 +363,7 @@ async def test_box_summary_projector_upserts_and_appends_history():
 
 @pytest.mark.asyncio
 async def test_box_summary_projector_skips_missing_box_id():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -384,7 +384,7 @@ async def test_box_summary_projector_skips_missing_box_id():
 async def test_box_summary_projector_replaces_on_subsequent_transitions():
     """Same Box transitioning again — UPSERT replaces row, history
     grows by one."""
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -421,7 +421,7 @@ async def test_box_summary_projector_replaces_on_subsequent_transitions():
 
 @pytest.mark.asyncio
 async def test_vendor_summary_skips_irrelevant_states():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         VendorSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -446,7 +446,7 @@ async def test_vendor_summary_skips_irrelevant_states():
 async def test_vendor_summary_recomputes_rollup():
     """Three bills for one vendor: posted + paid + rejected. Verify
     counts + exception rate + currency split."""
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         VendorSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -503,7 +503,7 @@ async def test_vendor_summary_recomputes_rollup():
 
 @pytest.mark.asyncio
 async def test_vendor_summary_skips_when_no_vendor_name():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         VendorSummaryProjector, ProjectionContext,
     )
     db = _FakeProjectionDB()
@@ -524,7 +524,7 @@ async def test_vendor_summary_skips_when_no_vendor_name():
 
 
 def test_vendor_summary_normalization():
-    from clearledgr.services.box_projection import VendorSummaryProjector
+    from solden.services.box_projection import VendorSummaryProjector
     assert VendorSummaryProjector._normalize("  Acme   Inc ") == "acme inc"
     assert VendorSummaryProjector._normalize("ACME inc") == "acme inc"
 
@@ -536,7 +536,7 @@ def test_vendor_summary_normalization():
 async def test_observer_enqueues_one_row_per_matching_projector():
     """Observer should fan out one outbox row per projector that
     declares the box_type. Both built-ins are ap_item, so we expect 2."""
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxProjectionObserver, _PROJECTOR_REGISTRY,
     )
 
@@ -563,7 +563,7 @@ async def test_observer_enqueues_one_row_per_matching_projector():
 
     db = _FakeProjectionDB()
     observer = BoxProjectionObserver(db, box_type="ap_item")
-    with patch("clearledgr.services.outbox.OutboxWriter", _FakeWriter):
+    with patch("solden.services.outbox.OutboxWriter", _FakeWriter):
         await observer.on_transition(_Event())
 
     assert len(enqueue_calls) == len([
@@ -579,7 +579,7 @@ async def test_observer_enqueues_one_row_per_matching_projector():
 async def test_observer_no_op_when_registry_empty():
     """If no projectors are registered for the box_type, observer
     must enqueue nothing."""
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         BoxProjectionObserver,
     )
 
@@ -606,7 +606,7 @@ async def test_observer_no_op_when_registry_empty():
 
     db = _FakeProjectionDB()
     observer = BoxProjectionObserver(db, box_type="po_item")  # no projector for po_item
-    with patch("clearledgr.services.outbox.OutboxWriter", _FakeWriter):
+    with patch("solden.services.outbox.OutboxWriter", _FakeWriter):
         await observer.on_transition(_Event())
     assert enqueue_calls == []
 
@@ -616,7 +616,7 @@ async def test_observer_no_op_when_registry_empty():
 
 @pytest.mark.asyncio
 async def test_outbox_handler_dispatches_to_named_projector():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         _outbox_handler_projection, _PROJECTOR_REGISTRY,
     )
 
@@ -628,7 +628,7 @@ async def test_outbox_handler_dispatches_to_named_projector():
 
         async def project(self, ctx):
             captured.append(ctx)
-            from clearledgr.services.box_projection import ProjectionResult
+            from solden.services.box_projection import ProjectionResult
             return ProjectionResult()
 
     saved = dict(_PROJECTOR_REGISTRY)
@@ -656,7 +656,7 @@ async def test_outbox_handler_dispatches_to_named_projector():
 
 @pytest.mark.asyncio
 async def test_outbox_handler_raises_for_unknown_target():
-    from clearledgr.services.box_projection import _outbox_handler_projection
+    from solden.services.box_projection import _outbox_handler_projection
 
     class _Outbox:
         id = "OE-1"
@@ -670,7 +670,7 @@ async def test_outbox_handler_raises_for_unknown_target():
 
 @pytest.mark.asyncio
 async def test_outbox_handler_rejects_wrong_prefix():
-    from clearledgr.services.box_projection import _outbox_handler_projection
+    from solden.services.box_projection import _outbox_handler_projection
 
     class _Outbox:
         id = "OE-1"
@@ -686,14 +686,14 @@ async def test_outbox_handler_rejects_wrong_prefix():
 
 
 def test_get_box_summary_row_returns_none_when_missing():
-    from clearledgr.services.box_projection import get_box_summary_row
+    from solden.services.box_projection import get_box_summary_row
     db = _FakeProjectionDB()
     row = get_box_summary_row("ap_item", "AP-NOTHERE", db=db)
     assert row is None
 
 
 def test_get_box_summary_row_hydrates_json_columns():
-    from clearledgr.services.box_projection import get_box_summary_row
+    from solden.services.box_projection import get_box_summary_row
     db = _FakeProjectionDB()
     db.box_summary.append({
         "box_type": "ap_item", "box_id": "AP-1",
@@ -716,7 +716,7 @@ def test_get_box_summary_row_hydrates_json_columns():
 
 
 def test_get_box_history_filters_by_at():
-    from clearledgr.services.box_projection import get_box_history
+    from solden.services.box_projection import get_box_history
     db = _FakeProjectionDB()
     db.box_summary_history.extend([
         {
@@ -737,7 +737,7 @@ def test_get_box_history_filters_by_at():
 
 
 def test_get_box_history_returns_recent_when_no_at():
-    from clearledgr.services.box_projection import get_box_history
+    from solden.services.box_projection import get_box_history
     db = _FakeProjectionDB()
     db.box_summary_history.extend([
         {
@@ -756,7 +756,7 @@ def test_get_box_history_returns_recent_when_no_at():
 
 
 def test_get_vendor_summary_row_normalizes_lookup():
-    from clearledgr.services.box_projection import get_vendor_summary_row
+    from solden.services.box_projection import get_vendor_summary_row
     db = _FakeProjectionDB()
     db.vendor_summary.append({
         "organization_id": "org-1",
@@ -777,7 +777,7 @@ def test_get_vendor_summary_row_normalizes_lookup():
 
 
 def test_list_vendor_summaries_returns_rows():
-    from clearledgr.services.box_projection import list_vendor_summaries
+    from solden.services.box_projection import list_vendor_summaries
     db = _FakeProjectionDB()
     db.vendor_summary.extend([
         {
@@ -801,7 +801,7 @@ def test_list_vendor_summaries_returns_rows():
 
 @pytest.mark.asyncio
 async def test_rebuild_projections_walks_all_items():
-    from clearledgr.services.box_projection import (
+    from solden.services.box_projection import (
         rebuild_projections, _PROJECTOR_REGISTRY,
     )
 
@@ -813,7 +813,7 @@ async def test_rebuild_projections_walks_all_items():
 
         async def project(self, ctx):
             handled.append(ctx.box_id)
-            from clearledgr.services.box_projection import ProjectionResult
+            from solden.services.box_projection import ProjectionResult
             return ProjectionResult(rows_upserted=1)
 
     db = _FakeProjectionDB()
@@ -839,7 +839,7 @@ async def test_rebuild_projections_walks_all_items():
 
 
 def test_is_projection_stale_returns_true_when_audit_has_newer_event():
-    from clearledgr.api.ap_items_read_routes import _is_projection_stale
+    from solden.api.ap_items_read_routes import _is_projection_stale
     db = _FakeProjectionDB()
     db.audit_events.append({
         "id": "AE-NEW", "box_id": "AP-1",
@@ -850,7 +850,7 @@ def test_is_projection_stale_returns_true_when_audit_has_newer_event():
 
 
 def test_is_projection_stale_returns_false_when_in_sync():
-    from clearledgr.api.ap_items_read_routes import _is_projection_stale
+    from solden.api.ap_items_read_routes import _is_projection_stale
     db = _FakeProjectionDB()
     db.audit_events.append({
         "id": "AE-1", "box_id": "AP-1",
@@ -864,7 +864,7 @@ def test_is_projection_stale_returns_false_when_no_audit_events():
     """Projection exists but audit_events has nothing — treat as
     fresh (we wrote the projection after the transition the projector
     saw; nothing newer to invalidate it)."""
-    from clearledgr.api.ap_items_read_routes import _is_projection_stale
+    from solden.api.ap_items_read_routes import _is_projection_stale
     db = _FakeProjectionDB()
     projection = {"last_event_id": "AE-1"}
     assert _is_projection_stale(db, "AP-1", projection) is False

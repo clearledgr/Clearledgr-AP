@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import clearledgr.core.database as db_module
-from clearledgr.core.database import get_db
-from clearledgr.services.agent_memory import AgentMemoryService
-from clearledgr.services.agent_reasoning import AgentReasoningService, ReasoningFactor
+import solden.core.database as db_module
+from solden.core.database import get_db
+from solden.services.agent_memory import AgentMemoryService
+from solden.services.agent_reasoning import AgentReasoningService, ReasoningFactor
 
 
 def test_agent_reasoning_uses_persisted_profile_thresholds(tmp_path, monkeypatch):

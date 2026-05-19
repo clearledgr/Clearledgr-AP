@@ -20,8 +20,8 @@ import json
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.services.policy_service import (
+from solden.core import database as db_module
+from solden.services.policy_service import (
     PolicyBranchNotFound,
     PolicyService,
     PolicyVersionNotFound,

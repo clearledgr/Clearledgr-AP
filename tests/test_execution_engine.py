@@ -5,14 +5,14 @@ import asyncio
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.core.coordination_engine import (
+from solden.core.database import get_db
+from solden.core.coordination_engine import (
     CoordinationEngine,
     _classify_failure,
     _ACTION_TO_SLA_STEP,
     _ACTION_TIMEOUTS,
 )
-from clearledgr.core.plan import Action, Plan
+from solden.core.plan import Action, Plan
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ class TestLLMBoundaryFence:
         even though the planner flags them as LLM-kind.
         """
         import inspect
-        from clearledgr.core import coordination_engine as ce_mod
+        from solden.core import coordination_engine as ce_mod
 
         source = inspect.getsource(ce_mod)
         # Find handler methods that mention gateway calls. This is a
@@ -133,7 +133,7 @@ class TestPlannerActionCoverage:
 
     def test_every_planner_action_has_handler(self, engine):
         import re
-        from clearledgr.core import planning_engine as pe_mod
+        from solden.core import planning_engine as pe_mod
         import inspect
 
         source = inspect.getsource(pe_mod)

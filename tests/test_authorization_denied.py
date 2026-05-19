@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from clearledgr.core.authorization import (
+from solden.core.authorization import (
     AdminRequired,
     AuthorizationDenied,
     CrossTenantAccessDenied,
@@ -120,7 +120,7 @@ class _StubDB:
 
 def test_emit_writes_authorization_denied_row_for_resource_denial() -> None:
     stub = _StubDB()
-    with patch("clearledgr.core.authorization._get_db", return_value=stub):
+    with patch("solden.core.authorization._get_db", return_value=stub):
         emit_authorization_denied_audit(
             denial_reason="organization_mismatch",
             actor_type="user",
@@ -153,7 +153,7 @@ def test_emit_falls_back_to_organization_box_when_no_resource() -> None:
     """Org-level denials (admin pages, login attempts) don't have a
     specific resource. Box-key falls back to (organization, <org_id>)."""
     stub = _StubDB()
-    with patch("clearledgr.core.authorization._get_db", return_value=stub):
+    with patch("solden.core.authorization._get_db", return_value=stub):
         emit_authorization_denied_audit(
             denial_reason="admin_required",
             actor_id="user@example.com",
@@ -177,7 +177,7 @@ def test_emit_handles_unknown_org() -> None:
     is the canonical replacement for "no resolved org" on audit rows.
     """
     stub = _StubDB()
-    with patch("clearledgr.core.authorization._get_db", return_value=stub):
+    with patch("solden.core.authorization._get_db", return_value=stub):
         emit_authorization_denied_audit(
             denial_reason="forbidden",
             request_path="/api/admin/users",
@@ -199,7 +199,7 @@ def test_emit_never_raises_when_db_fails() -> None:
         def append_audit_event(self, _payload: Dict[str, Any]) -> Dict[str, Any]:
             raise RuntimeError("audit chain unavailable")
 
-    with patch("clearledgr.core.authorization._get_db", return_value=_ExplodingDB()):
+    with patch("solden.core.authorization._get_db", return_value=_ExplodingDB()):
         # Must not raise
         emit_authorization_denied_audit(
             denial_reason="test",

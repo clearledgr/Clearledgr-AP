@@ -28,9 +28,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services import finance_agent_runtime as far  # noqa: E402
-from clearledgr.services.agent_command_dispatch import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services import finance_agent_runtime as far  # noqa: E402
+from solden.services.agent_command_dispatch import (  # noqa: E402
     build_channel_runtime,
     resolve_org_id_for_user,
 )

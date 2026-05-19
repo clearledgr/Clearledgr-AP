@@ -24,8 +24,8 @@ import pytest
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -72,7 +72,7 @@ class TestMigrationV16:
 
     def test_migration_v16_idempotent(self, tmp_db):
         """Re-running v16 on an already-initialized DB is a no-op."""
-        from clearledgr.core.migrations import _MIGRATIONS
+        from solden.core.migrations import _MIGRATIONS
         m16 = next(m for m in _MIGRATIONS if m[0] == 16)
         with tmp_db.connect() as conn:
             # Run in autocommit so the try/except ALTER TABLE pattern
@@ -273,7 +273,7 @@ class TestComputeVendorYtdSpend:
 class TestVendorRiskScoreService:
 
     def _svc(self, db):
-        from clearledgr.services.vendor_risk import VendorRiskScoreService
+        from solden.services.vendor_risk import VendorRiskScoreService
         return VendorRiskScoreService("org_t", db=db)
 
     def test_unknown_vendor(self, tmp_db):
@@ -454,7 +454,7 @@ class TestVendorRiskScoreService:
 class TestIbanVerifiedDerivation:
 
     def test_verified_when_bank_details_set_no_freeze(self, tmp_db):
-        from clearledgr.api.vendor_kyc import _derive_iban_verification
+        from solden.api.vendor_kyc import _derive_iban_verification
         _seed_vendor(tmp_db)
         tmp_db.set_vendor_bank_details(
             "org_t", "Acme", {"iban": "GB82WEST12345698765432"}
@@ -465,7 +465,7 @@ class TestIbanVerifiedDerivation:
         assert result["iban_verified_at"] is not None
 
     def test_unverified_when_no_bank_details(self, tmp_db):
-        from clearledgr.api.vendor_kyc import _derive_iban_verification
+        from solden.api.vendor_kyc import _derive_iban_verification
         _seed_vendor(tmp_db)
         profile = tmp_db.get_vendor_profile("org_t", "Acme")
         result = _derive_iban_verification(profile)
@@ -473,7 +473,7 @@ class TestIbanVerifiedDerivation:
         assert result["iban_verified_at"] is None
 
     def test_unverified_when_freeze_active(self, tmp_db):
-        from clearledgr.api.vendor_kyc import _derive_iban_verification
+        from solden.api.vendor_kyc import _derive_iban_verification
         _seed_vendor(tmp_db)
         tmp_db.set_vendor_bank_details(
             "org_t", "Acme", {"iban": "GB82WEST12345698765432"}
@@ -499,8 +499,8 @@ class TestVendorKycAPI:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
         import main
 
         db = get_db()
@@ -511,7 +511,7 @@ class TestVendorKycAPI:
         yield client, main, db
 
     def _override_user(self, main, role: str, org_id: str = "org_t"):
-        from clearledgr.core.auth import (
+        from solden.core.auth import (
             TokenData,
             get_current_user,
             require_financial_controller,
@@ -604,7 +604,7 @@ class TestVendorKycAPI:
         client, main, db = app_client
         _seed_vendor(db)
         # AP Manager should be rejected
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
 
         def _ap_manager():
             return TokenData(
@@ -765,7 +765,7 @@ class TestVendorKycAPI:
         (Phase 2.3), so it should still pass require_financial_controller."""
         client, main, db = app_client
         _seed_vendor(db)
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
 
         def _legacy_admin():
             return TokenData(

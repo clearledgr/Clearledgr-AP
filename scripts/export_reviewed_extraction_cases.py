@@ -12,7 +12,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from clearledgr.services.correction_learning import CorrectionLearningService
+from solden.services.correction_learning import CorrectionLearningService
 
 
 DEFAULT_OUTPUT_PATH = Path("tests/fixtures/reviewed_production_invoice_truth.json")

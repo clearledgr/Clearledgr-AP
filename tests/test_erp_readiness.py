@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from clearledgr.core import database as db_module
-from clearledgr.core.launch_controls import set_ga_readiness, set_rollback_controls
-from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
+from solden.core import database as db_module
+from solden.core.launch_controls import set_ga_readiness, set_rollback_controls
+from solden.services.erp_readiness import evaluate_erp_connector_readiness
 
 
 def _db(tmp_path, monkeypatch):

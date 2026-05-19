@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import erp_webhooks as webhooks_mod  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.erp_webhook_verify import (  # noqa: E402
+from solden.api import erp_webhooks as webhooks_mod  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.erp_webhook_verify import (  # noqa: E402
     REPLAY_WINDOW_SECONDS,
     sign_quickbooks,
     sign_timestamped,
@@ -38,7 +38,7 @@ from clearledgr.core.erp_webhook_verify import (  # noqa: E402
     verify_sap_signature,
     verify_xero_signature,
 )
-from clearledgr.integrations.erp_router import ERPConnection  # noqa: E402
+from solden.integrations.erp_router import ERPConnection  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +410,7 @@ class TestOutlookWebhookFailClosed:
         # the webhook handler's security behavior.
         monkeypatch.setenv("FEATURE_OUTLOOK_ENABLED", "true")
 
-        from clearledgr.api import outlook_routes
+        from solden.api import outlook_routes
 
         app = FastAPI()
         app.include_router(outlook_routes.router)
@@ -430,7 +430,7 @@ class TestOutlookWebhookFailClosed:
         monkeypatch.setenv("OUTLOOK_WEBHOOK_SECRET", "correct-horse-battery")
         monkeypatch.setenv("FEATURE_OUTLOOK_ENABLED", "true")
 
-        from clearledgr.api import outlook_routes
+        from solden.api import outlook_routes
 
         app = FastAPI()
         app.include_router(outlook_routes.router)
@@ -454,7 +454,7 @@ class TestOutlookWebhookFailClosed:
         monkeypatch.setenv("OUTLOOK_WEBHOOK_SECRET", "correct-horse-battery")
         monkeypatch.setenv("FEATURE_OUTLOOK_ENABLED", "true")
 
-        from clearledgr.api import outlook_routes
+        from solden.api import outlook_routes
 
         app = FastAPI()
         app.include_router(outlook_routes.router)

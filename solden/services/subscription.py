@@ -1,0 +1,1014 @@
+"""
+Subscription & Plan Management Service
+
+Handles:
+- Plan tiers (Free, Starter, Professional, Enterprise)
+- Trial management (14-day Professional trial)
+- Feature gating based on plan
+- Usage tracking and limits
+- AI credit consumption
+"""
+
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class PlanTier(str, Enum):
+    """Available subscription plans."""
+    FREE = "free"
+    STARTER = "starter"
+    PROFESSIONAL = "professional"
+    ENTERPRISE = "enterprise"
+
+
+@dataclass
+class PlanLimits:
+    """Usage limits per plan tier.
+
+    Sentinel: ``-1`` means unlimited. Downstream gate code MUST treat
+    -1 as "no cap" rather than "zero" — the subscription helpers
+    centralise this to prevent accidental misreads.
+    """
+    invoices_per_month: int
+    vendors: int
+    users: int
+    erp_connections: int
+    api_calls_per_day: int
+    storage_gb: float
+    ai_credits_per_month: int
+    # §13 tier comparison — "Saved Views — Show in Inbox: Starter 3
+    # per pipeline, Pro+ Unlimited". Enforced at saved-view creation
+    # in clearledgr/api/pipelines.py.
+    saved_views_per_pipeline: int = -1
+    # §13 tier comparison — "Agent Activity feed retention:
+    # Starter 30 days, Pro+ Statutory minimum — default 7 years".
+    # Enforced at audit-event reaper time so old rows drop off on
+    # Starter but are preserved on Pro+.
+    agent_activity_retention_days: int = 30
+    # Runaway-spend guard: hard cap on Claude API cost (USD) per
+    # calendar month per workspace. The LLM gateway pauses further
+    # calls once this is exceeded; an override by the customer CFO
+    # or CS ops clears the pause. Unlike the other limits here,
+    # this is NEVER "-1 unlimited" — even Enterprise has a ceiling
+    # so a bug or retry loop can't take the Anthropic bill to the
+    # moon. Per-org overrides land in
+    # ``organizations.settings_json["llm_cost_hard_cap_usd_override"]``.
+    monthly_llm_cost_usd_hard_cap: float = 10.0
+
+    @classmethod
+    def for_tier(cls, tier: PlanTier) -> "PlanLimits":
+        """Get limits for a specific plan tier."""
+        # 7 years of calendar days (365 × 7 + 2 leap days) ≈ 2557.
+        # Rounded to 2555 for a clean constant that still clears the
+        # statutory-minimum 7-year floor.
+        _SEVEN_YEARS_DAYS = 2555
+
+        limits = {
+            PlanTier.FREE: cls(
+                invoices_per_month=10,
+                vendors=5,
+                users=1,
+                erp_connections=0,
+                api_calls_per_day=50,
+                storage_gb=0.25,
+                ai_credits_per_month=5,
+                saved_views_per_pipeline=0,
+                agent_activity_retention_days=7,
+                monthly_llm_cost_usd_hard_cap=10.0,
+            ),
+            PlanTier.STARTER: cls(
+                invoices_per_month=500,  # thesis §13: "up to 500 invoices per month"
+                vendors=-1,
+                users=5,  # thesis §13: per-seat, standard match is ~5
+                erp_connections=1,
+                api_calls_per_day=1000,
+                storage_gb=5.0,
+                ai_credits_per_month=500,
+                saved_views_per_pipeline=3,       # §13 explicit cap
+                agent_activity_retention_days=30,  # §13 explicit
+                monthly_llm_cost_usd_hard_cap=50.0,
+            ),
+            PlanTier.PROFESSIONAL: cls(
+                invoices_per_month=-1,
+                vendors=-1,
+                users=15,
+                erp_connections=3,
+                api_calls_per_day=10000,
+                storage_gb=25.0,
+                ai_credits_per_month=3000,
+                saved_views_per_pipeline=-1,            # §13 "Unlimited"
+                agent_activity_retention_days=_SEVEN_YEARS_DAYS,
+                monthly_llm_cost_usd_hard_cap=250.0,
+            ),
+            PlanTier.ENTERPRISE: cls(
+                invoices_per_month=-1,
+                vendors=-1,
+                users=-1,
+                erp_connections=-1,
+                api_calls_per_day=-1,
+                storage_gb=100.0,
+                ai_credits_per_month=-1,
+                saved_views_per_pipeline=-1,
+                agent_activity_retention_days=_SEVEN_YEARS_DAYS,
+                # Runaway guard only, not a real ceiling for normal use.
+                # Real enterprise usage at ~10k invoices/month is in the
+                # low hundreds of dollars. $5000 catches disasters
+                # (bug/retry loop) without biting legitimate workloads.
+                monthly_llm_cost_usd_hard_cap=5000.0,
+            ),
+        }
+        return limits.get(tier, limits[PlanTier.FREE])
+
+
+@dataclass
+class PlanFeatures:
+    """Features available per plan tier."""
+    # Core
+    gmail_sidebar: bool = True
+    invoice_extraction: bool = True
+    vendor_management: bool = False
+
+    # ERP & routing
+    erp_posting: bool = False
+    approval_routing: bool = False
+
+    # AI / Intelligence
+    ai_categorization: bool = False
+    three_way_matching: bool = False
+    custom_gl_rules: bool = False
+    recurring_detection: bool = False
+
+    # Premium
+    multi_currency: bool = False
+    advanced_analytics: bool = False
+    api_access: bool = False
+    slack_integration: bool = False
+    teams_integration: bool = False
+    custom_policies: bool = False
+    approval_chains: bool = False
+    vendor_intelligence: bool = False
+    audit_logs: bool = False
+    gl_auto_coding: bool = False
+    pipeline_saved_views: bool = False
+    custom_workflows: bool = False
+    priority_support: bool = False
+    sso: bool = False
+    data_residency: bool = False
+
+    @classmethod
+    def for_tier(cls, tier: PlanTier) -> "PlanFeatures":
+        """Get features for a specific plan tier."""
+        features = {
+            PlanTier.FREE: cls(
+                gmail_sidebar=True,
+                invoice_extraction=True,
+                vendor_management=False,
+                erp_posting=False,
+                approval_routing=False,
+                ai_categorization=False,
+                three_way_matching=False,
+                custom_gl_rules=False,
+                recurring_detection=False,
+                multi_currency=False,
+                advanced_analytics=False,
+                api_access=False,
+                slack_integration=False,
+                teams_integration=False,
+                custom_policies=False,
+                approval_chains=False,
+                vendor_intelligence=False,
+                audit_logs=False,
+                gl_auto_coding=False,
+                pipeline_saved_views=False,
+                custom_workflows=False,
+                priority_support=False,
+                sso=False,
+                data_residency=False,
+            ),
+            PlanTier.STARTER: cls(
+                gmail_sidebar=True,
+                invoice_extraction=True,
+                vendor_management=True,
+                erp_posting=True,
+                approval_routing=True,
+                ai_categorization=True,
+                # §13 tier comparison: Starter gets "core AP and Vendor
+                # Onboarding workflows." Three-way match is the central
+                # AP primitive, not a premium add-on — without it
+                # Starter sells invoice scanning, not AP automation.
+                three_way_matching=True,
+                custom_gl_rules=False,
+                recurring_detection=False,
+                multi_currency=False,
+                advanced_analytics=False,
+                api_access=False,
+                slack_integration=True,
+                teams_integration=True,
+                custom_policies=False,
+                # §13: "Approval routing — Single tier" on Starter.
+                # "Multi-tier with escalation and OOO routing" is a
+                # Professional / Enterprise differentiator. Code
+                # previously granted approval_chains to Starter, which
+                # was a pricing leak on the routing feature.
+                approval_chains=False,
+                vendor_intelligence=True,
+                audit_logs=True,
+                gl_auto_coding=True,
+                pipeline_saved_views=True,
+                custom_workflows=False,
+                priority_support=False,
+                sso=False,
+                data_residency=False,
+            ),
+            PlanTier.PROFESSIONAL: cls(
+                gmail_sidebar=True,
+                invoice_extraction=True,
+                vendor_management=True,
+                erp_posting=True,
+                approval_routing=True,
+                ai_categorization=True,
+                three_way_matching=True,
+                custom_gl_rules=True,
+                recurring_detection=True,
+                multi_currency=True,
+                advanced_analytics=True,
+                api_access=True,
+                slack_integration=True,
+                teams_integration=True,
+                custom_policies=True,
+                approval_chains=True,
+                vendor_intelligence=True,
+                audit_logs=True,
+                gl_auto_coding=True,
+                pipeline_saved_views=True,
+                custom_workflows=True,
+                priority_support=True,
+                sso=False,
+                data_residency=False,
+            ),
+            PlanTier.ENTERPRISE: cls(
+                gmail_sidebar=True,
+                invoice_extraction=True,
+                vendor_management=True,
+                erp_posting=True,
+                approval_routing=True,
+                ai_categorization=True,
+                three_way_matching=True,
+                custom_gl_rules=True,
+                recurring_detection=True,
+                multi_currency=True,
+                advanced_analytics=True,
+                api_access=True,
+                slack_integration=True,
+                teams_integration=True,
+                custom_policies=True,
+                approval_chains=True,
+                vendor_intelligence=True,
+                audit_logs=True,
+                gl_auto_coding=True,
+                pipeline_saved_views=True,
+                custom_workflows=True,
+                priority_support=True,
+                sso=True,
+                data_residency=True,
+            ),
+        }
+        return features.get(tier, features[PlanTier.FREE])
+
+
+# ---------------------------------------------------------------------------
+# Pricing Constants (display / billing reference -- not enforcement)
+# ---------------------------------------------------------------------------
+# §13 Pricing Structure: "Annual billing saves 20% on the seat charge."
+# The annual monthly-equivalent must be exactly 80% of the monthly
+# sticker so the billing summary's "20% annual savings" line is
+# arithmetically honest. Previously the annual prices rounded to the
+# nearest integer dollar (65/125/249), which produced ~17% discounts
+# and drifted from the thesis's explicit 20% claim.
+PLAN_PRICING: Dict[PlanTier, Dict[str, int]] = {
+    PlanTier.FREE:         {"monthly": 0,   "annual": 0},
+    PlanTier.STARTER:      {"monthly": 79,  "annual": round(79 * 0.8)},    # 63
+    PlanTier.PROFESSIONAL: {"monthly": 149, "annual": round(149 * 0.8)},   # 119
+    PlanTier.ENTERPRISE:   {"monthly": 299, "annual": round(299 * 0.8)},   # 239
+}
+
+AI_CREDIT_COSTS: Dict[str, int] = {
+    "invoice_extraction": 1,
+    "ap_decision": 1,
+    "vendor_outreach_draft": 1,
+    "gl_auto_coding": 1,
+    "vendor_intelligence_enrichment": 2,
+    "cross_invoice_analysis": 1,
+    "agent_planning_loop": 5,
+}
+
+AI_CREDIT_ADDON_PRICING: Dict[int, int] = {
+    100: 75,
+    250: 150,
+    500: 250,
+    1000: 400,
+    5000: 1500,
+}
+
+
+# ---------------------------------------------------------------------------
+# Usage Stats
+# ---------------------------------------------------------------------------
+@dataclass
+class UsageStats:
+    """Current usage statistics for an organization.
+
+    §13 Pricing Structure: metered billing with per-seat, volume bands,
+    and pooled agent credits.
+    """
+    invoices_this_month: int = 0
+    vendors_count: int = 0
+    users_count: int = 1
+    read_only_users_count: int = 0  # §13: Read Only seats at reduced rate
+    api_calls_today: int = 0
+    storage_used_gb: float = 0.0
+    ai_credits_this_month: int = 0
+    ai_credits_remaining: int = 0  # §13: pooled credits, purchased in advance
+    last_reset: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # §13 Invoice volume banding
+    invoice_volume_band: str = "included"  # included | band_1 | band_2 | overage
+    invoice_overage_count: int = 0  # invoices above the included band
+
+    @classmethod
+    def from_dict(cls, payload: Optional[Dict[str, Any]]) -> "UsageStats":
+        normalized = dict(payload or {})
+        if (
+            "ai_credits_this_month" not in normalized
+            and "ai_extractions_this_month" in normalized
+        ):
+            normalized["ai_credits_this_month"] = normalized.get("ai_extractions_this_month")
+        allowed_keys = set(cls.__dataclass_fields__.keys())
+        filtered = {key: value for key, value in normalized.items() if key in allowed_keys}
+        return cls(**filtered)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class Subscription:
+    """Organization subscription details."""
+    organization_id: str
+    plan: PlanTier = PlanTier.FREE
+    status: str = "active"  # active, cancelled, past_due, trialing
+
+    # Trial info
+    trial_started_at: Optional[str] = None
+    trial_ends_at: Optional[str] = None
+    trial_days_remaining: int = 0
+
+    # Billing info
+    billing_cycle: str = "monthly"  # monthly, yearly
+    current_period_start: Optional[str] = None
+    current_period_end: Optional[str] = None
+
+    # Payment provider
+    stripe_customer_id: Optional[str] = None
+    stripe_subscription_id: Optional[str] = None
+
+    # Limits and features
+    limits: Optional[PlanLimits] = None
+    features: Optional[PlanFeatures] = None
+    usage: Optional[UsageStats] = None
+
+    # Onboarding
+    onboarding_completed: bool = False
+    onboarding_step: int = 0
+
+    # Timestamps
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def __post_init__(self):
+        if self.limits is None:
+            self.limits = PlanLimits.for_tier(self.plan)
+        if self.features is None:
+            self.features = PlanFeatures.for_tier(self.plan)
+        if self.usage is None:
+            self.usage = UsageStats()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "organization_id": self.organization_id,
+            "plan": self.plan.value,
+            "status": self.status,
+            "trial_started_at": self.trial_started_at,
+            "trial_ends_at": self.trial_ends_at,
+            "trial_days_remaining": self.trial_days_remaining,
+            "billing_cycle": self.billing_cycle,
+            "current_period_start": self.current_period_start,
+            "current_period_end": self.current_period_end,
+            "limits": asdict(self.limits) if self.limits else None,
+            "features": asdict(self.features) if self.features else None,
+            "usage": self.usage.to_dict() if self.usage else None,
+            "onboarding_completed": self.onboarding_completed,
+            "onboarding_step": self.onboarding_step,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Subscription Service
+# ---------------------------------------------------------------------------
+class SubscriptionService:
+    """
+    Manages subscriptions, trials, and feature access.
+    """
+
+    TRIAL_DAYS = 14
+
+    def __init__(self):
+        from solden.core.database import get_db
+
+        self.db = get_db()
+
+    def _subscription_from_row(self, row: Optional[Dict[str, Any]], organization_id: str) -> Subscription:
+        if not row:
+            return Subscription(organization_id=organization_id)
+
+        plan_value = str(row.get("plan") or PlanTier.FREE.value).lower()
+        try:
+            plan = PlanTier(plan_value)
+        except ValueError:
+            plan = PlanTier.FREE
+
+        usage_raw = row.get("usage_json") or {}
+        usage = UsageStats.from_dict(usage_raw if isinstance(usage_raw, dict) else {})
+
+        limits_raw = row.get("limits_json") or {}
+        if isinstance(limits_raw, dict) and limits_raw:
+            try:
+                limits = PlanLimits(**limits_raw)
+            except TypeError:
+                limits = PlanLimits.for_tier(plan)
+        else:
+            limits = PlanLimits.for_tier(plan)
+
+        features_raw = row.get("features_json") or {}
+        if isinstance(features_raw, dict) and features_raw:
+            try:
+                features = PlanFeatures(**features_raw)
+            except TypeError:
+                features = PlanFeatures.for_tier(plan)
+        else:
+            features = PlanFeatures.for_tier(plan)
+
+        return Subscription(
+            organization_id=organization_id,
+            plan=plan,
+            status=str(row.get("status") or "active"),
+            trial_started_at=row.get("trial_started_at"),
+            trial_ends_at=row.get("trial_ends_at"),
+            trial_days_remaining=int(row.get("trial_days_remaining") or 0),
+            billing_cycle=str(row.get("billing_cycle") or "monthly"),
+            current_period_start=row.get("current_period_start"),
+            current_period_end=row.get("current_period_end"),
+            stripe_customer_id=row.get("stripe_customer_id"),
+            stripe_subscription_id=row.get("stripe_subscription_id"),
+            limits=limits,
+            features=features,
+            usage=usage,
+            onboarding_completed=bool(row.get("onboarding_completed")),
+            onboarding_step=int(row.get("onboarding_step") or 0),
+            created_at=str(row.get("created_at") or datetime.now(timezone.utc).isoformat()),
+            updated_at=str(row.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+        )
+
+    def _save_subscription(self, sub: Subscription) -> Subscription:
+        sub.updated_at = datetime.now(timezone.utc).isoformat()
+        row = self.db.upsert_subscription_record(
+            sub.organization_id,
+            {
+                "plan": sub.plan.value,
+                "status": sub.status,
+                "trial_started_at": sub.trial_started_at,
+                "trial_ends_at": sub.trial_ends_at,
+                "trial_days_remaining": sub.trial_days_remaining,
+                "billing_cycle": sub.billing_cycle,
+                "current_period_start": sub.current_period_start,
+                "current_period_end": sub.current_period_end,
+                "stripe_customer_id": sub.stripe_customer_id,
+                "stripe_subscription_id": sub.stripe_subscription_id,
+                "limits": asdict(sub.limits) if sub.limits else {},
+                "features": asdict(sub.features) if sub.features else {},
+                "usage": sub.usage.to_dict() if sub.usage else {},
+                "onboarding_completed": sub.onboarding_completed,
+                "onboarding_step": sub.onboarding_step,
+                "created_at": sub.created_at,
+                "updated_at": sub.updated_at,
+            },
+        )
+        return self._subscription_from_row(row, sub.organization_id)
+
+    def get_subscription(self, organization_id: str) -> Subscription:
+        """Get or create subscription for an organization.
+
+        §3 Multi-entity: child orgs inherit the parent's subscription via
+        ``get_effective_subscription`` so billing is consolidated at the
+        parent account level.
+        """
+        self.db.ensure_organization(organization_id, organization_name=organization_id)
+        # Try entity-aware lookup first (child → parent fallback)
+        row = None
+        if hasattr(self.db, "get_effective_subscription"):
+            row = self.db.get_effective_subscription(organization_id)
+        if not row:
+            row = self.db.get_subscription_record(organization_id)
+        sub = self._subscription_from_row(row, organization_id)
+        self._update_trial_status(sub)
+        sub = self._save_subscription(sub)
+        return sub
+
+    def start_trial(self, organization_id: str) -> Subscription:
+        """Start a 14-day Professional trial for an organization."""
+        sub = self.get_subscription(organization_id)
+
+        if sub.trial_started_at:
+            logger.warning(f"Organization {organization_id} already had a trial")
+            return sub
+
+        now = datetime.now(timezone.utc)
+        trial_end = now + timedelta(days=self.TRIAL_DAYS)
+
+        sub.plan = PlanTier.PROFESSIONAL
+        sub.status = "trialing"
+        sub.trial_started_at = now.isoformat()
+        sub.trial_ends_at = trial_end.isoformat()
+        sub.trial_days_remaining = self.TRIAL_DAYS
+        sub.limits = PlanLimits.for_tier(PlanTier.PROFESSIONAL)
+        sub.features = PlanFeatures.for_tier(PlanTier.PROFESSIONAL)
+        sub.updated_at = now.isoformat()
+
+        logger.info(f"Started Professional trial for organization {organization_id}")
+        return self._save_subscription(sub)
+
+    def upgrade_plan(
+        self,
+        organization_id: str,
+        tier: PlanTier,
+        stripe_customer_id: str = None,
+        stripe_subscription_id: str = None,
+    ) -> Subscription:
+        """Upgrade organization to the specified plan tier."""
+        sub = self.get_subscription(organization_id)
+
+        now = datetime.now(timezone.utc)
+        period_end = now + timedelta(days=30)
+
+        sub.plan = tier
+        sub.status = "active"
+        sub.stripe_customer_id = stripe_customer_id or sub.stripe_customer_id
+        sub.stripe_subscription_id = stripe_subscription_id or sub.stripe_subscription_id
+        sub.current_period_start = now.isoformat()
+        sub.current_period_end = period_end.isoformat()
+        sub.limits = PlanLimits.for_tier(tier)
+        sub.features = PlanFeatures.for_tier(tier)
+        sub.updated_at = now.isoformat()
+
+        logger.info(f"Upgraded organization {organization_id} to {tier.value}")
+        return self._save_subscription(sub)
+
+    def downgrade_plan(self, organization_id: str, tier: PlanTier = PlanTier.FREE) -> Subscription:
+        """Downgrade organization to the specified plan tier (defaults to Free)."""
+        sub = self.get_subscription(organization_id)
+
+        sub.plan = tier
+        sub.status = "active"
+        sub.limits = PlanLimits.for_tier(tier)
+        sub.features = PlanFeatures.for_tier(tier)
+        sub.updated_at = datetime.now(timezone.utc).isoformat()
+
+        logger.info(f"Downgraded organization {organization_id} to {tier.value}")
+        return self._save_subscription(sub)
+
+    def complete_onboarding_step(self, organization_id: str, step: int) -> Subscription:
+        """Mark an onboarding step as complete."""
+        sub = self.get_subscription(organization_id)
+
+        if step > sub.onboarding_step:
+            sub.onboarding_step = step
+
+        # Frontend ships a 4-step wizard:
+        #   1=Connect ERP, 2=Set AP policy, 3=Connect Slack/Teams,
+        #   4=Install Gmail extension (optional for ERP-native intake).
+        # Steps 1-3 are required. Once the operator has acked through
+        # step 3 (manually or via integration go-live) the workspace
+        # is past the wizard and the OnboardingGate should stop
+        # redirecting daily-work surfaces back here.
+        if sub.onboarding_step >= 3:
+            sub.onboarding_completed = True
+
+        sub.updated_at = datetime.now(timezone.utc).isoformat()
+        return self._save_subscription(sub)
+
+    def skip_onboarding(self, organization_id: str) -> Subscription:
+        """Skip onboarding flow."""
+        sub = self.get_subscription(organization_id)
+        sub.onboarding_completed = True
+        sub.onboarding_step = 5
+        sub.updated_at = datetime.now(timezone.utc).isoformat()
+        return self._save_subscription(sub)
+
+    def check_feature_access(self, organization_id: str, feature: str) -> bool:
+        """Check if organization has access to a feature."""
+        sub = self.get_subscription(organization_id)
+
+        if sub.features is None:
+            return False
+
+        return getattr(sub.features, feature, False)
+
+    def _reset_monthly_counters(self, sub: Subscription) -> None:
+        """Reset monthly usage counters and update last_reset timestamp."""
+        if sub.usage is None:
+            sub.usage = UsageStats()
+        sub.usage.invoices_this_month = 0
+        sub.usage.ai_credits_this_month = 0
+        sub.usage.api_calls_today = 0
+        sub.usage.last_reset = datetime.now(timezone.utc).isoformat()
+        self._save_subscription(sub)
+
+    def check_limit(self, organization_id: str, limit_type: str, current_value: int) -> Dict[str, Any]:
+        """Check if organization is within a usage limit."""
+        sub = self.get_subscription(organization_id)
+
+        # D10: Reset counters if month has changed
+        if sub.usage:
+            now = datetime.now(timezone.utc)
+            last_reset = sub.usage.last_reset
+            if last_reset:
+                try:
+                    last_dt = datetime.fromisoformat(last_reset.replace("Z", "+00:00"))
+                    if last_dt.month != now.month or last_dt.year != now.year:
+                        self._reset_monthly_counters(sub)
+                        sub = self.get_subscription(organization_id)
+                        current_value = 0
+                except Exception as exc:
+                    logger.error("Monthly usage counter reset failed for org %s: %s", organization_id, exc)
+
+        if sub.limits is None:
+            return {"allowed": False, "limit": 0, "current": current_value}
+
+        limit = getattr(sub.limits, limit_type, 0)
+
+        # -1 means unlimited
+        if limit == -1:
+            return {"allowed": True, "limit": -1, "current": current_value, "unlimited": True}
+
+        return {
+            "allowed": current_value < limit,
+            "limit": limit,
+            "current": current_value,
+            "remaining": max(0, limit - current_value),
+            "percentage_used": round((current_value / limit) * 100, 1) if limit > 0 else 0,
+        }
+
+    def increment_usage(self, organization_id: str, usage_type: str, amount: int = 1) -> UsageStats:
+        """Increment a usage counter."""
+        sub = self.get_subscription(organization_id)
+
+        if sub.usage is None:
+            sub.usage = UsageStats()
+
+        current = getattr(sub.usage, usage_type, 0)
+        setattr(sub.usage, usage_type, current + amount)
+        saved = self._save_subscription(sub)
+        return saved.usage or UsageStats()
+
+    def consume_ai_credits(
+        self, organization_id: str, action: str, amount: int = None
+    ) -> Dict[str, Any]:
+        """Delegate to the §13 pre-purchased pool ledger.
+
+        The historical monthly-counter path is retired in favour of
+        the pool model the thesis describes: credits are pooled,
+        purchased in advance, consumed per action, refunded on
+        failure. This wrapper keeps the old signature so callers
+        that already use ``consume_ai_credits`` don't need to change,
+        while the underlying behaviour picks up the new invariants
+        (monthly auto-grant lazily recorded, insufficient-balance
+        short-circuit, idempotent).
+
+        Callers that need the full pool surface — refund on failure,
+        consume preview with confirmation prompt, admin top-up —
+        should import ``solden.services.agent_credit_pool``
+        directly rather than calling this shim.
+        """
+        if amount is None:
+            amount = AI_CREDIT_COSTS.get(action, 1)
+
+        from solden.services.agent_credit_pool import (
+            consume_credit,
+        )
+
+        result = consume_credit(
+            organization_id,
+            credits=int(amount),
+            action_type=action,
+            db=self.db,
+        )
+
+        if result.get("unlimited"):
+            return {
+                "allowed": True,
+                "credits_used": int(amount),
+                "credits_remaining": -1,
+                "unlimited": True,
+                "action": action,
+            }
+
+        if result.get("ok"):
+            # Also update the legacy usage counter so the billing-
+            # summary payload's "ai_credits_used" field stays in sync
+            # with what the pool actually consumed this period. The
+            # counter is no longer authoritative for gating — the
+            # pool ledger is — but the UI still reads it for display.
+            sub = self.get_subscription(organization_id)
+            if sub.usage is None:
+                sub.usage = UsageStats()
+            sub.usage.ai_credits_this_month = (sub.usage.ai_credits_this_month or 0) + int(amount)
+            self._save_subscription(sub)
+            return {
+                "allowed": True,
+                "credits_used": int(amount),
+                "credits_remaining": int(result.get("balance_after") or 0),
+                "entry_id": result.get("entry_id"),
+                "action": action,
+            }
+
+        return {
+            "allowed": False,
+            "credits_used": 0,
+            "credits_remaining": int(result.get("balance", 0) or 0),
+            "action": action,
+            "reason": result.get("reason", "ai_credit_limit_reached"),
+        }
+
+    def _update_trial_status(self, sub: Subscription) -> None:
+        """Update trial status and days remaining."""
+        if sub.status != "trialing" or not sub.trial_ends_at:
+            return
+
+        try:
+            trial_end = datetime.fromisoformat(sub.trial_ends_at.replace('Z', '+00:00'))
+            now = datetime.now(timezone.utc)
+
+            if now >= trial_end:
+                # Trial expired - downgrade to free
+                sub.plan = PlanTier.FREE
+                sub.status = "active"
+                sub.trial_days_remaining = 0
+                sub.limits = PlanLimits.for_tier(PlanTier.FREE)
+                sub.features = PlanFeatures.for_tier(PlanTier.FREE)
+                logger.info(f"Trial expired for organization {sub.organization_id}")
+            else:
+                # Calculate days remaining
+                delta = trial_end - now
+                sub.trial_days_remaining = max(0, delta.days)
+        except Exception as e:
+            logger.error(f"Error updating trial status: {e}")
+
+
+# Singleton instance
+    # ------------------------------------------------------------------
+    # §13 Metered Billing — thesis pricing structure
+    # ------------------------------------------------------------------
+
+    # Invoice volume bands (thesis: "charged per invoice, in bands")
+    _VOLUME_BANDS = {
+        PlanTier.STARTER: [
+            {"up_to": 500, "per_invoice": 0.0, "label": "included"},     # First 500 included in seat charge
+            {"up_to": 1000, "per_invoice": 0.15, "label": "band_1"},     # 501-1000
+            {"up_to": float("inf"), "per_invoice": 0.25, "label": "overage"},  # 1001+
+        ],
+        PlanTier.PROFESSIONAL: [
+            {"up_to": 2000, "per_invoice": 0.0, "label": "included"},
+            {"up_to": 5000, "per_invoice": 0.10, "label": "band_1"},
+            {"up_to": float("inf"), "per_invoice": 0.20, "label": "overage"},
+        ],
+        PlanTier.ENTERPRISE: [
+            {"up_to": float("inf"), "per_invoice": 0.0, "label": "included"},  # Unlimited
+        ],
+    }
+
+    # Read Only seat pricing (thesis: "reduced rate")
+    _READ_ONLY_SEAT_RATE = 0.5  # 50% of full seat price
+
+    def record_invoice_processed(self, organization_id: str) -> Dict[str, Any]:
+        """§13: Record an invoice processed, update volume band and overage.
+
+        Called after every invoice is processed. Unused volume does not roll over.
+        """
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        usage.invoices_this_month += 1
+
+        # Determine current band
+        tier = PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER
+        bands = self._VOLUME_BANDS.get(tier, self._VOLUME_BANDS[PlanTier.STARTER])
+        current_count = usage.invoices_this_month
+        band_label = "included"
+        for band in bands:
+            if current_count <= band["up_to"]:
+                band_label = band["label"]
+                break
+
+        usage.invoice_volume_band = band_label
+        if band_label != "included":
+            # Count invoices above the included band
+            included_limit = bands[0]["up_to"] if bands else 0
+            usage.invoice_overage_count = max(0, current_count - int(included_limit))
+
+        self._persist_usage(organization_id, usage)
+        return {"invoices_this_month": usage.invoices_this_month, "band": band_label, "overage": usage.invoice_overage_count}
+
+    def consume_agent_credit(self, organization_id: str, action_type: str = "extraction", cost: int = 1) -> Dict[str, Any]:
+        """§13: Consume agent action credits from the pooled pool.
+
+        "Credits are pooled across the team, purchased in advance, and
+        consumed per action. Failed actions do not consume credits."
+        """
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        limits = sub.limits or PlanLimits.for_tier(PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER)
+
+        if limits.ai_credits_per_month != -1:  # -1 = unlimited
+            remaining = limits.ai_credits_per_month - usage.ai_credits_this_month
+            if remaining < cost:
+                return {"consumed": False, "reason": "credits_exhausted", "remaining": max(0, remaining)}
+
+            # §13: "A confirmation prompt appears before any action that
+            # would consume a significant number of credits."
+            if cost >= 10 and remaining - cost < 20:
+                return {"consumed": False, "reason": "confirmation_required", "remaining": remaining, "cost": cost}
+
+        usage.ai_credits_this_month += cost
+        usage.ai_credits_remaining = max(0, (limits.ai_credits_per_month if limits.ai_credits_per_month != -1 else 999999) - usage.ai_credits_this_month)
+        self._persist_usage(organization_id, usage)
+        return {"consumed": True, "credits_used": cost, "remaining": usage.ai_credits_remaining}
+
+    def get_billing_summary(self, organization_id: str) -> Dict[str, Any]:
+        """§13: Full billing summary for the Settings > Billing section."""
+        sub = self.get_subscription(organization_id)
+        usage = sub.usage or UsageStats()
+        tier = PlanTier(sub.plan) if sub.plan in [t.value for t in PlanTier] else PlanTier.STARTER
+        limits = sub.limits or PlanLimits.for_tier(tier)
+        prices = PLAN_PRICING.get(tier, PLAN_PRICING[PlanTier.STARTER])
+
+        # Subscription.billing_cycle stores "monthly" or "yearly"; the
+        # PLAN_PRICING dict uses "monthly"/"annual". Normalize so a
+        # yearly cycle doesn't fall through to the monthly price by
+        # accident (and worse, KeyError on the old `prices[...]` path).
+        cycle_key = "annual" if sub.billing_cycle == "yearly" else "monthly"
+        seat_price = prices.get(cycle_key, prices["monthly"])
+        active_seats = usage.users_count
+        read_only_seats = usage.read_only_users_count
+        read_only_cost = seat_price * self._READ_ONLY_SEAT_RATE * read_only_seats
+
+        bands = self._VOLUME_BANDS.get(tier, [])
+        volume_cost = 0.0
+        if usage.invoice_overage_count > 0 and len(bands) > 1:
+            volume_cost = usage.invoice_overage_count * bands[1].get("per_invoice", 0.15)
+
+        # §8.2: Aggregate LLM costs from llm_call_log
+        llm_cost = self._get_llm_cost_this_month(organization_id)
+
+        return {
+            "plan": sub.plan,
+            "billing_cycle": sub.billing_cycle,
+            "seat_price": seat_price,
+            "active_seats": active_seats,
+            "read_only_seats": read_only_seats,
+            "read_only_cost": round(read_only_cost, 2),
+            "seat_total": round(seat_price * active_seats + read_only_cost, 2),
+            "invoices_this_month": usage.invoices_this_month,
+            "invoice_volume_band": usage.invoice_volume_band,
+            "invoice_overage_count": usage.invoice_overage_count,
+            "volume_cost": round(volume_cost, 2),
+            "ai_credits_used": usage.ai_credits_this_month,
+            "ai_credits_remaining": usage.ai_credits_remaining,
+            "llm_cost_usd": round(llm_cost.get("total_cost_usd", 0), 4),
+            "llm_calls_count": llm_cost.get("call_count", 0),
+            "estimated_total": round(seat_price * active_seats + read_only_cost + volume_cost, 2),
+            "annual_savings_pct": 20 if sub.billing_cycle == "yearly" else 0,
+            "limits": {
+                "users_max": limits.users,
+                "invoices_per_month": limits.invoices_per_month,
+                "ai_credits_per_month": limits.ai_credits_per_month,
+                "monthly_llm_cost_usd_hard_cap": getattr(limits, "monthly_llm_cost_usd_hard_cap", None),
+            },
+        }
+
+    def get_effective_llm_cost_cap(self, organization_id: str) -> float:
+        """Resolve the runaway-spend hard cap (USD) for an organization.
+
+        Precedence:
+          1. ``organizations.settings_json["llm_cost_hard_cap_usd_override"]``
+             — per-org override set by CS to relax or tighten the default
+             without a code change. Useful for Enterprise renegotiations
+             or for pausing a suspicious tenant below tier default.
+          2. ``sub.limits.monthly_llm_cost_usd_hard_cap`` — per-tier
+             default from :class:`PlanLimits`.
+          3. Safe fallback (FREE tier cap: $10) if no subscription row.
+
+        Returns the effective ceiling in USD as a float. Never returns
+        ``-1`` or any sentinel — the hard cap is always a real number
+        because a runaway guard without a ceiling is useless.
+        """
+        try:
+            org = self.db.get_organization(organization_id)
+        except Exception:
+            org = None
+
+        if isinstance(org, dict):
+            settings = org.get("settings_json") or org.get("settings") or {}
+            if isinstance(settings, str):
+                try:
+                    import json as _json
+                    settings = _json.loads(settings)
+                except Exception:
+                    settings = {}
+            if isinstance(settings, dict):
+                override = settings.get("llm_cost_hard_cap_usd_override")
+                if override is not None:
+                    try:
+                        return float(override)
+                    except (TypeError, ValueError):
+                        pass
+
+        try:
+            sub = self.get_subscription(organization_id)
+            if sub and sub.limits:
+                return float(sub.limits.monthly_llm_cost_usd_hard_cap)
+        except Exception as exc:
+            logger.debug(
+                "[Subscription] get_effective_llm_cost_cap fallback for %s: %s",
+                organization_id, exc,
+            )
+
+        return 10.0  # FREE-tier floor; safe runaway guard if subscription is missing
+
+    def _get_llm_cost_this_month(self, organization_id: str) -> Dict[str, Any]:
+        """§8.2: Aggregate LLM API costs from llm_call_log for current month."""
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+            sql = (
+                "SELECT COUNT(*) as call_count, "
+                "COALESCE(SUM(cost_estimate_usd), 0) as total_cost_usd, "
+                "COALESCE(SUM(input_tokens), 0) as total_input_tokens, "
+                "COALESCE(SUM(output_tokens), 0) as total_output_tokens "
+                "FROM llm_call_log "
+                "WHERE organization_id = %s AND created_at >= %s"
+            )
+            with self.db.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, (organization_id, month_start))
+                row = cur.fetchone()
+                if row:
+                    r = dict(row)
+                    return {
+                        "call_count": r.get("call_count", 0),
+                        "total_cost_usd": r.get("total_cost_usd", 0),
+                        "total_input_tokens": r.get("total_input_tokens", 0),
+                        "total_output_tokens": r.get("total_output_tokens", 0),
+                    }
+        except Exception as exc:
+            logger.debug("[Subscription] LLM cost aggregation failed: %s", exc)
+        return {"call_count": 0, "total_cost_usd": 0}
+
+    def _persist_usage(self, organization_id: str, usage: UsageStats) -> None:
+        """Write usage stats back to the subscription record."""
+        try:
+            import json
+            db = self._get_db()
+            sql = "UPDATE subscriptions SET usage_json = %s WHERE organization_id = %s"
+            with db.connect() as conn:
+                conn.execute(sql, (json.dumps(usage.to_dict()), organization_id))
+                conn.commit()
+        except Exception as exc:
+            logger.warning("[Subscription] persist usage failed: %s", exc)
+
+
+_subscription_service: Optional[SubscriptionService] = None
+
+
+def get_subscription_service() -> SubscriptionService:
+    """Get the subscription service singleton."""
+    global _subscription_service
+    if _subscription_service is None:
+        _subscription_service = SubscriptionService()
+    return _subscription_service

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.services.slack_notifications import (
+from solden.services.slack_notifications import (
     send_vendor_activated_notification,
 )
 
@@ -29,7 +29,7 @@ class TestSendVendorActivatedNotification:
     @pytest.mark.asyncio
     async def test_posts_to_slack_with_vendor_and_erp(self):
         with patch(
-            "clearledgr.services.slack_notifications._post_slack_blocks",
+            "solden.services.slack_notifications._post_slack_blocks",
             new=AsyncMock(return_value={"ok": True, "via": "bot"}),
         ) as mock_post:
             result = await send_vendor_activated_notification(
@@ -57,7 +57,7 @@ class TestSendVendorActivatedNotification:
         # return an ID (legacy connector behaviour). The message
         # should still fire with a clean fallback.
         with patch(
-            "clearledgr.services.slack_notifications._post_slack_blocks",
+            "solden.services.slack_notifications._post_slack_blocks",
             new=AsyncMock(return_value={"ok": True}),
         ) as mock_post:
             await send_vendor_activated_notification(
@@ -73,7 +73,7 @@ class TestSendVendorActivatedNotification:
     @pytest.mark.asyncio
     async def test_fallback_erp_label_when_system_missing(self):
         with patch(
-            "clearledgr.services.slack_notifications._post_slack_blocks",
+            "solden.services.slack_notifications._post_slack_blocks",
             new=AsyncMock(return_value={"ok": True}),
         ) as mock_post:
             await send_vendor_activated_notification(
@@ -108,14 +108,14 @@ class TestActivationSlackWiring:
         db.append_audit_event = MagicMock()
         db.get_erp_connections = MagicMock(return_value=[{"erp_type": "quickbooks"}])
 
-        from clearledgr.services import vendor_onboarding_lifecycle
+        from solden.services import vendor_onboarding_lifecycle
 
         with patch.object(
             vendor_onboarding_lifecycle,
             "_dispatch_erp_create_vendor",
             new=AsyncMock(return_value="QB-5432"),
         ), patch(
-            "clearledgr.services.slack_notifications.send_vendor_activated_notification",
+            "solden.services.slack_notifications.send_vendor_activated_notification",
             new=AsyncMock(return_value={"ok": True}),
         ) as mock_slack:
             result = await vendor_onboarding_lifecycle.activate_vendor_in_erp(
@@ -152,14 +152,14 @@ class TestActivationSlackWiring:
         db.append_audit_event = MagicMock()
         db.get_erp_connections = MagicMock(return_value=[])
 
-        from clearledgr.services import vendor_onboarding_lifecycle
+        from solden.services import vendor_onboarding_lifecycle
 
         with patch.object(
             vendor_onboarding_lifecycle,
             "_dispatch_erp_create_vendor",
             new=AsyncMock(return_value="QB-9999"),
         ), patch(
-            "clearledgr.services.slack_notifications.send_vendor_activated_notification",
+            "solden.services.slack_notifications.send_vendor_activated_notification",
             new=AsyncMock(side_effect=RuntimeError("slack down")),
         ):
             result = await vendor_onboarding_lifecycle.activate_vendor_in_erp(

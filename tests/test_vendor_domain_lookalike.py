@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 
-from clearledgr.services.vendor_domain_lookalike import (
+from solden.services.vendor_domain_lookalike import (
     _canonicalize_homoglyphs,
     _damerau_levenshtein,
     _registrable_base,

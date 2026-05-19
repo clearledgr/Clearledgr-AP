@@ -15,7 +15,7 @@ import asyncio
 
 from unittest.mock import MagicMock
 
-from clearledgr.services.vendor_master_check import (
+from solden.services.vendor_master_check import (
     VENDOR_NOT_IN_ERP_MASTER,
     VendorMasterCheckResult,
     check_vendor_in_erp_master,
@@ -44,7 +44,7 @@ class TestVendorMasterCheck:
         # No ERP wired → can't gate against a master that doesn't
         # exist. AP advances normally.
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: None,
         )
         result = asyncio.run(
@@ -57,7 +57,7 @@ class TestVendorMasterCheck:
 
     def test_found_in_erp_returns_found(self, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -65,7 +65,7 @@ class TestVendorMasterCheck:
             return {"vendor_id": "qb-vendor-42", "name": name}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
         result = asyncio.run(
@@ -78,7 +78,7 @@ class TestVendorMasterCheck:
 
     def test_not_found_in_erp_returns_not_found(self, monkeypatch):
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -86,7 +86,7 @@ class TestVendorMasterCheck:
             return None
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
         result = asyncio.run(
@@ -101,7 +101,7 @@ class TestVendorMasterCheck:
         # Transient ERP failure must not gate the AP item — the
         # resume hook will retry on workflow re-fire.
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -109,7 +109,7 @@ class TestVendorMasterCheck:
             raise RuntimeError("ERP timeout")
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _raising_find_vendor,
         )
         result = asyncio.run(
@@ -126,7 +126,7 @@ class TestVendorMasterCheck:
         # The lookup should pass both keys to find_vendor.
         captured: dict = {}
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -136,7 +136,7 @@ class TestVendorMasterCheck:
             return {"vendor_id": "qb-vendor-7"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _capture_find_vendor,
         )
 
@@ -190,7 +190,7 @@ class TestFuzzyMatchTier:
         # even run. Verify by patching list_vendor_profiles to raise
         # if called.
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -198,7 +198,7 @@ class TestFuzzyMatchTier:
             return {"vendor_id": "ext-1", "name": "Acme Corp"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
 
@@ -207,7 +207,7 @@ class TestFuzzyMatchTier:
             side_effect=AssertionError("fuzzy tier should not run on exact hit"),
         )
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db", lambda: fake_db,
+            "solden.core.database.get_db", lambda: fake_db,
         )
 
         result = asyncio.run(
@@ -224,7 +224,7 @@ class TestFuzzyMatchTier:
         # Tier 1 miss (exact ERP lookup) → Tier 2 hit (local fuzzy
         # match against vendor_profiles cache).
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -232,7 +232,7 @@ class TestFuzzyMatchTier:
             return None  # exact ERP miss
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
 
@@ -243,7 +243,7 @@ class TestFuzzyMatchTier:
             {"vendor_name": "ACME Corp"},
         ])
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db", lambda: fake_db,
+            "solden.core.database.get_db", lambda: fake_db,
         )
 
         result = asyncio.run(
@@ -261,7 +261,7 @@ class TestFuzzyMatchTier:
         # When no candidate clears the 0.85 confidence floor, return
         # not_found rather than risk a wrong auto-bind.
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -269,7 +269,7 @@ class TestFuzzyMatchTier:
             return None
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
 
@@ -279,7 +279,7 @@ class TestFuzzyMatchTier:
             {"vendor_name": "Beta Industries"},
         ])
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db", lambda: fake_db,
+            "solden.core.database.get_db", lambda: fake_db,
         )
 
         result = asyncio.run(
@@ -295,7 +295,7 @@ class TestFuzzyMatchTier:
         # Vendor name fails both tier 1 and tier 2; sender domain
         # resolves via tier 3 (find_vendor by email).
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -309,14 +309,14 @@ class TestFuzzyMatchTier:
             return None
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
 
         fake_db = MagicMock()
         fake_db.list_vendor_profiles = MagicMock(return_value=[])
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db", lambda: fake_db,
+            "solden.core.database.get_db", lambda: fake_db,
         )
 
         result = asyncio.run(
@@ -336,7 +336,7 @@ class TestFuzzyMatchTier:
         # MUST still work for any caller that hasn't migrated to the
         # full-result variant.
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_erp_connection",
+            "solden.integrations.erp_router.get_erp_connection",
             lambda org_id: object(),
         )
 
@@ -344,7 +344,7 @@ class TestFuzzyMatchTier:
             return {"vendor_id": "ext-1"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.find_vendor",
+            "solden.integrations.erp_router.find_vendor",
             _fake_find_vendor,
         )
 

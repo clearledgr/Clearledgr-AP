@@ -3,7 +3,7 @@
 Producers covered:
 
 * PEPPOL UBL parser
-  (``clearledgr.services.peppol_ubl_parser.ParsedPeppolInvoice``)
+  (``solden.services.peppol_ubl_parser.ParsedPeppolInvoice``)
 * QuickBooks ERP-native intake adapter
 * NetSuite ERP-native intake adapter
 * Xero ERP-native intake adapter
@@ -21,7 +21,7 @@ from typing import Any, Dict
 
 import pytest
 
-from clearledgr.services.extraction_provenance import (
+from solden.services.extraction_provenance import (
     METHOD_API_PASSTHROUGH,
     METHOD_UBL_PARSER,
     SOURCE_ERP_NATIVE_NETSUITE,
@@ -88,7 +88,7 @@ def test_passthrough_evidence_mirrors_provenance_keys():
 
 
 def test_peppol_ubl_parser_emits_field_provenance():
-    from clearledgr.services.peppol_ubl_parser import ParsedPeppolInvoice
+    from solden.services.peppol_ubl_parser import ParsedPeppolInvoice
     from decimal import Decimal
 
     parsed = ParsedPeppolInvoice(
@@ -124,7 +124,7 @@ def test_peppol_ubl_parser_emits_field_provenance():
 
 def _make_envelope(source_id: str, channel_metadata: Dict[str, Any], *, source_type: str = "test"):
     """Construct a minimal IntakeEnvelope for ERP adapter tests."""
-    from clearledgr.services.intake_adapter import IntakeEnvelope
+    from solden.services.intake_adapter import IntakeEnvelope
 
     return IntakeEnvelope(
         source_type=source_type,
@@ -152,7 +152,7 @@ def _assert_provenance(invoice, *, source: str, method: str, fields: tuple):
 
 
 def test_quickbooks_adapter_full_intake_emits_provenance():
-    from clearledgr.integrations.erp_quickbooks_intake_adapter import (
+    from solden.integrations.erp_quickbooks_intake_adapter import (
         QuickBooksIntakeAdapter,
     )
 
@@ -176,7 +176,7 @@ def test_quickbooks_adapter_full_intake_emits_provenance():
 
 
 def test_quickbooks_adapter_thin_intake_emits_provenance():
-    from clearledgr.integrations.erp_quickbooks_intake_adapter import (
+    from solden.integrations.erp_quickbooks_intake_adapter import (
         QuickBooksIntakeAdapter,
     )
 
@@ -187,7 +187,7 @@ def test_quickbooks_adapter_thin_intake_emits_provenance():
 
 
 def test_netsuite_adapter_full_intake_emits_provenance():
-    from clearledgr.integrations.erp_netsuite_intake_adapter import (
+    from solden.integrations.erp_netsuite_intake_adapter import (
         NetSuiteIntakeAdapter,
     )
 
@@ -215,7 +215,7 @@ def test_netsuite_adapter_full_intake_emits_provenance():
 
 
 def test_xero_adapter_full_intake_emits_provenance():
-    from clearledgr.integrations.erp_xero_intake_adapter import XeroIntakeAdapter
+    from solden.integrations.erp_xero_intake_adapter import XeroIntakeAdapter
 
     envelope = _make_envelope("xero-1", {"xero_tenant_id": "tenant-1"})
     invoice_payload = {
@@ -239,7 +239,7 @@ def test_xero_adapter_full_intake_emits_provenance():
 
 
 def test_sap_adapter_full_intake_emits_provenance():
-    from clearledgr.integrations.erp_sap_s4hana_intake_adapter import (
+    from solden.integrations.erp_sap_s4hana_intake_adapter import (
         SapS4HanaIntakeAdapter,
     )
 
@@ -273,7 +273,7 @@ def test_save_invoice_status_persists_field_provenance(postgres_test_db):
     """The ERP-native + PEPPOL paths persist via ``save_invoice_status``;
     confirm it carries field_provenance/field_evidence/erp_metadata
     onto ``ap_items.metadata`` so the audit chain reaches the row."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     db = get_db()
     db.initialize()

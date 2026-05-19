@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from clearledgr.services.correction_learning import CorrectionLearningService
+from solden.services.correction_learning import CorrectionLearningService
 
 
 @pytest.fixture

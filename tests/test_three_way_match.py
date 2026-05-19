@@ -29,13 +29,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import three_way_match as tw_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.purchase_orders import (  # noqa: E402
+from solden.api import three_way_match as tw_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.purchase_orders import (  # noqa: E402
     get_purchase_order_service,
 )
-from clearledgr.services.three_way_match_runner import (  # noqa: E402
+from solden.services.three_way_match_runner import (  # noqa: E402
     run_three_way_match,
 )
 
@@ -115,11 +115,11 @@ def _make_po(
     )
     if line_items:
         po.calculate_totals()
-        from clearledgr.services.purchase_orders import _po_to_store_dict
+        from solden.services.purchase_orders import _po_to_store_dict
         svc._db.save_purchase_order(_po_to_store_dict(po))
     if not line_items:
         po.total_amount = total
-        from clearledgr.services.purchase_orders import _po_to_store_dict
+        from solden.services.purchase_orders import _po_to_store_dict
         svc._db.save_purchase_order(_po_to_store_dict(po))
     svc.approve_po(po.po_id, approved_by="ops@" + org)
     return po.po_number
@@ -384,7 +384,7 @@ def test_custom_tolerance_via_policy_service(db):
     previously-MATCHED 1% variance into an exception. Proves the
     match path reads tolerances from the active policy version, not
     the class-level constants."""
-    from clearledgr.services.policy_service import PolicyService
+    from solden.services.policy_service import PolicyService
 
     po_lines = [
         {"item_number": "SKU-TOL", "description": "Widget",

@@ -1,0 +1,735 @@
+"""Inline Gmail triage orchestration for the extension adapter."""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Callable, Dict, List, Optional
+
+from solden.services.agent_reflection import get_agent_reflection
+from solden.services.audit_trail import AuditEventType, get_audit_trail
+from solden.services.budget_awareness import get_budget_awareness
+from solden.services.cross_invoice_analysis import get_cross_invoice_analyzer
+from solden.services.policy_compliance import get_policy_compliance
+from solden.services.priority_detection import get_priority_detection
+from solden.services.proactive_insights import get_proactive_insights
+from solden.services.vendor_intelligence import get_vendor_intelligence
+from solden.workflows.gmail_activities import (
+    classify_email_activity,
+    extract_email_data_activity,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def run_inline_gmail_triage(
+    *,
+    payload: Dict[str, Any],
+    org_id: str,
+    combined_text: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    agent_reasoning_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    _is_subunit: bool = False,
+) -> Dict[str, Any]:
+    """Run the inline Gmail triage flow and return the triage payload.
+
+    Multi-invoice handling: at the top-level call (``_is_subunit=False``),
+    the email's attachments are run through
+    :mod:`solden.services.multi_invoice_intake` to detect the case
+    where one PDF carries multiple invoices, or where multiple PDFs
+    each carry one. When fan-out happens, this function recurses
+    once per detected invoice (with ``_is_subunit=True`` to break
+    further recursion) and returns the primary result with a
+    ``multi_invoice_results`` field listing every triage result so
+    the caller creates one AP item per invoice.
+    """
+    request_attachments = list(attachments or [])
+
+    # Multi-invoice fan-out — only at the top-level call to avoid
+    # recursive splitting of already-split sub-PDFs.
+    if not _is_subunit:
+        from solden.services.multi_invoice_intake import split_email_attachments
+
+        units = split_email_attachments(request_attachments)
+        if len(units) > 1:
+            return await _fan_out_multi_invoice(
+                units=units,
+                payload=payload,
+                org_id=org_id,
+                combined_text=combined_text,
+                agent_reasoning_fn=agent_reasoning_fn,
+            )
+
+    trail = get_audit_trail(org_id)
+    trail.log(
+        invoice_id=payload.get("email_id"),
+        event_type=AuditEventType.RECEIVED,
+        summary=f"Email received from {payload.get('sender') or 'unknown'}",
+        details={"subject": payload.get("subject"), "sender": payload.get("sender")},
+    )
+
+    # Wall-clock start for the processing-mode-metric event. The
+    # event fires exactly once per invocation regardless of which
+    # path (single-pass or multi-call) wins, so dashboards can
+    # compare the two paths' real-world latency.
+    triage_started_at = time.monotonic()
+
+    # --- Single-pass: try processing everything in one Claude call ---
+    single_pass_result = await _try_single_pass(payload, org_id, request_attachments)
+    if single_pass_result:
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.CLASSIFIED,
+            summary=f"Single-pass: classified as {single_pass_result.get('classification', {}).get('document_type', '?')}",
+            confidence=single_pass_result.get("classification", {}).get("confidence", 0),
+            reasoning="single_pass_processor",
+        )
+        formatted = _format_single_pass_result(single_pass_result, payload, org_id)
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="single_pass",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+        )
+        return formatted
+
+    # --- Multi-call fallback: existing pipeline ---
+    classification = await classify_email_activity(payload)
+    trail.log(
+        invoice_id=payload.get("email_id"),
+        event_type=AuditEventType.CLASSIFIED,
+        summary=f"Classified as {classification.get('type', 'UNKNOWN')}",
+        confidence=classification.get("confidence", 0),
+        reasoning=classification.get("reason", "AI classification"),
+    )
+
+    # Use the document routing table to determine workflow
+    from solden.services.document_routing import get_route
+
+    doc_type = str(classification.get("type") or "noise").lower()
+    route = get_route(doc_type)
+
+    if doc_type == "noise":
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="multi_call",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+        )
+        return {
+            "email_id": payload.get("email_id"),
+            "classification": classification,
+            "action": "skipped",
+        }
+
+    # Non-AP documents: extract data for records but skip approval workflow
+    if route.auto_close:
+        extraction = await extract_email_data_activity({**payload, "classification": classification})
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.EXTRACTED,
+            summary=f"{route.label} from {extraction.get('vendor') or payload.get('sender')}",
+            details={"amount": extraction.get("amount"), "vendor": extraction.get("vendor")},
+        )
+        _emit_processing_mode_metric(
+            trail=trail,
+            email_id=payload.get("email_id"),
+            mode="multi_call",
+            elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+        )
+        return {
+            "email_id": payload.get("email_id"),
+            "classification": classification,
+            "extraction": extraction,
+            "action": "recorded",
+            "document_type": doc_type,
+            "workflow": "auto_record",
+            "reason": route.workflow_guidance,
+            "suggested_state": route.initial_state,
+            "creates_ap_item": route.creates_ap_item,
+            "needs_approval": route.needs_approval,
+            "gmail_label": route.gmail_label,
+            "match_to": route.match_to,
+        }
+
+    extraction = await extract_email_data_activity({**payload, "classification": classification})
+
+    # --- Multi-invoice handling ---
+    # When the parser detects multiple distinct invoices in the same email
+    # (e.g. separate PDF attachments), run the triage pipeline once per
+    # sub-invoice and return a combined result so the caller can create
+    # one AP item per invoice, all linked to the same source thread.
+    if extraction.get("multiple_invoices") and isinstance(extraction.get("invoices"), list):
+        sub_invoices = extraction["invoices"]
+        if len(sub_invoices) > 1:
+            logger.info(
+                "Multi-invoice email detected for email_id=%s: %d invoices",
+                payload.get("email_id"),
+                len(sub_invoices),
+            )
+            trail.log(
+                invoice_id=payload.get("email_id"),
+                event_type=AuditEventType.EXTRACTED,
+                summary=f"Multi-invoice email: {len(sub_invoices)} distinct invoices detected",
+                details={"invoice_count": len(sub_invoices)},
+            )
+
+            sub_results = []
+            for idx, sub_inv in enumerate(sub_invoices):
+                # Build a per-invoice extraction by overlaying sub-invoice
+                # fields onto the shared extraction base.
+                sub_extraction = dict(extraction)
+                sub_extraction.pop("invoices", None)
+                sub_extraction.pop("multiple_invoices", None)
+                sub_extraction["vendor"] = sub_inv.get("vendor") or extraction.get("vendor")
+                sub_extraction["amount"] = sub_inv.get("amount") if sub_inv.get("amount") is not None else extraction.get("amount")
+                sub_extraction["total_amount"] = sub_extraction["amount"]
+                sub_extraction["currency"] = sub_inv.get("currency") or extraction.get("currency")
+                sub_extraction["invoice_number"] = sub_inv.get("invoice_number") or extraction.get("invoice_number")
+                sub_extraction["due_date"] = sub_inv.get("due_date") or extraction.get("due_date")
+                sub_extraction["invoice_date"] = sub_inv.get("invoice_date") or extraction.get("invoice_date")
+                sub_extraction["confidence"] = sub_inv.get("confidence", extraction.get("confidence", 0))
+                sub_extraction["attachment_name"] = sub_inv.get("attachment_name")
+                sub_extraction["sub_invoice_index"] = idx
+
+                sub_results.append({
+                    "email_id": payload.get("email_id"),
+                    "classification": classification,
+                    "extraction": sub_extraction,
+                    "action": "triaged",
+                    "ai_powered": True,
+                    "sub_invoice_index": idx,
+                })
+
+            return {
+                "email_id": payload.get("email_id"),
+                "classification": classification,
+                "extraction": extraction,
+                "action": "triaged",
+                "ai_powered": True,
+                "multiple_invoices": True,
+                "invoice_count": len(sub_invoices),
+                "attachment_count": extraction.get("attachment_count", 0),
+                "invoices": sub_results,
+            }
+
+    # C7: Validate that critical extraction fields are present
+    if not extraction.get("vendor") or extraction.get("amount") is None:
+        extraction["extraction_incomplete"] = True
+        missing = []
+        if not extraction.get("vendor"):
+            missing.append("vendor_name")
+        if extraction.get("amount") is None:
+            missing.append("amount")
+        logger.warning(
+            "Extraction incomplete for email_id=%s: missing %s",
+            payload.get("email_id"), ", ".join(missing),
+        )
+
+    extracted_amount = extraction.get("amount")
+    amount_display = (
+        f"{float(extracted_amount):,.2f}"
+        if isinstance(extracted_amount, (int, float))
+        else "Unknown"
+    )
+    trail.log(
+        invoice_id=payload.get("email_id"),
+        event_type=AuditEventType.EXTRACTED,
+        summary=f"Extracted: {extraction.get('vendor', 'Unknown')} ${amount_display}",
+        confidence=extraction.get("confidence", 0),
+        vendor=extraction.get("vendor"),
+        amount=extraction.get("amount"),
+    )
+
+    reflection = get_agent_reflection()
+    original_text = f"{payload.get('subject') or ''} {payload.get('snippet') or ''} {payload.get('body') or ''}"
+    reflection_result = reflection.reflect_on_extraction(extraction, original_text)
+    if reflection_result.corrections_made:
+        extraction = reflection_result.final_extraction
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.VALIDATED,
+            summary=f"Self-corrected {len(reflection_result.corrections_made)} field(s)",
+            reasoning="; ".join(reflection_result.reflection_notes),
+        )
+
+    vendor_intel = get_vendor_intelligence()
+    vendor_info = vendor_intel.get_suggestion(extraction.get("vendor", ""))
+    if vendor_info:
+        extraction["vendor_intelligence"] = vendor_info
+        if not extraction.get("gl_code") and vendor_info.get("suggested_gl"):
+            extraction["gl_code"] = vendor_info["suggested_gl"]
+            extraction["gl_source"] = "vendor_intelligence"
+
+    # C13: Wrap policy compliance in try/except to prevent cascade failures
+    invoice_for_policy = {
+        "vendor": extraction.get("vendor") or "",
+        "amount": extraction.get("amount", 0),
+        "category": extraction.get("category") or "",
+        "vendor_intelligence": extraction.get("vendor_intelligence", {}),
+    }
+    policy_result = None
+    try:
+        policy_service = get_policy_compliance(org_id)
+        policy_result = policy_service.check(invoice_for_policy)
+        extraction["policy_compliance"] = policy_result.to_dict()
+        if not policy_result.compliant:
+            trail.log(
+                invoice_id=payload.get("email_id"),
+                event_type=AuditEventType.POLICY_CHECK,
+                summary=f"Policy: {len(policy_result.violations)} requirement(s)",
+                details={"violations": [v.message for v in policy_result.violations]},
+            )
+    except Exception as policy_exc:
+        logger.warning("Policy compliance check failed for email_id=%s: %s", payload.get("email_id"), policy_exc)
+        extraction["policy_compliance"] = {"compliant": True, "violations": [], "error": "check_failed"}
+
+    priority_service = get_priority_detection(org_id)
+    invoice_for_priority = {
+        "id": payload.get("email_id"),
+        "vendor": extraction.get("vendor"),
+        "amount": extraction.get("amount", 0),
+        "due_date": extraction.get("due_date"),
+        "created_at": extraction.get("created_at"),
+        "vendor_intelligence": extraction.get("vendor_intelligence", {}),
+    }
+    priority = priority_service.assess(invoice_for_priority)
+    extraction["priority"] = priority.to_dict()
+
+    analyzer = get_cross_invoice_analyzer(org_id)
+    analysis = analyzer.analyze(
+        vendor=extraction.get("vendor", ""),
+        amount=extraction.get("amount", 0),
+        invoice_number=extraction.get("invoice_number"),
+        invoice_date=extraction.get("invoice_date"),
+        gmail_id=payload.get("email_id"),
+    )
+    extraction["cross_invoice_analysis"] = analysis.to_dict()
+    duplicate_alerts = getattr(analysis, "duplicates", []) or []
+    if duplicate_alerts:
+        trail.log(
+            invoice_id=payload.get("email_id"),
+            event_type=AuditEventType.DUPLICATE_CHECK,
+            summary="Potential duplicate detected",
+            details={"duplicates": [getattr(d, "invoice_id", None) for d in duplicate_alerts]},
+        )
+
+    # C13: Wrap budget check in try/except to prevent cascade failures
+    budget_checks = []
+    try:
+        budget_service = get_budget_awareness(org_id)
+        budget_checks = budget_service.check_invoice(invoice_for_policy)
+        if budget_checks:
+            extraction["budget_impact"] = [b.to_dict() for b in budget_checks]
+            for check in budget_checks:
+                if check.after_approval_status.value in ["critical", "exceeded"]:
+                    trail.log(
+                        invoice_id=payload.get("email_id"),
+                        event_type=AuditEventType.ANALYZED,
+                        summary=f"Budget alert: {check.budget.name} at {check.after_approval_percent:.0f}%",
+                    )
+    except Exception as budget_exc:
+        logger.warning("Budget check failed for email_id=%s: %s", payload.get("email_id"), budget_exc)
+        budget_checks = []
+
+    insights_service = get_proactive_insights(org_id)
+    insights = insights_service.analyze_after_invoice(invoice_for_priority)
+    if insights:
+        # Rule-detected insights get a contextual rewrite from Haiku so
+        # the operator sees "Cisco's annual licence renewal landed
+        # alongside monthly support" instead of the generic dashboard
+        # phrasing. Narration never changes which insights surface; if
+        # it fails, the rule copy ships untouched.
+        try:
+            from solden.services.proactive_insights import narrate_insights
+
+            insights = await narrate_insights(
+                insights,
+                organization_id=org_id,
+                period="current invoice",
+            )
+        except Exception as exc:
+            logger.debug("[Triage] insight narration skipped (non-fatal): %s", exc)
+        extraction["insights"] = [
+            {"title": insight.title, "description": insight.description, "severity": insight.severity}
+            for insight in insights
+        ]
+
+    trail.log(
+        invoice_id=payload.get("email_id"),
+        event_type=AuditEventType.DECISION_MADE,
+        summary=f"Ready for processing - Priority: {priority.priority.label}",
+        confidence=extraction.get("confidence", 0),
+        reasoning=(
+            f"Vendor: {'known' if vendor_info else 'new'}, "
+            f"Policy: {'compliant' if (policy_result and policy_result.compliant) else 'requirements'}, "
+            f"Duplicates: {len(duplicate_alerts)}"
+        ),
+    )
+
+    result = {
+        "email_id": payload.get("email_id"),
+        "classification": classification,
+        "extraction": extraction,
+        "action": "triaged",
+        "ai_powered": True,
+        "intelligence": {
+            "vendor_known": vendor_info is not None,
+            "vendor_info": vendor_info,
+            "policy_compliant": policy_result.compliant if policy_result else True,
+            "policy_requirements": [v.message for v in policy_result.violations] if policy_result else [],
+            "required_approvers": policy_result.required_approvers if policy_result else [],
+            "priority": priority.priority.value,
+            "priority_label": priority.priority.label,
+            "days_until_due": priority.days_until_due,
+            "alerts": priority.alerts,
+            "potential_duplicates": len(duplicate_alerts),
+            "anomalies": [getattr(a, "anomaly_type", None) for a in (getattr(analysis, "anomalies", []) or [])],
+            "budget_warnings": [
+                check.warning_message for check in budget_checks if check.warning_message
+            ] if budget_checks else [],
+            "insights": [insight.title for insight in insights] if insights else [],
+            "self_verified": reflection_result.self_verified,
+        },
+    }
+
+    # C13: Wrap agent reasoning in try/except to prevent cascade failures
+    if callable(agent_reasoning_fn):
+        try:
+            result = agent_reasoning_fn(
+                result=result,
+                org_id=org_id,
+                combined_text=combined_text,
+                attachments=request_attachments,
+            )
+        except Exception as reasoning_exc:
+            logger.warning("Agent reasoning failed for email_id=%s: %s", payload.get("email_id"), reasoning_exc)
+            result["intelligence"]["agent_reasoning_error"] = str(reasoning_exc)
+
+    _emit_processing_mode_metric(
+        trail=trail,
+        email_id=payload.get("email_id"),
+        mode="multi_call",
+        elapsed_ms=int((time.monotonic() - triage_started_at) * 1000),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Single-pass helpers
+# ---------------------------------------------------------------------------
+
+
+async def _fan_out_multi_invoice(
+    *,
+    units: List[Any],
+    payload: Dict[str, Any],
+    org_id: str,
+    combined_text: str,
+    agent_reasoning_fn: Optional[Callable[..., Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Run triage once per detected invoice and aggregate results.
+
+    Each unit gets its own AP item id (suffixed ``::split-N`` for
+    everything past the first) so downstream Box creation stays
+    unique. The splitter's pre-detected invoice number, when
+    present, is grafted onto the per-unit extraction as a fallback
+    for cases where Claude misses it on the sub-PDF.
+
+    Returns a dict shaped like the primary triage result with two
+    extra keys consumers can rely on:
+
+      - ``multi_invoice_results`` — list of every per-unit triage
+        result (length matches ``len(units)``). The caller iterates
+        and creates one AP item per entry.
+      - ``multi_invoice_count`` — same length as a number, for
+        quick inspection without enumerating.
+    """
+    results: List[Dict[str, Any]] = []
+    base_email_id = str(payload.get("email_id") or "unknown")
+
+    for idx, unit in enumerate(units):
+        sub_payload = dict(payload)
+        # Disambiguate AP item ids for fan-out beyond the primary so
+        # each invoice ends up in its own Box.
+        if idx > 0:
+            sub_payload["email_id"] = f"{base_email_id}::split-{idx}"
+
+        sub_result = await run_inline_gmail_triage(
+            payload=sub_payload,
+            org_id=org_id,
+            combined_text=combined_text,
+            attachments=list(unit.attachments),
+            agent_reasoning_fn=agent_reasoning_fn,
+            _is_subunit=True,
+        )
+
+        # Surface the splitter's pre-detected invoice number on the
+        # extraction when single-pass / multi-call missed it. The
+        # splitter saw the invoice header text on the boundary page
+        # — no reason to lose that signal.
+        hint = getattr(unit, "hint_invoice_number", None)
+        if hint and isinstance(sub_result, dict):
+            extraction = sub_result.get("extraction")
+            if isinstance(extraction, dict) and not extraction.get("invoice_number"):
+                extraction["invoice_number"] = hint
+
+        results.append(sub_result)
+
+    primary = dict(results[0]) if results else {
+        "email_id": base_email_id,
+        "action": "multi_invoice_empty",
+    }
+    primary["multi_invoice_results"] = results
+    primary["multi_invoice_count"] = len(results)
+    primary["multi_invoice_strategy"] = "splitter_fanout"
+    return primary
+
+
+def _emit_processing_mode_metric(
+    *,
+    trail: Any,
+    email_id: Optional[str],
+    mode: str,
+    elapsed_ms: int,
+) -> None:
+    """Emit a PROCESSING_MODE_METRIC audit event so operators can
+    compare single-pass vs multi-call latency over time.
+
+    Aggregation query (illustrative):
+      SELECT
+        payload_json->>'mode' AS mode,
+        AVG((payload_json->>'elapsed_ms')::int) AS avg_ms,
+        COUNT(*)
+      FROM audit_events
+      WHERE event_type = 'processing_mode_metric'
+        AND created_at > now() - interval '7 days'
+      GROUP BY mode
+
+    Failure to emit is non-fatal — the triage result is the
+    contract; telemetry is best-effort.
+    """
+    try:
+        trail.log(
+            invoice_id=email_id or "unknown",
+            event_type=AuditEventType.PROCESSING_MODE_METRIC,
+            summary=f"Triage completed via {mode} in {elapsed_ms}ms",
+            details={
+                "mode": mode,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception as exc:
+        logger.debug("[Triage] failed to emit processing_mode_metric: %s", exc)
+
+def _collect_attachment_text(attachments: List[Dict[str, Any]]) -> str:
+    """Concatenate any pre-extracted text from email attachments.
+
+    Each attachment dict may carry a ``content_text`` field set by
+    upstream OCR / parsing. We forward those to the single-pass call
+    as ``attachment_text`` so Claude has both the visual stream
+    (through vision) AND the plain-text stream (through the prompt).
+    Each excerpt is capped at 4000 chars and tagged with the
+    filename so Claude can correlate snippets back to their source
+    attachments. Returns "" when nothing usable is available.
+    """
+    if not isinstance(attachments, list):
+        return ""
+    chunks: List[str] = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        text = str(att.get("content_text") or "").strip()
+        if not text:
+            continue
+        # Cap individual excerpts so a single 200KB OCR dump doesn't
+        # blow the call's input-token budget.
+        if len(text) > 4000:
+            text = text[:4000] + " ...[truncated]"
+        name = str(att.get("filename") or att.get("name") or "attachment").strip() or "attachment"
+        chunks.append(f"--- {name} ---\n{text}")
+    return "\n\n".join(chunks)
+
+
+async def _try_single_pass(
+    payload: Dict[str, Any],
+    org_id: str,
+    attachments: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Attempt single-pass processing. Returns None if it fails."""
+    try:
+        from solden.services.single_pass_processor import process_invoice_single_pass
+        from solden.services.llm_email_parser import (
+            _build_vendor_context,
+            _build_thread_context,
+        )
+
+        vendor_context = _build_vendor_context(
+            payload.get("sender", ""),
+            payload.get("subject", ""),
+            org_id,
+        )
+        thread_context = _build_thread_context(
+            payload.get("thread_id"),
+            org_id,
+        ) if payload.get("thread_id") else ""
+
+        # Build recent invoices context for duplicate detection
+        recent_context = ""
+        try:
+            from solden.core.database import get_db
+            db = get_db()
+            recent = db.get_ap_items_by_vendor(org_id, payload.get("sender", "").split("@")[0], days=90, limit=5)
+            if recent:
+                lines = []
+                for r in recent[:3]:
+                    lines.append(
+                        f"  #{r.get('invoice_number', '?')} — {r.get('currency', 'USD')} {r.get('amount', 0)} — "
+                        f"state: {r.get('state', '?')} — date: {r.get('created_at', '?')[:10]}"
+                    )
+                recent_context = "\n".join(lines)
+        except Exception:
+            pass
+
+        # Determine if there are visual attachments
+        visual_atts = [
+            a for a in attachments
+            if any(t in str(a.get("mimeType") or a.get("content_type") or "").lower()
+                   for t in ("pdf", "image", "png", "jpeg", "jpg"))
+        ]
+
+        # Forward any pre-extracted attachment text (OCR'd PDFs, plain
+        # .txt attachments, etc.) into the single-pass call. The visual
+        # attachments above also get sent through Claude vision, which
+        # is intentional duplication — text-heavy invoices benefit from
+        # both signals.
+        attachment_text = _collect_attachment_text(attachments)
+
+        result = await process_invoice_single_pass(
+            subject=payload.get("subject", ""),
+            sender=payload.get("sender", ""),
+            body=payload.get("body") or payload.get("snippet") or "",
+            attachment_text=attachment_text,
+            has_visual_attachments=bool(visual_atts),
+            visual_attachments=visual_atts if visual_atts else None,
+            organization_id=org_id,
+            thread_id=payload.get("thread_id"),
+            vendor_context=vendor_context,
+            thread_context=thread_context,
+            recent_invoices_context=recent_context,
+        )
+
+        return result
+    except Exception as exc:
+        logger.debug("[Triage] Single-pass failed, falling back to multi-call: %s", exc)
+        return None
+
+
+def _format_single_pass_result(
+    sp: Dict[str, Any],
+    payload: Dict[str, Any],
+    org_id: str,
+) -> Dict[str, Any]:
+    """Convert single-pass result into the standard triage result format."""
+    from solden.services.document_routing import get_route
+
+    classification = sp.get("classification", {})
+    extraction = sp.get("extraction", {})
+    doc_type = classification.get("document_type", "invoice")
+    route = get_route(doc_type)
+
+    # Build standard triage result
+    result: Dict[str, Any] = {
+        "email_id": payload.get("email_id"),
+        "classification": {
+            "type": doc_type.upper(),
+            "confidence": classification.get("confidence", 0),
+            "reason": classification.get("reasoning", ""),
+            "method": "single_pass",
+        },
+        "extraction": extraction,
+        "processing_mode": "single_pass",
+        "api_calls": 1,
+    }
+
+    if route.auto_close:
+        result["action"] = "recorded"
+        result["document_type"] = doc_type
+        result["workflow"] = "auto_record"
+        result["reason"] = route.workflow_guidance
+        result["suggested_state"] = route.initial_state
+        result["creates_ap_item"] = route.creates_ap_item
+        result["needs_approval"] = route.needs_approval
+    else:
+        result["action"] = "processed"
+        result["document_type"] = doc_type
+        # Advisory intelligence only — APDecisionService owns the
+        # routing call. The deterministic fraud-control gates +
+        # DUPLICATE_EVALUATION action refine these single-pass hints
+        # downstream; consumers must not treat them as authoritative.
+        single_pass_hints = {
+            "gl_coding": sp.get("gl_coding", {}),
+            "duplicate_analysis": sp.get("duplicate_analysis", {}),
+            "risk_assessment": sp.get("risk_assessment", {}),
+        }
+        result["intelligence"] = single_pass_hints
+        # Mirror the hints under a dedicated key that the workflow's
+        # AP-decision call reads. ``intelligence`` is overwritten by
+        # ``gmail_extension_support.apply_intelligence`` on the sidebar
+        # path; ``single_pass_hints`` survives that overwrite so the
+        # downgrade-only consumer in ``APDecisionService.decide`` always
+        # sees the LLM advisory output when one was produced.
+        result["single_pass_hints"] = single_pass_hints
+        # Map single-pass fields to standard extraction fields
+        result["vendor"] = extraction.get("vendor")
+        result["amount"] = extraction.get("amount")
+        result["currency"] = extraction.get("currency")
+        result["invoice_number"] = extraction.get("invoice_number")
+        result["due_date"] = extraction.get("due_date")
+        result["confidence"] = extraction.get("overall_confidence", 0)
+        result["field_confidences"] = extraction.get("field_confidences", {})
+
+        # Run the canonical extraction-review gate against the
+        # single-pass output so the field-review blocker shape is
+        # consistent with the multi-call webhook path. Without this,
+        # single-pass-extracted invoices skip the critical-field
+        # confidence check that the multi-call extracted ones go
+        # through — a real gap that would let low-confidence
+        # single-pass output flow through to posting.
+        try:
+            from solden.core.ap_confidence import build_extraction_review_gate
+
+            amount_raw = extraction.get("amount")
+            try:
+                amount_for_gate = float(amount_raw) if amount_raw is not None else 0.0
+            except (TypeError, ValueError):
+                amount_for_gate = 0.0
+            gate = build_extraction_review_gate(
+                extraction=extraction,
+                amount=amount_for_gate,
+                currency=str(extraction.get("currency") or "USD"),
+                invoice_number=extraction.get("invoice_number"),
+                due_date=extraction.get("due_date"),
+                confidence=float(extraction.get("overall_confidence") or 0.0),
+            )
+            result["confidence_gate"] = gate
+            result["confidence_blockers"] = gate.get("confidence_blockers") or []
+            result["requires_field_review"] = bool(gate.get("requires_field_review"))
+        except Exception as exc:
+            # Failing closed: if the gate raises, treat the item as
+            # needing review rather than letting it through without
+            # a check. The webhook path already has the same fallback
+            # contract — never silently bypass field review.
+            logger.warning(
+                "[Triage] confidence-gate failed on single-pass result, "
+                "marking for field review: %s",
+                exc,
+            )
+            result["confidence_gate"] = {
+                "requires_field_review": True,
+                "error": str(exc),
+            }
+            result["confidence_blockers"] = []
+            result["requires_field_review"] = True
+
+    return result

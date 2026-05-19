@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from clearledgr.core.llm_gateway import (
+from solden.core.llm_gateway import (
     ACTION_REGISTRY,
     ActionConfig,
     LLMAction,

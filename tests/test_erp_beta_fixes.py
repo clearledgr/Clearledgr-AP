@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.integrations.erp_router import (
+from solden.core import database as db_module
+from solden.integrations.erp_router import (
     Bill,
     CreditApplication,
     ERPConnection,
@@ -205,7 +205,7 @@ def test_sap_preflight_passes_valid_bill():
     fake_client.post = AsyncMock(return_value=post_response)
     fake_client.get = AsyncMock(return_value=csrf_response)
 
-    with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=fake_client):
+    with patch("solden.integrations.erp_sap.get_http_client", return_value=fake_client):
         result = asyncio.run(post_bill_to_sap(conn, bill))
 
     assert result["status"] == "success"
@@ -240,10 +240,10 @@ def test_qb_token_refresh_retry_on_401(db):
 
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_post_bill_to_qb), \
-         patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_post_bill_to_qb), \
+         patch("solden.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = ERPConnection(
             type="quickbooks", access_token="old", refresh_token="rt", realm_id="123",
             client_id="cid", client_secret="csec",
@@ -266,10 +266,10 @@ def test_qb_token_refresh_failure_returns_original_error(db):
 
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_post_bill_to_qb), \
-         patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh_fail), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_post_bill_to_qb), \
+         patch("solden.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh_fail), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = ERPConnection(
             type="quickbooks", access_token="old", refresh_token="rt", realm_id="123",
             client_id="cid", client_secret="csec",
@@ -313,10 +313,10 @@ def test_quickbooks_credit_application_uses_native_vendor_credit_and_bill_paymen
         "doc_number": "BILL-100",
     }
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
-         patch("clearledgr.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_router.find_vendor_credit_quickbooks", AsyncMock(return_value=None)), \
-         patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
+         patch("solden.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
+         patch("solden.integrations.erp_router.find_vendor_credit_quickbooks", AsyncMock(return_value=None)), \
+         patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "org-test",
@@ -379,9 +379,9 @@ def test_quickbooks_settlement_uses_native_bill_payment_api():
         "doc_number": "BILL-200",
     }
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
-         patch("clearledgr.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
+         patch("solden.integrations.erp_router.get_bill_quickbooks", AsyncMock(return_value=bill_context)), \
+         patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "org-test",
@@ -417,8 +417,8 @@ def test_quickbooks_refund_settlement_stays_off_native_api():
         source_document_type="refund",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
-         patch("clearledgr.integrations.erp_quickbooks.get_http_client") as mock_client:
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_quickbooks_connection()), \
+         patch("solden.integrations.erp_quickbooks.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
@@ -449,10 +449,10 @@ def test_quickbooks_credit_application_refresh_retry_on_401(db):
         credit_note_number="VC-QB-401",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.apply_credit_note_to_quickbooks", side_effect=mock_apply_credit_to_qb), \
-         patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.apply_credit_note_to_quickbooks", side_effect=mock_apply_credit_to_qb), \
+         patch("solden.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _quickbooks_connection(access_token="old_qb_token")
         result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-qb-refresh"))
 
@@ -485,10 +485,10 @@ def test_quickbooks_settlement_refresh_retry_on_401(db):
         source_document_type="payment",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.apply_settlement_to_quickbooks", side_effect=mock_apply_settlement_to_qb), \
-         patch("clearledgr.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.apply_settlement_to_quickbooks", side_effect=mock_apply_settlement_to_qb), \
+         patch("solden.integrations.erp_router.refresh_quickbooks_token", side_effect=mock_refresh), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _quickbooks_connection(access_token="old_qb_token")
         result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-qb-refresh"))
 
@@ -538,8 +538,8 @@ def test_xero_credit_application_uses_native_allocation_api():
         credit_note_number="CN-100",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
+         patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "org-test",
@@ -587,8 +587,8 @@ def test_xero_settlement_uses_native_payment_api():
         source_document_type="receipt",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
+         patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "org-test",
@@ -618,8 +618,8 @@ def test_xero_refund_settlement_stays_off_native_api():
         source_document_type="refund",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
-         patch("clearledgr.integrations.erp_xero.get_http_client") as mock_client:
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_xero_connection()), \
+         patch("solden.integrations.erp_xero.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
@@ -650,10 +650,10 @@ def test_xero_credit_application_refresh_retry_on_401(db):
         credit_note_number="CN-401",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.apply_credit_note_to_xero", side_effect=mock_apply_credit_to_xero), \
-         patch("clearledgr.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.apply_credit_note_to_xero", side_effect=mock_apply_credit_to_xero), \
+         patch("solden.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _xero_connection(access_token="old_token")
         result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-refresh"))
 
@@ -686,10 +686,10 @@ def test_xero_settlement_refresh_retry_on_401(db):
         source_document_type="payment",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.apply_settlement_to_xero", side_effect=mock_apply_settlement_to_xero), \
-         patch("clearledgr.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
-         patch("clearledgr.integrations.erp_router.set_erp_connection") as mock_set:
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.apply_settlement_to_xero", side_effect=mock_apply_settlement_to_xero), \
+         patch("solden.integrations.erp_router.refresh_xero_token", side_effect=mock_refresh), \
+         patch("solden.integrations.erp_router.set_erp_connection") as mock_set:
         mock_get_conn.return_value = _xero_connection(access_token="old_token")
         result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-refresh"))
 
@@ -729,8 +729,8 @@ def test_netsuite_credit_application_uses_native_update_api():
         credit_note_number="VC-100",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
+         patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "org-test",
@@ -780,8 +780,8 @@ def test_netsuite_settlement_uses_native_vendor_payment_api():
         source_document_type="receipt",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
+         patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "org-test",
@@ -810,8 +810,8 @@ def test_netsuite_refund_settlement_stays_off_native_api():
         source_document_type="refund",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_netsuite.get_http_client") as mock_client:
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
+         patch("solden.integrations.erp_netsuite.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
@@ -836,8 +836,8 @@ def test_netsuite_credit_application_retry_on_401():
         credit_note_number="VC-401",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_router.apply_credit_note_to_netsuite", side_effect=mock_apply_credit_to_netsuite):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
+         patch("solden.integrations.erp_router.apply_credit_note_to_netsuite", side_effect=mock_apply_credit_to_netsuite):
         result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-ns-refresh"))
 
     assert result["status"] == "success"
@@ -862,8 +862,8 @@ def test_netsuite_settlement_retry_on_401():
         source_document_type="payment",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
-         patch("clearledgr.integrations.erp_router.apply_settlement_to_netsuite", side_effect=mock_apply_settlement_to_netsuite):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_netsuite_connection()), \
+         patch("solden.integrations.erp_router.apply_settlement_to_netsuite", side_effect=mock_apply_settlement_to_netsuite):
         result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-ns-refresh"))
 
     assert result["status"] == "success"
@@ -912,10 +912,10 @@ def test_sap_credit_application_uses_native_purchase_credit_note_api():
         ],
     }
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_router.find_credit_note_sap", AsyncMock(return_value=None)), \
-         patch("clearledgr.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
+         patch("solden.integrations.erp_router.find_credit_note_sap", AsyncMock(return_value=None)), \
+         patch("solden.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
+         patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_credit_note(
                 "org-test",
@@ -976,9 +976,9 @@ def test_sap_settlement_uses_native_vendor_payment_api():
         "document_lines": [],
     }
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
-         patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
+         patch("solden.integrations.erp_router.get_purchase_invoice_sap", AsyncMock(return_value=bill_context)), \
+         patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
         result = asyncio.run(
             apply_settlement(
                 "org-test",
@@ -1013,8 +1013,8 @@ def test_sap_refund_settlement_stays_off_native_api():
         source_document_type="refund",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_sap.get_http_client") as mock_client:
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
+         patch("solden.integrations.erp_sap.get_http_client") as mock_client:
         result = asyncio.run(apply_settlement("org-test", application))
 
     assert result["status"] == "error"
@@ -1039,8 +1039,8 @@ def test_sap_credit_application_retry_on_401():
         credit_note_number="CN-SAP-401",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_router.apply_credit_note_to_sap", side_effect=mock_apply_credit_to_sap):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
+         patch("solden.integrations.erp_router.apply_credit_note_to_sap", side_effect=mock_apply_credit_to_sap):
         result = asyncio.run(apply_credit_note("org-test", application, idempotency_key="idem-credit-sap-refresh"))
 
     assert result["status"] == "success"
@@ -1065,8 +1065,8 @@ def test_sap_settlement_retry_on_401():
         source_document_type="payment",
     )
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
-         patch("clearledgr.integrations.erp_router.apply_settlement_to_sap", side_effect=mock_apply_settlement_to_sap):
+    with patch("solden.integrations.erp_router.get_erp_connection", return_value=_sap_connection()), \
+         patch("solden.integrations.erp_router.apply_settlement_to_sap", side_effect=mock_apply_settlement_to_sap):
         result = asyncio.run(apply_settlement("org-test", application, idempotency_key="idem-settlement-sap-refresh"))
 
     assert result["status"] == "success"
@@ -1117,7 +1117,7 @@ def test_erp_connection_company_code_defaults_none():
 
 
 def test_redirect_path_rejects_double_slash():
-    from clearledgr.api.auth import _sanitize_redirect_path
+    from solden.api.auth import _sanitize_redirect_path
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc_info:
         _sanitize_redirect_path("//attacker.com/phishing")
@@ -1125,7 +1125,7 @@ def test_redirect_path_rejects_double_slash():
 
 
 def test_redirect_path_allows_valid_path():
-    from clearledgr.api.auth import _sanitize_redirect_path
+    from solden.api.auth import _sanitize_redirect_path
     assert _sanitize_redirect_path("/dashboard") == "/dashboard"
     assert _sanitize_redirect_path("/") == "/"
 
@@ -1142,7 +1142,7 @@ def test_post_bill_to_quickbooks_appends_requestid_query_param_for_idempotency()
     forwards it to Intuit's ``requestid`` query parameter (max 50
     chars), which QBO uses to dedupe.
     """
-    from clearledgr.integrations.erp_quickbooks import post_bill_to_quickbooks
+    from solden.integrations.erp_quickbooks import post_bill_to_quickbooks
 
     success_response = MagicMock()
     success_response.status_code = 200
@@ -1158,7 +1158,7 @@ def test_post_bill_to_quickbooks_appends_requestid_query_param_for_idempotency()
     )
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(post_bill_to_quickbooks(
             conn, bill, idempotency_key="auto:ap-99:erp_post",
         ))
@@ -1177,7 +1177,7 @@ def test_post_bill_to_xero_sends_idempotency_key_header():
     ``Idempotency-Key`` header (Xero's native dedupe mechanism).
     Pre-fix, the function ignored the kwarg entirely.
     """
-    from clearledgr.integrations.erp_xero import post_bill_to_xero
+    from solden.integrations.erp_xero import post_bill_to_xero
 
     success_response = MagicMock()
     success_response.status_code = 200
@@ -1197,7 +1197,7 @@ def test_post_bill_to_xero_sends_idempotency_key_header():
     )
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
         result = asyncio.run(post_bill_to_xero(
             conn, bill, idempotency_key="auto:ap-77:erp_post",
         ))
@@ -1218,7 +1218,7 @@ def test_post_bill_to_netsuite_returns_validation_failed_on_missing_vendor():
     returns ``netsuite_validation_failed`` with the same
     ``missing_fields`` list.
     """
-    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+    from solden.integrations.erp_netsuite import post_bill_to_netsuite
 
     # vendor_id missing on the bill
     bill = _make_bill(vendor_id="", amount=500.0, currency="USD")
@@ -1240,7 +1240,7 @@ def test_post_bill_to_netsuite_returns_validation_failed_on_missing_subsidiary_o
     """OneWorld tenants require a subsidiary on every Vendor Bill.
     Pre-fix, a missing subsidiary on a OneWorld connection silently
     posted to the wrong entity. Pre-flight now refuses."""
-    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+    from solden.integrations.erp_netsuite import post_bill_to_netsuite
 
     bill = _make_bill(vendor_id="V001", amount=500.0, currency="USD")
     conn = ERPConnection(
@@ -1265,7 +1265,7 @@ def test_post_bill_to_sap_b1_validates_currency_length():
     a missing/blank currency posted ``DocCurrency: ""`` and burned an
     API roundtrip on a generic 400. Now blocked at pre-flight with a
     structured ``missing_fields`` list."""
-    from clearledgr.integrations.erp_sap import post_bill_to_sap
+    from solden.integrations.erp_sap import post_bill_to_sap
 
     # currency is empty — should fail pre-flight
     bill = _make_bill(vendor_id="V001", amount=500.0)
@@ -1293,7 +1293,7 @@ def test_post_bill_to_quickbooks_does_not_leak_raw_response_body_on_non_json_err
     field now carries an opaque ``http_<status>_non_json_response``
     placeholder; the truncated body is logged at debug for ops.
     """
-    from clearledgr.integrations.erp_quickbooks import post_bill_to_quickbooks
+    from solden.integrations.erp_quickbooks import post_bill_to_quickbooks
     import httpx
 
     sensitive_body = (
@@ -1324,7 +1324,7 @@ def test_post_bill_to_quickbooks_does_not_leak_raw_response_body_on_non_json_err
     )
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+    with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
         result = asyncio.run(post_bill_to_quickbooks(conn, bill))
 
     assert result["status"] == "error"
@@ -1350,7 +1350,7 @@ def test_verify_bill_posted_returns_indeterminate_on_finder_exception(db):
     to manual reconciliation rather than treating an unverified
     post as confirmed.
     """
-    from clearledgr.integrations.erp_router import verify_bill_posted
+    from solden.integrations.erp_router import verify_bill_posted
 
     db.ensure_organization("org-test")
 
@@ -1358,9 +1358,9 @@ def test_verify_bill_posted_returns_indeterminate_on_finder_exception(db):
     async def exploding_finder(connection, invoice_number):
         raise RuntimeError("ERP API down")
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
          patch.dict(
-             "clearledgr.integrations.erp_router._BILL_FINDERS",
+             "solden.integrations.erp_router._BILL_FINDERS",
              {"quickbooks": exploding_finder},
          ):
         mock_get_conn.return_value = ERPConnection(
@@ -1386,7 +1386,7 @@ def test_decision_action_lock_fails_closed_on_persist_exception():
     the cost of one false-positive 'duplicate locked' is far less
     than the cost of a duplicate bill in the customer's ERP.
     """
-    from clearledgr.services.invoice_validation import InvoiceValidationMixin
+    from solden.services.invoice_validation import InvoiceValidationMixin
 
     svc = InvoiceValidationMixin.__new__(InvoiceValidationMixin)
     svc.organization_id = "org_lock_test"
@@ -1436,8 +1436,8 @@ def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
 
     bill = _make_bill()
 
-    with patch("clearledgr.integrations.erp_router.get_erp_connection") as mock_get_conn, \
-         patch("clearledgr.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_qb):
+    with patch("solden.integrations.erp_router.get_erp_connection") as mock_get_conn, \
+         patch("solden.integrations.erp_router.post_bill_to_quickbooks", side_effect=mock_qb):
         mock_get_conn.return_value = ERPConnection(
             type="quickbooks", access_token="tok", realm_id="123",
             client_id="cid", client_secret="csec",

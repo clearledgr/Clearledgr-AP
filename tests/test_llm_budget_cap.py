@@ -21,14 +21,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
-from clearledgr.core.llm_gateway import (
+from solden.core import database as db_module
+from solden.core.auth import TokenData
+from solden.core.llm_gateway import (
     LLMBudgetExceededError,
     LLMGateway,
     reset_llm_gateway,
 )
-from clearledgr.services.subscription import (
+from solden.services.subscription import (
     PlanLimits,
     PlanTier,
     get_subscription_service,
@@ -44,7 +44,7 @@ from clearledgr.services.subscription import (
 def db(tmp_path, monkeypatch):
     # SubscriptionService caches the DB reference at construction —
     # reset its singleton too so the per-test DB wins.
-    import clearledgr.services.subscription as _sub_mod
+    import solden.services.subscription as _sub_mod
     _sub_mod._subscription_service = None
     inst = db_module.get_db()
     inst.initialize()
@@ -203,10 +203,10 @@ class TestBudgetCapSideEffects:
 
     def test_pause_calls_alert_cs_team(self, gateway, db):
         # Patch at the defining module — llm_gateway imports alert_cs_team
-        # inside _trip_budget_cap via `from clearledgr.services.monitoring
+        # inside _trip_budget_cap via `from solden.services.monitoring
         # import alert_cs_team`, so the patch target is the defining module.
-        with patch("clearledgr.services.webhook_delivery.emit_webhook_event", AsyncMock()), \
-             patch("clearledgr.services.monitoring.alert_cs_team") as alert_mock, \
+        with patch("solden.services.webhook_delivery.emit_webhook_event", AsyncMock()), \
+             patch("solden.services.monitoring.alert_cs_team") as alert_mock, \
              patch.object(
                 get_subscription_service(),
                 "_get_llm_cost_this_month",
@@ -223,8 +223,8 @@ class TestBudgetCapSideEffects:
 
     def test_pause_emits_webhook_event(self, gateway, db):
         mock_emit = AsyncMock(return_value=0)
-        with patch("clearledgr.services.webhook_delivery.emit_webhook_event", mock_emit), \
-             patch("clearledgr.services.monitoring.alert_cs_team"), \
+        with patch("solden.services.webhook_delivery.emit_webhook_event", mock_emit), \
+             patch("solden.services.monitoring.alert_cs_team"), \
              patch.object(
                 get_subscription_service(),
                 "_get_llm_cost_this_month",
@@ -242,8 +242,8 @@ class TestBudgetCapSideEffects:
         assert payload.get("cap_usd") == 10.0
 
     def test_pause_appends_audit_event(self, gateway, db):
-        with patch("clearledgr.services.webhook_delivery.emit_webhook_event", AsyncMock()), \
-             patch("clearledgr.services.monitoring.alert_cs_team"), \
+        with patch("solden.services.webhook_delivery.emit_webhook_event", AsyncMock()), \
+             patch("solden.services.monitoring.alert_cs_team"), \
              patch.object(
                 get_subscription_service(),
                 "_get_llm_cost_this_month",
@@ -285,8 +285,8 @@ class TestBudgetCapSideEffects:
 
 def _make_test_client(db, *, role: str = "cfo", org_id: str = "budget-test-org"):
     from main import app
-    from clearledgr.api import workspace_shell as ws_module
-    from clearledgr.api import ops as ops_module
+    from solden.api import workspace_shell as ws_module
+    from solden.api import ops as ops_module
 
     def _fake_user():
         return TokenData(

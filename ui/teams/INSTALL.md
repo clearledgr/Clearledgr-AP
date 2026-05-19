@@ -205,7 +205,7 @@ the first time per tenant.
   `teams_invoices` — every interactive callback writes one structured
   log line per audit_event emitted.
 - JWT verifier failures: 401s logged at WARNING level in
-  `clearledgr.core.teams_verify`. Common cause: stale env after a
+  `solden.core.teams_verify`. Common cause: stale env after a
   Bot Framework key rotation (5-min cache + stale-fallback handles
   most cases automatically).
 - Card-update failures: enqueued for retry via

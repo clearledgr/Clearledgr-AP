@@ -53,7 +53,7 @@ def reset_shared_http_client():
     """Drop the cached shared httpx.AsyncClient between tests.
 
     Many tests monkey-patch ``httpx.AsyncClient`` (via module-alias
-    patches like ``clearledgr.integrations.erp_router.httpx.AsyncClient``)
+    patches like ``solden.integrations.erp_router.httpx.AsyncClient``)
     to inject mocks for outbound HTTP calls. The shared-client module
     caches one AsyncClient instance for the process lifetime; if that
     cache got populated before the patch (either by production import
@@ -62,7 +62,7 @@ def reset_shared_http_client():
     test means the next ``get_http_client()`` call hits the patched
     constructor and the mock intercepts.
     """
-    from clearledgr.core.http_client import _reset_for_testing
+    from solden.core.http_client import _reset_for_testing
     _reset_for_testing()
     yield
     _reset_for_testing()
@@ -77,7 +77,7 @@ def reset_rate_limit_store():
     single process hits the 100-request limit mid-run and causes 429 errors
     in later tests.
     """
-    from clearledgr.services.rate_limit import _rate_limit_store
+    from solden.services.rate_limit import _rate_limit_store
 
     _rate_limit_store.clear()
     yield
@@ -100,22 +100,22 @@ def reset_service_singletons():
     yield
     if _TEST_DB_ENGINE != "postgres":
         try:
-            import clearledgr.core.database as _db_mod
+            import solden.core.database as _db_mod
             _db_mod._DB_INSTANCE = None
         except Exception:
             pass
     try:
-        from clearledgr.services.gl_correction import _gl_correction_services
+        from solden.services.gl_correction import _gl_correction_services
         _gl_correction_services.clear()
     except Exception:
         pass
     try:
-        from clearledgr.services.agent_memory import _agent_memory_services
+        from solden.services.agent_memory import _agent_memory_services
         _agent_memory_services.clear()
     except Exception:
         pass
     try:
-        from clearledgr.services.finance_learning import _finance_learning_services
+        from solden.services.finance_learning import _finance_learning_services
         _finance_learning_services.clear()
     except Exception:
         pass
@@ -124,7 +124,7 @@ def reset_service_singletons():
     # stayed alive from an earlier test, it would keep writing to the old
     # DB. Cheap to reset; matches the other singletons already cleared here.
     try:
-        import clearledgr.services.subscription as _sub_mod
+        import solden.services.subscription as _sub_mod
         _sub_mod._subscription_service = None
     except Exception:
         pass
@@ -218,7 +218,7 @@ def postgres_test_db():
 
     # Reset the DB singleton so the next `get_db()` reads the new URL,
     # then initialize so migrations run against the fresh Postgres.
-    import clearledgr.core.database as _db_mod
+    import solden.core.database as _db_mod
     _db_mod._DB_INSTANCE = None
     _db_mod.get_db().initialize()
 
@@ -439,7 +439,7 @@ _HandlerFn = "callable"
 def mock_http(monkeypatch):
     """Swap the shared async client for a MockTransport. Opt-in."""
     import httpx as _httpx
-    from clearledgr.core import http_client as _http_client_mod
+    from solden.core import http_client as _http_client_mod
 
     helper = HttpMock()
 

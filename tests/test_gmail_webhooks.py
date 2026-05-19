@@ -1,4 +1,4 @@
-"""Tests for clearledgr.api.gmail_webhooks — Pub/Sub validation and OAuth state."""
+"""Tests for solden.api.gmail_webhooks — Pub/Sub validation and OAuth state."""
 
 import base64
 import hashlib
@@ -9,8 +9,8 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from clearledgr.api import workspace_shell as workspace_shell_module
-from clearledgr.api.gmail_webhooks import (
+from solden.api import workspace_shell as workspace_shell_module
+from solden.api.gmail_webhooks import (
     _validate_push_payload,
     _unsign_oauth_state,
     _resolve_user_org_id,
@@ -324,7 +324,7 @@ class TestResolveUserOrgId:
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.return_value = {"organization_id": "acme-corp"}
-        with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
+        with patch("solden.api.gmail_webhooks.get_db", return_value=mock_db):
             assert _resolve_user_org_id("user@test.com") == "acme-corp"
 
     def test_returns_unprovisioned_sentinel_on_missing_user(self, monkeypatch):
@@ -335,7 +335,7 @@ class TestResolveUserOrgId:
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.return_value = None
-        with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
+        with patch("solden.api.gmail_webhooks.get_db", return_value=mock_db):
             assert _resolve_user_org_id("unknown@test.com") == "_unprovisioned"
 
     def test_returns_unprovisioned_sentinel_on_db_error(self, monkeypatch):
@@ -344,7 +344,7 @@ class TestResolveUserOrgId:
         from unittest.mock import MagicMock, patch
         mock_db = MagicMock()
         mock_db.get_user.side_effect = Exception("DB down")
-        with patch("clearledgr.api.gmail_webhooks.get_db", return_value=mock_db):
+        with patch("solden.api.gmail_webhooks.get_db", return_value=mock_db):
             assert _resolve_user_org_id("user@test.com") == "_unprovisioned"
 
 

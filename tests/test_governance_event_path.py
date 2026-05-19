@@ -28,11 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.coordination_engine import CoordinationEngine  # noqa: E402
-from clearledgr.core.plan import Action, Plan  # noqa: E402
-from clearledgr.services import finance_agent_runtime as far  # noqa: E402
-from clearledgr.services.finance_agent_governance import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.coordination_engine import CoordinationEngine  # noqa: E402
+from solden.core.plan import Action, Plan  # noqa: E402
+from solden.services import finance_agent_runtime as far  # noqa: E402
+from solden.services.finance_agent_governance import (  # noqa: E402
     _RISKY_ACTIONS,
     evaluate_doctrine,
 )
@@ -289,7 +289,7 @@ class TestEngineGovernanceGate:
             }
 
         with patch(
-            "clearledgr.services.finance_agent_governance.build_deliberation",
+            "solden.services.finance_agent_governance.build_deliberation",
             side_effect=fake_build_deliberation,
         ):
             verdict = engine._evaluate_governance_for_action(action, plan)
@@ -393,7 +393,7 @@ class TestEngineGovernanceGate:
     def test_all_listed_risky_actions_are_in_governance_risky_set(self):
         """Drift fence: the engine's gated-action map must use action
         tokens the governance module actually treats as risky."""
-        from clearledgr.core.coordination_engine import _GOVERNANCE_GATED_ACTIONS
+        from solden.core.coordination_engine import _GOVERNANCE_GATED_ACTIONS
 
         for engine_action, governance_token in _GOVERNANCE_GATED_ACTIONS.items():
             assert governance_token in _RISKY_ACTIONS, (

@@ -19,14 +19,14 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from clearledgr.services.specialist_agent import (
+from solden.services.specialist_agent import (
     SPECIALIST_STATUS_ERROR,
     SPECIALIST_STATUS_OK,
     SPECIALIST_STATUS_UNROUTED,
     SpecialistAgent,
     SpecialistResult,
 )
-from clearledgr.services.specialist_router import SpecialistRouter
+from solden.services.specialist_router import SpecialistRouter
 
 
 # ─── Fakes ─────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ def test_router_intent_collision_logs_warning_and_last_wins(caplog):
     test passes in isolation and under full-suite ordering.
     """
     import logging as _logging
-    target_logger = _logging.getLogger("clearledgr.services.specialist_router")
+    target_logger = _logging.getLogger("solden.services.specialist_router")
     prior_level = target_logger.level
     prior_propagate = target_logger.propagate
     target_logger.setLevel(_logging.WARNING)
@@ -265,7 +265,7 @@ def test_router_intent_collision_logs_warning_and_last_wins(caplog):
     router.register(a)
     try:
         caplog.set_level(_logging.WARNING,
-                         logger="clearledgr.services.specialist_router")
+                         logger="solden.services.specialist_router")
         router.register(b)
         assert any("shared_intent" in record.message for record in caplog.records)
     finally:
@@ -307,7 +307,7 @@ def runtime(db):
     Uses the existing test-db fixture so the runtime can construct
     its own DB handle.
     """
-    from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+    from solden.services.finance_agent_runtime import FinanceAgentRuntime
     db.ensure_organization("org-specialist", organization_name="X")
     return FinanceAgentRuntime(
         organization_id="org-specialist",
@@ -318,7 +318,7 @@ def runtime(db):
 
 @pytest.fixture()
 def db():
-    from clearledgr.core import database as db_module
+    from solden.core import database as db_module
     inst = db_module.get_db()
     inst.initialize()
     return inst

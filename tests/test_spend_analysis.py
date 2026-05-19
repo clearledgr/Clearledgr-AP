@@ -14,9 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from clearledgr.api import workspace_shell as workspace_shell_module
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
+from solden.api import workspace_shell as workspace_shell_module
+from solden.core import database as db_module
+from solden.core.auth import TokenData
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ def _create_posted_item(db, item_id, vendor, amount, days_ago=5, gl_code=None):
 class TestSpendAnalysisService:
 
     def test_analyze_returns_all_keys(self, db):
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         result = svc.analyze(period_days=30)
         assert result["organization_id"] == "org-test"
@@ -104,7 +104,7 @@ class TestSpendAnalysisService:
 
     def test_analyze_empty_org(self, db):
         """No AP items -> empty lists and zero totals."""
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         result = svc.analyze(30)
         assert result["summary"]["total_spend"] == 0.0
@@ -116,7 +116,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-2", "Acme Corp", 3000.0, days_ago=3)
         _create_posted_item(db, "SA-3", "Globex Inc", 2000.0, days_ago=4)
 
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         top = svc._top_vendors_by_spend(30)
         assert len(top) == 2
@@ -141,7 +141,7 @@ class TestSpendAnalysisService:
             "state": "needs_approval",
             "organization_id": "org-test",
         })
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         top = svc._top_vendors_by_spend(30)
         vendor_names = [v["vendor_name"] for v in top]
@@ -154,7 +154,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-GL-3", "Vendor C", 500.0, gl_code="6100")
         _create_posted_item(db, "SA-GL-4", "Vendor D", 300.0)  # no GL
 
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         gl = svc._spend_by_gl_category(30)
         gl_map = {item["gl_code"]: item["total_spend"] for item in gl}
@@ -163,7 +163,7 @@ class TestSpendAnalysisService:
         assert gl_map["unclassified"] == 300.0
 
     def test_monthly_trends_returns_six_months(self, db):
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         trends = svc._monthly_trends(months=6)
         assert len(trends) == 6
@@ -178,7 +178,7 @@ class TestSpendAnalysisService:
         _create_posted_item(db, "SA-SUM-1", "Vendor X", 1000.0, days_ago=5)
         _create_posted_item(db, "SA-SUM-2", "Vendor Y", 2500.0, days_ago=3)
 
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         summary = svc._build_summary(30)
         assert summary["total_spend"] == 3500.0
@@ -189,7 +189,7 @@ class TestSpendAnalysisService:
         """A vendor with spend only in the current period is flagged as new."""
         _create_posted_item(db, "SA-ANOM-1", "Brand New Corp", 5000.0, days_ago=3)
 
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         anomalies = svc._detect_portfolio_anomalies(15)
         new_vendor_anomalies = [a for a in anomalies if a["type"] == "new_vendor"]
@@ -198,7 +198,7 @@ class TestSpendAnalysisService:
 
     def test_analyze_never_raises(self, db):
         """Even with a broken DB, analyze returns a dict, not an exception."""
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         # Force the whole _build_summary to raise (simulates catastrophic failure)
         with patch.object(svc, "_build_summary", side_effect=RuntimeError("DB gone")):
@@ -214,10 +214,10 @@ class TestSpendAnalysisService:
         mock_service = MagicMock()
         mock_service.get_report.return_value = mock_report
 
-        from clearledgr.services.spend_analysis import SpendAnalysisService
+        from solden.services.spend_analysis import SpendAnalysisService
         svc = SpendAnalysisService("org-test")
         with patch(
-            "clearledgr.services.budget_awareness.get_budget_awareness",
+            "solden.services.budget_awareness.get_budget_awareness",
             return_value=mock_service,
         ):
             util = svc._budget_utilization()

@@ -13,7 +13,7 @@ RUNTIME_FILES = (
 )
 
 FORBIDDEN_TOKENS = (
-    "from clearledgr.services.agent_orchestrator import get_orchestrator",
+    "from solden.services.agent_orchestrator import get_orchestrator",
     "get_orchestrator(",
 )
 

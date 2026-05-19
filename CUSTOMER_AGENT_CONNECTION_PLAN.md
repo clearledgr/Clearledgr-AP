@@ -350,7 +350,7 @@ typed exception handler that emits the audit row and returns 429.
   an org has many keys distributed across teams.
 - Backend: Redis when `REDIS_URL` is set (shared across workers),
   otherwise per-process in-memory (dev/test). Mirrors
-  `clearledgr.services.rate_limit`. Fails open on Redis errors
+  `solden.services.rate_limit`. Fails open on Redis errors
   matching the existing contract.
 - Limit-breach response: HTTP 429 with `Retry-After` header + typed
   error envelope (`error_code: rate_limit_exceeded`, scope, limit,

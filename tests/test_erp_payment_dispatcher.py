@@ -35,9 +35,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services import erp_payment_dispatcher as dispatcher  # noqa: E402
-from clearledgr.services.erp_payment_dispatcher import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services import erp_payment_dispatcher as dispatcher  # noqa: E402
+from solden.services.erp_payment_dispatcher import (  # noqa: E402
     dispatch_netsuite_payment_webhook,
     dispatch_quickbooks_payment_webhook,
     dispatch_xero_payment_webhook,
@@ -143,14 +143,14 @@ async def test_qb_dispatch_records_confirmation_end_to_end(db):
         dispatcher, "_fetch_qb_bill_payment_to_events",
         wraps=dispatcher._fetch_qb_bill_payment_to_events,
     ), patch(
-        "clearledgr.services.erp_payment_dispatcher.get_erp_connection",
+        "solden.services.erp_payment_dispatcher.get_erp_connection",
         return_value=fake_connection,
         create=True,
     ) if False else patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
+        "solden.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
@@ -194,10 +194,10 @@ async def test_qb_dispatch_voided_billpayment_marks_failed(db):
     })
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
+        "solden.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
@@ -238,10 +238,10 @@ async def test_qb_dispatch_multi_linked_bills_emits_one_event_each(db):
         "voided": False,
     })
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
+        "solden.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
         new=fake_fetch,
     ):
         result = await dispatch_quickbooks_payment_webhook(
@@ -276,10 +276,10 @@ async def test_qb_dispatch_redelivery_idempotent(db):
         "voided": False,
     })
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
+        "solden.integrations.erp_quickbooks.fetch_quickbooks_bill_payment",
         new=fake_fetch,
     ):
         first = await dispatch_quickbooks_payment_webhook(
@@ -347,10 +347,10 @@ async def test_xero_dispatch_records_paid_invoice(db):
         "remaining_balance": 0.0,
     })
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_xero.get_payment_status_xero",
+        "solden.integrations.erp_xero.get_payment_status_xero",
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(
@@ -378,10 +378,10 @@ async def test_xero_dispatch_unpaid_invoice_no_event(db):
     })()
     fake_status = AsyncMock(return_value={"paid": False, "reason": "unpaid"})
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_xero.get_payment_status_xero",
+        "solden.integrations.erp_xero.get_payment_status_xero",
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(
@@ -410,10 +410,10 @@ async def test_xero_dispatch_voided_payment_records_failure(db):
         "reason": "payment_voided_or_deleted",
     })
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=fake_connection,
     ), patch(
-        "clearledgr.integrations.erp_xero.get_payment_status_xero",
+        "solden.integrations.erp_xero.get_payment_status_xero",
         new=fake_status,
     ):
         result = await dispatch_xero_payment_webhook(

@@ -3,7 +3,7 @@
 Tests the composition layer (``build_invite_email``) directly,
 and the send-and-translate layer (``send_team_invite_email``) by
 mocking ``send_transactional_email``. The helper is module-local
-to clearledgr.services so these tests don't pull in the
+to solden.services so these tests don't pull in the
 workspace_shell → core.auth → core.database → psycopg chain.
 """
 
@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from clearledgr.services import team_invite_email as tie_module
-from clearledgr.services.team_invite_email import (
+from solden.services import team_invite_email as tie_module
+from solden.services.team_invite_email import (
     build_invite_email,
     send_team_invite_email,
 )
-from clearledgr.services.transactional_email import EmailDeliveryResult
+from solden.services.transactional_email import EmailDeliveryResult
 
 
 # ─── build_invite_email: pure composition ──────────────────────────

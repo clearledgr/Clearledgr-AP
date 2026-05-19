@@ -12,6 +12,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "celery -A clearledgr.services.celery_app beat -l info"
+startCommand = "celery -A solden.services.celery_app beat -l info"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

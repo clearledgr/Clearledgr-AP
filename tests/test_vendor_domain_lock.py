@@ -34,42 +34,42 @@ import pytest
 class TestExtractSenderDomain:
 
     def test_bare_email(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("billing@acme.com") == "acme.com"
 
     def test_with_display_name(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("Acme Corp <billing@acme.com>") == "acme.com"
 
     def test_with_quoted_display_name(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert (
             extract_sender_domain('"Acme Corp" <billing@acme.com>') == "acme.com"
         )
 
     def test_uppercase_normalized(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("BILLING@ACME.COM") == "acme.com"
 
     def test_subdomain_preserved(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("ap@billing.acme.com") == "billing.acme.com"
 
     def test_whitespace_stripped(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("  billing@acme.com  ") == "acme.com"
 
     def test_empty_and_none(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("") == ""
         assert extract_sender_domain(None) == ""
 
     def test_no_at_sign(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         assert extract_sender_domain("not-an-email") == ""
 
     def test_strips_display_injection(self):
-        from clearledgr.services.vendor_domain_lock import extract_sender_domain
+        from solden.services.vendor_domain_lock import extract_sender_domain
         # Chars that can't appear in a valid DNS label get stripped
         assert (
             extract_sender_domain("billing@acme.com;evil=1") == "acme.comevil1"
@@ -79,64 +79,64 @@ class TestExtractSenderDomain:
 class TestIsPaymentProcessor:
 
     def test_known_processor(self):
-        from clearledgr.services.vendor_domain_lock import is_payment_processor
+        from solden.services.vendor_domain_lock import is_payment_processor
         assert is_payment_processor("stripe.com") is True
         assert is_payment_processor("paypal.com") is True
         assert is_payment_processor("bill.com") is True
 
     def test_processor_subdomain(self):
-        from clearledgr.services.vendor_domain_lock import is_payment_processor
+        from solden.services.vendor_domain_lock import is_payment_processor
         assert is_payment_processor("mail.stripe.com") is True
 
     def test_not_a_processor(self):
-        from clearledgr.services.vendor_domain_lock import is_payment_processor
+        from solden.services.vendor_domain_lock import is_payment_processor
         assert is_payment_processor("acme.com") is False
 
     def test_empty(self):
-        from clearledgr.services.vendor_domain_lock import is_payment_processor
+        from solden.services.vendor_domain_lock import is_payment_processor
         assert is_payment_processor("") is False
 
 
 class TestDomainMatchesAllowlist:
 
     def test_exact_match(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("acme.com", ["acme.com"]) is True
 
     def test_subdomain_match(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("billing.acme.com", ["acme.com"]) is True
         assert domain_matches_allowlist("ap.billing.acme.com", ["acme.com"]) is True
 
     def test_fake_prefix_rejected(self):
         """fake-acme.com must NOT match acme.com — the distinctive
         security property of dot-boundary suffix matching."""
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("fake-acme.com", ["acme.com"]) is False
         assert domain_matches_allowlist("notacme.com", ["acme.com"]) is False
 
     def test_fake_suffix_rejected(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("acme.com.evil", ["acme.com"]) is False
 
     def test_case_insensitive(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("ACME.COM", ["acme.com"]) is True
         assert domain_matches_allowlist("acme.com", ["ACME.COM"]) is True
 
     def test_multi_entry_allowlist(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         allowlist = ["acme.com", "acme.io", "acme-trading.co.uk"]
         assert domain_matches_allowlist("acme.io", allowlist) is True
         assert domain_matches_allowlist("billing.acme-trading.co.uk", allowlist) is True
         assert domain_matches_allowlist("unknown.com", allowlist) is False
 
     def test_empty_allowlist_no_match(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("acme.com", []) is False
 
     def test_empty_sender_no_match(self):
-        from clearledgr.services.vendor_domain_lock import domain_matches_allowlist
+        from solden.services.vendor_domain_lock import domain_matches_allowlist
         assert domain_matches_allowlist("", ["acme.com"]) is False
 
 
@@ -147,8 +147,8 @@ class TestDomainMatchesAllowlist:
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -234,7 +234,7 @@ class TestVendorStoreTrustedDomains:
 class TestVendorDomainLockService:
 
     def _svc(self, db):
-        from clearledgr.services.vendor_domain_lock import (
+        from solden.services.vendor_domain_lock import (
             VendorDomainLockService,
         )
         return VendorDomainLockService("org_t", db=db)
@@ -397,7 +397,7 @@ class TestValidationGateDomainLock:
         )
 
     def _make_invoice(self, sender="billing@acme.com"):
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_models import InvoiceData
         return InvoiceData(
             gmail_id="gmail-domain-test",
             subject="Invoice",
@@ -418,7 +418,7 @@ class TestValidationGateDomainLock:
         )
 
     def test_matching_domain_no_block(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         self._seed_fully(tmp_db, domains=["acme.com"])
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(sender="billing@acme.com")
@@ -426,7 +426,7 @@ class TestValidationGateDomainLock:
         assert "vendor_sender_domain_mismatch" not in gate["reason_codes"]
 
     def test_mismatching_domain_blocks(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         self._seed_fully(tmp_db, domains=["acme.com"])
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(sender="billing@fake-acme.com")
@@ -443,7 +443,7 @@ class TestValidationGateDomainLock:
     def test_bootstrap_no_block_when_no_known_domains(self, tmp_db):
         """Vendors with no known domains yet are protected by
         first-payment-hold, not by the domain lock."""
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         self._seed_fully(tmp_db, domains=[])
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(sender="billing@anywhere.com")
@@ -451,7 +451,7 @@ class TestValidationGateDomainLock:
         assert "vendor_sender_domain_mismatch" not in gate["reason_codes"]
 
     def test_processor_bypass_no_block(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         self._seed_fully(tmp_db, domains=["acme.com"])
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(sender="invoice@stripe.com")
@@ -459,7 +459,7 @@ class TestValidationGateDomainLock:
         assert "vendor_sender_domain_mismatch" not in gate["reason_codes"]
 
     def test_subdomain_matches_no_block(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         self._seed_fully(tmp_db, domains=["acme.com"])
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(sender="ap@billing.acme.com")
@@ -475,7 +475,7 @@ class TestValidationGateDomainLock:
 class TestVendorDomainTrackingObserver:
 
     def _make_event(self, **overrides):
-        from clearledgr.services.state_observers import StateTransitionEvent
+        from solden.services.state_observers import StateTransitionEvent
         defaults = dict(
             ap_item_id="AP-OBS-1",
             organization_id="org_t",
@@ -505,14 +505,14 @@ class TestVendorDomainTrackingObserver:
         db.upsert_vendor_profile("org_t", vendor, invoice_count=1)
 
     def test_observer_records_domain_on_first_post(self, tmp_db):
-        from clearledgr.services.state_observers import VendorDomainTrackingObserver
+        from solden.services.state_observers import VendorDomainTrackingObserver
         self._seed_posted_item(tmp_db)
         observer = VendorDomainTrackingObserver(tmp_db)
         asyncio.run(observer.on_transition(self._make_event()))
         assert tmp_db.get_trusted_sender_domains("org_t", "Acme") == ["acme.com"]
 
     def test_observer_skips_when_domain_already_known(self, tmp_db):
-        from clearledgr.services.state_observers import VendorDomainTrackingObserver
+        from solden.services.state_observers import VendorDomainTrackingObserver
         tmp_db.create_organization("org_t", name="X")
         tmp_db.upsert_vendor_profile(
             "org_t", "Acme", invoice_count=5, sender_domains=["acme.com"]
@@ -535,7 +535,7 @@ class TestVendorDomainTrackingObserver:
         assert tmp_db.get_trusted_sender_domains("org_t", "Acme") == ["acme.com"]
 
     def test_observer_skips_non_posted_state(self, tmp_db):
-        from clearledgr.services.state_observers import VendorDomainTrackingObserver
+        from solden.services.state_observers import VendorDomainTrackingObserver
         self._seed_posted_item(tmp_db)
         observer = VendorDomainTrackingObserver(tmp_db)
         asyncio.run(
@@ -544,7 +544,7 @@ class TestVendorDomainTrackingObserver:
         assert tmp_db.get_trusted_sender_domains("org_t", "Acme") == []
 
     def test_observer_skips_processor_sender(self, tmp_db):
-        from clearledgr.services.state_observers import VendorDomainTrackingObserver
+        from solden.services.state_observers import VendorDomainTrackingObserver
         self._seed_posted_item(tmp_db, sender="invoice@stripe.com")
         observer = VendorDomainTrackingObserver(tmp_db)
         asyncio.run(observer.on_transition(self._make_event()))
@@ -562,8 +562,8 @@ class TestVendorTrustedDomainsAPI:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
         import main
 
         db = get_db()
@@ -574,7 +574,7 @@ class TestVendorTrustedDomainsAPI:
         yield client, main, db
 
     def _override_user(self, main, role: str, org_id: str = "org_t"):
-        from clearledgr.core.auth import (
+        from solden.core.auth import (
             TokenData,
             get_current_user,
             require_cfo,
@@ -647,7 +647,7 @@ class TestVendorTrustedDomainsAPI:
         """
         client, main, db = app_client
         _seed_vendor(db)
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
         from datetime import datetime, timezone
 
         def _user():

@@ -8,8 +8,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
-from clearledgr.api import agent_intents, ap_items, gmail_extension
-from clearledgr.core.auth import TokenData, get_current_user, has_ops_access, require_ops_user
+from solden.api import agent_intents, ap_items, gmail_extension
+from solden.core.auth import TokenData, get_current_user, has_ops_access, require_ops_user
 
 
 OPS_MUTATION_ROUTES = {

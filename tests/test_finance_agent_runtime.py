@@ -6,7 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from solden.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 class _FakeDB:
@@ -714,7 +714,7 @@ def test_preview_route_low_risk_for_approval_returns_precheck():
         "reason_codes": [],
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = runtime.preview_intent(
             "route_low_risk_for_approval",
             {"email_id": "gmail-thread-route-1"},
@@ -737,7 +737,7 @@ def test_execute_route_low_risk_for_approval_success_and_idempotent_replay():
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.10"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         first = asyncio.run(
             runtime.execute_intent(
                 "route_low_risk_for_approval",
@@ -777,7 +777,7 @@ def test_execute_route_low_risk_for_approval_returns_success_when_audit_append_f
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.13"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
             result = asyncio.run(
                 runtime.execute_intent(
@@ -799,7 +799,7 @@ def test_execute_request_approval_falls_back_to_email_reference_when_ap_item_id_
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.10"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "request_approval",
@@ -824,7 +824,7 @@ def test_execute_request_approval_uses_resolved_email_reference_when_invoice_gma
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.11"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "request_approval",
@@ -849,7 +849,7 @@ def test_execute_request_approval_returns_success_when_audit_append_fails():
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.12"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
             result = asyncio.run(
                 runtime.execute_intent(
@@ -876,7 +876,7 @@ def test_execute_request_approval_blocks_until_entity_route_is_resolved():
     ]
     workflow = MagicMock()
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "request_approval",
@@ -911,7 +911,7 @@ def test_execute_request_approval_blocks_until_org_entity_rules_are_resolved():
     runtime = _runtime(db)
     workflow = MagicMock()
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "request_approval",
@@ -935,7 +935,7 @@ def test_execute_route_low_risk_for_approval_blocks_field_review_precheck():
         "blocked_fields": ["amount"],
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "route_low_risk_for_approval",
@@ -960,7 +960,7 @@ def test_execute_route_low_risk_for_approval_blocks_unvalidated_items_explicitly
         "state": "received",
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "route_low_risk_for_approval",
@@ -988,8 +988,8 @@ def test_execute_escalate_approval_updates_followup_metadata():
             "email_id": payload.get("email_id"),
         }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
             result = asyncio.run(
                 runtime.execute_intent(
                     "escalate_approval",
@@ -1020,8 +1020,8 @@ def test_execute_escalate_approval_dedupes_without_incrementing_followup_metadat
             "thread_ts": "170.123",
         }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
             result = asyncio.run(
                 runtime.execute_intent(
                     "escalate_approval",
@@ -1049,8 +1049,8 @@ def test_execute_escalate_approval_returns_success_when_audit_append_fails():
             "email_id": payload.get("email_id"),
         }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.workflows.gmail_activities.send_slack_notification_activity", _fake_send):
             with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
                 result = asyncio.run(
                     runtime.execute_intent(
@@ -1077,15 +1077,15 @@ def test_execute_nudge_approval_falls_back_without_slack_thread():
     )
     workflow = MagicMock()
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
             resolve_runtime.return_value = {
                 "connected": True,
                 "approval_channel": "cl-finance-ap",
                 "source": "shared_env",
             }
             with patch(
-                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                "solden.services.finance_skills.ap_skill.send_approval_reminder",
                 AsyncMock(return_value=True),
             ) as send_reminder:
                 result = asyncio.run(
@@ -1123,15 +1123,15 @@ def test_execute_nudge_approval_returns_success_when_audit_append_fails():
     )
     workflow = MagicMock()
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
             resolve_runtime.return_value = {
                 "connected": True,
                 "approval_channel": "cl-finance-ap",
                 "source": "shared_env",
             }
             with patch(
-                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                "solden.services.finance_skills.ap_skill.send_approval_reminder",
                 AsyncMock(return_value=True),
             ):
                 with patch.object(runtime, "append_runtime_audit", side_effect=RuntimeError("audit_locked")):
@@ -1161,15 +1161,15 @@ def test_execute_nudge_approval_reports_slack_not_connected():
     )
     workflow = MagicMock()
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
-        with patch("clearledgr.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+        with patch("solden.services.finance_skills.ap_skill.resolve_slack_runtime") as resolve_runtime:
             resolve_runtime.return_value = {
                 "connected": False,
                 "approval_channel": "cl-finance-ap",
                 "source": "shared_env_unconfigured",
             }
             with patch(
-                "clearledgr.services.finance_skills.ap_skill.send_approval_reminder",
+                "solden.services.finance_skills.ap_skill.send_approval_reminder",
                 AsyncMock(return_value=False),
             ):
                 result = asyncio.run(
@@ -1201,7 +1201,7 @@ def test_execute_reassign_approval_updates_pending_approver_and_chain():
         send_message=AsyncMock(return_value=SimpleNamespace(channel="C123", thread_ts="171.99", ts="171.100"))
     )
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "reassign_approval",
@@ -1236,7 +1236,7 @@ def test_execute_route_low_risk_for_approval_blocks_autonomous_mode_when_vendor_
         "metrics": {"ap_kpis": db.get_ap_kpis("org-test")},
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         with patch.object(runtime, "skill_readiness", return_value=readiness):
             result = asyncio.run(
                 runtime.execute_intent(
@@ -1275,7 +1275,7 @@ def test_execute_post_to_erp_blocked_by_field_review_precheck():
         ],
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "post_to_erp",
@@ -1301,7 +1301,7 @@ def test_execute_retry_recoverable_failures_blocked_by_precheck():
         "state": "failed_post",
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_intent(
                 "retry_recoverable_failures",
@@ -1327,7 +1327,7 @@ def test_execute_retry_recoverable_failures_success_and_replay():
     }
     workflow.resume_workflow = AsyncMock(return_value={"status": "recovered", "erp_reference": "ERP-RUNTIME-1"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         first = asyncio.run(
             runtime.execute_intent(
                 "retry_recoverable_failures",
@@ -1365,7 +1365,7 @@ def test_preview_retry_recoverable_failures_returns_precheck():
         "state": "failed_post",
     }
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         result = runtime.preview_intent(
             "retry_recoverable_failures",
             {"email_id": "gmail-thread-retry-1"},
@@ -1437,7 +1437,7 @@ def test_runtime_preview_and_execute_include_canonical_contract_fields():
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval", "slack_ts": "171.10"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         preview = runtime.preview_intent(
             "route_low_risk_for_approval",
             {"email_id": "gmail-thread-route-1"},
@@ -1472,7 +1472,7 @@ def test_runtime_audit_rows_include_canonical_audit_event_schema():
     workflow.build_invoice_data_from_ap_item.return_value = SimpleNamespace(gmail_id="gmail-thread-route-1")
     workflow._send_for_approval = AsyncMock(return_value={"status": "pending_approval"})
 
-    with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=workflow):
         _ = asyncio.run(
             runtime.execute_intent(
                 "route_low_risk_for_approval",
@@ -1508,7 +1508,7 @@ def test_execute_ap_invoice_processing_fails_closed_when_workflow_unavailable():
         "currency": "USD",
     }
 
-    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1725,7 +1725,7 @@ def test_execute_ap_invoice_processing_invokes_invoice_workflow_directly():
         "currency": "USD",
     }
 
-    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1773,9 +1773,9 @@ def test_execute_ap_invoice_processing_records_finance_learning_outcome():
         "currency": "USD",
     }
 
-    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         with patch(
-            "clearledgr.services.finance_learning.get_finance_learning_service",
+            "solden.services.finance_learning.get_finance_learning_service",
             return_value=_FakeFinanceLearning(),
         ):
             result = asyncio.run(
@@ -1823,7 +1823,7 @@ def test_execute_ap_invoice_processing_downgrades_auto_post_when_autonomy_not_ea
     }
 
     with patch.object(runtime, "skill_readiness", return_value=readiness):
-        with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+        with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
             result = asyncio.run(
                 runtime.execute_ap_invoice_processing(
                     invoice_payload=invoice_payload,
@@ -1875,7 +1875,7 @@ def test_execute_ap_invoice_processing_blocks_on_field_review_without_planner():
         "field_confidences": {"amount": 0.98},
     }
 
-    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
+    with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=workflow):
         result = asyncio.run(
             runtime.execute_ap_invoice_processing(
                 invoice_payload=invoice_payload,
@@ -1926,7 +1926,7 @@ def test_escalate_invoice_review_appends_runtime_audit():
         }
 
     with patch(
-        "clearledgr.workflows.gmail_activities.send_slack_notification_activity",
+        "solden.workflows.gmail_activities.send_slack_notification_activity",
         _fake_send,
     ):
         result = asyncio.run(
@@ -1958,7 +1958,7 @@ def test_record_field_correction_appends_runtime_audit():
             return {"correction_learning": {"stored": True}}
 
     with patch(
-        "clearledgr.services.finance_learning.get_finance_learning_service",
+        "solden.services.finance_learning.get_finance_learning_service",
         return_value=_FakeFinanceLearning(),
     ):
         result = runtime.record_field_correction(
@@ -1991,7 +1991,7 @@ def test_append_runtime_audit_syncs_agent_memory_when_service_available():
             return {"belief_state": {"ap_item_id": kwargs.get("ap_item_id")}}
 
     with patch(
-        "clearledgr.services.agent_memory.get_agent_memory_service",
+        "solden.services.agent_memory.get_agent_memory_service",
         return_value=_FakeMemory(),
     ):
         audit_row = runtime.append_runtime_audit(
@@ -2020,7 +2020,7 @@ def test_append_runtime_audit_syncs_finance_learning_when_service_available():
             return {"event": {"id": "learning-1"}}
 
     with patch(
-        "clearledgr.services.finance_learning.get_finance_learning_service",
+        "solden.services.finance_learning.get_finance_learning_service",
         return_value=_FakeLearning(),
     ):
         audit_row = runtime.append_runtime_audit(
@@ -2097,7 +2097,7 @@ def test_finance_lead_summary_prefers_agent_memory_next_action_label():
             }
 
     with patch(
-        "clearledgr.services.agent_memory.get_agent_memory_service",
+        "solden.services.agent_memory.get_agent_memory_service",
         return_value=_FakeMemory(),
     ):
         payload = runtime._build_finance_lead_summary_payload(ap_item)

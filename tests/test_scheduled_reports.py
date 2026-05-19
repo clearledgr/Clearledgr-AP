@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services.scheduled_reports import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services.scheduled_reports import (  # noqa: E402
     DEFAULT_SCHEDULES,
     ScheduledReportService,
 )

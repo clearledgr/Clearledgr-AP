@@ -1,6 +1,6 @@
 import asyncio
 
-from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
 
 class _FakeDB:
@@ -105,7 +105,7 @@ def test_po_match_exception_forces_manual_approval(monkeypatch):
             return _FakeMatch()
 
     monkeypatch.setattr(
-        "clearledgr.services.purchase_orders.get_purchase_order_service",
+        "solden.services.purchase_orders.get_purchase_order_service",
         lambda _org: _FakePOService(),
     )
 

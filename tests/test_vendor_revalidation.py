@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api.vendor_status import router as vendor_status_router  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.vendor_revalidation import (  # noqa: E402
+from solden.api.vendor_status import router as vendor_status_router  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.vendor_revalidation import (  # noqa: E402
     HIGH_SEVERITY_REASONS,
     MEDIUM_SEVERITY_REASONS,
     revalidate_in_flight_ap_items,

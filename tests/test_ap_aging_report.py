@@ -19,9 +19,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from clearledgr.api import ap_items_read_routes as read_routes_module
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
+from solden.api import ap_items_read_routes as read_routes_module
+from solden.core import database as db_module
+from solden.core.auth import TokenData
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ class TestAPAgingBuckets:
         future = (date.today() + timedelta(days=10)).isoformat()
         _create_item(db, "cur-1", "Vendor A", 1000.0, future)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -97,7 +97,7 @@ class TestAPAgingBuckets:
         past = (date.today() - timedelta(days=15)).isoformat()
         _create_item(db, "b30-1", "Vendor B", 500.0, past)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -109,7 +109,7 @@ class TestAPAgingBuckets:
         past = (date.today() - timedelta(days=45)).isoformat()
         _create_item(db, "b60-1", "Vendor C", 750.0, past)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -121,7 +121,7 @@ class TestAPAgingBuckets:
         past = (date.today() - timedelta(days=75)).isoformat()
         _create_item(db, "b90-1", "Vendor D", 2000.0, past)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -133,7 +133,7 @@ class TestAPAgingBuckets:
         past = (date.today() - timedelta(days=120)).isoformat()
         _create_item(db, "b90p-1", "Vendor E", 3000.0, past)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -145,7 +145,7 @@ class TestAPAgingBuckets:
         today = date.today().isoformat()
         _create_item(db, "today-1", "Vendor F", 100.0, today)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -164,7 +164,7 @@ class TestAPAgingFilters:
         past = (date.today() - timedelta(days=10)).isoformat()
         _create_item(db, "closed-1", "Vendor G", 500.0, past, state="closed")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -175,7 +175,7 @@ class TestAPAgingFilters:
         past = (date.today() - timedelta(days=10)).isoformat()
         _create_item(db, "rej-1", "Vendor H", 300.0, past, state="rejected")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -185,7 +185,7 @@ class TestAPAgingFilters:
         """Items without due_date are excluded from buckets but counted in summary."""
         _create_item(db, "nodue-1", "Vendor I", 400.0, None, state="approved")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -197,7 +197,7 @@ class TestAPAgingFilters:
         past = (date.today() - timedelta(days=5)).isoformat()
         _create_item(db, "posted-1", "Vendor J", 800.0, past, state="posted_to_erp")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -217,7 +217,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "mc-1", "Vendor X", 1000.0, past, currency="USD")
         _create_item(db, "mc-2", "Vendor Y", 500.0, past, currency="EUR")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -233,7 +233,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "sc-1", "Vendor A", 1000.0, future, currency="USD")
         _create_item(db, "sc-2", "Vendor B", 2000.0, past, currency="NGN")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -248,7 +248,7 @@ class TestAPAgingMultiCurrency:
         _create_item(db, "vbc-1", "Acme Corp", 1000.0, past, currency="USD")
         _create_item(db, "vbc-2", "Acme Corp", 500.0, past, currency="EUR")
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -275,7 +275,7 @@ class TestAPAgingVendorBreakdown:
         _create_item(db, "vb-2", "Acme Corp", 500.0, past_20)
         _create_item(db, "vb-3", "Beta LLC", 2000.0, past_50)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -310,7 +310,7 @@ class TestAPAgingSummary:
         _create_item(db, "sum-2", "Vendor L", 2000.0, past_10)     # 1-30
         _create_item(db, "sum-3", "Vendor M", 3000.0, past_100)    # 90+
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -334,7 +334,7 @@ class TestAPAgingSummary:
         _create_item(db, "wavg-1", "Vendor A", 1000.0, past_10)
         _create_item(db, "wavg-2", "Vendor B", 3000.0, past_50)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -345,7 +345,7 @@ class TestAPAgingSummary:
         future = (date.today() + timedelta(days=10)).isoformat()
         _create_item(db, "wavgn-1", "Vendor A", 1000.0, future)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate()
 
@@ -353,7 +353,7 @@ class TestAPAgingSummary:
 
     def test_empty_org_summary(self, db):
         """Empty org returns zeros."""
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("empty-org")
         result = report.generate()
 
@@ -376,7 +376,7 @@ class TestAPAgingItemsCap:
         for i in range(10):
             _create_item(db, f"cap-{i}", f"Vendor {i}", 100.0, past)
 
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         report = APAgingReport("org-test")
         result = report.generate(items_per_bucket=3)
 
@@ -427,7 +427,7 @@ class TestBucketLabel:
     """Test the _bucket_label helper uses AGING_BUCKETS, not hardcoded values."""
 
     def test_labels(self):
-        from clearledgr.services.ap_aging_report import _bucket_label
+        from solden.services.ap_aging_report import _bucket_label
         assert _bucket_label(-5) == "current"
         assert _bucket_label(0) == "current"
         assert _bucket_label(1) == "1_30"
@@ -444,22 +444,22 @@ class TestParseDate:
     """Test APAgingReport._parse_date."""
 
     def test_iso_date(self):
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         assert APAgingReport._parse_date("2026-03-15") == date(2026, 3, 15)
 
     def test_iso_datetime(self):
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         assert APAgingReport._parse_date("2026-03-15T10:30:00+00:00") == date(2026, 3, 15)
 
     def test_none(self):
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         assert APAgingReport._parse_date(None) is None
 
     def test_garbage(self):
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         assert APAgingReport._parse_date("not-a-date") is None
 
     def test_date_object(self):
-        from clearledgr.services.ap_aging_report import APAgingReport
+        from solden.services.ap_aging_report import APAgingReport
         d = date(2026, 1, 1)
         assert APAgingReport._parse_date(d) == d

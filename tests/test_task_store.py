@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from clearledgr.core.database import SoldenDB
+from solden.core.database import SoldenDB
 
 
 def test_create_task_run_resets_failed_idempotent_runs(tmp_path, monkeypatch):

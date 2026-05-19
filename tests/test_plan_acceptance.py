@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
-from clearledgr.core.ap_states import (
+from solden.core.ap_states import (
     IllegalTransitionError,
     VALID_TRANSITIONS,
     classify_post_failure_recoverability,
@@ -43,7 +43,7 @@ def _get_db():
     connection per ``connect()`` call, and :memory: databases are not shared
     across connections.
     """
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
     tmp.close()
@@ -197,7 +197,7 @@ class TestLegacyStates:
 class TestSlackVerification:
     def test_valid_signature_accepted(self):
         """PLAN.md 7.1.6a: Valid Slack signature accepted."""
-        from clearledgr.core.slack_verify import verify_slack_signature
+        from solden.core.slack_verify import verify_slack_signature
         import hashlib
         import hmac
         import time
@@ -216,7 +216,7 @@ class TestSlackVerification:
 
     def test_invalid_signature_rejected(self):
         """PLAN.md 7.1.6b: Invalid Slack signature rejected."""
-        from clearledgr.core.slack_verify import verify_slack_signature
+        from solden.core.slack_verify import verify_slack_signature
         import time
 
         assert verify_slack_signature(
@@ -225,7 +225,7 @@ class TestSlackVerification:
 
     def test_replay_rejected(self):
         """PLAN.md 7.1.6c: Stale timestamp rejected (replay protection)."""
-        from clearledgr.core.slack_verify import verify_slack_signature
+        from solden.core.slack_verify import verify_slack_signature
 
         old_ts = str(int(1000000))  # very old timestamp
         assert verify_slack_signature("secret", old_ts, b"body", "v0=anything") is False
@@ -448,7 +448,7 @@ class TestSecurityHardening:
 
     def test_require_secret_crashes_in_prod(self):
         """require_secret raises RuntimeError in production-like envs if not set."""
-        from clearledgr.core.secrets import require_secret, _generated_cache
+        from solden.core.secrets import require_secret, _generated_cache
 
         for env_name in ("production", "staging"):
             with patch.dict(os.environ, {"ENV": env_name}, clear=False):

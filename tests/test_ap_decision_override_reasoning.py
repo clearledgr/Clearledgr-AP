@@ -14,7 +14,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock
 
 
-from clearledgr.services.invoice_validation import InvoiceValidationMixin
+from solden.services.invoice_validation import InvoiceValidationMixin
 
 
 def _make_service(item_metadata: Dict[str, Any]) -> InvoiceValidationMixin:

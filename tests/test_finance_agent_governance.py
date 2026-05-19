@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from clearledgr.core.database import SoldenDB
-from clearledgr.core.finance_contracts import ActionExecution, SkillRequest
-from clearledgr.services.agent_memory import AgentMemoryService
-from clearledgr.services.finance_agent_loop import FinanceAgentLoopService
+from solden.core.database import SoldenDB
+from solden.core.finance_contracts import ActionExecution, SkillRequest
+from solden.services.agent_memory import AgentMemoryService
+from solden.services.finance_agent_loop import FinanceAgentLoopService
 
 
 class _GovernanceRuntime:
@@ -156,7 +156,7 @@ def test_finance_agent_loop_attempts_self_recovery_for_failed_post(tmp_path, mon
     async def _executor():
         return {"status": "failed", "reason": "connector_timeout", "ap_item_id": "ap-recover-1"}
 
-    with patch("clearledgr.services.invoice_workflow.get_invoice_workflow", return_value=_Workflow()):
+    with patch("solden.services.invoice_workflow.get_invoice_workflow", return_value=_Workflow()):
         response = __import__("asyncio").run(loop.run_skill_request(request, action, _executor))
 
     assert response["status"] == "posted_to_erp"

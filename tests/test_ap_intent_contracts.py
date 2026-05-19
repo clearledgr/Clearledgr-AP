@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services.finance_skills.ap_intent_contracts import (  # noqa: E402
+from solden.services.finance_skills.ap_intent_contracts import (  # noqa: E402
     build_operator_copy,
     get_intent_audit_contract,
 )

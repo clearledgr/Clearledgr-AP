@@ -37,9 +37,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import ap_item_detail as detail_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
+from solden.api import ap_item_detail as detail_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ class TestMatchPanel:
         # Patch the runner to raise — endpoint must not blow up; match
         # comes back null.
         with patch(
-            "clearledgr.services.three_way_match_runner.run_three_way_match",
+            "solden.services.three_way_match_runner.run_three_way_match",
             side_effect=RuntimeError("runner offline"),
         ):
             body = client_orgA.get("/api/workspace/ap-items/ap-match-skip-1/detail").json()

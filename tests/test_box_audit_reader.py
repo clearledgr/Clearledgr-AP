@@ -10,7 +10,7 @@ import pytest
 
 
 def _fresh_db(tmp_path, monkeypatch):
-    import clearledgr.core.database as db_module
+    import solden.core.database as db_module
     db = db_module.get_db()
     db.initialize()
     return db

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from clearledgr.services.state_observers import (
+from solden.services.state_observers import (
     AuditTrailObserver,
     GmailLabelObserver,
     NotificationObserver,
@@ -248,8 +248,8 @@ def test_gmail_label_observer_syncs_message_labels():
     sync_labels = AsyncMock(return_value={"processed", "invoices", "approved"})
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("clearledgr.services.gmail_api.GmailAPIClient", lambda _user_id: fake_client)
-        mp.setattr("clearledgr.services.gmail_labels.sync_finance_labels", sync_labels)
+        mp.setattr("solden.services.gmail_api.GmailAPIClient", lambda _user_id: fake_client)
+        mp.setattr("solden.services.gmail_labels.sync_finance_labels", sync_labels)
 
         obs = GmailLabelObserver(db)
         _run(obs.on_transition(_make_event(gmail_id="thread-001", new_state="approved")))
@@ -286,7 +286,7 @@ def test_observer_fires_on_workflow_transition(postgres_test_db):
     os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "test-key-for-observer-test")
     os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-    from clearledgr.core import database as db_mod
+    from solden.core import database as db_mod
 
     db = db_mod.get_db()
     db.initialize()
@@ -304,7 +304,7 @@ def test_observer_fires_on_workflow_transition(postgres_test_db):
         "amount": 100.0,
     })
 
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
     svc = InvoiceWorkflowService(org_id)
 
     # Verify observer registry exists

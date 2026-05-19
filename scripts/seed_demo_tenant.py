@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from clearledgr.core.auth import (
+from solden.core.auth import (
     ROLE_AP_CLERK,
     ROLE_AP_MANAGER,
     ROLE_FINANCIAL_CONTROLLER,
@@ -35,8 +35,8 @@ from clearledgr.core.auth import (
     get_user_by_email,
     hash_password,
 )
-from clearledgr.core.ap_states import APState
-from clearledgr.core.database import get_db
+from solden.core.ap_states import APState
+from solden.core.database import get_db
 
 logger = logging.getLogger("seed_demo_tenant")
 

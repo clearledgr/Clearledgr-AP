@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from clearledgr.core.database import SoldenDB
-from clearledgr.services.agent_memory import AgentMemoryService
+from solden.core.database import SoldenDB
+from solden.services.agent_memory import AgentMemoryService
 
 
 def test_agent_memory_service_persists_profile_events_and_belief(tmp_path, monkeypatch):

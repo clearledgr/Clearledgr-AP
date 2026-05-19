@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import clearledgr.services.finance_skills.ap_skill as ap_skill_module
-from clearledgr.services.finance_skills.ap_intent_handlers import get_ap_intent_handler
-from clearledgr.services.finance_skills.ap_skill import APFinanceSkill
+import solden.services.finance_skills.ap_skill as ap_skill_module
+from solden.services.finance_skills.ap_intent_handlers import get_ap_intent_handler
+from solden.services.finance_skills.ap_skill import APFinanceSkill
 
 
 def test_handler_registry_covers_all_supported_ap_intents():

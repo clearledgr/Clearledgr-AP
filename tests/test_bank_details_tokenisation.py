@@ -44,8 +44,8 @@ SAMPLE_BANK_DETAILS: Dict[str, str] = {
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -61,26 +61,26 @@ def tmp_db(tmp_path, monkeypatch):
 class TestBankDetailsHelper:
 
     def test_normalize_drops_unknown_keys(self):
-        from clearledgr.core.stores.bank_details import normalize_bank_details
+        from solden.core.stores.bank_details import normalize_bank_details
         result = normalize_bank_details(
             {"iban": "GB82", "evil_field": "X", "account_number": "1234"}
         )
         assert result == {"iban": "GB82", "account_number": "1234"}
 
     def test_normalize_returns_none_for_empty(self):
-        from clearledgr.core.stores.bank_details import normalize_bank_details
+        from solden.core.stores.bank_details import normalize_bank_details
         assert normalize_bank_details(None) is None
         assert normalize_bank_details({}) is None
         assert normalize_bank_details("not a dict") is None
         assert normalize_bank_details({"iban": "  "}) is None
 
     def test_normalize_strips_whitespace_and_stringifies(self):
-        from clearledgr.core.stores.bank_details import normalize_bank_details
+        from solden.core.stores.bank_details import normalize_bank_details
         result = normalize_bank_details({"account_number": "  12345678  ", "currency": 1234})
         assert result == {"account_number": "12345678", "currency": "1234"}
 
     def test_encrypt_round_trip(self):
-        from clearledgr.core.stores.bank_details import (
+        from solden.core.stores.bank_details import (
             encrypt_bank_details,
             decrypt_bank_details,
         )
@@ -106,17 +106,17 @@ class TestBankDetailsHelper:
         assert plain == SAMPLE_BANK_DETAILS
 
     def test_encrypt_returns_none_for_empty_input(self):
-        from clearledgr.core.stores.bank_details import encrypt_bank_details
+        from solden.core.stores.bank_details import encrypt_bank_details
         assert encrypt_bank_details(None, encrypt_fn=lambda s: s) is None
         assert encrypt_bank_details({}, encrypt_fn=lambda s: s) is None
 
     def test_decrypt_returns_none_for_corrupt_ciphertext(self):
-        from clearledgr.core.stores.bank_details import decrypt_bank_details
+        from solden.core.stores.bank_details import decrypt_bank_details
         # Decrypt that returns a non-JSON string
         assert decrypt_bank_details("xxx", decrypt_fn=lambda t: "not json") is None
 
     def test_decrypt_returns_none_for_decrypt_exception(self):
-        from clearledgr.core.stores.bank_details import decrypt_bank_details
+        from solden.core.stores.bank_details import decrypt_bank_details
 
         def raises(_):
             raise RuntimeError("kaboom")
@@ -126,50 +126,50 @@ class TestBankDetailsHelper:
     # ---- masking ----
 
     def test_mask_iban_format_matches_thesis(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"iban": SAMPLE_IBAN})
         assert masked["iban"] == "GB82 **** **** **** 5432"
         assert SAMPLE_IBAN not in masked["iban"]
 
     def test_mask_account_number_keeps_only_last_4(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"account_number": "12345678"})
         assert masked["account_number"] == "****5678"
 
     def test_mask_sort_code_uk_format(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"sort_code": "20-00-00"})
         assert masked["sort_code"] == "**-**-00"
 
     def test_mask_swift_keeps_only_last_4(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"swift": "BARCGB22XXX"})
         # length 11 → first 7 masked, last 4 visible
         assert masked["swift"] == "*******2XXX"
 
     def test_mask_holder_name_initials_only(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"account_holder_name": "Acme Trading Ltd"})
         assert masked["account_holder_name"] == "A*** T****** L**"
 
     def test_mask_bank_name_passes_through(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details({"bank_name": "Barclays"})
         assert masked["bank_name"] == "Barclays"
 
     def test_mask_returns_none_for_empty(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         assert mask_bank_details(None) is None
         assert mask_bank_details({}) is None
 
     def test_mask_does_not_mutate_input(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         original = dict(SAMPLE_BANK_DETAILS)
         _ = mask_bank_details(original)
         assert original == SAMPLE_BANK_DETAILS
 
     def test_full_mask_shape_contains_no_plaintext_iban(self):
-        from clearledgr.core.stores.bank_details import mask_bank_details
+        from solden.core.stores.bank_details import mask_bank_details
         masked = mask_bank_details(SAMPLE_BANK_DETAILS)
         full_text = json.dumps(masked)
         assert SAMPLE_IBAN not in full_text
@@ -180,7 +180,7 @@ class TestBankDetailsHelper:
     # ---- diff ----
 
     def test_diff_field_names_only(self):
-        from clearledgr.core.stores.bank_details import diff_bank_details_field_names
+        from solden.core.stores.bank_details import diff_bank_details_field_names
         result = diff_bank_details_field_names(
             {"iban": "GB82WEST12345698765432", "sort_code": "20-00-00"},
             {"iban": "GB82WEST99999999999999", "sort_code": "20-00-00"},
@@ -195,7 +195,7 @@ class TestBankDetailsHelper:
             assert value not in result
 
     def test_diff_empty_inputs_return_empty_list(self):
-        from clearledgr.core.stores.bank_details import diff_bank_details_field_names
+        from solden.core.stores.bank_details import diff_bank_details_field_names
         assert diff_bank_details_field_names(None, {"iban": "X"}) == []
         assert diff_bank_details_field_names({"iban": "X"}, None) == []
         assert diff_bank_details_field_names({}, {}) == []
@@ -427,7 +427,7 @@ class TestMigrationV13Backfill:
         # the migration function outside that path, so we need to
         # replicate the autocommit toggle or we get
         # ``current transaction is aborted, commands ignored ...``.
-        from clearledgr.core.migrations import _MIGRATIONS
+        from solden.core.migrations import _MIGRATIONS
         m13 = next(m for m in _MIGRATIONS if m[0] == 13)
         with tmp_db.connect() as conn:
             conn.autocommit = True
@@ -483,7 +483,7 @@ class TestMigrationV13Backfill:
             )
             conn.commit()
 
-        from clearledgr.core.migrations import _MIGRATIONS
+        from solden.core.migrations import _MIGRATIONS
         m13 = next(m for m in _MIGRATIONS if m[0] == 13)
         with tmp_db.connect() as conn:
             # Same autocommit dance as the sibling test above — see
@@ -509,8 +509,8 @@ class TestValidationGateBankDetailsMismatch:
         # The gate lives on InvoiceValidationMixin which is composed into
         # InvoiceWorkflowService. Use the workflow service as the entry
         # point (same pattern as Phase 1 tests).
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_models import InvoiceData
 
         tmp_db.create_organization("org_t", name="X", settings={})
         # Seed enough vendor history so first_payment_hold doesn't fire.

@@ -25,8 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.ap_states import CURRENT_AP_POLICY_VERSION  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.ap_states import CURRENT_AP_POLICY_VERSION  # noqa: E402
 
 
 @pytest.fixture()
@@ -130,7 +130,7 @@ def test_export_surface_includes_policy_version(db):
     Belt-and-braces check that Phase 1.1's export endpoint reads the
     column threaded through by Phase 1.2.
     """
-    from clearledgr.api.box_export import _normalize_audit_event
+    from solden.api.box_export import _normalize_audit_event
     item = db.create_ap_item({
         "id": "AP-pv-export",
         "organization_id": "orgPV",

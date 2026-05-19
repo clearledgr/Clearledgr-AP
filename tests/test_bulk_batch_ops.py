@@ -18,14 +18,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from clearledgr.api import ap_items_action_routes as action_routes
-from clearledgr.api.ap_item_contracts import (
+from solden.api import ap_items_action_routes as action_routes
+from solden.api.ap_item_contracts import (
     BulkApproveRequest,
     BulkRejectRequest,
     BulkSnoozeRequest,
 )
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import require_ops_user
+from solden.core import database as db_module
+from solden.core.auth import require_ops_user
 
 
 @pytest.fixture()

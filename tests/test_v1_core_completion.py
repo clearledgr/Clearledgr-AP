@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main as _main
-from clearledgr.core import database as db_module
+from solden.core import database as db_module
 
 
 @pytest.fixture()
@@ -58,7 +58,7 @@ def _create_ap_item(
 def test_extension_pipeline_normalizes_exception_taxonomy(client, db):
     from datetime import datetime, timezone
 
-    from clearledgr.core.auth import TokenData, get_current_user
+    from solden.core.auth import TokenData, get_current_user
     import main as _m
     app = _m.app
 
@@ -120,7 +120,7 @@ def test_worklist_derives_budget_exception_and_teams_interactive(monkeypatch, cl
 
     from datetime import datetime, timezone
 
-    from clearledgr.core.auth import TokenData, get_current_user
+    from solden.core.auth import TokenData, get_current_user
     import main as _m
     app = _m.app
 
@@ -213,7 +213,7 @@ def _run_worklist_test(monkeypatch, client, db):
             return {"status": "approved", "result": {"status": "approved"}}
         return {"status": "error"}
 
-    monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _fake_dispatch)
+    monkeypatch.setattr("solden.api.teams_invoices._dispatch_runtime_intent", _fake_dispatch)
     # M9 contract: the Teams interactive callback resolves the AAD ``tid``
     # claim against ``teams_installations`` BEFORE any AP-item lookup. Seed
     # the install for "org-test" and stub the token to return a matching tid.
@@ -225,7 +225,7 @@ def _run_worklist_test(monkeypatch, client, db):
         bot_app_id="test-bot",
     )
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices._verify_teams_token",
+        "solden.api.teams_invoices._verify_teams_token",
         lambda _auth: {"appid": "test-bot", "iat": 1890000000, "tid": _aad_tid_v1},
     )
 

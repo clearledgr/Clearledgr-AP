@@ -28,8 +28,8 @@ import pytest
 
 
 def test_all_five_targets_registered_at_import():
-    import clearledgr.services.annotation_targets  # noqa: F401
-    from clearledgr.services.annotation_targets.base import list_registered_targets
+    import solden.services.annotation_targets  # noqa: F401
+    from solden.services.annotation_targets.base import list_registered_targets
     targets = list_registered_targets()
     for expected in [
         "gmail_label", "netsuite_custom_field", "sap_z_field",
@@ -39,13 +39,13 @@ def test_all_five_targets_registered_at_import():
 
 
 def test_annotation_handler_registered_at_import():
-    import clearledgr.services.annotation_targets  # noqa: F401
-    from clearledgr.services.outbox import list_handlers
+    import solden.services.annotation_targets  # noqa: F401
+    from solden.services.outbox import list_handlers
     assert "annotation" in list_handlers()
 
 
 def test_unknown_target_returns_none():
-    from clearledgr.services.annotation_targets.base import get_target
+    from solden.services.annotation_targets.base import get_target
     assert get_target("nonexistent_target") is None
 
 
@@ -53,12 +53,12 @@ def test_unknown_target_returns_none():
 
 
 def test_annotation_targets_is_a_policy_kind():
-    from clearledgr.services.policy_service import POLICY_KINDS
+    from solden.services.policy_service import POLICY_KINDS
     assert "annotation_targets" in POLICY_KINDS
 
 
 def test_default_annotation_targets_all_disabled():
-    from clearledgr.services.policy_service import _default_content
+    from solden.services.policy_service import _default_content
     default = _default_content("annotation_targets")
     assert default["gmail_label"]["enabled"] is False
     assert default["netsuite_custom_field"]["enabled"] is False
@@ -68,7 +68,7 @@ def test_default_annotation_targets_all_disabled():
 
 
 def test_annotation_targets_slice_and_merge_round_trip():
-    from clearledgr.services.policy_service import (
+    from solden.services.policy_service import (
         _slice_settings_for_kind, _merge_kind_into_settings,
     )
     fixture = {
@@ -87,8 +87,8 @@ def test_annotation_targets_slice_and_merge_round_trip():
 
 @pytest.mark.asyncio
 async def test_gmail_label_skips_for_erp_native():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.gmail_label import GmailLabelTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.gmail_label import GmailLabelTarget
     target = GmailLabelTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -104,8 +104,8 @@ async def test_gmail_label_skips_for_erp_native():
 
 @pytest.mark.asyncio
 async def test_gmail_label_skips_for_non_gmail_source():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.gmail_label import GmailLabelTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.gmail_label import GmailLabelTarget
     target = GmailLabelTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -123,8 +123,8 @@ async def test_gmail_label_skips_for_non_gmail_source():
 
 @pytest.mark.asyncio
 async def test_netsuite_target_skips_for_gmail_source():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.netsuite_custom_field import (
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.netsuite_custom_field import (
         NetSuiteCustomFieldTarget,
     )
     target = NetSuiteCustomFieldTarget()
@@ -142,8 +142,8 @@ async def test_netsuite_target_skips_for_gmail_source():
 
 @pytest.mark.asyncio
 async def test_netsuite_target_skips_when_no_ns_id():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.netsuite_custom_field import (
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.netsuite_custom_field import (
         NetSuiteCustomFieldTarget,
     )
     target = NetSuiteCustomFieldTarget()
@@ -156,8 +156,8 @@ async def test_netsuite_target_skips_when_no_ns_id():
     )
     db = MagicMock()
     db.get_ap_item.return_value = {}  # no erp_reference either
-    with patch("clearledgr.services.annotation_targets.netsuite_custom_field.get_db", return_value=db) if False else patch.object(
-        __import__("clearledgr.core.database", fromlist=["get_db"]), "get_db", return_value=db,
+    with patch("solden.services.annotation_targets.netsuite_custom_field.get_db", return_value=db) if False else patch.object(
+        __import__("solden.core.database", fromlist=["get_db"]), "get_db", return_value=db,
     ):
         # The netsuite target imports get_db inside _extract_ns_id; the
         # patch above is broad enough.
@@ -171,8 +171,8 @@ async def test_netsuite_target_skips_when_no_ns_id():
 
 @pytest.mark.asyncio
 async def test_sap_target_skips_for_non_sap_source():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.sap_z_field import SapZFieldTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.sap_z_field import SapZFieldTarget
     target = SapZFieldTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -187,8 +187,8 @@ async def test_sap_target_skips_for_non_sap_source():
 
 @pytest.mark.asyncio
 async def test_sap_target_skips_without_composite_key():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.sap_z_field import SapZFieldTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.sap_z_field import SapZFieldTarget
     target = SapZFieldTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -200,7 +200,7 @@ async def test_sap_target_skips_without_composite_key():
     db = MagicMock()
     db.get_ap_item.return_value = {"erp_reference": ""}
     with patch.object(
-        __import__("clearledgr.core.database", fromlist=["get_db"]), "get_db", return_value=db,
+        __import__("solden.core.database", fromlist=["get_db"]), "get_db", return_value=db,
     ):
         result = await target.apply(ctx)
     assert result.status == "skipped"
@@ -212,8 +212,8 @@ async def test_sap_target_skips_without_composite_key():
 
 @pytest.mark.asyncio
 async def test_customer_webhook_filters_by_event_type():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.customer_webhook import CustomerWebhookTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.customer_webhook import CustomerWebhookTarget
     target = CustomerWebhookTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -232,8 +232,8 @@ async def test_customer_webhook_filters_by_event_type():
 
 @pytest.mark.asyncio
 async def test_customer_webhook_skipped_when_no_subscriptions():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.customer_webhook import CustomerWebhookTarget
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.customer_webhook import CustomerWebhookTarget
     target = CustomerWebhookTarget()
     ctx = AnnotationContext(
         organization_id="org-1", box_type="ap_item", box_id="AP-1",
@@ -250,7 +250,7 @@ async def test_customer_webhook_skipped_when_no_subscriptions():
 
 def test_customer_webhook_signature_format():
     """v1 signatures are HMAC-SHA256 hex of (timestamp + '.' + body)."""
-    from clearledgr.services.annotation_targets.customer_webhook import CustomerWebhookTarget
+    from solden.services.annotation_targets.customer_webhook import CustomerWebhookTarget
     sig = CustomerWebhookTarget._sign("12345", b'{"a":1}', "secret")
     # 64 chars hex
     assert len(sig) == 64
@@ -264,8 +264,8 @@ def test_customer_webhook_signature_format():
 
 @pytest.mark.asyncio
 async def test_slack_card_update_skips_for_no_state_change():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.slack_card_update import (
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.slack_card_update import (
         SlackCardUpdateTarget,
     )
     target = SlackCardUpdateTarget()
@@ -283,8 +283,8 @@ async def test_slack_card_update_skips_for_no_state_change():
 
 @pytest.mark.asyncio
 async def test_slack_card_update_skips_when_no_thread_recorded():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.slack_card_update import (
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.slack_card_update import (
         SlackCardUpdateTarget,
     )
     target = SlackCardUpdateTarget()
@@ -298,7 +298,7 @@ async def test_slack_card_update_skips_when_no_thread_recorded():
     db = MagicMock()
     db.get_slack_thread.return_value = None
     with patch.object(
-        __import__("clearledgr.core.database", fromlist=["get_db"]),
+        __import__("solden.core.database", fromlist=["get_db"]),
         "get_db", return_value=db,
     ):
         result = await target.apply(ctx)
@@ -307,8 +307,8 @@ async def test_slack_card_update_skips_when_no_thread_recorded():
 
 
 def test_slack_card_status_text_includes_emoji_and_actor():
-    from clearledgr.services.annotation_targets.base import AnnotationContext
-    from clearledgr.services.annotation_targets.slack_card_update import (
+    from solden.services.annotation_targets.base import AnnotationContext
+    from solden.services.annotation_targets.slack_card_update import (
         SlackCardUpdateTarget,
     )
     ctx = AnnotationContext(
@@ -332,10 +332,10 @@ def test_slack_card_status_text_includes_emoji_and_actor():
 async def test_dispatch_observer_enqueues_per_active_target():
     """The dispatcher reads the org's annotation_targets policy and
     enqueues one outbox row per target whose ``enabled=True``."""
-    from clearledgr.services.annotation_targets.base import (
+    from solden.services.annotation_targets.base import (
         AnnotationDispatchObserver,
     )
-    from clearledgr.services.state_observers import StateTransitionEvent
+    from solden.services.state_observers import StateTransitionEvent
 
     db = MagicMock()
     observer = AnnotationDispatchObserver(db)
@@ -359,8 +359,8 @@ async def test_dispatch_observer_enqueues_per_active_target():
         "customer_webhook": {"enabled": False},  # disabled — should NOT enqueue
     }
     with patch(
-        "clearledgr.services.annotation_targets.base._resolve_active_targets",
-    ) as mocker, patch("clearledgr.services.outbox.OutboxWriter.enqueue", fake_enqueue):
+        "solden.services.annotation_targets.base._resolve_active_targets",
+    ) as mocker, patch("solden.services.outbox.OutboxWriter.enqueue", fake_enqueue):
         # _resolve_active_targets returns only the enabled ones
         mocker.return_value = {k: v for k, v in fake_resolved.items() if v.get("enabled")}
         await observer.on_transition(event)
@@ -376,10 +376,10 @@ async def test_dispatch_observer_enqueues_per_active_target():
 
 @pytest.mark.asyncio
 async def test_dispatch_observer_noop_when_no_active_targets():
-    from clearledgr.services.annotation_targets.base import (
+    from solden.services.annotation_targets.base import (
         AnnotationDispatchObserver,
     )
-    from clearledgr.services.state_observers import StateTransitionEvent
+    from solden.services.state_observers import StateTransitionEvent
 
     db = MagicMock()
     observer = AnnotationDispatchObserver(db)
@@ -389,10 +389,10 @@ async def test_dispatch_observer_noop_when_no_active_targets():
     )
     enqueued: List[Any] = []
     with patch(
-        "clearledgr.services.annotation_targets.base._resolve_active_targets",
+        "solden.services.annotation_targets.base._resolve_active_targets",
         return_value={},
     ), patch(
-        "clearledgr.services.outbox.OutboxWriter.enqueue",
+        "solden.services.outbox.OutboxWriter.enqueue",
         side_effect=lambda *a, **kw: enqueued.append(kw),
     ):
         await observer.on_transition(event)
@@ -404,11 +404,11 @@ async def test_dispatch_observer_noop_when_no_active_targets():
 
 @pytest.mark.asyncio
 async def test_outbox_handler_dispatches_to_registered_target():
-    from clearledgr.services.annotation_targets.base import (
+    from solden.services.annotation_targets.base import (
         AnnotationContext, AnnotationResult, _outbox_handler_annotation,
         _TARGET_REGISTRY,
     )
-    from clearledgr.services.outbox import OutboxEvent
+    from solden.services.outbox import OutboxEvent
 
     received: List[AnnotationContext] = []
 
@@ -446,7 +446,7 @@ async def test_outbox_handler_dispatches_to_registered_target():
         )
         # Patch the audit-row write since we don't have a real DB.
         with patch(
-            "clearledgr.services.annotation_targets.base._persist_annotation_attempt",
+            "solden.services.annotation_targets.base._persist_annotation_attempt",
         ):
             await _outbox_handler_annotation(ev)
     finally:
@@ -462,10 +462,10 @@ async def test_outbox_handler_dispatches_to_registered_target():
 
 @pytest.mark.asyncio
 async def test_outbox_handler_raises_on_unknown_target():
-    from clearledgr.services.annotation_targets.base import (
+    from solden.services.annotation_targets.base import (
         _TARGET_REGISTRY, _outbox_handler_annotation,
     )
-    from clearledgr.services.outbox import OutboxEvent
+    from solden.services.outbox import OutboxEvent
 
     saved = dict(_TARGET_REGISTRY)
     try:
@@ -491,10 +491,10 @@ async def test_outbox_handler_raises_on_unknown_target():
 async def test_outbox_handler_persists_audit_row_for_skipped():
     """Even skipped attempts get audited so the ops view can show
     'this target was inactive for this transition' as a reason."""
-    from clearledgr.services.annotation_targets.base import (
+    from solden.services.annotation_targets.base import (
         AnnotationResult, _TARGET_REGISTRY, _outbox_handler_annotation,
     )
-    from clearledgr.services.outbox import OutboxEvent
+    from solden.services.outbox import OutboxEvent
 
     persisted: List[Dict[str, Any]] = []
 
@@ -526,7 +526,7 @@ async def test_outbox_handler_persists_audit_row_for_skipped():
             error_log=[], created_at="", updated_at="", created_by="system",
         )
         with patch(
-            "clearledgr.services.annotation_targets.base._persist_annotation_attempt",
+            "solden.services.annotation_targets.base._persist_annotation_attempt",
             side_effect=lambda **kw: persisted.append(kw),
         ):
             await _outbox_handler_annotation(ev)

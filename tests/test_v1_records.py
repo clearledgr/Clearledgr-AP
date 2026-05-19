@@ -11,7 +11,7 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import pytest
 
-from clearledgr.api.v1_records import (
+from solden.api.v1_records import (
     _AP_ITEM_PUBLIC_FIELDS,
     _RECORD_READERS,
     _decode_cursor,

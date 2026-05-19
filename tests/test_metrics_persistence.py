@@ -4,7 +4,7 @@ import importlib
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-from clearledgr.core import database as db_module
+from solden.core import database as db_module
 
 
 def test_metrics_use_durable_store_in_staging(monkeypatch, tmp_path: Path):
@@ -14,7 +14,7 @@ def test_metrics_use_durable_store_in_staging(monkeypatch, tmp_path: Path):
     db = db_module.get_db()
     db.initialize()
 
-    metrics_module = importlib.import_module("clearledgr.services.metrics")
+    metrics_module = importlib.import_module("solden.services.metrics")
     metrics = importlib.reload(metrics_module)
     metrics.reset_metrics()
     metrics.record_request("GET", "/health", 200, 12.5)
@@ -50,7 +50,7 @@ def test_metrics_prunes_rows_older_than_retention(monkeypatch, tmp_path: Path):
     db = db_module.get_db()
     db.initialize()
 
-    metrics_module = importlib.import_module("clearledgr.services.metrics")
+    metrics_module = importlib.import_module("solden.services.metrics")
     metrics = importlib.reload(metrics_module)
     metrics.reset_metrics()
     metrics.record_request("GET", "/health", 200, 10.0)

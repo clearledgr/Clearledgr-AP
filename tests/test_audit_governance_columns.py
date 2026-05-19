@@ -14,15 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from clearledgr.api import v1_rate_limit
-from clearledgr.api.v1_auth import AgentIdentity
-from clearledgr.api.v1_rate_limit import (
+from solden.api import v1_rate_limit
+from solden.api.v1_auth import AgentIdentity
+from solden.api.v1_rate_limit import (
     RateLimitExceeded,
     emit_rate_limit_exceeded_audit,
     enforce_v1_rate_limit,
 )
-from clearledgr.core import authorization
-from clearledgr.core.authorization import (
+from solden.core import authorization
+from solden.core.authorization import (
     AuthorizationDenied,
     emit_authorization_denied_audit,
 )
@@ -163,7 +163,7 @@ def test_rate_limit_audit_writes_tool_scope() -> None:
     the audit row alongside scope/limit/window."""
     db = _stub_db()
     with patch(
-        "clearledgr.core.authorization._get_db", return_value=db
+        "solden.core.authorization._get_db", return_value=db
     ):
         emit_rate_limit_exceeded_audit(
             RateLimitExceeded(

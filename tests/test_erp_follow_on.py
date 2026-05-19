@@ -11,20 +11,20 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.core.ap_states import APState
-from clearledgr.core.utils import safe_float as _safe_float
-from clearledgr.services.ap_item_service import (
+from solden.core import database as db_module
+from solden.core.ap_states import APState
+from solden.core.utils import safe_float as _safe_float
+from solden.services.ap_item_service import (
     _execute_non_invoice_erp_follow_on,
     _normalize_document_type_token,
     _normalize_non_invoice_outcome,
     _parse_json,
 )
-from clearledgr.services.erp_connector_strategy import (
+from solden.services.erp_connector_strategy import (
     ERPConnectorStrategy,
 )
-from clearledgr.services.erp_follow_on_reconciliation import reconcile_erp_follow_on_state
-from clearledgr.services.erp_follow_on_result import (
+from solden.services.erp_follow_on_reconciliation import reconcile_erp_follow_on_state
+from solden.services.erp_follow_on_result import (
     _ERP_FOLLOW_ON_APPLIED_STATUSES,
     _ERP_FOLLOW_ON_PENDING_STATUSES,
     _finance_effect_review_blockers,
@@ -298,7 +298,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         related = _create_ap_item(db, item_id="REL-2", state="posted_to_erp", erp_reference="ERP-REF-002")
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "CR-123"})
-        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -382,7 +382,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "CR-005"})
-        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -417,7 +417,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success", "erp_reference": "SET-006"})
-        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -450,7 +450,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(side_effect=RuntimeError("ERP connection timeout"))
-        with patch("clearledgr.services.ap_item_service.apply_credit_note_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_credit_note_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -479,7 +479,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(side_effect=Exception("unexpected failure"))
-        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,
@@ -507,7 +507,7 @@ class TestExecuteNonInvoiceERPFollowOn:
         )
 
         mock_api = AsyncMock(return_value={"status": "success"})
-        with patch("clearledgr.services.ap_item_service.apply_settlement_api_first", mock_api):
+        with patch("solden.services.ap_item_service.apply_settlement_api_first", mock_api):
             async def _run():
                 return await _execute_non_invoice_erp_follow_on(
                     db,

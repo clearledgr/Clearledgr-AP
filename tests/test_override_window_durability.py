@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
 
 
 @pytest.fixture()
@@ -96,7 +96,7 @@ class TestOverrideWindowDurability:
         close-override action. The reaper running on its own
         wall-clock schedule must still pick the window up and
         finalise it. No engine.execute() call needed."""
-        from clearledgr.services.agent_background import reap_expired_override_windows
+        from solden.services.agent_background import reap_expired_override_windows
 
         item, window = _seed_box_with_expired_window(
             db, item_id="AP-ow-1",
@@ -108,7 +108,7 @@ class TestOverrideWindowDurability:
         # effort, swallowed on failure, but mocking removes
         # noise.)
         with patch(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             return_value=None,
         ):
             reaped = asyncio.run(reap_expired_override_windows())
@@ -125,12 +125,12 @@ class TestOverrideWindowDurability:
         window in state='expired' and skips (the
         list_expired_override_windows query filters on
         state='pending')."""
-        from clearledgr.services.agent_background import reap_expired_override_windows
+        from solden.services.agent_background import reap_expired_override_windows
 
         _, window = _seed_box_with_expired_window(db, item_id="AP-ow-2")
 
         with patch(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             return_value=None,
         ):
             first = asyncio.run(reap_expired_override_windows())
@@ -143,7 +143,7 @@ class TestOverrideWindowDurability:
     def test_pending_unexpired_window_is_not_reaped(self, db):
         """Windows whose ``expires_at`` is in the FUTURE are skipped
         — the reaper only finalises windows past their deadline."""
-        from clearledgr.services.agent_background import reap_expired_override_windows
+        from solden.services.agent_background import reap_expired_override_windows
 
         item = db.create_ap_item({
             "id": "AP-ow-3",
@@ -170,7 +170,7 @@ class TestOverrideWindowDurability:
         )
 
         with patch(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             return_value=None,
         ):
             reaped = asyncio.run(reap_expired_override_windows())
@@ -193,12 +193,12 @@ class TestReapOverrideWindowsTickTask:
         status dict. The dedicated task (vs being bundled in
         fire_pending_timers) gives the override subsystem its own
         Celery metric surface."""
-        from clearledgr.services.celery_tasks import reap_override_windows_tick
+        from solden.services.celery_tasks import reap_override_windows_tick
 
         _, _ = _seed_box_with_expired_window(db, item_id="AP-ow-task-1")
 
         with patch(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             return_value=None,
         ):
             result = reap_override_windows_tick()
@@ -211,10 +211,10 @@ class TestReapOverrideWindowsTickTask:
         """If the underlying reaper raises an unexpected exception,
         the task returns ``status='error'`` so Celery telemetry
         catches it instead of bubbling and crashing the worker."""
-        from clearledgr.services.celery_tasks import reap_override_windows_tick
+        from solden.services.celery_tasks import reap_override_windows_tick
 
         with patch(
-            "clearledgr.services.agent_background.reap_expired_override_windows",
+            "solden.services.agent_background.reap_expired_override_windows",
             side_effect=RuntimeError("simulated reaper crash"),
         ):
             result = reap_override_windows_tick()
@@ -231,11 +231,11 @@ class TestBeatScheduleEntry:
         """Drift fence: the dedicated beat schedule entry must
         actually be registered on the Celery app, otherwise the
         tighter 30s cadence claim is fictional."""
-        from clearledgr.services.celery_app import app
+        from solden.services.celery_app import app
 
         beat_schedule = app.conf.beat_schedule or {}
         assert "reap-override-windows" in beat_schedule
 
         entry = beat_schedule["reap-override-windows"]
-        assert entry["task"] == "clearledgr.services.celery_tasks.reap_override_windows_tick"
+        assert entry["task"] == "solden.services.celery_tasks.reap_override_windows_tick"
         assert entry["schedule"] == 30.0

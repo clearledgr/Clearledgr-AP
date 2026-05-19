@@ -13,9 +13,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
-from clearledgr.services.approval_delegation import DelegationService
+from solden.core import database as db_module
+from solden.core.auth import TokenData
+from solden.services.approval_delegation import DelegationService
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ class TestDelegationEndpoints:
     @pytest.fixture()
     def client(self, db):
         from main import app
-        from clearledgr.api import workspace_shell as ws_module
+        from solden.api import workspace_shell as ws_module
 
         def _fake_user():
             return TokenData(

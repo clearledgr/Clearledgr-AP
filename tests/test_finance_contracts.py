@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from clearledgr.core.finance_contracts import (
+from solden.core.finance_contracts import (
     ActionExecution,
     AuditEvent,
     SkillCapabilityManifest,

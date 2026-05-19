@@ -22,9 +22,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
-from clearledgr.services.webhook_delivery import (
+from solden.core import database as db_module
+from solden.core.auth import TokenData
+from solden.services.webhook_delivery import (
     compute_signature,
     deliver_webhook,
     emit_webhook_event,
@@ -46,7 +46,7 @@ def db(tmp_path, monkeypatch):
 @pytest.fixture()
 def client(db):
     from main import app
-    from clearledgr.api import workspace_shell as ws_module
+    from solden.api import workspace_shell as ws_module
 
     def _fake_user():
         return TokenData(
@@ -161,7 +161,7 @@ class TestWebhookDelivery:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.webhook_delivery.get_http_client", return_value=mock_client):
+        with patch("solden.services.webhook_delivery.get_http_client", return_value=mock_client):
             ok = asyncio.run(deliver_webhook(
                 url="https://example.com/hook",
                 event_type="invoice.approved",
@@ -184,7 +184,7 @@ class TestWebhookDelivery:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.webhook_delivery.get_http_client", return_value=mock_client):
+        with patch("solden.services.webhook_delivery.get_http_client", return_value=mock_client):
             ok = asyncio.run(deliver_webhook(
                 url="https://example.com/hook",
                 event_type="test",
@@ -202,7 +202,7 @@ class TestEmitWebhookEvent:
     def test_emit_to_matching_subscriptions(self, db):
         db.create_webhook_subscription("org-test", "https://f.com/h", ["invoice.approved"], secret="sec")
 
-        with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
+        with patch("solden.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
             count = asyncio.run(emit_webhook_event(
                 organization_id="org-test",
                 event_type="invoice.approved",
@@ -219,7 +219,7 @@ class TestEmitWebhookEvent:
     def test_failed_delivery_enqueues_retry(self, db):
         db.create_webhook_subscription("org-test", "https://g.com/h", ["invoice.posted_to_erp"])
 
-        with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=False):
+        with patch("solden.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=False):
             asyncio.run(emit_webhook_event(
                 organization_id="org-test",
                 event_type="invoice.posted_to_erp",
@@ -236,7 +236,7 @@ class TestEmitStateChangeWebhook:
     def test_maps_state_to_event_type(self, db):
         db.create_webhook_subscription("org-test", "https://h.com/h", ["*"])
 
-        with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
+        with patch("solden.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True) as mock_deliver:
             count = asyncio.run(emit_state_change_webhook(
                 organization_id="org-test",
                 ap_item_id="ap-3",
@@ -278,7 +278,7 @@ class TestEmitStateChangeWebhook:
 
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             with patch(
-                "clearledgr.services.webhook_delivery.emit_state_change_webhook",
+                "solden.services.webhook_delivery.emit_state_change_webhook",
                 new_callable=AsyncMock,
             ) as mock_emit:
                 assert db.update_ap_item(
@@ -339,7 +339,7 @@ class TestWebhookEndpoints:
 
     def test_test_webhook(self, client, db):
         sub = db.create_webhook_subscription("org-test", "https://k.com/h", ["*"])
-        with patch("clearledgr.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True):
+        with patch("solden.services.webhook_delivery.deliver_webhook", new_callable=AsyncMock, return_value=True):
             resp = client.post(f"/api/workspace/webhooks/{sub['id']}/test")
         assert resp.status_code == 200
         assert resp.json()["delivered"] is True
@@ -359,7 +359,7 @@ class TestWebhookCrossOrgIsolation:
     isolation tests; webhooks did not. This class closes that gap.
 
     The guarantees under test, all enforced by
-    ``clearledgr.api.workspace_shell._resolve_org_id`` raising
+    ``solden.api.workspace_shell._resolve_org_id`` raising
     HTTPException(403) when the requested organization_id does not
     match the caller's token:
 

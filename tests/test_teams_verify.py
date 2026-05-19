@@ -6,7 +6,7 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
-from clearledgr.core import teams_verify as teams_verify_module
+from solden.core import teams_verify as teams_verify_module
 
 
 class _SigningKey:

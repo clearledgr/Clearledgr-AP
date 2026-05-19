@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.integrations.erp_router import (
+from solden.core import database as db_module
+from solden.integrations.erp_router import (
     ERPConnection,
     verify_bill_posted,
     attach_file_to_erp_bill,
@@ -52,8 +52,8 @@ class TestSlackCallbackRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.api.slack_invoices.get_http_client", return_value=mock_client):
-            from clearledgr.api.slack_invoices import _post_to_response_url
+        with patch("solden.api.slack_invoices.get_http_client", return_value=mock_client):
+            from solden.api.slack_invoices import _post_to_response_url
             asyncio.run(_post_to_response_url("https://hooks.slack.com/x", {"text": "ok"}))
 
         # No notification should be enqueued
@@ -67,9 +67,9 @@ class TestSlackCallbackRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.api.slack_invoices.get_http_client", return_value=mock_client), \
-             patch("clearledgr.api.slack_invoices.get_db", return_value=db):
-            from clearledgr.api.slack_invoices import _post_to_response_url
+        with patch("solden.api.slack_invoices.get_http_client", return_value=mock_client), \
+             patch("solden.api.slack_invoices.get_db", return_value=db):
+            from solden.api.slack_invoices import _post_to_response_url
             asyncio.run(_post_to_response_url("https://hooks.slack.com/x", {"text": "ok"}))
 
         pending = db.get_pending_notifications(limit=10)
@@ -92,7 +92,7 @@ class TestTeamsCallbackRetry:
     def test_teams_failure_enqueues(self, db, monkeypatch):
         """Failed Teams card update should enqueue for retry."""
         monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
-        from clearledgr.services.slack_notifications import _retry_teams_card_update
+        from solden.services.slack_notifications import _retry_teams_card_update
         payload = {
             "service_url": "https://smba.trafficmanager.net/x",
             "conversation_id": "conv123",
@@ -105,14 +105,14 @@ class TestTeamsCallbackRetry:
         mock_client = MagicMock()
         mock_client.update_activity = MagicMock(side_effect=Exception("timeout"))
 
-        with patch("clearledgr.services.teams_api.TeamsAPIClient", return_value=mock_client):
+        with patch("solden.services.teams_api.TeamsAPIClient", return_value=mock_client):
             result = asyncio.run(_retry_teams_card_update(payload))
         assert result is False
 
     def test_teams_retry_success(self, monkeypatch):
         """Successful Teams card update retry returns True."""
         monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
-        from clearledgr.services.slack_notifications import _retry_teams_card_update
+        from solden.services.slack_notifications import _retry_teams_card_update
         payload = {
             "service_url": "https://smba.trafficmanager.net/x",
             "conversation_id": "conv123",
@@ -125,7 +125,7 @@ class TestTeamsCallbackRetry:
         mock_client = MagicMock()
         mock_client.update_activity = MagicMock()
 
-        with patch("clearledgr.services.teams_api.TeamsAPIClient", return_value=mock_client):
+        with patch("solden.services.teams_api.TeamsAPIClient", return_value=mock_client):
             result = asyncio.run(_retry_teams_card_update(payload))
         assert result is True
         mock_client.update_activity.assert_called_once()
@@ -133,7 +133,7 @@ class TestTeamsCallbackRetry:
     def test_teams_retry_missing_fields(self, monkeypatch):
         """Retry with missing required fields returns False."""
         monkeypatch.setenv("FEATURE_TEAMS_ENABLED", "true")
-        from clearledgr.services.slack_notifications import _retry_teams_card_update
+        from solden.services.slack_notifications import _retry_teams_card_update
         result = asyncio.run(_retry_teams_card_update({"service_url": "", "conversation_id": "", "activity_id": ""}))
         assert result is False
 
@@ -142,7 +142,7 @@ class TestSlackResponseUrlRetry:
     """_retry_slack_response_url handler tests."""
 
     def test_success_returns_true(self):
-        from clearledgr.services.slack_notifications import _retry_slack_response_url
+        from solden.services.slack_notifications import _retry_slack_response_url
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_client = AsyncMock()
@@ -150,7 +150,7 @@ class TestSlackResponseUrlRetry:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.services.slack_notifications.get_http_client", return_value=mock_client):
+        with patch("solden.services.slack_notifications.get_http_client", return_value=mock_client):
             result = asyncio.run(_retry_slack_response_url({
                 "response_url": "https://hooks.slack.com/x",
                 "body": {"text": "hi"},
@@ -158,7 +158,7 @@ class TestSlackResponseUrlRetry:
         assert result is True
 
     def test_empty_url_returns_false(self):
-        from clearledgr.services.slack_notifications import _retry_slack_response_url
+        from solden.services.slack_notifications import _retry_slack_response_url
         result = asyncio.run(_retry_slack_response_url({"response_url": "", "body": {}}))
         assert result is False
 
@@ -175,9 +175,9 @@ class TestRetryQueueDispatch:
         )
 
         mock_retry = AsyncMock(return_value=True)
-        with patch("clearledgr.services.slack_notifications._retry_slack_response_url", mock_retry), \
-             patch("clearledgr.core.database.get_db", return_value=db):
-            from clearledgr.services.slack_notifications import process_retry_queue
+        with patch("solden.services.slack_notifications._retry_slack_response_url", mock_retry), \
+             patch("solden.core.database.get_db", return_value=db):
+            from solden.services.slack_notifications import process_retry_queue
             processed = asyncio.run(process_retry_queue())
 
         assert processed == 1
@@ -192,9 +192,9 @@ class TestRetryQueueDispatch:
         )
 
         mock_retry = AsyncMock(return_value=True)
-        with patch("clearledgr.services.slack_notifications._retry_teams_card_update", mock_retry), \
-             patch("clearledgr.core.database.get_db", return_value=db):
-            from clearledgr.services.slack_notifications import process_retry_queue
+        with patch("solden.services.slack_notifications._retry_teams_card_update", mock_retry), \
+             patch("solden.core.database.get_db", return_value=db):
+            from solden.services.slack_notifications import process_retry_queue
             processed = asyncio.run(process_retry_queue())
 
         assert processed == 1
@@ -214,7 +214,7 @@ class TestVerifyBillPosted:
         assert result["reason"] == "no_invoice_number"
 
     def test_no_erp_connection(self):
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=None):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
         assert result["verified"] is True
         assert result["reason"] == "no_erp_connection"
@@ -223,8 +223,8 @@ class TestVerifyBillPosted:
         conn = _qb_connection()
         mock_finder = AsyncMock(return_value={"bill_id": "B1", "doc_number": "INV-001", "amount": 100.0, "erp": "quickbooks"})
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001", expected_amount=100.0))
 
         assert result["verified"] is True
@@ -235,8 +235,8 @@ class TestVerifyBillPosted:
         conn = _qb_connection()
         mock_finder = AsyncMock(return_value=None)
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
 
         assert result["verified"] is False
@@ -246,8 +246,8 @@ class TestVerifyBillPosted:
         conn = _qb_connection()
         mock_finder = AsyncMock(return_value={"bill_id": "B1", "doc_number": "INV-001", "amount": 200.0, "erp": "quickbooks"})
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001", expected_amount=100.0))
 
         assert result["verified"] is False
@@ -257,8 +257,8 @@ class TestVerifyBillPosted:
         conn = _qb_connection()
         mock_finder = AsyncMock(return_value={"bill_id": "B1", "doc_number": "INV-001", "amount": 100.005, "erp": "quickbooks"})
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001", expected_amount=100.0))
 
         assert result["verified"] is True
@@ -268,8 +268,8 @@ class TestVerifyBillPosted:
         conn = _qb_connection()
         mock_finder = AsyncMock(side_effect=Exception("network error"))
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch.dict("clearledgr.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
 
         # On error, default to verified=True (don't block pipeline)
@@ -278,7 +278,7 @@ class TestVerifyBillPosted:
 
     def test_unknown_erp_type(self):
         conn = ERPConnection(type="unknown_erp")
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
 
         assert result["verified"] is True
@@ -293,20 +293,20 @@ class TestAttachFileToErpBill:
     """attach_file_to_erp_bill() tests."""
 
     def test_no_connection_returns_none(self):
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=None):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             result = asyncio.run(attach_file_to_erp_bill("org1", "B1", "https://example.com/inv.pdf"))
         assert result is None
 
     def test_unknown_erp_returns_none(self):
         conn = ERPConnection(type="unknown_erp")
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn):
             result = asyncio.run(attach_file_to_erp_bill("org1", "B1", "https://example.com/inv.pdf"))
         assert result is None
 
     def test_download_failure_returns_none(self):
         conn = _qb_connection()
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch("clearledgr.integrations.erp_router._download_attachment", AsyncMock(return_value=None)):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch("solden.integrations.erp_router._download_attachment", AsyncMock(return_value=None)):
             result = asyncio.run(attach_file_to_erp_bill("org1", "B1", "https://example.com/inv.pdf"))
         assert result is None
 
@@ -314,9 +314,9 @@ class TestAttachFileToErpBill:
         conn = _qb_connection()
         mock_uploader = AsyncMock(return_value={"attached": True, "erp": "quickbooks"})
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch("clearledgr.integrations.erp_router._download_attachment", AsyncMock(return_value=b"%PDF-1.4 test")), \
-             patch.dict("clearledgr.integrations.erp_router._ATTACHMENT_UPLOADERS", {"quickbooks": mock_uploader}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch("solden.integrations.erp_router._download_attachment", AsyncMock(return_value=b"%PDF-1.4 test")), \
+             patch.dict("solden.integrations.erp_router._ATTACHMENT_UPLOADERS", {"quickbooks": mock_uploader}):
             result = asyncio.run(attach_file_to_erp_bill("org1", "B1", "https://example.com/inv.pdf"))
 
         assert result is not None
@@ -327,9 +327,9 @@ class TestAttachFileToErpBill:
         conn = _qb_connection()
         mock_uploader = AsyncMock(side_effect=Exception("upload failed"))
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn), \
-             patch("clearledgr.integrations.erp_router._download_attachment", AsyncMock(return_value=b"%PDF-1.4 test")), \
-             patch.dict("clearledgr.integrations.erp_router._ATTACHMENT_UPLOADERS", {"quickbooks": mock_uploader}):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn), \
+             patch("solden.integrations.erp_router._download_attachment", AsyncMock(return_value=b"%PDF-1.4 test")), \
+             patch.dict("solden.integrations.erp_router._ATTACHMENT_UPLOADERS", {"quickbooks": mock_uploader}):
             result = asyncio.run(attach_file_to_erp_bill("org1", "B1", "https://example.com/inv.pdf"))
 
         assert result is None
@@ -339,12 +339,12 @@ class TestDownloadAttachment:
     """_download_attachment tests."""
 
     def test_empty_url_returns_none(self):
-        from clearledgr.integrations.erp_router import _download_attachment
+        from solden.integrations.erp_router import _download_attachment
         result = asyncio.run(_download_attachment(""))
         assert result is None
 
     def test_successful_download(self):
-        from clearledgr.integrations.erp_router import _download_attachment
+        from solden.integrations.erp_router import _download_attachment
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.content = b"%PDF test"
@@ -353,17 +353,17 @@ class TestDownloadAttachment:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_router.get_http_client", return_value=mock_client):
             result = asyncio.run(_download_attachment("https://example.com/inv.pdf"))
         assert result == b"%PDF test"
 
     def test_download_error_returns_none(self):
-        from clearledgr.integrations.erp_router import _download_attachment
+        from solden.integrations.erp_router import _download_attachment
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=Exception("timeout"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("clearledgr.integrations.erp_router.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_router.get_http_client", return_value=mock_client):
             result = asyncio.run(_download_attachment("https://example.com/inv.pdf"))
         assert result is None

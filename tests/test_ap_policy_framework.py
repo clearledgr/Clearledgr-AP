@@ -7,13 +7,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from clearledgr.api import ap_policies as ap_policies_module
-from clearledgr.api.ap_policies import router as ap_policies_router
-from clearledgr.core.auth import TokenData
-from clearledgr.core.database import SoldenDB
-from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
-from clearledgr.services import policy_compliance as policy_compliance_module
-from clearledgr.services import agent_background as agent_background_module
+from solden.api import ap_policies as ap_policies_module
+from solden.api.ap_policies import router as ap_policies_router
+from solden.core.auth import TokenData
+from solden.core.database import SoldenDB
+from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+from solden.services import policy_compliance as policy_compliance_module
+from solden.services import agent_background as agent_background_module
 
 
 def _make_db(tmp_path: Path) -> SoldenDB:
@@ -56,8 +56,8 @@ class _FakeWorkflowDB:
 
 def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
-    monkeypatch.setattr("clearledgr.api.ap_policies.get_db", lambda: db)
-    monkeypatch.setattr("clearledgr.services.policy_compliance.get_db", lambda: db)
+    monkeypatch.setattr("solden.api.ap_policies.get_db", lambda: db)
+    monkeypatch.setattr("solden.services.policy_compliance.get_db", lambda: db)
 
     app = FastAPI()
     app.include_router(ap_policies_router)
@@ -149,8 +149,8 @@ def test_ap_policy_api_is_versioned_and_auditable(tmp_path: Path, monkeypatch):
 
 def test_ap_policy_api_rejects_invalid_vendor_rule(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
-    monkeypatch.setattr("clearledgr.api.ap_policies.get_db", lambda: db)
-    monkeypatch.setattr("clearledgr.services.policy_compliance.get_db", lambda: db)
+    monkeypatch.setattr("solden.api.ap_policies.get_db", lambda: db)
+    monkeypatch.setattr("solden.services.policy_compliance.get_db", lambda: db)
 
     app = FastAPI()
     app.include_router(ap_policies_router)
@@ -176,8 +176,8 @@ def test_ap_policy_api_rejects_invalid_vendor_rule(tmp_path: Path, monkeypatch):
 
 def test_ap_policy_api_rejects_invalid_approval_automation(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
-    monkeypatch.setattr("clearledgr.api.ap_policies.get_db", lambda: db)
-    monkeypatch.setattr("clearledgr.services.policy_compliance.get_db", lambda: db)
+    monkeypatch.setattr("solden.api.ap_policies.get_db", lambda: db)
+    monkeypatch.setattr("solden.services.policy_compliance.get_db", lambda: db)
 
     app = FastAPI()
     app.include_router(ap_policies_router)
@@ -223,7 +223,7 @@ def test_runtime_policy_changes_drive_workflow_routing(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(policy_compliance_module, "get_db", lambda: db)
     monkeypatch.setattr(
-        "clearledgr.services.invoice_workflow.get_policy_compliance",
+        "solden.services.invoice_workflow.get_policy_compliance",
         lambda _org: policy_compliance_module.PolicyComplianceService("org-test"),
     )
 
@@ -314,15 +314,15 @@ def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "clearledgr.services.slack_notifications.send_overdue_summary",
+        "solden.services.slack_notifications.send_overdue_summary",
         _fake_send_overdue_summary,
     )
     monkeypatch.setattr(
-        "clearledgr.services.task_scheduler.should_send_reminder",
+        "solden.services.task_scheduler.should_send_reminder",
         _fake_should_send_reminder,
     )
     monkeypatch.setattr(
-        "clearledgr.services.task_scheduler.log_reminder",
+        "solden.services.task_scheduler.log_reminder",
         _fake_log_reminder,
     )
 
@@ -348,8 +348,8 @@ def test_background_overdue_summary_is_throttled_per_org(monkeypatch):
 
 def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, monkeypatch):
     db = _make_db(tmp_path)
-    monkeypatch.setattr("clearledgr.core.database.get_db", lambda: db)
-    monkeypatch.setattr("clearledgr.services.policy_compliance.get_db", lambda: db)
+    monkeypatch.setattr("solden.core.database.get_db", lambda: db)
+    monkeypatch.setattr("solden.services.policy_compliance.get_db", lambda: db)
 
     db.upsert_ap_policy_version(
         organization_id="org-test",
@@ -417,7 +417,7 @@ def test_background_approval_timeouts_follow_policy_milestones(tmp_path: Path, m
         return True
 
     monkeypatch.setattr(
-        "clearledgr.services.slack_notifications.send_approval_reminder",
+        "solden.services.slack_notifications.send_approval_reminder",
         _fake_send_approval_reminder,
     )
 

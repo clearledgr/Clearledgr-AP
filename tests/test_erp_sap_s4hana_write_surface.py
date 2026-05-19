@@ -31,9 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.integrations import erp_quickbooks  # noqa: E402
-from clearledgr.integrations import erp_sap  # noqa: E402
-from clearledgr.integrations import erp_xero  # noqa: E402
+from solden.integrations import erp_quickbooks  # noqa: E402
+from solden.integrations import erp_sap  # noqa: E402
+from solden.integrations import erp_xero  # noqa: E402
 
 
 # ─── Fakes ──────────────────────────────────────────────────────────

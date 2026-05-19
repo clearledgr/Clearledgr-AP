@@ -24,9 +24,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import app  # noqa: E402
-from clearledgr.api import box_exceptions_admin as admin_module  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import TokenData  # noqa: E402
+from solden.api import box_exceptions_admin as admin_module  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import TokenData  # noqa: E402
 
 
 @pytest.fixture()

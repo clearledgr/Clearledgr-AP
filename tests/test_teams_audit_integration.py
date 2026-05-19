@@ -36,8 +36,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.services.agent_command_dispatch import (
+from solden.core.database import get_db
+from solden.services.agent_command_dispatch import (
     build_channel_runtime,
     dispatch_runtime_intent,
 )

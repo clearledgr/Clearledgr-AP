@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from clearledgr.services import agent_background as agent_background_module
+from solden.services import agent_background as agent_background_module
 
 
 def test_run_loop_iteration_isolates_org_failures(monkeypatch):
@@ -49,8 +49,8 @@ def test_check_overdue_tasks_continues_when_one_org_fails(monkeypatch):
         lambda: ["org-a", "org-b"],
     )
 
-    import clearledgr.services.task_scheduler as task_scheduler_module
-    import clearledgr.services.slack_notifications as slack_notifications_module
+    import solden.services.task_scheduler as task_scheduler_module
+    import solden.services.slack_notifications as slack_notifications_module
 
     monkeypatch.setattr(task_scheduler_module, "should_send_reminder", lambda *args, **kwargs: True)
     monkeypatch.setattr(task_scheduler_module, "log_reminder", lambda *args, **kwargs: None)

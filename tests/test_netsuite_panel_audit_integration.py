@@ -33,8 +33,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from clearledgr.api.netsuite_panel import router as netsuite_panel_router
-from clearledgr.core.database import get_db
+from solden.api.netsuite_panel import router as netsuite_panel_router
+from solden.core.database import get_db
 
 
 _TEST_DEV_TOKEN = "test-netsuite-panel-dev-token-9f3c8b"

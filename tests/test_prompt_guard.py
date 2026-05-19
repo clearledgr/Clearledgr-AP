@@ -1,4 +1,4 @@
-"""Tests for clearledgr.core.prompt_guard — prompt injection detection.
+"""Tests for solden.core.prompt_guard — prompt injection detection.
 
 Per DESIGN_THESIS.md §8 and the Phase 1.2a hardening, prompt injection
 patterns are DETECTED and BLOCKED at the deterministic validation gate —
@@ -9,7 +9,7 @@ gate.
 from __future__ import annotations
 
 
-from clearledgr.core.prompt_guard import (
+from solden.core.prompt_guard import (
     clip_untrusted,
     detect_injection,
     scan_invoice_fields,
@@ -298,9 +298,9 @@ class TestValidationGateBlocksInjection:
 
     def _make_workflow(self, tmp_path):
         """Build an InvoiceWorkflowService over a fresh temp-file DB."""
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.core.database import get_db
+        from solden.core import database as db_module
+        from solden.services.invoice_workflow import InvoiceWorkflowService
 
         db = get_db()
         db.initialize()
@@ -308,7 +308,7 @@ class TestValidationGateBlocksInjection:
         return InvoiceWorkflowService(organization_id="org_pg_test"), db
 
     def _make_invoice(self, **kwargs):
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_models import InvoiceData
 
         defaults = dict(
             gmail_id="g_pg_1",

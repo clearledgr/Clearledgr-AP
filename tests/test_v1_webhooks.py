@@ -8,7 +8,7 @@ delivery tests live with the integration suite (need a real Postgres
 
 from __future__ import annotations
 
-from clearledgr.api.v1_webhooks import (
+from solden.api.v1_webhooks import (
     _ALLOWED_EVENTS,
     _generate_secret,
     _redact_secret,

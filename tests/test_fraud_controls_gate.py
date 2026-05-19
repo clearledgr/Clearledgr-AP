@@ -33,8 +33,8 @@ from fastapi.testclient import TestClient
 
 def _make_db(tmp_path, name: str = "fc_test.db"):
     """Create a fresh temp-file SoldenDB and wire it as the singleton."""
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -43,12 +43,12 @@ def _make_db(tmp_path, name: str = "fc_test.db"):
 
 
 def _make_workflow(db, org_id: str = "org_fc_test"):
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
     return InvoiceWorkflowService(organization_id=org_id)
 
 
 def _make_invoice(**overrides):
-    from clearledgr.services.invoice_models import InvoiceData
+    from solden.services.invoice_models import InvoiceData
     defaults = dict(
         gmail_id="g_fc_1",
         subject="Invoice INV-FC-1",
@@ -106,7 +106,7 @@ def _seed_org(db, org_id: str, fraud_controls: Dict[str, Any] = None):
 class TestFraudControlConfigDefaults:
 
     def test_defaults_match_thesis_baseline(self):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             DEFAULT_PAYMENT_CEILING,
             DEFAULT_VENDOR_VELOCITY_MAX_PER_WEEK,
@@ -122,7 +122,7 @@ class TestFraudControlConfigDefaults:
         assert config.base_currency == ""
 
     def test_config_is_frozen(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig()
         with pytest.raises(Exception):
             config.payment_ceiling = 50_000  # type: ignore
@@ -131,17 +131,17 @@ class TestFraudControlConfigDefaults:
 class TestFraudControlConfigFromDict:
 
     def test_from_empty_dict_uses_defaults(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict({})
         assert config.payment_ceiling == 10_000.0
 
     def test_from_none_uses_defaults(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict(None)
         assert config.payment_ceiling == 10_000.0
 
     def test_honors_supplied_values(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict(
             {
                 "payment_ceiling": 50_000.0,
@@ -156,7 +156,7 @@ class TestFraudControlConfigFromDict:
         assert config.base_currency == "EUR"
 
     def test_rejects_negative_values_falls_back_to_defaults(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict(
             {
                 "payment_ceiling": -5000.0,
@@ -169,14 +169,14 @@ class TestFraudControlConfigFromDict:
         assert config.first_payment_dormancy_days == 180
 
     def test_rejects_non_numeric_falls_back(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict(
             {"payment_ceiling": "not-a-number"}
         )
         assert config.payment_ceiling == 10_000.0
 
     def test_base_currency_from_org_when_not_in_data(self):
-        from clearledgr.core.fraud_controls import FraudControlConfig
+        from solden.core.fraud_controls import FraudControlConfig
         config = FraudControlConfig.from_dict({}, base_currency="GBP")
         assert config.base_currency == "GBP"
 
@@ -189,13 +189,13 @@ class TestFraudControlConfigFromDict:
 class TestLoadSaveFraudControls:
 
     def test_load_returns_defaults_for_missing_org(self, tmp_path):
-        from clearledgr.core.fraud_controls import load_fraud_controls
+        from solden.core.fraud_controls import load_fraud_controls
         db = _make_db(tmp_path)
         config = load_fraud_controls("nonexistent_org", db)
         assert config.payment_ceiling == 10_000.0
 
     def test_load_returns_stored_values(self, tmp_path):
-        from clearledgr.core.fraud_controls import load_fraud_controls
+        from solden.core.fraud_controls import load_fraud_controls
         db = _make_db(tmp_path)
         _seed_org(
             db,
@@ -211,7 +211,7 @@ class TestLoadSaveFraudControls:
         assert config.first_payment_dormancy_days == 180  # default preserved
 
     def test_load_resolves_base_currency_from_locale_section(self, tmp_path):
-        from clearledgr.core.fraud_controls import load_fraud_controls
+        from solden.core.fraud_controls import load_fraud_controls
         db = _make_db(tmp_path)
         db.create_organization(
             "org_eur",
@@ -222,7 +222,7 @@ class TestLoadSaveFraudControls:
         assert config.base_currency == "EUR"
 
     def test_save_persists_values(self, tmp_path):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             load_fraud_controls,
             save_fraud_controls,
@@ -243,7 +243,7 @@ class TestLoadSaveFraudControls:
         assert loaded.vendor_velocity_max_per_week == 20
 
     def test_save_emits_audit_event_with_diff(self, tmp_path):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             save_fraud_controls,
         )
@@ -276,7 +276,7 @@ class TestLoadSaveFraudControls:
 
     def test_save_emits_audit_event_even_when_no_value_changed(self, tmp_path):
         """'No silent modifications' — audit event fires on every save call."""
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             save_fraud_controls,
         )
@@ -305,7 +305,7 @@ class TestLoadSaveFraudControls:
 class TestEvaluatePaymentCeiling:
 
     def test_same_currency_under_ceiling_passes(self):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             evaluate_payment_ceiling,
         )
@@ -317,7 +317,7 @@ class TestEvaluatePaymentCeiling:
         assert result.fx_unavailable is False
 
     def test_same_currency_over_ceiling_blocks(self):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             evaluate_payment_ceiling,
         )
@@ -327,7 +327,7 @@ class TestEvaluatePaymentCeiling:
         assert result.converted_amount == 15_000.0
 
     def test_exactly_at_ceiling_does_not_exceed(self):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             evaluate_payment_ceiling,
         )
@@ -336,7 +336,7 @@ class TestEvaluatePaymentCeiling:
         assert result.exceeds_ceiling is False  # strict >
 
     def test_fx_conversion_applied(self):
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             evaluate_payment_ceiling,
         )
@@ -344,7 +344,7 @@ class TestEvaluatePaymentCeiling:
 
         fake_fx = {"converted_amount": 12_000.0, "rate": 1.2, "source": "ecb"}
         with patch(
-            "clearledgr.services.fx_conversion.convert", return_value=fake_fx
+            "solden.services.fx_conversion.convert", return_value=fake_fx
         ):
             result = evaluate_payment_ceiling(10_000.0, "EUR", config)
         assert result.exceeds_ceiling is True
@@ -354,14 +354,14 @@ class TestEvaluatePaymentCeiling:
 
     def test_fx_unavailable_fails_closed(self):
         """When FX service cannot convert, treat as exceeding ceiling."""
-        from clearledgr.core.fraud_controls import (
+        from solden.core.fraud_controls import (
             FraudControlConfig,
             evaluate_payment_ceiling,
         )
         config = FraudControlConfig(payment_ceiling=10_000.0, base_currency="USD")
         fake_fx = {"converted_amount": None, "rate": None, "source": "unavailable"}
         with patch(
-            "clearledgr.services.fx_conversion.convert", return_value=fake_fx
+            "solden.services.fx_conversion.convert", return_value=fake_fx
         ):
             result = evaluate_payment_ceiling(500.0, "XYZ", config)
         assert result.fx_unavailable is True
@@ -655,7 +655,7 @@ class TestGateFailsClosed:
 
         # Force load_fraud_controls to raise
         with patch(
-            "clearledgr.core.fraud_controls.load_fraud_controls",
+            "solden.core.fraud_controls.load_fraud_controls",
             side_effect=RuntimeError("simulated config load failure"),
         ):
             invoice = _make_invoice()
@@ -676,8 +676,8 @@ class TestFraudControlsAPI:
 
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
         import importlib
         import main
 
@@ -691,7 +691,7 @@ class TestFraudControlsAPI:
         yield client, main, db
 
     def _make_user(self, role: str, user_id: str = "user_1", org_id: str = "org_fc_test"):
-        from clearledgr.core.auth import TokenData
+        from solden.core.auth import TokenData
         return TokenData(
             user_id=user_id,
             email=f"{user_id}@test.example",
@@ -702,7 +702,7 @@ class TestFraudControlsAPI:
 
     def test_get_returns_defaults_for_fresh_org(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user("user")
         try:
             _seed_org(db, "org_fc_test")
@@ -720,7 +720,7 @@ class TestFraudControlsAPI:
 
     def test_non_cfo_cannot_modify(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user("admin")
         try:
             _seed_org(db, "org_fc_test")
@@ -735,7 +735,7 @@ class TestFraudControlsAPI:
 
     def test_ap_manager_cannot_modify(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user(
             "operator"
         )
@@ -751,7 +751,7 @@ class TestFraudControlsAPI:
 
     def test_cfo_can_modify(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user(
             "cfo", user_id="cfo_user_1"
         )
@@ -778,7 +778,7 @@ class TestFraudControlsAPI:
 
     def test_owner_can_modify_as_superset_of_cfo(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user(
             "owner"
         )
@@ -795,7 +795,7 @@ class TestFraudControlsAPI:
 
     def test_cfo_from_other_org_cannot_modify(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user(
             "cfo", org_id="different_org"
         )
@@ -811,7 +811,7 @@ class TestFraudControlsAPI:
 
     def test_partial_update_preserves_other_fields(self, app_client):
         client, main, db = app_client
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         main.app.dependency_overrides[get_current_user] = lambda: self._make_user("cfo")
         try:
             _seed_org(
@@ -858,8 +858,8 @@ class TestEndToEndCeilingWithPhase11Enforcement:
         )
         _seed_established_vendor(db, "Established Vendor")
 
-        from clearledgr.services.ap_decision import APDecision
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.ap_decision import APDecision
+        from solden.services.invoice_workflow import InvoiceWorkflowService
 
         workflow = InvoiceWorkflowService(organization_id="org_fc_test")
 
@@ -927,7 +927,7 @@ class TestFraudFlagCASRace:
     def test_add_fraud_flag_retries_on_optimistic_lock_failure(self, tmp_path):
         """First update returns False (lock check failed → another writer
         beat us). The second attempt re-reads, re-applies, and succeeds."""
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
 
         svc = InvoiceWorkflowService(organization_id="org_cas")
 
@@ -969,7 +969,7 @@ class TestFraudFlagCASRace:
     def test_resolve_fraud_flag_retries_on_optimistic_lock_failure(self, tmp_path):
         """Resolution under contention re-reads the freshest flags list
         before applying the resolved_at/resolved_by stamp."""
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
 
         svc = InvoiceWorkflowService(organization_id="org_cas_resolve")
 

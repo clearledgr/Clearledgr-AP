@@ -1,4 +1,4 @@
-from clearledgr.services.email_parser import EmailParser
+from solden.services.email_parser import EmailParser
 
 
 def test_email_parser_classifies_refund_before_receipt():

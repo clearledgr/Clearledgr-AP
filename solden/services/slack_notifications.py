@@ -1,0 +1,2014 @@
+"""
+Slack Notifications
+
+Sends reconciliation results to Slack.
+Following the spec: Exception-only notifications with one-click approval.
+"""
+
+import os
+import logging
+from solden.core.http_client import get_http_client
+from solden.core.org_utils import assert_org_id
+from typing import Dict, Any, Optional, List
+from solden.services.slack_api import resolve_slack_runtime
+
+logger = logging.getLogger(__name__)
+
+
+def _build_approval_followup_blocks(
+    *,
+    ap_item: Dict[str, Any],
+    vendor: str,
+    amount: float,
+    invoice_num: str,
+    hours_pending: int,
+    stage: str,
+    approver_display_targets: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    action_ref = str(ap_item.get("id") or invoice_num or "unknown").strip() or "unknown"
+    currency = str(ap_item.get("currency") or "USD").strip() or "USD"
+    details = {
+        "Vendor": vendor,
+        "Amount": f"{currency} {amount:,.2f}",
+        "Invoice": invoice_num,
+        "Waiting": f"{hours_pending}h",
+    }
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "Approval Escalation" if stage == "escalation" else "Approval Reminder",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{vendor}* invoice *#{invoice_num}* has been waiting for approval for *{hours_pending}h*.\n"
+                    "Approve, reject, or request more information directly from Slack."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*{key}:*\n{value}"}
+                for key, value in details.items()
+            ],
+        },
+    ]
+    display_targets = [str(value).strip() for value in (approver_display_targets or []) if str(value).strip()]
+    if display_targets:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Pending approvers:*\n" + ", ".join(display_targets),
+                },
+            }
+        )
+    blocks.append(
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": f"approve_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "style": "danger",
+                    "action_id": f"reject_invoice_{action_ref}",
+                    "value": action_ref,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Request info"},
+                    "action_id": f"request_info_{action_ref}",
+                    "value": action_ref,
+                },
+            ],
+        }
+    )
+    return blocks
+
+
+def _resolve_intelligent_route(
+    *,
+    message_type: str = "channel",
+    approver_email: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    amount: Optional[float] = None,
+) -> Dict[str, Any]:
+    """§6.8 Intelligent Routing — five thesis-defined routing rules.
+
+    Returns {"target": "channel"|"dm"|"dm_and_channel", "user_email": ...,
+             "escalation_hours": ..., "backup_email": ...}.
+    """
+    result = {
+        "target": "channel",
+        "channel": None,
+        "user_email": None,
+        "also_channel": False,
+        "escalation_hours": None,
+        "backup_email": None,
+        "routing_rule": "default",
+    }
+
+    # Load org settings for thresholds and contacts
+    org_settings = {}
+    try:
+        from solden.core.database import get_db
+        db = get_db()
+        org = db.get_organization(organization_id) if organization_id else None
+        raw = (org or {}).get("settings_json") or {}
+        if isinstance(raw, str):
+            import json as _j
+            raw = _j.loads(raw)
+        org_settings = raw or {}
+    except Exception:
+        pass
+
+    controller_threshold = float(org_settings.get("controller_approval_threshold") or 50000)
+    cfo_threshold = float(org_settings.get("cfo_approval_threshold") or 100000)
+    procurement_email = org_settings.get("procurement_contact_email")
+
+    # Rule 5: OOO routing — check if approver is unavailable, route to backup
+    if approver_email:
+        backup = _check_ooo_and_get_backup(approver_email, org_settings)
+        if backup:
+            result["backup_email"] = approver_email  # Original approver (OOO)
+            approver_email = backup  # Route to backup instead
+            result["routing_rule"] = "ooo_backup"
+
+    # Rule 1: Standard approval → AP Manager DM
+    if message_type == "personal_approval" and approver_email:
+        result["target"] = "dm"
+        result["user_email"] = approver_email
+        result["routing_rule"] = result.get("routing_rule") if result["routing_rule"] != "default" else "standard_approval"
+
+    # Rule 2 / 3: tiered amount-based escalation. Above cfo_threshold
+    # always goes to the CFO with a 4h SLA; between controller and cfo
+    # thresholds goes to the Financial Controller with a channel copy.
+    elif message_type in ("personal_approval", "cfo_escalation") and amount and amount > controller_threshold:
+        cfo_email = org_settings.get("cfo_email")
+        controller_email = org_settings.get("financial_controller_email")
+        if amount > cfo_threshold and cfo_email:
+            result["target"] = "dm"
+            result["user_email"] = cfo_email
+            result["also_channel"] = True
+            result["escalation_hours"] = 4
+            result["routing_rule"] = "above_threshold_cfo"
+        elif controller_email:
+            result["target"] = "dm"
+            result["user_email"] = controller_email
+            result["also_channel"] = True
+            result["routing_rule"] = "above_threshold_controller"
+        elif approver_email:
+            result["target"] = "dm"
+            result["user_email"] = approver_email
+            result["routing_rule"] = "standard_approval"
+
+    # Rule 3b: explicit CFO escalation message type below cfo_threshold —
+    # still goes to the configured approver with the 4h response window.
+    elif message_type == "cfo_escalation" and approver_email:
+        result["target"] = "dm"
+        result["user_email"] = approver_email
+        result["escalation_hours"] = 4
+        result["routing_rule"] = "cfo_sign_off"
+
+    # Rule 4: Exception requiring procurement → procurement contact DM
+    elif message_type == "no_po_exception" and procurement_email:
+        result["target"] = "dm"
+        result["user_email"] = procurement_email
+        result["routing_rule"] = "procurement_exception"
+
+    return result
+
+
+def _check_ooo_and_get_backup(
+    approver_email: str,
+    org_settings: Dict[str, Any],
+) -> Optional[str]:
+    """§6.8 OOO Routing: Check if approver is unavailable, return backup.
+
+    "If the assigned approver's Google Calendar shows OOO, the agent
+    routes to their backup. Backup is configured per role in Settings."
+
+    Checks org settings for OOO overrides first (manual), then could
+    check Google Calendar API (future). Returns backup email or None.
+    """
+    # Check manual OOO overrides in settings
+    ooo_overrides = org_settings.get("ooo_overrides") or {}
+    if isinstance(ooo_overrides, dict) and approver_email in ooo_overrides:
+        backup = ooo_overrides[approver_email]
+        if isinstance(backup, str) and backup.strip():
+            return backup.strip()
+
+    # Check approval delegation rules
+    try:
+        from solden.core.database import get_db
+        db = get_db()
+        if hasattr(db, "get_active_delegation"):
+            delegation = db.get_active_delegation(approver_email)
+            if delegation and delegation.get("delegate_email"):
+                return delegation["delegate_email"]
+    except Exception:
+        pass
+
+    # Google Calendar freeBusy check — works for approvers who are
+    # Solden users (their Google OAuth token is on file). External
+    # approvers without tokens fall through fail-open. See
+    # clearledgr/services/calendar_ooo.py for the fail-open rationale.
+    try:
+        from solden.services.calendar_ooo import is_approver_ooo_sync
+        if is_approver_ooo_sync(approver_email):
+            # Approver IS OOO per their calendar. Resolve the backup
+            # from org_settings. Backup lookup order:
+            #   1. ooo_backups[approver_email] — explicit per-person override
+            #   2. ooo_backups["default"] — org-wide fallback
+            # If neither is configured, return None so the caller
+            # continues to the next routing rule rather than silently
+            # dropping the approval.
+            backups = org_settings.get("ooo_backups") or {}
+            if isinstance(backups, dict):
+                backup = backups.get(approver_email) or backups.get("default")
+                if isinstance(backup, str) and backup.strip():
+                    return backup.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[ooo] calendar freeBusy check failed: %s", exc)
+
+    return None
+
+
+async def _post_slack_dm(
+    *,
+    user_email: str,
+    blocks: List[Dict[str, Any]],
+    text: str,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """Send a Slack DM to a specific user by email (§6.8 intelligent routing)."""
+    try:
+        # Slack workspace is per-tenant. Without a real organization_id
+        # we'd silently route the DM through the platform "default"
+        # workspace and leak tenant data. Refuse instead — caller
+        # treats it as a delivery failure (the existing return-False
+        # contract).
+        if not organization_id or not str(organization_id).strip():
+            logger.warning(
+                "send_dm_to_user refused: organization_id missing for user=%s",
+                user_email,
+            )
+            return False
+        runtime = resolve_slack_runtime(organization_id)
+        if not runtime or not runtime.get("token"):
+            return False
+
+        token = runtime["token"]
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Look up Slack user by email
+        client = get_http_client()
+        lookup = await client.post(
+            "https://slack.com/api/users.lookupByEmail",
+            json={"email": user_email},
+            headers=headers,
+        )
+        data = lookup.json()
+        if not data.get("ok"):
+            logger.warning("[intelligent_routing] user lookup failed for %s: %s", user_email, data.get("error"))
+            return False
+        slack_user_id = data["user"]["id"]
+
+        # Send DM
+        resp = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            json={"channel": slack_user_id, "text": text, "blocks": blocks},
+            headers=headers,
+        )
+        dm_data = resp.json()
+        if not dm_data.get("ok"):
+            logger.warning("[intelligent_routing] DM failed: %s", dm_data.get("error"))
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("[intelligent_routing] DM to %s failed: %s", user_email, exc)
+        return False
+
+
+async def _post_slack_blocks(
+    blocks: List[Dict[str, Any]],
+    text: str,
+    preferred_channel: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Send Slack blocks using webhook first, then bot token fallback.
+
+    This supports both deployment styles:
+    - Incoming webhook (SLACK_WEBHOOK_URL)
+    - Bot token (SLACK_BOT_TOKEN + channel)
+    """
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    runtime = resolve_slack_runtime(organization_id)
+    bot_token = (runtime.get("bot_token") or "").strip()
+    channel = (
+        (preferred_channel or "").strip()
+        or str(runtime.get("approval_channel") or "").strip()
+        or "#finance-approvals"
+    )
+
+    def _retry_candidates(primary: str) -> List[str]:
+        candidates: List[str] = []
+        for value in (
+            runtime.get("approval_channel"),
+            os.getenv("SLACK_APPROVAL_CHANNEL"),
+            os.getenv("SLACK_DEFAULT_CHANNEL"),
+        ):
+            token = str(value or "").strip()
+            if not token or token == primary or token in candidates:
+                continue
+            candidates.append(token)
+        return candidates
+
+    if webhook_url:
+        try:
+            client = get_http_client()
+            response = await client.post(
+                webhook_url,
+                json={"text": text, "blocks": blocks},
+                timeout=15,
+            )
+            response.raise_for_status()
+            return {"ok": True, "via": "webhook"}
+        except Exception as e:
+            logger.warning(f"Slack webhook send failed, trying bot token fallback: {e}")
+
+    if bot_token:
+        try:
+            client = get_http_client()
+            headers = {
+                "Authorization": f"Bearer {bot_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            }
+
+            async def _send_to(target_channel: str):
+                return await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers=headers,
+                    json={
+                        "channel": target_channel,
+                        "text": text,
+                        "blocks": blocks,
+                        "unfurl_links": False,
+                        "unfurl_media": False,
+                    },
+                    timeout=15,
+                )
+
+            response = await _send_to(channel)
+            payload = response.json() if response.content else {}
+            if response.status_code < 400 and payload.get("ok", False):
+                return {"ok": True, "ts": payload.get("ts"), "channel": payload.get("channel"), "via": "bot"}
+
+            if payload.get("error") == "channel_not_found":
+                for retry_channel in _retry_candidates(channel):
+                    retry_response = await _send_to(retry_channel)
+                    retry_payload = retry_response.json() if retry_response.content else {}
+                    if retry_response.status_code < 400 and retry_payload.get("ok", False):
+                        logger.warning(
+                            "Slack primary channel %s not found; delivered via fallback %s",
+                            channel,
+                            retry_channel,
+                        )
+                        return {"ok": True, "ts": retry_payload.get("ts"), "channel": retry_payload.get("channel"), "via": "bot_fallback"}
+
+            logger.error(f"Slack bot send failed: status={response.status_code} payload={payload}")
+            return None
+        except Exception as e:
+            logger.error(f"Slack bot token send failed: {e}")
+            return None
+
+    logger.warning(
+        "No Slack delivery method configured (set Slack install or SLACK_BOT_TOKEN, or connect via onboarding). org=%s mode=%s",
+        # Log-only context; raise-on-missing is wrong here since the
+        # function legitimately runs in env-only mode without an org.
+        organization_id or "<unscoped>",
+        runtime.get("mode"),
+    )
+    return False
+
+
+async def send_with_retry(
+    blocks: List[Dict[str, Any]],
+    text: str,
+    ap_item_id: Optional[str] = None,
+    preferred_channel: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """Send Slack blocks, enqueueing for retry on failure."""
+    try:
+        result = await _post_slack_blocks(blocks, text, preferred_channel, organization_id)
+    except Exception as post_exc:
+        logger.error("Slack _post_slack_blocks raised for ap_item=%s: %s", ap_item_id, post_exc)
+        result = None
+    if result:
+        return True
+    # Enqueue for retry
+    try:
+        from solden.core.database import get_db
+        db = get_db()
+        if not organization_id or not str(organization_id).strip():
+            # The retry queue is per-tenant. Without an org_id the
+            # retry would land on the platform tenant's queue and
+            # never be picked up by the right worker. Skip enqueueing
+            # rather than misroute.
+            logger.warning(
+                "send_with_retry skipped enqueue: organization_id missing (ap_item=%s)",
+                ap_item_id,
+            )
+            return False
+        db.enqueue_notification(
+            organization_id=organization_id,
+            channel="slack",
+            payload={
+                "blocks": blocks,
+                "text": text,
+                "preferred_channel": preferred_channel,
+            },
+            ap_item_id=ap_item_id,
+        )
+        logger.info("Notification enqueued for retry (ap_item=%s)", ap_item_id)
+    except Exception as e:
+        logger.critical(
+            "Slack send AND enqueue both failed for ap_item=%s channel=%s org=%s: %s",
+            ap_item_id, preferred_channel, organization_id, e,
+        )
+    return False
+
+
+async def _retry_slack_response_url(payload: dict) -> bool:
+    """Retry a failed Slack response_url POST."""
+    response_url = payload.get("response_url", "")
+    body = payload.get("body", {})
+    if not response_url:
+        return False
+    try:
+        client = get_http_client()
+        resp = await client.post(response_url, json=body, timeout=10)
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("Slack response_url retry failed: %s", exc)
+        return False
+
+
+async def _retry_teams_card_update(payload: dict) -> bool:
+    """Retry a failed Teams card update."""
+    # §12 / §6.8 — Teams disabled in V1. Any enqueued retry rows from
+    # pre-flag deployments simply succeed-as-skipped so the retry
+    # worker drains the queue cleanly.
+    from solden.core.feature_flags import is_teams_enabled
+    if not is_teams_enabled():
+        return True
+
+    service_url = payload.get("service_url", "")
+    conversation_id = payload.get("conversation_id", "")
+    activity_id = payload.get("activity_id", "")
+    if not (service_url and conversation_id and activity_id):
+        return False
+    try:
+        from solden.services.teams_api import TeamsAPIClient
+        client = TeamsAPIClient()
+        client.update_activity(
+            service_url=service_url,
+            conversation_id=conversation_id,
+            activity_id=activity_id,
+            result_status=payload.get("result_status", "unknown"),
+            actor_display=payload.get("actor_display", "unknown"),
+            action=payload.get("action", "unknown"),
+            reason=payload.get("reason"),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Teams card update retry failed: %s", exc)
+        return False
+
+
+async def process_retry_queue() -> int:
+    """Process pending notifications in the retry queue.
+
+    Returns the number of notifications processed.
+    Call this from a background task every 60 seconds.
+    """
+    from solden.core.database import get_db
+    db = get_db()
+    pending = db.get_pending_notifications(limit=20)
+    processed = 0
+    for notif in pending:
+        import json as _json
+        payload = _json.loads(notif["payload_json"]) if isinstance(notif["payload_json"], str) else notif["payload_json"]
+        channel = str(notif.get("channel") or "").strip()
+        ok = False
+        try:
+            if channel == "webhook":
+                from solden.services.webhook_delivery import retry_webhook_delivery
+                ok = await retry_webhook_delivery(notif)
+            elif channel == "slack_response_url":
+                ok = await _retry_slack_response_url(payload)
+            elif channel == "teams_card_update":
+                ok = await _retry_teams_card_update(payload)
+            else:
+                ok = await _post_slack_blocks(
+                    blocks=payload.get("blocks", []),
+                    text=payload.get("text", ""),
+                    preferred_channel=payload.get("preferred_channel"),
+                    organization_id=notif.get("organization_id"),
+                )
+        except Exception as dispatch_exc:
+            logger.warning("Retry dispatch error for %s: %s", notif["id"], dispatch_exc)
+        if ok:
+            db.mark_notification_sent(notif["id"])
+            logger.info("Retry succeeded for notification %s", notif["id"])
+        else:
+            db.mark_notification_failed(notif["id"], "delivery failed")
+            logger.warning(
+                "Retry %d failed for notification %s",
+                (notif.get("retry_count") or 0) + 1,
+                notif["id"],
+            )
+        processed += 1
+    return processed
+
+
+class SlackNotifier:
+    """
+    Sends formatted notifications to Slack.
+    
+    Users only see:
+    1. Summary metrics
+    2. Exceptions that need attention
+    3. Action buttons
+    
+    Users don't see:
+    - Successfully matched transactions (invisible)
+    - Intermediate processing steps
+    """
+    
+    def __init__(self, webhook_url: Optional[str] = None):
+        """
+        Initialize Slack notifier.
+        
+        Args:
+            webhook_url: Slack webhook URL. If not provided, uses SLACK_WEBHOOK_URL env var.
+        """
+        self.webhook_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")
+        if not self.webhook_url:
+            logger.warning("Slack webhook URL not configured")
+    
+    async def send_reconciliation_complete(
+        self,
+        result: Dict[str, Any],
+        sheets_url: Optional[str] = None,
+    ) -> bool:
+        """
+        Send reconciliation complete notification.
+        
+        Format from spec:
+        Bank Reconciliation Complete - January 15, 2026
+        
+        Summary:
+        - 2,847 transactions processed
+        - 2,801 matched automatically (98.4%)
+        - 46 exceptions need review
+        
+        Actions:
+        [Review Exceptions] [Approve & Post]
+        """
+        if not self.webhook_url:
+            logger.warning("Cannot send Slack notification - no webhook configured")
+            return False
+        
+        summary = result.get("summary", {})
+        amounts = result.get("amounts", {})
+        exceptions = result.get("exceptions", [])
+        
+        # Build exception breakdown
+        exception_breakdown = self._build_exception_breakdown(exceptions)
+        
+        # Format the message
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"Bank Reconciliation Complete - {self._get_date()}",
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Summary:*\n"
+                        f"- {summary.get('gateway_transactions', 0):,} transactions processed\n"
+                        f"- {summary.get('matched', 0):,} matched automatically ({summary.get('match_rate', 0):.1f}%)\n"
+                        f"- {summary.get('exceptions', 0)} exceptions need review"
+                    )
+                }
+            },
+        ]
+        
+        # Add exception breakdown if there are exceptions
+        if exceptions:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Exception Breakdown:*\n{exception_breakdown}"
+                }
+            })
+        
+        # Add amounts
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Amounts:*\n"
+                    f"- Total processed: EUR {amounts.get('total_gateway', 0):,.2f}\n"
+                    f"- Matched: EUR {amounts.get('matched', 0):,.2f}\n"
+                    f"- Unmatched: EUR {amounts.get('unmatched', 0):,.2f}"
+                )
+            }
+        })
+        
+        # Add draft entries info
+        draft_count = len(result.get("draft_entries", []))
+        if draft_count > 0:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Ready to Post:*\n{draft_count} draft journal entries awaiting approval"
+                }
+            })
+        
+        # Add action buttons
+        actions = []
+        
+        if exceptions:
+            actions.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Review Exceptions"},
+                "style": "primary",
+                "url": sheets_url or "https://docs.google.com/spreadsheets",
+                "action_id": "review_exceptions",
+            })
+        
+        if draft_count > 0:
+            actions.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Approve & Post to SAP"},
+                "style": "primary" if not exceptions else "default",
+                "action_id": "approve_and_post",
+            })
+        
+        if actions:
+            blocks.append({
+                "type": "actions",
+                "elements": actions,
+            })
+        
+        # Add time saved estimate
+        time_saved = self._estimate_time_saved(summary.get("matched", 0))
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Time saved today: ~{time_saved}"
+                }
+            ]
+        })
+        
+        # Send to Slack
+        payload = {"blocks": blocks}
+        
+        try:
+            client = get_http_client()
+            response = await client.post(self.webhook_url, json=payload)
+            response.raise_for_status()
+
+            logger.info("Sent reconciliation notification to Slack")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Failed to send Slack notification: {e}")
+            return False
+    
+    async def send_exception_alert(
+        self,
+        exception: Dict[str, Any],
+        organization_id: str,
+    ) -> bool:
+        """
+        Send alert for critical exception.
+        
+        Only sent for high-value or critical exceptions.
+        """
+        if not self.webhook_url:
+            return False
+        
+        priority = exception.get("priority", "low")
+        if priority not in ["critical", "high"]:
+            return True  # Don't send for low priority
+        
+        amount = exception.get("amount", 0)
+        tx = exception.get("transaction", {})
+        
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*[{priority.upper()}] Reconciliation Exception*\n\n"
+                        f"*Amount:* EUR {amount:,.2f}\n"
+                        f"*Description:* {tx.get('description', 'Unknown')}\n"
+                        f"*Reason:* {exception.get('reason', 'No match found')}"
+                    )
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Review Now"},
+                        "style": "danger",
+                        "action_id": f"review_exception_{exception.get('transaction', {}).get('id', 'unknown')}",
+                    }
+                ]
+            }
+        ]
+        
+        try:
+            client = get_http_client()
+            response = await client.post(self.webhook_url, json={"blocks": blocks})
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send exception alert: {e}")
+            return False
+    
+    def _build_exception_breakdown(self, exceptions: List[Dict[str, Any]]) -> str:
+        """Build formatted exception breakdown."""
+        if not exceptions:
+            return "No exceptions"
+        
+        # Group by priority
+        by_priority = {"critical": [], "high": [], "medium": [], "low": []}
+        for exc in exceptions:
+            priority = exc.get("priority", "low")
+            by_priority[priority].append(exc)
+        
+        lines = []
+        
+        from solden.core.money import money_sum, money_to_float
+        if by_priority["critical"]:
+            total = money_to_float(money_sum(e.get("amount") for e in by_priority["critical"]))
+            lines.append(f"- {len(by_priority['critical'])} critical (EUR {total:,.2f})")
+
+        if by_priority["high"]:
+            total = money_to_float(money_sum(e.get("amount") for e in by_priority["high"]))
+            lines.append(f"- {len(by_priority['high'])} high priority (EUR {total:,.2f})")
+        
+        if by_priority["medium"]:
+            lines.append(f"- {len(by_priority['medium'])} medium priority")
+        
+        if by_priority["low"]:
+            lines.append(f"- {len(by_priority['low'])} low priority (timing differences)")
+        
+        return "\n".join(lines) if lines else "No exceptions"
+    
+    def _get_date(self) -> str:
+        """Get formatted current date."""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).strftime("%B %d, %Y")
+    
+    def _estimate_time_saved(self, matched_count: int) -> str:
+        """Estimate time saved based on matched transactions."""
+        # Assume ~1 minute per manual match
+        minutes = matched_count
+        
+        if minutes < 60:
+            return f"{minutes} minutes"
+        else:
+            hours = minutes / 60
+            return f"{hours:.1f} hours"
+
+
+async def notify_reconciliation_complete(
+    result: Dict[str, Any],
+    webhook_url: Optional[str] = None,
+    sheets_url: Optional[str] = None,
+) -> bool:
+    """
+    Convenience function to send reconciliation notification.
+    
+    This is called after reconciliation workflow completes.
+    """
+    notifier = SlackNotifier(webhook_url=webhook_url)
+    return await notifier.send_reconciliation_complete(result, sheets_url)
+
+
+async def send_payment_request_notification(request) -> bool:
+    """
+    Send Slack notification for a new payment request.
+    
+    Payment requests need approval before payment can be made.
+    This sends an interactive message with Approve/Reject buttons.
+    
+    Args:
+        request: PaymentRequest object
+    
+    Returns:
+        True if sent successfully
+    """
+    organization_id = getattr(request, "organization_id", None)
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+    
+    # Determine channel based on amount
+    amount = request.amount
+    if amount >= 10000:
+        channel_note = "#executive-approvals"
+    elif amount >= 1000:
+        channel_note = "#finance-approvals"
+    else:
+        channel_note = "#finance"
+    
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "Payment Request",
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*From:* {request.requester_name}"
+                    + (f" ({request.requester_email})" if request.requester_email else "")
+                    + f"\n*To:* {request.payee_name}"
+                    + f"\n*Amount:* ${request.amount:,.2f} {request.currency}"
+                    + f"\n*Type:* {request.request_type.value.replace('_', ' ').title()}"
+                )
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Description:*\n{request.description[:500]}"
+            }
+        },
+        {
+            "type": "divider"
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": f"approve_payment_request_{request.request_id}",
+                    "value": request.request_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "style": "danger",
+                    "action_id": f"reject_payment_request_{request.request_id}",
+                    "value": request.request_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Details"},
+                    "action_id": f"view_payment_request_{request.request_id}",
+                    "value": request.request_id,
+                }
+            ]
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Request ID: {request.request_id} | Source: {request.source.value} | {channel_note}"
+                }
+            ]
+        }
+    ]
+    
+    sent = await send_with_retry(
+        blocks=blocks,
+        text=f"Payment request {request.request_id} requires approval",
+        ap_item_id=request.request_id,
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+    if sent:
+        logger.info(f"Sent payment request notification for {request.request_id}")
+    return sent
+
+
+async def deliver_approval_with_routing(
+    *,
+    blocks: List[Dict[str, Any]],
+    text: str,
+    approval_channel: Optional[str],
+    approver_email: Optional[str],
+    amount: Optional[float],
+    message_type: str = "personal_approval",
+    organization_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """§6.8 Interactive Approval Messages — routed delivery.
+
+    Encapsulates the thesis's intelligent routing:
+      Rule 1: AP Manager DM (standard approval)
+      Rule 2: Controller DM + channel copy (above controller threshold)
+      Rule 3: CFO DM with 4h window (CFO-level sign-off)
+      Rule 4: Procurement DM (no-PO exceptions)
+      Rule 5: OOO backup (approver unavailable)
+
+    Returns ``{channel, ts, routing_rule, user_email?}`` compatible with
+    the shape ``invoice_workflow._send_for_approval`` consumes, so the
+    workflow's downstream save_slack_thread / waiting_condition logic
+    stays unchanged.
+
+    Falls back to the approval channel if DM delivery fails (e.g., the
+    approver's Slack lookup by email returns 404). Never silently drops
+    — the finance team always sees the card somewhere.
+    """
+    route = _resolve_intelligent_route(
+        message_type=message_type,
+        approver_email=approver_email,
+        organization_id=organization_id,
+        amount=amount,
+    )
+    routing_rule = route.get("routing_rule", "default")
+
+    # DM path
+    if route.get("target") == "dm" and route.get("user_email"):
+        dm_sent = await _post_slack_dm(
+            user_email=route["user_email"],
+            blocks=blocks,
+            text=text,
+            organization_id=organization_id,
+        )
+        if dm_sent:
+            logger.info(
+                "[intelligent_routing] DM approval to %s (rule=%s)",
+                route["user_email"], routing_rule,
+            )
+            # Rule 2: also post to channel for visibility above threshold.
+            if route.get("also_channel"):
+                try:
+                    channel_result = await _post_slack_blocks(
+                        blocks=blocks,
+                        text=f"{text} (routed to {route['user_email']})",
+                        preferred_channel=approval_channel,
+                        organization_id=organization_id,
+                    )
+                    if channel_result:
+                        return {
+                            "channel": channel_result.get("channel"),
+                            "ts": channel_result.get("ts"),
+                            "routing_rule": routing_rule,
+                            "user_email": route["user_email"],
+                            "dm_sent": True,
+                            "also_channel": True,
+                        }
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[intelligent_routing] also_channel copy failed: %s", exc)
+            # DM-only path — use the DM channel id (we don't have it
+            # directly from the DM API, so we return a synthetic marker).
+            return {
+                "channel": f"dm:{route['user_email']}",
+                "ts": None,
+                "routing_rule": routing_rule,
+                "user_email": route["user_email"],
+                "dm_sent": True,
+                "also_channel": False,
+            }
+        logger.info("[intelligent_routing] DM failed, falling back to channel")
+
+    # Channel path (default, or DM fallback)
+    channel_result = await _post_slack_blocks(
+        blocks=blocks,
+        text=text,
+        preferred_channel=approval_channel,
+        organization_id=organization_id,
+    )
+    if channel_result:
+        return {
+            "channel": channel_result.get("channel"),
+            "ts": channel_result.get("ts"),
+            "routing_rule": routing_rule,
+            "dm_sent": False,
+            "also_channel": False,
+        }
+    return None
+
+
+
+async def send_invoice_posted_notification(
+    invoice_id: str,
+    vendor: str,
+    amount: float,
+    erp_system: str,
+    erp_reference: str,
+    approved_by: str,
+    organization_id: Optional[str] = None,
+) -> bool:
+    """
+    Send confirmation that invoice was posted to ERP.
+    """
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+    
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Invoice Posted*\n\n"
+                    f"*{vendor}* — ${amount:,.2f}\n"
+                    f"Posted to {erp_system} (Ref: {erp_reference})\n"
+                    f"Approved by: {approved_by}"
+                )
+            }
+        }
+    ]
+    
+    return await _post_slack_blocks(
+        blocks=blocks,
+        text=f"Invoice {invoice_id} posted to {erp_system}",
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+
+
+async def send_vendor_activated_notification(
+    *,
+    vendor_name: str,
+    erp_system: str,
+    erp_vendor_id: Optional[str],
+    organization_id: Optional[str] = None,
+) -> bool:
+    """DESIGN_THESIS §9: confirm vendor activation in the AP channel.
+
+    "Agent writes the vendor to the ERP vendor master with AP-enabled
+    status. The vendor is now capable of submitting invoices that will
+    be processed. Agent posts a confirmation to the finance team's
+    Slack channel."
+
+    Called from vendor_onboarding_lifecycle.activate_vendor_in_erp at
+    step 7 of the activation sequence, after the ERP write has
+    confirmed and the audit event has been written. Fires-and-forgets
+    into _post_slack_blocks so any Slack outage is non-fatal — the
+    vendor is already live in the ERP at this point.
+    """
+    preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+
+    erp_label = (erp_system or "ERP").strip() or "ERP"
+    erp_id_line = f"\nERP ID: `{erp_vendor_id}`" if erp_vendor_id else ""
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"✓ *Vendor activated*\n\n"
+                    f"*{vendor_name}* is live in {erp_label}.{erp_id_line}\n"
+                    f"The vendor can now submit invoices — the agent will "
+                    f"process them through the standard AP pipeline."
+                ),
+            },
+        }
+    ]
+
+    return await _post_slack_blocks(
+        blocks=blocks,
+        text=f"Vendor {vendor_name} activated in {erp_label}",
+        preferred_channel=preferred_channel,
+        organization_id=organization_id,
+    )
+
+
+async def send_task_created_notification(*args, **kwargs):
+    """Placeholder for task created notification."""
+    pass
+
+
+async def send_task_assigned_notification(*args, **kwargs):
+    """Placeholder for task assigned notification."""
+    pass
+
+
+async def send_task_completed_notification(*args, **kwargs):
+    """Placeholder for task completed notification."""
+    pass
+
+
+async def send_task_comment_notification(*args, **kwargs):
+    """Placeholder for task comment notification."""
+    pass
+
+
+async def send_invoice_exception_notification(
+    invoice_id: str,
+    gmail_thread_id: str,
+    vendor: str,
+    amount: float,
+    exception_statement: str,
+    due_date: Optional[str] = None,
+    user_email: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    match_detail: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> bool:
+    """§6.8 Exception Messages — Designed for Resolution.
+
+    "Exception notifications are not alerts. They are decision packages."
+    Different from approval messages: specific exception statement,
+    resolution-oriented buttons, context thread, timer.
+    """
+    currency_str = currency or "USD"
+    gmail_link = f"https://mail.google.com/mail/u/0/#inbox/{gmail_thread_id}"
+
+    # TIMER: if due within 48 hours, show countdown
+    timer_text = ""
+    if due_date:
+        try:
+            from datetime import datetime, timezone
+            due = datetime.fromisoformat(str(due_date).replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            hours_remaining = (due - now).total_seconds() / 3600
+            if 0 < hours_remaining <= 48:
+                timer_text = f"\n⏱ Payment due in {int(hours_remaining)} hours. Override required before {due.strftime('%H:%M')} today to avoid late payment."
+        except Exception:
+            pass
+
+    blocks = [
+        # EXCEPTION STATEMENT: specific and immediate
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{exception_statement}*{timer_text}",
+            },
+        },
+        {"type": "divider"},
+        # RESOLUTION OPTIONS: three buttons for the three thesis-defined actions
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Override and approve"},
+                    "style": "primary",
+                    "action_id": f"override_approve_{invoice_id}",
+                    "value": invoice_id,
+                    "confirm": {
+                        "title": {"type": "plain_text", "text": "Override exception"},
+                        "text": {"type": "mrkdwn", "text": "You are overriding a match exception. Please provide a reason."},
+                        "confirm": {"type": "plain_text", "text": "Override"},
+                        "deny": {"type": "plain_text", "text": "Cancel"},
+                    },
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Request credit note"},
+                    "action_id": f"request_credit_{invoice_id}",
+                    "value": invoice_id,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject invoice"},
+                    "style": "danger",
+                    "action_id": f"reject_invoice_{invoice_id}",
+                    "value": invoice_id,
+                },
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"{vendor} | {currency_str} {amount:,.2f} | <{gmail_link}|Open in Gmail →>"
+                },
+            ],
+        },
+    ]
+
+    # Send main card — apply intelligent routing (DM the resolved
+    # approver when one is configured, else channel post). The
+    # threaded match-detail follow-up below needs a channel post for
+    # the parent_ts/parent_channel handles, so DM-only delivery
+    # (no also_channel hint) skips the threaded elaboration.
+    route = _resolve_intelligent_route(
+        message_type="personal_approval" if user_email else "channel",
+        approver_email=user_email,
+        organization_id=organization_id,
+    )
+
+    dm_sent = False
+    if route.get("target") == "dm" and route.get("user_email"):
+        dm_sent = await _post_slack_dm(
+            user_email=route["user_email"],
+            blocks=blocks,
+            text=f"Exception: {exception_statement}",
+            organization_id=organization_id,
+        )
+
+    send_result: Optional[Dict[str, Any]] = None
+    needs_channel = (not dm_sent) or bool(route.get("also_channel"))
+    if needs_channel:
+        preferred_channel = os.getenv("SLACK_APPROVAL_CHANNEL") or os.getenv("SLACK_DEFAULT_CHANNEL")
+        send_result = await _post_slack_blocks(
+            blocks=blocks,
+            text=f"Exception: {exception_statement}",
+            preferred_channel=preferred_channel,
+            organization_id=organization_id,
+        )
+    sent = dm_sent or bool(send_result)
+
+    if sent:
+        # CONTEXT THREAD: full match detail as threaded reply
+        parent_ts = (send_result or {}).get("ts")
+        parent_channel = (send_result or {}).get("channel")
+        context_text = match_detail or reasoning or ""
+        if parent_ts and parent_channel and context_text:
+            try:
+                if not organization_id or not str(organization_id).strip():
+                    # Threaded context reply: skip rather than route
+                    # through the platform workspace and leak tenant
+                    # data into a different tenant's Slack.
+                    logger.warning(
+                        "Skipping threaded context reply: organization_id missing"
+                    )
+                    return sent
+                runtime = resolve_slack_runtime(organization_id)
+                if runtime and runtime.get("token"):
+                    headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+                    client = get_http_client()
+                    await client.post(
+                        "https://slack.com/api/chat.postMessage",
+                        json={
+                            "channel": parent_channel,
+                            "thread_ts": parent_ts,
+                            "text": f"*Full match detail*\n{context_text}",
+                        },
+                        headers=headers,
+                    )
+            except Exception:
+                pass
+
+    return sent
+
+
+async def send_overdue_summary(
+    overdue_items: List[Dict[str, Any]],
+    stale_items: List[Dict[str, Any]],
+    organization_id: str,
+    preferred_channel: Optional[str] = None,
+) -> bool:
+    """Send a rich AP KPI dashboard to Slack with overdue highlights.
+
+    Pulls the full KPI bundle from the DB (touchless rate, SLA breach %,
+    missed discounts) then renders Slack blocks with:
+      - Header KPI bar
+      - Top-5 overdue items (vendor, amount, due date)
+      - Top-3 stale items (vendor, stuck state)
+      - Footer: pending count + missed discount value
+    """
+    try:
+        from solden.core.database import get_db
+
+        db = get_db()
+        kpis: Dict[str, Any] = {}
+        try:
+            kpis = db.get_ap_kpis(organization_id) or {}
+        except Exception as exc:
+            logger.debug("KPI fetch failed: %s", exc)
+
+        # --- KPI summary line ---
+        touchless = kpis.get("touchless_rate", {})
+        touchless_pct = round((touchless.get("rate") or 0) * 100, 1)
+        friction = kpis.get("approval_friction", {})
+        sla_breach_pct = round((friction.get("sla_breach_rate") or 0) * 100, 1)
+        missed = kpis.get("missed_discounts", {})
+        missed_value = missed.get("missed_value") or 0
+        totals = kpis.get("totals", {})
+        pending_count = totals.get("items", 0) - totals.get("completed_items", 0)
+
+        kpi_line = (
+            f"Touchless: *{touchless_pct}%* | "
+            f"SLA breach: *{sla_breach_pct}%* | "
+            f"Pending: *{pending_count}*"
+        )
+        if missed_value:
+            kpi_line += f" | Missed discounts: *${missed_value:,.2f}*"
+
+        blocks: List[Dict[str, Any]] = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":bar_chart: AP Status Dashboard"},
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": kpi_line},
+            },
+        ]
+
+        # --- Overdue section ---
+        if overdue_items:
+            lines = [f"*{len(overdue_items)} overdue item(s):*"]
+            for item in overdue_items[:5]:
+                vendor = item.get("vendor_name") or "Unknown"
+                amount = item.get("amount") or 0
+                due = item.get("due_date") or "?"
+                lines.append(f"  :red_circle: *{vendor}* — ${amount:,.2f} (due {due})")
+            blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}}
+            )
+
+        # --- Stale section ---
+        if stale_items:
+            lines = [f"*{len(stale_items)} stale item(s) needing attention:*"]
+            for item in stale_items[:3]:
+                vendor = item.get("vendor_name") or "Unknown"
+                state = item.get("state") or "?"
+                lines.append(f"  :warning: *{vendor}* — stuck in `{state}`")
+            blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}}
+            )
+
+        if not overdue_items and not stale_items:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": ":white_check_mark: No overdue or stale items."},
+                }
+            )
+
+        blocks.append({"type": "divider"})
+
+        channel = (
+            preferred_channel
+            or os.getenv("SLACK_APPROVAL_CHANNEL")
+            or os.getenv("SLACK_DEFAULT_CHANNEL")
+            or "#finance"
+        )
+        summary_text = f"AP Status: {len(overdue_items)} overdue, {len(stale_items)} stale"
+        return await _post_slack_blocks(
+            blocks=blocks,
+            text=summary_text,
+            preferred_channel=channel,
+            organization_id=organization_id,
+        )
+    except Exception as exc:
+        logger.error("send_overdue_summary failed: %s", exc)
+        return False
+
+
+async def send_approval_reminder(
+    ap_item: Dict[str, Any],
+    approver_ids: List[str],
+    hours_pending: float,
+    organization_id: Optional[str] = None,
+    stage: str = "reminder",
+    escalation_channel: Optional[str] = None,
+) -> bool:
+    """Send a reminder (or escalation) for an AP item stuck in needs_approval.
+
+    - `stage="reminder"`: DM each pending approver
+    - `stage="escalation"`: DM each pending approver and post to the approval channel
+    """
+    from solden.services.slack_api import get_slack_client
+
+    vendor = ap_item.get("vendor_name") or "Unknown vendor"
+    amount = ap_item.get("amount") or 0
+    invoice_num = ap_item.get("invoice_number") or "N/A"
+    # M19: AP-item follow-up DMs are per-tenant; resolve strictly from
+    # the explicit org or the AP item's binding. No env-var "default"
+    # fallback — a missing org here means the caller routed the item
+    # without a tenant binding, which would silently DM the platform
+    # workspace.
+    org_id = assert_org_id(
+        organization_id or ap_item.get("organization_id"),
+        context="send_approval_followup_dm",
+    )
+    metadata = ap_item.get("metadata") if isinstance(ap_item.get("metadata"), dict) else {}
+    runtime = resolve_slack_runtime(org_id)
+
+    is_escalation = str(stage or "").strip().lower() == "escalation"
+    verb = "ESCALATION" if is_escalation else "Reminder"
+    icon = ":rotating_light:" if is_escalation else ":bell:"
+    h = int(hours_pending)
+    dm_text = (
+        f"{icon} *Approval {verb}* — {vendor} invoice #{invoice_num} "
+        f"(${amount:,.2f}) has been waiting for approval for *{h}h*. "
+        f"Please review and approve or reject."
+    )
+    try:
+        amount_num = float(amount or 0)
+    except (TypeError, ValueError):
+        amount_num = 0.0
+
+    reminder_sent = False
+    try:
+        client = get_slack_client(organization_id=org_id)
+        resolved_targets = await client.resolve_user_targets(approver_ids or [])
+        delivery_ids = list(resolved_targets.get("delivery_ids") or [])
+        mention_targets = list(resolved_targets.get("mentions") or [])
+        display_targets = list(mention_targets or [])
+        unresolved_targets = [
+            str(value).strip()
+            for value in (resolved_targets.get("unresolved") or [])
+            if str(value).strip()
+        ]
+        for value in unresolved_targets:
+            if value not in display_targets:
+                display_targets.append(value)
+
+        reminder_blocks = _build_approval_followup_blocks(
+            ap_item=ap_item,
+            vendor=vendor,
+            amount=amount_num,
+            invoice_num=str(invoice_num),
+            hours_pending=h,
+            stage="escalation" if is_escalation else "reminder",
+            approver_display_targets=display_targets,
+        )
+        channel_text = dm_text
+        if display_targets:
+            channel_text = f"{dm_text} Pending approvers: {', '.join(display_targets)}"
+
+        for uid in delivery_ids:
+            try:
+                await client.send_dm(uid, dm_text, blocks=reminder_blocks)
+                reminder_sent = True
+            except Exception as dm_err:
+                logger.error("Approval reminder DM to %s failed: %s", uid, dm_err)
+
+        fallback_channel = (
+            str(escalation_channel or "").strip()
+            or str(runtime.get("approval_channel") or "").strip()
+            or str(metadata.get("approval_channel") or "").strip()
+            or str(ap_item.get("slack_channel_id") or "").strip()
+            or os.getenv("SLACK_APPROVAL_CHANNEL")
+            or os.getenv("SLACK_DEFAULT_CHANNEL")
+            or "#finance"
+        )
+
+        if (not delivery_ids) and fallback_channel:
+            reminder_sent = reminder_sent or bool(
+                await _post_slack_blocks(
+                    blocks=reminder_blocks,
+                    text=channel_text,
+                    preferred_channel=fallback_channel,
+                    organization_id=org_id,
+                )
+            )
+
+        if is_escalation:
+            escalation_sent = await _post_slack_blocks(
+                blocks=reminder_blocks,
+                text=channel_text,
+                preferred_channel=fallback_channel,
+                organization_id=org_id,
+            )
+            reminder_sent = reminder_sent or bool(escalation_sent)
+    except Exception as exc:
+        logger.error("send_approval_reminder failed: %s", exc)
+        return False
+    return reminder_sent
+
+
+class SlackNotificationService:
+    """
+    Synchronous Slack notification service for use in API endpoints.
+    Simpler interface for sending notifications from the engine.
+    """
+    
+    def __init__(self, webhook_url: str):
+        self.webhook_url = webhook_url
+    
+    def send_reconciliation_complete(
+        self,
+        total_transactions: int,
+        matched: int,
+        exceptions: int,
+        organization_id: str,
+    ) -> bool:
+        """
+        Send a simple reconciliation complete notification.
+        
+        Args:
+            total_transactions: Total bank transactions processed
+            matched: Number of matched transactions
+            exceptions: Number of exceptions
+            organization_id: Organization identifier
+        
+        Returns:
+            True if sent successfully
+        """
+        from datetime import datetime, timezone
+
+        match_rate = (matched / total_transactions * 100) if total_transactions > 0 else 0
+        
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"Bank Statement Imported - {datetime.now(timezone.utc).strftime('%B %d, %Y')}",
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Summary:*\n"
+                        f"- {total_transactions:,} bank transactions imported\n"
+                        f"- {matched:,} matched automatically ({match_rate:.1f}%)\n"
+                        f"- {exceptions} exceptions need review"
+                    )
+                }
+            },
+        ]
+        
+        if exceptions > 0:
+            blocks.append({
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Review Exceptions"},
+                        "style": "primary",
+                        "action_id": "review_exceptions",
+                    }
+                ]
+            })
+        else:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "All transactions matched. No action needed."
+                }
+            })
+        
+        # Time saved estimate (~1 min per manual match)
+        time_saved = matched
+        time_str = f"{time_saved} minutes" if time_saved < 60 else f"{time_saved / 60:.1f} hours"
+        
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"Organization: {organization_id} | Time saved: ~{time_str}"}
+            ]
+        })
+        
+        try:
+            import requests
+            response = requests.post(
+                self.webhook_url,
+                json={"blocks": blocks},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send Slack notification: {e}")
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Payment readiness notification
+# ---------------------------------------------------------------------------
+
+async def send_payment_ready_notification(
+    organization_id: str,
+    ap_item_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str,
+    due_date: Optional[str],
+    erp_reference: Optional[str],
+) -> bool:
+    """Notify the finance channel that an invoice is posted and ready for payment.
+
+    This is a simple informational notification — it does NOT trigger any
+    payment execution.  Humans decide when and how to pay.
+    """
+    due_str = due_date or "not specified"
+    erp_str = erp_reference or "N/A"
+
+    text = (
+        f"Invoice from {vendor_name} for {currency} {amount:,.2f} is posted to ERP "
+        f"and ready for payment. Due: {due_str}. ERP ref: {erp_str}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":white_check_mark: *Payment Ready*\n"
+                    f"Invoice from *{vendor_name}* for *{currency} {amount:,.2f}* "
+                    f"is posted to ERP and ready for payment."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Due Date:*\n{due_str}"},
+                {"type": "mrkdwn", "text": f"*ERP Reference:*\n{erp_str}"},
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Payment status change notifications
+# ---------------------------------------------------------------------------
+
+async def send_payment_completed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str,
+    payment_reference: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment has been detected as completed in the ERP."""
+    ref_str = payment_reference or "N/A"
+    method_str = payment_method or "ERP"
+
+    text = (
+        f"Payment completed: {vendor_name} {currency} {amount:,.2f} "
+        f"via {method_str}. Ref: {ref_str}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":white_check_mark: *Payment Completed*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}* via {method_str}."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Reference:*\n{ref_str}"},
+                {"type": "mrkdwn", "text": f"*Method:*\n{method_str}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_partial_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    paid_amount: float,
+    remaining: float,
+    currency: str = "USD",
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a partial payment has been detected in the ERP."""
+    text = (
+        f"Partial payment: {vendor_name} — {currency} {paid_amount:,.2f} of "
+        f"{currency} {amount:,.2f} paid. Remaining: {currency} {remaining:,.2f}."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":hourglass_flowing_sand: *Partial Payment Detected*\n"
+                    f"*{vendor_name}* — *{currency} {paid_amount:,.2f}* of "
+                    f"*{currency} {amount:,.2f}* paid."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Remaining:*\n{currency} {remaining:,.2f}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_reversed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    reference: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment was reversed/voided in the ERP."""
+    ref_str = reference or "N/A"
+    text = (
+        f"Payment REVERSED: {vendor_name} {currency} {amount:,.2f}. "
+        f"ERP ref: {ref_str}. "
+        f"The payment was voided or returned. Manual review required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":rotating_light: *Payment REVERSED*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"The payment was voided or returned in the ERP. Manual review required."
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*ERP Reference:*\n{ref_str}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_overdue_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    due_date: Optional[str] = None,
+    days_overdue: int = 0,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment is overdue (past due_date but not yet paid)."""
+    due_str = due_date or "unknown"
+    text = (
+        f"OVERDUE: {vendor_name} {currency} {amount:,.2f} was due {due_str} "
+        f"({days_overdue} days ago). Payment not yet detected in ERP."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":warning: *Payment OVERDUE*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Due {due_str} ({days_overdue} days ago). "
+                    f"Payment not yet detected in ERP."
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_failed_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    reason: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that a payment failed in the ERP."""
+    reason_str = reason or "unknown"
+    text = (
+        f"Payment FAILED: {vendor_name} {currency} {amount:,.2f}. "
+        f"Reason: {reason_str}. Manual intervention required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":x: *Payment FAILED*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Reason: {reason_str}. Manual intervention required."
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_payment_credit_applied_notification(
+    organization_id: str,
+    vendor_name: str,
+    amount: float,
+    currency: str = "USD",
+    closure_method: Optional[str] = None,
+    reference: Optional[str] = None,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify that an invoice was closed by credit/write-off instead of payment."""
+    method_str = closure_method or "credit"
+    ref_str = reference or ""
+    text = (
+        f"Invoice closed by credit: {vendor_name} {currency} {amount:,.2f}. "
+        f"Credit/write-off applied in ERP."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":memo: *Invoice Closed by Credit*\n"
+                    f"*{vendor_name}* — *{currency} {amount:,.2f}*\n"
+                    f"Closure method: {method_str}. {ref_str}"
+                ),
+            },
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Vendor communication notifications
+# ---------------------------------------------------------------------------
+
+
+async def send_vendor_response_notification(
+    organization_id: str,
+    vendor: str,
+    invoice_number: str,
+    ap_item_id: str,
+) -> bool:
+    """Notify the finance channel that a vendor replied to a follow-up."""
+    text = (
+        f"Vendor {vendor} replied to your follow-up about invoice #{invoice_number}. "
+        f"Review the response and decide next steps."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":incoming_envelope: *Vendor Response Received*\n"
+                    f"*{vendor}* replied to the follow-up for invoice *#{invoice_number}*.\n"
+                    f"Review the response in Gmail and decide next steps."
+                ),
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )
+
+
+async def send_vendor_escalation_notification(
+    organization_id: str,
+    vendor: str,
+    invoice_number: str,
+    days_waiting: int,
+    attempts: int,
+    ap_item_id: Optional[str] = None,
+) -> bool:
+    """Notify the finance channel that a vendor is unresponsive after max follow-ups."""
+    text = (
+        f"Vendor {vendor} unresponsive after {attempts} follow-up(s) over "
+        f"{days_waiting} days for invoice #{invoice_number}. Manual escalation required."
+    )
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":rotating_light: *Vendor Unresponsive — Escalation Required*\n"
+                    f"*{vendor}* has not replied after *{attempts}* follow-up(s) "
+                    f"over *{days_waiting} day(s)* for invoice *#{invoice_number}*.\n"
+                    f"Manual escalation or alternative contact is needed."
+                ),
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"AP Item: {ap_item_id or 'N/A'}"},
+            ],
+        },
+    ]
+
+    return await send_with_retry(
+        blocks=blocks,
+        text=text,
+        ap_item_id=ap_item_id,
+        organization_id=organization_id,
+    )

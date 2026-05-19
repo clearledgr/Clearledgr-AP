@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from clearledgr.services import gmail_autopilot as autopilot_module
+from solden.services import gmail_autopilot as autopilot_module
 
 
 class _FakeDB:

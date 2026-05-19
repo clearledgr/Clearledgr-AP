@@ -5,9 +5,9 @@ from typing import Dict
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.integrations.erp_router import Bill, ERPConnection
-from clearledgr.services import erp_api_first as erp_api_first_module
+from solden.core import database as db_module
+from solden.integrations.erp_router import Bill, ERPConnection
+from solden.services import erp_api_first as erp_api_first_module
 
 
 @pytest.fixture()
@@ -26,7 +26,7 @@ def _bypass_pre_post_validate(monkeypatch):
     leaving it on would require seeding full PO/GRN/vendor-master
     fixtures per test. Stub it to always pass here.
     """
-    from clearledgr.integrations import erp_router
+    from solden.integrations import erp_router
 
     monkeypatch.setattr(
         erp_router,

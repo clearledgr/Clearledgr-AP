@@ -31,7 +31,7 @@ def _run(coro):
 def _make_db(tmp_path: str):
     """Create a fresh SoldenDB instance at a temp path."""
     os.environ["CLEARLEDGR_DB_PATH"] = tmp_path
-    from clearledgr.core.database import SoldenDB
+    from solden.core.database import SoldenDB
     db = SoldenDB(tmp_path)
     db.initialize()
     return db
@@ -42,7 +42,7 @@ def _make_db(tmp_path: str):
 
 class TestGetPaymentStatusQuickbooks:
     def test_fully_paid(self, monkeypatch):
-        from clearledgr.integrations import erp_quickbooks as mod
+        from solden.integrations import erp_quickbooks as mod
 
         qb_response = {
             "QueryResponse": {
@@ -79,7 +79,7 @@ class TestGetPaymentStatusQuickbooks:
         assert result["remaining_balance"] == 0.0
 
     def test_partial_payment(self, monkeypatch):
-        from clearledgr.integrations import erp_quickbooks as mod
+        from solden.integrations import erp_quickbooks as mod
 
         qb_response = {
             "QueryResponse": {
@@ -115,7 +115,7 @@ class TestGetPaymentStatusQuickbooks:
         assert result["remaining_balance"] == 400.0
 
     def test_not_found(self, monkeypatch):
-        from clearledgr.integrations import erp_quickbooks as mod
+        from solden.integrations import erp_quickbooks as mod
 
         class FakeResponse:
             status_code = 200
@@ -139,7 +139,7 @@ class TestGetPaymentStatusQuickbooks:
         assert result.get("reason") == "not_found"
 
     def test_no_connection(self):
-        from clearledgr.integrations.erp_quickbooks import get_payment_status_quickbooks
+        from solden.integrations.erp_quickbooks import get_payment_status_quickbooks
 
         class Conn:
             access_token = None
@@ -152,7 +152,7 @@ class TestGetPaymentStatusQuickbooks:
 
 class TestGetPaymentStatusXero:
     def test_fully_paid(self, monkeypatch):
-        from clearledgr.integrations import erp_xero as mod
+        from solden.integrations import erp_xero as mod
 
         xero_response = {
             "Invoices": [{
@@ -190,7 +190,7 @@ class TestGetPaymentStatusXero:
 
 class TestGetPaymentStatusNetsuite:
     def test_fully_paid(self, monkeypatch):
-        from clearledgr.integrations import erp_netsuite as mod
+        from solden.integrations import erp_netsuite as mod
 
         ns_response = {
             "items": [{
@@ -227,7 +227,7 @@ class TestGetPaymentStatusNetsuite:
 
 class TestGetPaymentStatusSAP:
     def test_fully_paid(self, monkeypatch):
-        from clearledgr.integrations import erp_sap as mod
+        from solden.integrations import erp_sap as mod
 
         sap_response = {
             "DocEntry": 100,
@@ -272,7 +272,7 @@ class TestGetPaymentStatusSAP:
 
 class TestGetBillPaymentStatusDispatcher:
     def test_no_connection(self, monkeypatch):
-        from clearledgr.integrations import erp_router
+        from solden.integrations import erp_router
 
         monkeypatch.setattr(erp_router, "get_erp_connection", lambda *a, **kw: None)
         result = _run(erp_router.get_bill_payment_status("org-1", "ref-1"))
@@ -280,7 +280,7 @@ class TestGetBillPaymentStatusDispatcher:
         assert result["reason"] == "no_erp_connection"
 
     def test_dispatches_to_quickbooks(self, monkeypatch):
-        from clearledgr.integrations import erp_router
+        from solden.integrations import erp_router
 
         class FakeConn:
             type = "quickbooks"
@@ -297,7 +297,7 @@ class TestGetBillPaymentStatusDispatcher:
         assert result["payment_amount"] == 100.0
 
     def test_token_refresh_on_reauth(self, monkeypatch):
-        from clearledgr.integrations import erp_router
+        from solden.integrations import erp_router
 
         class FakeConn:
             type = "quickbooks"
@@ -325,7 +325,7 @@ class TestGetBillPaymentStatusDispatcher:
 
 class TestPollPaymentStatuses:
     def test_poll_updates_completed_payment(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -354,7 +354,7 @@ class TestPollPaymentStatuses:
                 return True
 
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db",
+            "solden.core.database.get_db",
             lambda: FakeDB(),
         )
 
@@ -370,13 +370,13 @@ class TestPollPaymentStatuses:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
 
         # Suppress Slack notification
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_completed_notification",
+            "solden.services.slack_notifications.send_payment_completed_notification",
             AsyncMock(return_value=True),
         )
 
@@ -388,7 +388,7 @@ class TestPollPaymentStatuses:
         assert updated_payments["meta:AP-001"]["payment_status"] == "completed"
 
     def test_poll_updates_partial_payment(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -417,7 +417,7 @@ class TestPollPaymentStatuses:
                 return True
 
         monkeypatch.setattr(
-            "clearledgr.core.database.get_db",
+            "solden.core.database.get_db",
             lambda: FakeDB(),
         )
 
@@ -430,12 +430,12 @@ class TestPollPaymentStatuses:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_partial_notification",
+            "solden.services.slack_notifications.send_payment_partial_notification",
             AsyncMock(return_value=True),
         )
 
@@ -446,7 +446,7 @@ class TestPollPaymentStatuses:
         assert updated_payments["PAY-002"]["paid_amount"] == 500.0
 
     def test_poll_skips_payments_without_erp_reference(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -463,14 +463,14 @@ class TestPollPaymentStatuses:
             def list_payments_by_status(self, org_id, status):
                 return payments if status == "ready_for_payment" else []
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         result = _run(mod._poll_payment_statuses("org-1"))
         assert result["checked"] == 0
         assert result["updated"] == 0
 
     def test_poll_caps_at_50(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -497,14 +497,14 @@ class TestPollPaymentStatuses:
             def update_ap_item_metadata_merge(self, ap_item_id, patch):
                 return True
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(organization_id, erp_reference, **kw):
             checked_refs.append(erp_reference)
             return {"paid": False, "reason": "unpaid"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
 
@@ -514,7 +514,7 @@ class TestPollPaymentStatuses:
 
     def test_poll_error_non_blocking(self, monkeypatch):
         """One payment failing should not stop others from being checked."""
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {"id": "PAY-A", "ap_item_id": "AP-A", "erp_reference": "REF-A", "vendor_name": "A", "amount": 100.0, "currency": "USD", "status": "ready_for_payment"},
@@ -535,7 +535,7 @@ class TestPollPaymentStatuses:
             def update_ap_item_metadata_merge(self, ap_item_id, patch):
                 return True
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(organization_id, erp_reference, **kw):
             checked_refs.append(erp_reference)
@@ -544,11 +544,11 @@ class TestPollPaymentStatuses:
             return {"paid": True, "payment_amount": 200.0, "payment_date": "", "payment_method": "", "payment_reference": "PMT-B", "partial": False, "remaining_balance": 0.0}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_completed_notification",
+            "solden.services.slack_notifications.send_payment_completed_notification",
             AsyncMock(return_value=True),
         )
 
@@ -599,7 +599,7 @@ class TestPaymentStorePartialStatus:
 
 class TestSlackPaymentNotifications:
     def test_send_payment_completed_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 
@@ -623,7 +623,7 @@ class TestSlackPaymentNotifications:
         assert "PMT-123" in sent_args["text"]
 
     def test_send_payment_partial_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 
@@ -678,7 +678,7 @@ class TestWorlistPaymentEnrichment:
                 "updated_at": "2026-03-20T10:00:00Z",
             }
 
-            from clearledgr.services.ap_item_service import build_worklist_item
+            from solden.services.ap_item_service import build_worklist_item
             result = build_worklist_item(db, item)
 
             assert result["payment_status"] == "completed"
@@ -707,7 +707,7 @@ class TestWorlistPaymentEnrichment:
                 "updated_at": "2026-03-15T10:00:00Z",
             }
 
-            from clearledgr.services.ap_item_service import build_worklist_item
+            from solden.services.ap_item_service import build_worklist_item
             result = build_worklist_item(db, item)
 
             assert result["payment_status"] is None
@@ -726,7 +726,7 @@ class TestWorlistPaymentEnrichment:
 class TestPollReversedPayments:
     def test_completed_payment_reversed_in_erp(self, monkeypatch):
         """If a completed payment is no longer paid in ERP, mark as reversed."""
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         ready_payments = []
         completed_payments = [
@@ -762,17 +762,17 @@ class TestPollReversedPayments:
                 updated_payments["event"] = kwargs
                 return {"id": "PEVT-test"}
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(*a, **kw):
             return {"paid": False, "reason": "unpaid"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_reversed_notification",
+            "solden.services.slack_notifications.send_payment_reversed_notification",
             AsyncMock(return_value=True),
         )
 
@@ -790,7 +790,7 @@ class TestPollReversedPayments:
 class TestPollOverduePayments:
     def test_overdue_payment_detected(self, monkeypatch):
         """If a ready_for_payment is past due_date, mark as overdue."""
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         past_date = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         payments = [
@@ -822,17 +822,17 @@ class TestPollOverduePayments:
             def update_ap_item_metadata_merge(self, ap_item_id, patch):
                 return True
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(*a, **kw):
             return {"paid": False, "reason": "unpaid"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_overdue_notification",
+            "solden.services.slack_notifications.send_payment_overdue_notification",
             AsyncMock(return_value=True),
         )
 
@@ -842,7 +842,7 @@ class TestPollOverduePayments:
 
     def test_already_alerted_payment_skipped(self, monkeypatch):
         """Payments already flagged as overdue_alerted should be skipped."""
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         past_date = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         payments = [
@@ -871,13 +871,13 @@ class TestPollOverduePayments:
                 updated_payments[payment_id] = kwargs
                 return None
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(*a, **kw):
             return {"paid": False, "reason": "unpaid"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
 
@@ -891,7 +891,7 @@ class TestPollOverduePayments:
 
 class TestPollPaymentFailed:
     def test_payment_failed_detected(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -925,17 +925,17 @@ class TestPollPaymentFailed:
                 updated_payments["event"] = kwargs
                 return {"id": "PEVT-test"}
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(*a, **kw):
             return {"paid": False, "payment_failed": True, "reason": "payment_voided"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_failed_notification",
+            "solden.services.slack_notifications.send_payment_failed_notification",
             AsyncMock(return_value=True),
         )
 
@@ -1030,7 +1030,7 @@ class TestPaymentEventsStore:
 
 class TestPollCreditClosure:
     def test_credit_closure_detected(self, monkeypatch):
-        from clearledgr.services import agent_background as mod
+        from solden.services import agent_background as mod
 
         payments = [
             {
@@ -1064,7 +1064,7 @@ class TestPollCreditClosure:
                 updated_payments["event"] = kwargs
                 return {"id": "PEVT-test"}
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: FakeDB())
+        monkeypatch.setattr("solden.core.database.get_db", lambda: FakeDB())
 
         async def fake_status(*a, **kw):
             return {
@@ -1077,11 +1077,11 @@ class TestPollCreditClosure:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.get_bill_payment_status",
+            "solden.integrations.erp_router.get_bill_payment_status",
             fake_status,
         )
         monkeypatch.setattr(
-            "clearledgr.services.slack_notifications.send_payment_credit_applied_notification",
+            "solden.services.slack_notifications.send_payment_credit_applied_notification",
             AsyncMock(return_value=True),
         )
 
@@ -1098,7 +1098,7 @@ class TestPollCreditClosure:
 
 class TestQuickbooksPaymentFailed:
     def test_voided_payment_detected(self, monkeypatch):
-        from clearledgr.integrations import erp_quickbooks as mod
+        from solden.integrations import erp_quickbooks as mod
 
         qb_response = {
             "QueryResponse": {
@@ -1136,7 +1136,7 @@ class TestQuickbooksPaymentFailed:
 
 class TestQuickbooksCreditClosure:
     def test_credit_closure_detected(self, monkeypatch):
-        from clearledgr.integrations import erp_quickbooks as mod
+        from solden.integrations import erp_quickbooks as mod
 
         qb_response = {
             "QueryResponse": {
@@ -1173,7 +1173,7 @@ class TestQuickbooksCreditClosure:
 
 class TestXeroPaymentFailed:
     def test_voided_payment_detected(self, monkeypatch):
-        from clearledgr.integrations import erp_xero as mod
+        from solden.integrations import erp_xero as mod
 
         xero_response = {
             "Invoices": [{
@@ -1210,7 +1210,7 @@ class TestXeroPaymentFailed:
 
 class TestXeroCreditClosure:
     def test_credit_note_closure(self, monkeypatch):
-        from clearledgr.integrations import erp_xero as mod
+        from solden.integrations import erp_xero as mod
 
         xero_response = {
             "Invoices": [{
@@ -1248,7 +1248,7 @@ class TestXeroCreditClosure:
 
 class TestNetsuitePaymentFailed:
     def test_pending_approval_detected(self, monkeypatch):
-        from clearledgr.integrations import erp_netsuite as mod
+        from solden.integrations import erp_netsuite as mod
 
         ns_response = {
             "items": [{
@@ -1286,7 +1286,7 @@ class TestNetsuitePaymentFailed:
 
 class TestSapPaymentFailed:
     def test_cancelled_invoice_detected(self, monkeypatch):
-        from clearledgr.integrations import erp_sap as mod
+        from solden.integrations import erp_sap as mod
 
         sap_response = {
             "DocEntry": 100,
@@ -1331,7 +1331,7 @@ class TestSapPaymentFailed:
 
 class TestSlackPaymentReversedNotification:
     def test_send_reversed_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 
@@ -1356,7 +1356,7 @@ class TestSlackPaymentReversedNotification:
 
 class TestSlackPaymentOverdueNotification:
     def test_send_overdue_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 
@@ -1382,7 +1382,7 @@ class TestSlackPaymentOverdueNotification:
 
 class TestSlackPaymentFailedNotification:
     def test_send_failed_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 
@@ -1406,7 +1406,7 @@ class TestSlackPaymentFailedNotification:
 
 class TestSlackPaymentCreditNotification:
     def test_send_credit_notification(self, monkeypatch):
-        from clearledgr.services import slack_notifications as mod
+        from solden.services import slack_notifications as mod
 
         sent_args = {}
 

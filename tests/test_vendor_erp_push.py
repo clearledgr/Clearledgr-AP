@@ -31,8 +31,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services.vendor_erp_push import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services.vendor_erp_push import (  # noqa: E402
     _build_safe_payload,
     _resolve_erp_vendor_id,
     push_vendor_to_erp,
@@ -145,7 +145,7 @@ async def test_push_vendor_returns_failed_when_no_erp_connection(db):
         metadata={"erp_vendor_id": "100"},
     )
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=None,
     ):
         out = await push_vendor_to_erp(
@@ -162,7 +162,7 @@ async def test_push_vendor_no_erp_id_when_metadata_missing(db):
         primary_contact_email="ap@acme.test",
     )
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ):
         out = await push_vendor_to_erp(
@@ -179,7 +179,7 @@ async def test_push_vendor_not_supported_for_netsuite(db):
         metadata={"erp_vendor_id": "100"},
     )
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("netsuite"),
     ):
         out = await push_vendor_to_erp(
@@ -199,7 +199,7 @@ async def test_push_vendor_no_change_when_payload_empty(db):
         metadata={"erp_vendor_id": "100"},
     )
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ):
         out = await push_vendor_to_erp(
@@ -249,10 +249,10 @@ async def test_quickbooks_adapter_reads_sync_token_then_posts(db):
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ), patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
@@ -291,10 +291,10 @@ async def test_quickbooks_adapter_fails_on_get_4xx(db):
     fake_client.post = AsyncMock()
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ), patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
@@ -335,10 +335,10 @@ async def test_xero_adapter_posts_contact_with_id(db):
     fake_client.post = AsyncMock(side_effect=_fake_post)
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("xero"),
     ), patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
@@ -376,10 +376,10 @@ async def test_push_emits_audit_event_on_success(db):
     fake_client.post = AsyncMock(return_value=_Resp(200, {}))
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ), patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(
@@ -422,10 +422,10 @@ async def test_push_emits_audit_event_on_failure(db):
     fake_client.post = AsyncMock(return_value=_Resp())
 
     with patch(
-        "clearledgr.integrations.erp_router.get_erp_connection",
+        "solden.integrations.erp_router.get_erp_connection",
         return_value=_stub_connection("quickbooks"),
     ), patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=fake_client,
     ):
         out = await push_vendor_to_erp(

@@ -9,13 +9,13 @@ Usage:
 """
 import sys
 
-from clearledgr.core.auth import (
+from solden.core.auth import (
     ROLE_OWNER,
     create_user,
     get_user_by_email,
     hash_password,
 )
-from clearledgr.core.database import get_db
+from solden.core.database import get_db
 
 
 def main() -> int:

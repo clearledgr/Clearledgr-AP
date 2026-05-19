@@ -25,11 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.coordination_engine import CoordinationEngine  # noqa: E402
-from clearledgr.core.plan import Action, Plan  # noqa: E402
-from clearledgr.services.policy_service import PolicyService  # noqa: E402
-from clearledgr.services.purchase_orders import (  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.coordination_engine import CoordinationEngine  # noqa: E402
+from solden.core.plan import Action, Plan  # noqa: E402
+from solden.services.policy_service import PolicyService  # noqa: E402
+from solden.services.purchase_orders import (  # noqa: E402
     _po_to_store_dict,
     get_purchase_order_service,
 )

@@ -16,12 +16,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from clearledgr.core.business_days import (
+from solden.core.business_days import (
     business_days_between,
     business_days_from_iso,
 )
-from clearledgr.services.slack_api import SlackAPIClient
-from clearledgr.services.teams_api import TeamsAPIClient
+from solden.services.slack_api import SlackAPIClient
+from solden.services.teams_api import TeamsAPIClient
 
 import pytest as _vo_skip_pytest
 
@@ -95,7 +95,7 @@ class TestComputeVendorActivationSLA:
         # subclass. We only need the list_completed_onboarding_sessions
         # hook — so construct a minimal object with that method and
         # bind the compute helper from the real class.
-        from clearledgr.core.stores.metrics_store import MetricsStore
+        from solden.core.stores.metrics_store import MetricsStore
 
         store = MagicMock(spec=MetricsStore)
         store.list_completed_onboarding_sessions = MagicMock(return_value=sessions)

@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services.single_pass_processor import (  # noqa: E402
+from solden.services.single_pass_processor import (  # noqa: E402
     MAX_VISUAL_ATTACHMENTS,
     _build_single_pass_prompt,
     _parse_single_pass_response,
@@ -339,7 +339,7 @@ async def test_process_invoice_single_pass_happy_path(monkeypatch):
     fake_gateway = AsyncMock()
     fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -366,7 +366,7 @@ async def test_process_invoice_single_pass_returns_none_on_missing_required_fiel
         return_value=_fake_llm_response(json.dumps(drifted)),
     )
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -382,7 +382,7 @@ async def test_process_invoice_single_pass_returns_none_on_malformed_json(monkey
         return_value=_fake_llm_response("this is not json"),
     )
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -398,7 +398,7 @@ async def test_process_invoice_single_pass_returns_none_on_gateway_error(monkeyp
     fake_gateway = AsyncMock()
     fake_gateway.call = AsyncMock(side_effect=RuntimeError("anthropic 500"))
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -412,7 +412,7 @@ async def test_process_invoice_single_pass_returns_none_on_empty_response(monkey
     fake_gateway = AsyncMock()
     fake_gateway.call = AsyncMock(return_value=_fake_llm_response(""))
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -429,7 +429,7 @@ async def test_process_invoice_single_pass_handles_markdown_fenced_response(monk
     fake_gateway = AsyncMock()
     fake_gateway.call = AsyncMock(return_value=_fake_llm_response(fenced))
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
@@ -448,17 +448,17 @@ class TestAttachmentTextPlumbing:
     """
 
     def test_collect_attachment_text_returns_empty_for_no_attachments(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         assert _collect_attachment_text([]) == ""
         assert _collect_attachment_text(None) == ""
 
     def test_collect_attachment_text_returns_empty_when_no_content_text(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         assert _collect_attachment_text([{"filename": "scan.png"}]) == ""
         assert _collect_attachment_text([{"filename": "x.pdf", "content_text": ""}]) == ""
 
     def test_collect_attachment_text_tags_each_excerpt_with_filename(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         out = _collect_attachment_text([
             {"filename": "invoice.pdf", "content_text": "INV-9001\nAmount: $500"},
             {"name": "remit.txt", "content_text": "Payment ref ABC123"},
@@ -469,7 +469,7 @@ class TestAttachmentTextPlumbing:
         assert "Payment ref ABC123" in out
 
     def test_collect_attachment_text_caps_excerpts_at_4000_chars(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         big = "X" * 5000
         out = _collect_attachment_text([{"filename": "huge.pdf", "content_text": big}])
         assert "...[truncated]" in out
@@ -478,11 +478,11 @@ class TestAttachmentTextPlumbing:
         assert len(out) < 5000
 
     def test_collect_attachment_text_skips_non_dict_entries(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         assert _collect_attachment_text([None, "not a dict", 42]) == ""
 
     def test_collect_attachment_text_falls_back_to_default_filename(self):
-        from clearledgr.services.gmail_triage_service import _collect_attachment_text
+        from solden.services.gmail_triage_service import _collect_attachment_text
         out = _collect_attachment_text([{"content_text": "no filename here"}])
         assert "--- attachment ---" in out
         assert "no filename here" in out
@@ -500,7 +500,7 @@ def test_single_pass_action_config_has_sufficient_output_budget():
     refactor lowers either, this test trips before drift reaches
     production.
     """
-    from clearledgr.core.llm_gateway import ACTION_REGISTRY, LLMAction
+    from solden.core.llm_gateway import ACTION_REGISTRY, LLMAction
 
     sp_config = ACTION_REGISTRY[LLMAction.SINGLE_PASS_EXTRACT]
     extract_config = ACTION_REGISTRY[LLMAction.EXTRACT_INVOICE_FIELDS]
@@ -531,7 +531,7 @@ class TestSinglePassConfidenceGate:
     runs."""
 
     def _format(self, sp_extraction):
-        from clearledgr.services.gmail_triage_service import _format_single_pass_result
+        from solden.services.gmail_triage_service import _format_single_pass_result
 
         sp = {
             "classification": {"document_type": "invoice", "confidence": 0.95, "reasoning": "test"},
@@ -618,7 +618,7 @@ class TestSinglePassConfidenceGate:
     def test_gate_signature_matches_webhook_path(self):
         # Sanity: the same `build_extraction_review_gate` produces the
         # same shape whether called from the webhook or the triage path.
-        from clearledgr.core.ap_confidence import build_extraction_review_gate
+        from solden.core.ap_confidence import build_extraction_review_gate
 
         gate = build_extraction_review_gate(
             extraction={
@@ -662,10 +662,10 @@ class TestSchemaDriftEvent:
                 recorded.append(kwargs)
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ), patch(
-            "clearledgr.services.audit_trail.get_audit_trail",
+            "solden.services.audit_trail.get_audit_trail",
             return_value=_FakeTrail(),
         ):
             result = await process_invoice_single_pass(
@@ -680,7 +680,7 @@ class TestSchemaDriftEvent:
         # One drift event with the failed path in details
         assert len(recorded) == 1
         evt = recorded[0]
-        from clearledgr.services.audit_trail import AuditEventType
+        from solden.services.audit_trail import AuditEventType
         assert evt["event_type"] == AuditEventType.SINGLE_PASS_VALIDATION_FAILED
         details = evt["details"]
         assert details["validation_path"] == "classification.document_type"
@@ -699,10 +699,10 @@ class TestSchemaDriftEvent:
                 recorded.append(kwargs)
 
         with patch(
-            "clearledgr.services.single_pass_processor.get_llm_gateway",
+            "solden.services.single_pass_processor.get_llm_gateway",
             return_value=fake_gateway,
         ), patch(
-            "clearledgr.services.audit_trail.get_audit_trail",
+            "solden.services.audit_trail.get_audit_trail",
             return_value=_FakeTrail(),
         ):
             result = await process_invoice_single_pass(
@@ -710,7 +710,7 @@ class TestSchemaDriftEvent:
             )
         assert result is not None
         # Zero drift events on the happy path.
-        from clearledgr.services.audit_trail import AuditEventType
+        from solden.services.audit_trail import AuditEventType
         drift_events = [
             r for r in recorded
             if r.get("event_type") == AuditEventType.SINGLE_PASS_VALIDATION_FAILED
@@ -726,7 +726,7 @@ async def test_process_invoice_single_pass_truncates_visual_attachments(monkeypa
     fake_gateway = AsyncMock()
     fake_gateway.call = AsyncMock(return_value=_fake_llm_response(_VALID_RESPONSE))
     with patch(
-        "clearledgr.services.single_pass_processor.get_llm_gateway",
+        "solden.services.single_pass_processor.get_llm_gateway",
         return_value=fake_gateway,
     ):
         # Five attachments — more than the cap (3).

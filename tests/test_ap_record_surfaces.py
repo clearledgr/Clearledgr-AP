@@ -16,12 +16,12 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import _apply_runtime_surface_profile, _is_strict_profile_allowed_path, app  # noqa: E402
-from clearledgr.api.ap_item_contracts import ResolveEntityRouteRequest  # noqa: E402
-from clearledgr.api.ap_items_action_routes import resolve_ap_item_entity_route  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import create_access_token  # noqa: E402
-from clearledgr.services.ap_item_service import build_worklist_item  # noqa: E402
-from clearledgr.services.correction_learning import CorrectionLearningService  # noqa: E402
+from solden.api.ap_item_contracts import ResolveEntityRouteRequest  # noqa: E402
+from solden.api.ap_items_action_routes import resolve_ap_item_entity_route  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import create_access_token  # noqa: E402
+from solden.services.ap_item_service import build_worklist_item  # noqa: E402
+from solden.services.correction_learning import CorrectionLearningService  # noqa: E402
 
 
 def _item_payload(
@@ -201,7 +201,7 @@ def test_detail_endpoint_includes_agent_memory_surface(client, db):
             }
 
     with patch(
-        "clearledgr.services.agent_memory.get_agent_memory_service",
+        "solden.services.agent_memory.get_agent_memory_service",
         return_value=_FakeMemory(),
     ):
         response = client.get(
@@ -301,7 +301,7 @@ def test_build_worklist_item_includes_agent_memory_projection(db):
             }
 
     with patch(
-        "clearledgr.services.agent_memory.get_agent_memory_service",
+        "solden.services.agent_memory.get_agent_memory_service",
         return_value=_FakeMemory(),
     ):
         normalized = build_worklist_item(db, item)
@@ -699,7 +699,7 @@ def test_field_review_resolution_endpoint_auto_resumes_retry_path_when_last_bloc
         return {"status": "ready_to_post", "reason": "resume_after_field_resolution"}
 
     monkeypatch.setattr(
-        "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
+        "solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
         _fake_execute_intent,
     )
 
@@ -1547,8 +1547,8 @@ def test_workspace_team_approver_directory_is_available_in_strict_profile_and_re
 
     assert _is_strict_profile_allowed_path("/api/workspace/team/approvers") is True
 
-    with patch("clearledgr.api.workspace_shell._resolve_slack_runtime", return_value={"connected": True}), patch(
-        "clearledgr.api.workspace_shell._get_slack_client",
+    with patch("solden.api.workspace_shell._resolve_slack_runtime", return_value={"connected": True}), patch(
+        "solden.api.workspace_shell._get_slack_client",
         return_value=_SlackClient(),
     ):
         response = client.get(

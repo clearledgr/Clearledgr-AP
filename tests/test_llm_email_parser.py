@@ -1,5 +1,5 @@
-from clearledgr.services import llm_email_parser as llm_email_parser_module
-from clearledgr.services.llm_email_parser import (
+from solden.services import llm_email_parser as llm_email_parser_module
+from solden.services.llm_email_parser import (
     LLMEmailParser,
     _merge_attachment_evidence,
     _merge_source_trace,
@@ -178,7 +178,7 @@ def test_authoritative_attachment_result_skips_llm(monkeypatch):
     }
 
     monkeypatch.setattr(
-        "clearledgr.services.email_parser.EmailParser.parse_email",
+        "solden.services.email_parser.EmailParser.parse_email",
         lambda self, subject, body, sender, attachments=None: dict(local_result),
     )
 

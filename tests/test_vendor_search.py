@@ -14,7 +14,7 @@ All tests are pure-function; no DB.
 """
 from __future__ import annotations
 
-from clearledgr.services.fuzzy_matching import (
+from solden.services.fuzzy_matching import (
     levenshtein_distance,
     levenshtein_ratio,
     trigram_jaccard,
@@ -22,7 +22,7 @@ from clearledgr.services.fuzzy_matching import (
     vendor_similarity_hybrid,
     vendor_similarity_modes,
 )
-from clearledgr.services.vendor_search import (
+from solden.services.vendor_search import (
     VendorMatch,
     explain_match,
     find_candidate_matches,
@@ -181,7 +181,7 @@ def test_match_probability_lifts_typo_above_partial_substring():
     score, but match_probability's log-LR sum + base prior + per-mode
     coefficients separates them.
     """
-    from clearledgr.services.fuzzy_matching import (
+    from solden.services.fuzzy_matching import (
         match_probability, vendor_similarity_modes,
     )
     p_typo = match_probability(vendor_similarity_modes("logisitcs co", "logistics co"))
@@ -318,19 +318,19 @@ def test_min_per_mode_score_filter_drops_weak_signals():
 
 
 def test_match_probability_exact_is_one():
-    from clearledgr.services.fuzzy_matching import match_probability
+    from solden.services.fuzzy_matching import match_probability
     modes = {"exact": 1.0, "containment": 1.0, "jaccard": 1.0,
              "sequence": 1.0, "levenshtein": 1.0, "trigram": 1.0}
     assert match_probability(modes) == 1.0
 
 
 def test_match_probability_empty_is_zero():
-    from clearledgr.services.fuzzy_matching import match_probability
+    from solden.services.fuzzy_matching import match_probability
     assert match_probability({}) == 0.0
 
 
 def test_match_probability_unrelated_is_low():
-    from clearledgr.services.fuzzy_matching import (
+    from solden.services.fuzzy_matching import (
         match_probability, vendor_similarity_modes,
     )
     modes = vendor_similarity_modes("Stripe", "Amazon")
@@ -345,7 +345,7 @@ def test_match_probability_typo_is_high():
     high-confidence regime (> 0.6 for an uncalibrated formula —
     absolute threshold tightens once we have labeled data).
     """
-    from clearledgr.services.fuzzy_matching import (
+    from solden.services.fuzzy_matching import (
         match_probability, vendor_similarity_modes,
     )
     modes = vendor_similarity_modes("logisitcs co", "logistics co")
@@ -360,7 +360,7 @@ def test_match_probability_partial_substring_low_to_moderate():
     typo case — that's the whole point of the per-mode coefficients
     (containment is high-precision, jaccard is low-precision).
     """
-    from clearledgr.services.fuzzy_matching import (
+    from solden.services.fuzzy_matching import (
         match_probability, vendor_similarity_modes,
     )
     modes_partial = vendor_similarity_modes("Stripe", "Striperock")
@@ -376,7 +376,7 @@ def test_match_probability_is_monotonic_in_strong_modes():
     """Increasing a strong mode's score should never decrease the
     probability. Sanity check on the log-LR formulation.
     """
-    from clearledgr.services.fuzzy_matching import match_probability
+    from solden.services.fuzzy_matching import match_probability
     base = {"exact": 0.0, "containment": 0.0, "jaccard": 0.0,
             "sequence": 0.0, "levenshtein": 0.5, "trigram": 0.0}
     for lev in (0.5, 0.6, 0.7, 0.8, 0.9):

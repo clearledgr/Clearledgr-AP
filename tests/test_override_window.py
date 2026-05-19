@@ -30,8 +30,8 @@ import pytest
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     """Fresh temp-file SoldenDB wired as the singleton."""
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -85,15 +85,15 @@ def _now_iso(offset_minutes: int = 0) -> str:
 class TestStateMachineReversed:
 
     def test_reversed_state_exists(self):
-        from clearledgr.core.ap_states import APState
+        from solden.core.ap_states import APState
         assert APState.REVERSED.value == "reversed"
 
     def test_posted_to_erp_can_transition_to_reversed(self):
-        from clearledgr.core.ap_states import validate_transition
+        from solden.core.ap_states import validate_transition
         assert validate_transition("posted_to_erp", "reversed") is True
 
     def test_posted_to_erp_can_still_transition_to_closed(self):
-        from clearledgr.core.ap_states import validate_transition
+        from solden.core.ap_states import validate_transition
         assert validate_transition("posted_to_erp", "closed") is True
 
     def test_reversed_is_terminal(self):
@@ -102,13 +102,13 @@ class TestStateMachineReversed:
         posted and successfully paid out; keeping them in separate
         terminal states stops reversed-then-closed items leaking into
         the Kanban Paid column."""
-        from clearledgr.core.ap_states import validate_transition, TERMINAL_STATES, APState
+        from solden.core.ap_states import validate_transition, TERMINAL_STATES, APState
         assert APState.REVERSED in TERMINAL_STATES
         assert validate_transition("reversed", "closed") is False
         assert validate_transition("reversed", "posted_to_erp") is False
 
     def test_closed_remains_terminal(self):
-        from clearledgr.core.ap_states import validate_transition
+        from solden.core.ap_states import validate_transition
         assert validate_transition("closed", "reversed") is False
 
 
@@ -283,7 +283,7 @@ class TestOverrideWindowStore:
 class TestOverrideWindowServiceDuration:
 
     def test_default_duration_when_no_config(self, tmp_db):
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             DEFAULT_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -293,7 +293,7 @@ class TestOverrideWindowServiceDuration:
 
     def test_configured_duration_for_erp_post(self, tmp_db):
         """Per-action dict with an explicit erp_post entry."""
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
@@ -308,7 +308,7 @@ class TestOverrideWindowServiceDuration:
 
     def test_default_action_key_used_as_fallback(self, tmp_db):
         """When the requested action isn't in the dict, fall back to 'default'."""
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
@@ -326,7 +326,7 @@ class TestOverrideWindowServiceDuration:
 
     def test_per_action_overrides_default_key(self, tmp_db):
         """Exact action match wins over the 'default' key."""
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
@@ -348,7 +348,7 @@ class TestOverrideWindowServiceDuration:
 
     def test_dict_with_no_default_or_action_returns_constant_default(self, tmp_db):
         """Empty config dict → DEFAULT_OVERRIDE_WINDOW_MINUTES constant."""
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             DEFAULT_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -363,7 +363,7 @@ class TestOverrideWindowServiceDuration:
         assert service.get_window_duration_minutes("erp_post") == DEFAULT_OVERRIDE_WINDOW_MINUTES
 
     def test_negative_duration_clamped_to_minimum(self, tmp_db):
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             MIN_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -380,7 +380,7 @@ class TestOverrideWindowServiceDuration:
         assert service.get_window_duration_minutes("erp_post") == MIN_OVERRIDE_WINDOW_MINUTES
 
     def test_huge_duration_clamped_to_maximum(self, tmp_db):
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             MAX_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -397,7 +397,7 @@ class TestOverrideWindowServiceDuration:
         assert service.get_window_duration_minutes("erp_post") == MAX_OVERRIDE_WINDOW_MINUTES
 
     def test_invalid_duration_falls_back_to_default(self, tmp_db):
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             DEFAULT_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -415,7 +415,7 @@ class TestOverrideWindowServiceDuration:
 
     def test_legacy_int_shape_rejected_with_default(self, tmp_db):
         """The old flat-int shape is no longer accepted (no-backcompat policy)."""
-        from clearledgr.services.override_window import (
+        from solden.services.override_window import (
             DEFAULT_OVERRIDE_WINDOW_MINUTES,
             OverrideWindowService,
         )
@@ -432,7 +432,7 @@ class TestOverrideWindowServiceDuration:
 class TestOverrideWindowServiceLifecycle:
 
     def test_open_window_persists_with_correct_expiry(self, tmp_db):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
@@ -464,7 +464,7 @@ class TestOverrideWindowServiceLifecycle:
 
     def test_open_window_uses_per_action_duration(self, tmp_db):
         """Two different action types in the same org get different durations."""
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(
             tmp_db,
             "org_t",
@@ -509,7 +509,7 @@ class TestOverrideWindowServiceLifecycle:
         assert tmp_db.get_override_window(pay_window["id"])["action_type"] == "payment_execution"
 
     def test_is_window_expired_logic(self):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         future = {"expires_at": _now_iso(60)}
         past = {"expires_at": _now_iso(-1)}
         assert OverrideWindowService.is_window_expired(future) is False
@@ -518,7 +518,7 @@ class TestOverrideWindowServiceLifecycle:
         assert OverrideWindowService.is_window_expired({"expires_at": "not-iso"}) is True
 
     def test_time_remaining_seconds(self):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         future = {"expires_at": _now_iso(5)}
         past = {"expires_at": _now_iso(-1)}
         future_secs = OverrideWindowService.time_remaining_seconds(future)
@@ -534,13 +534,13 @@ class TestOverrideWindowServiceAttemptReversal:
         fake_workflow = MagicMock()
         fake_workflow._transition_invoice_state = MagicMock(return_value=True)
         monkeypatch.setattr(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             lambda org_id: fake_workflow,
         )
         return fake_workflow
 
     def test_window_not_found(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
         outcome = asyncio.run(
@@ -553,7 +553,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert outcome.status == "not_found"
 
     def test_already_reversed_short_circuit(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-AR", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -576,7 +576,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert outcome.status == "already_reversed"
 
     def test_window_expired_short_circuit(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-EX", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -606,7 +606,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert row["state"] == "expired"
 
     def test_happy_path_reversal(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-OK", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -626,7 +626,7 @@ class TestOverrideWindowServiceAttemptReversal:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill",
+            "solden.integrations.erp_router.reverse_bill",
             _fake_reverse_bill,
         )
         self._setup_workflow_stub(monkeypatch)
@@ -648,7 +648,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert row["reversal_reason"] == "human_override"
 
     def test_erp_failure_marks_window_failed(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-FAIL", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -667,7 +667,7 @@ class TestOverrideWindowServiceAttemptReversal:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill",
+            "solden.integrations.erp_router.reverse_bill",
             _fake_reverse_bill,
         )
         self._setup_workflow_stub(monkeypatch)
@@ -687,7 +687,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert row["failure_reason"] == "payment_already_applied"
 
     def test_skipped_when_no_erp_connected(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-SK", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -701,7 +701,7 @@ class TestOverrideWindowServiceAttemptReversal:
             return {"status": "skipped", "reason": "no_erp_connected"}
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill",
+            "solden.integrations.erp_router.reverse_bill",
             _fake_reverse_bill,
         )
 
@@ -717,7 +717,7 @@ class TestOverrideWindowServiceAttemptReversal:
         assert row["state"] == "failed"
 
     def test_expire_window_marks_pending_only(self, tmp_db, monkeypatch):
-        from clearledgr.services.override_window import OverrideWindowService
+        from solden.services.override_window import OverrideWindowService
         _seed_org(tmp_db, "org_t")
         _seed_posted_ap_item(tmp_db, ap_item_id="AP-EX2", organization_id="org_t")
         service = OverrideWindowService("org_t", db=tmp_db)
@@ -764,7 +764,7 @@ class TestSlackCardBuilders:
         }
 
     def test_build_undo_post_card_includes_undo_button(self):
-        from clearledgr.services.slack_cards import build_undo_post_card
+        from solden.services.slack_cards import build_undo_post_card
         blocks = build_undo_post_card(ap_item=self._ap_item(), window=self._window())
         # Find the actions block
         actions_block = next((b for b in blocks if b.get("type") == "actions"), None)
@@ -778,7 +778,7 @@ class TestSlackCardBuilders:
         assert "confirm" in button
 
     def test_undo_card_displays_amount_and_vendor(self):
-        from clearledgr.services.slack_cards import build_undo_post_card
+        from solden.services.slack_cards import build_undo_post_card
         blocks = build_undo_post_card(ap_item=self._ap_item(), window=self._window())
         all_text = json.dumps(blocks)
         assert "Acme Inc" in all_text
@@ -787,7 +787,7 @@ class TestSlackCardBuilders:
         assert "QuickBooks" in all_text
 
     def test_reversed_card_omits_undo_button(self):
-        from clearledgr.services.slack_cards import build_card_reversed
+        from solden.services.slack_cards import build_card_reversed
         blocks = build_card_reversed(
             ap_item=self._ap_item(),
             window=self._window(),
@@ -802,14 +802,14 @@ class TestSlackCardBuilders:
         assert "Reversed" in text
 
     def test_finalized_card_shows_locked(self):
-        from clearledgr.services.slack_cards import build_card_finalized
+        from solden.services.slack_cards import build_card_finalized
         blocks = build_card_finalized(ap_item=self._ap_item(), window=self._window())
         text = json.dumps(blocks)
         assert "Override window has closed" in text
         assert any(b.get("type") == "actions" for b in blocks) is False
 
     def test_failed_card_surfaces_reason_and_actor(self):
-        from clearledgr.services.slack_cards import build_card_reversal_failed
+        from solden.services.slack_cards import build_card_reversal_failed
         blocks = build_card_reversal_failed(
             ap_item=self._ap_item(),
             window=self._window(),
@@ -832,7 +832,7 @@ class TestSlackCardBuilders:
 class TestUndoPostActionContract:
 
     def test_canonical_action_recognized(self):
-        from clearledgr.core.approval_action_contract import _canonical_slack_action
+        from solden.core.approval_action_contract import _canonical_slack_action
         action, variant = _canonical_slack_action("undo_post_ovw_xyz123")
         assert action == "undo_post"
         assert variant is None
@@ -841,7 +841,7 @@ class TestUndoPostActionContract:
         """The contract overloads gmail_id to carry the lookup key. The
         handler is responsible for treating it as the override window id
         when action == 'undo_post'."""
-        from clearledgr.core.approval_action_contract import normalize_slack_action
+        from solden.core.approval_action_contract import normalize_slack_action
 
         payload = {
             "actions": [
@@ -870,7 +870,7 @@ class TestUndoPostActionContract:
 class TestOverrideWindowObserver:
 
     def test_observer_skips_non_posted_states(self, tmp_db):
-        from clearledgr.services.state_observers import (
+        from solden.services.state_observers import (
             OverrideWindowObserver,
             StateTransitionEvent,
         )
@@ -886,7 +886,7 @@ class TestOverrideWindowObserver:
         assert tmp_db.get_override_window_by_ap_item_id("AP-1") is None
 
     def test_observer_creates_window_on_posted_to_erp(self, tmp_db, monkeypatch):
-        from clearledgr.services.state_observers import (
+        from solden.services.state_observers import (
             OverrideWindowObserver,
             StateTransitionEvent,
         )
@@ -898,7 +898,7 @@ class TestOverrideWindowObserver:
             return {"channel": "C123", "message_ts": "ts-1"}
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.post_undo_card_for_window",
+            "solden.services.slack_cards.post_undo_card_for_window",
             _fake_post,
         )
 
@@ -921,7 +921,7 @@ class TestOverrideWindowObserver:
         """The observer reacts to posted_to_erp transitions, so it must
         record action_type='erp_post' on the window row regardless of
         the org's per-action duration config."""
-        from clearledgr.services.state_observers import (
+        from solden.services.state_observers import (
             OverrideWindowObserver,
             StateTransitionEvent,
         )
@@ -943,7 +943,7 @@ class TestOverrideWindowObserver:
             return {"channel": "C1", "message_ts": "ts1"}
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.post_undo_card_for_window",
+            "solden.services.slack_cards.post_undo_card_for_window",
             _fake_post,
         )
 
@@ -967,7 +967,7 @@ class TestOverrideWindowObserver:
         assert 6.5 <= delta_min <= 7.5
 
     def test_observer_skips_when_no_erp_reference(self, tmp_db, monkeypatch):
-        from clearledgr.services.state_observers import (
+        from solden.services.state_observers import (
             OverrideWindowObserver,
             StateTransitionEvent,
         )
@@ -1005,7 +1005,7 @@ class TestOverrideWindowObserver:
 class TestReaper:
 
     def test_reaper_finalizes_expired_windows(self, tmp_db, monkeypatch):
-        from clearledgr.services.agent_background import (
+        from solden.services.agent_background import (
             reap_expired_override_windows,
         )
         _seed_org(tmp_db, "org_t")
@@ -1033,14 +1033,14 @@ class TestReaper:
             return True
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             _fake_finalize,
         )
         # Stub the workflow get_invoice_workflow used by service.expire_window
         fake_workflow = MagicMock()
         fake_workflow._transition_invoice_state = MagicMock(return_value=True)
         monkeypatch.setattr(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             lambda org_id: fake_workflow,
         )
 
@@ -1053,7 +1053,7 @@ class TestReaper:
         assert pending_row["state"] == "pending"
 
     def test_reaper_handles_slack_failure_gracefully(self, tmp_db, monkeypatch):
-        from clearledgr.services.agent_background import (
+        from solden.services.agent_background import (
             reap_expired_override_windows,
         )
         _seed_org(tmp_db, "org_t")
@@ -1070,12 +1070,12 @@ class TestReaper:
             raise RuntimeError("simulated slack outage")
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             _broken_finalize,
         )
         fake_workflow = MagicMock()
         monkeypatch.setattr(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             lambda org_id: fake_workflow,
         )
 
@@ -1096,8 +1096,8 @@ class TestReverseAPItemEndpoint:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
         import importlib
         import main
 
@@ -1109,7 +1109,7 @@ class TestReverseAPItemEndpoint:
         yield client, main, db
 
     def _override_user(self, main, role: str = "admin", org_id: str = "org_t"):
-        from clearledgr.core.auth import TokenData, get_current_user, require_ops_user
+        from solden.core.auth import TokenData, get_current_user, require_ops_user
         from datetime import datetime, timezone
 
         def _user():
@@ -1161,7 +1161,7 @@ class TestReverseAPItemEndpoint:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill",
+            "solden.integrations.erp_router.reverse_bill",
             _fake_reverse_bill,
         )
 
@@ -1169,13 +1169,13 @@ class TestReverseAPItemEndpoint:
             return True
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.update_card_to_reversed",
+            "solden.services.slack_cards.update_card_to_reversed",
             _fake_update,
         )
         fake_workflow = MagicMock()
         fake_workflow._transition_invoice_state = MagicMock(return_value=True)
         monkeypatch.setattr(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             lambda org_id: fake_workflow,
         )
 
@@ -1209,12 +1209,12 @@ class TestReverseAPItemEndpoint:
             return True
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.update_card_to_finalized",
+            "solden.services.slack_cards.update_card_to_finalized",
             _fake_update,
         )
         fake_workflow = MagicMock()
         monkeypatch.setattr(
-            "clearledgr.services.invoice_workflow.get_invoice_workflow",
+            "solden.services.invoice_workflow.get_invoice_workflow",
             lambda org_id: fake_workflow,
         )
 
@@ -1250,7 +1250,7 @@ class TestReverseAPItemEndpoint:
             }
 
         monkeypatch.setattr(
-            "clearledgr.integrations.erp_router.reverse_bill",
+            "solden.integrations.erp_router.reverse_bill",
             _fake_reverse_bill,
         )
 
@@ -1258,7 +1258,7 @@ class TestReverseAPItemEndpoint:
             return True
 
         monkeypatch.setattr(
-            "clearledgr.services.slack_cards.update_card_to_reversal_failed",
+            "solden.services.slack_cards.update_card_to_reversal_failed",
             _fake_update,
         )
 

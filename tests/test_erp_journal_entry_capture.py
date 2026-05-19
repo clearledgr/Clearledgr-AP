@@ -34,8 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.integrations.erp_router import Bill  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.integrations.erp_router import Bill  # noqa: E402
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ def _sap_connection():
 
 @pytest.mark.asyncio
 async def test_quickbooks_returns_journal_entry_id_equal_to_bill_id():
-    from clearledgr.integrations.erp_quickbooks import post_bill_to_quickbooks
+    from solden.integrations.erp_quickbooks import post_bill_to_quickbooks
 
     class _Resp:
         status_code = 200
@@ -114,7 +114,7 @@ async def test_quickbooks_returns_journal_entry_id_equal_to_bill_id():
     fake_client.post = AsyncMock(return_value=_Resp())
 
     with patch(
-        "clearledgr.integrations.erp_quickbooks.get_http_client",
+        "solden.integrations.erp_quickbooks.get_http_client",
         return_value=fake_client,
     ):
         result = await post_bill_to_quickbooks(
@@ -132,7 +132,7 @@ async def test_quickbooks_returns_journal_entry_id_equal_to_bill_id():
 
 @pytest.mark.asyncio
 async def test_netsuite_returns_journal_entry_id_equal_to_bill_id():
-    from clearledgr.integrations.erp_netsuite import post_bill_to_netsuite
+    from solden.integrations.erp_netsuite import post_bill_to_netsuite
 
     # Synchronous 200 response with the vendor bill body — NetSuite
     # returns this for tenants without async-prefer headers honoured.
@@ -148,10 +148,10 @@ async def test_netsuite_returns_journal_entry_id_equal_to_bill_id():
     fake_client.post = AsyncMock(return_value=_Resp())
 
     with patch(
-        "clearledgr.integrations.erp_netsuite.get_http_client",
+        "solden.integrations.erp_netsuite.get_http_client",
         return_value=fake_client,
     ), patch(
-        "clearledgr.integrations.erp_netsuite._oauth_header",
+        "solden.integrations.erp_netsuite._oauth_header",
         return_value="OAuth ...",
     ):
         result = await post_bill_to_netsuite(
@@ -172,7 +172,7 @@ async def test_netsuite_returns_journal_entry_id_equal_to_bill_id():
 async def test_sap_returns_journal_entry_distinct_from_doc_entry():
     """SAP B1 separates Bill DocEntry from JE DocEntry (OJDT). The
     ``JournalEntry`` field on the create response is the JE-side id."""
-    from clearledgr.integrations.erp_sap import post_bill_to_sap
+    from solden.integrations.erp_sap import post_bill_to_sap
 
     class _Resp:
         status_code = 201
@@ -192,10 +192,10 @@ async def test_sap_returns_journal_entry_distinct_from_doc_entry():
         return {"status": "success", "headers": {"Cookie": "B1SESSION=x"}}
 
     with patch(
-        "clearledgr.integrations.erp_sap.get_http_client",
+        "solden.integrations.erp_sap.get_http_client",
         return_value=fake_client,
     ), patch(
-        "clearledgr.integrations.erp_sap._open_sap_service_layer_session",
+        "solden.integrations.erp_sap._open_sap_service_layer_session",
         side_effect=_fake_session,
     ):
         result = await post_bill_to_sap(_sap_connection(), _bill())
@@ -212,7 +212,7 @@ async def test_sap_returns_journal_entry_distinct_from_doc_entry():
 async def test_sap_handles_journal_entry_replica_field_form():
     """Some B1 versions surface the JE id under
     ``JournalEntryReplica.DocEntry``; the adapter should accept either."""
-    from clearledgr.integrations.erp_sap import post_bill_to_sap
+    from solden.integrations.erp_sap import post_bill_to_sap
 
     class _Resp:
         status_code = 201
@@ -232,10 +232,10 @@ async def test_sap_handles_journal_entry_replica_field_form():
         return {"status": "success", "headers": {}}
 
     with patch(
-        "clearledgr.integrations.erp_sap.get_http_client",
+        "solden.integrations.erp_sap.get_http_client",
         return_value=fake_client,
     ), patch(
-        "clearledgr.integrations.erp_sap._open_sap_service_layer_session",
+        "solden.integrations.erp_sap._open_sap_service_layer_session",
         side_effect=_fake_session,
     ):
         result = await post_bill_to_sap(_sap_connection(), _bill())
@@ -248,7 +248,7 @@ async def test_sap_handles_journal_entry_replica_field_form():
 
 @pytest.mark.asyncio
 async def test_xero_does_followup_journal_fetch():
-    from clearledgr.integrations.erp_xero import post_bill_to_xero
+    from solden.integrations.erp_xero import post_bill_to_xero
 
     class _PostResp:
         status_code = 200
@@ -267,7 +267,7 @@ async def test_xero_does_followup_journal_fetch():
     fake_client.get = AsyncMock(return_value=_GetResp())
 
     with patch(
-        "clearledgr.integrations.erp_xero.get_http_client",
+        "solden.integrations.erp_xero.get_http_client",
         return_value=fake_client,
     ):
         result = await post_bill_to_xero(_xero_connection(), _bill())
@@ -284,7 +284,7 @@ async def test_xero_does_followup_journal_fetch():
 async def test_xero_journal_fetch_failure_is_soft():
     """A 500 from /Journals must NOT fail the post — the bill is
     durably created, the JE id back-fills via the recon pass."""
-    from clearledgr.integrations.erp_xero import post_bill_to_xero
+    from solden.integrations.erp_xero import post_bill_to_xero
 
     class _PostResp:
         status_code = 200
@@ -302,7 +302,7 @@ async def test_xero_journal_fetch_failure_is_soft():
     fake_client.get = AsyncMock(return_value=_GetResp())
 
     with patch(
-        "clearledgr.integrations.erp_xero.get_http_client",
+        "solden.integrations.erp_xero.get_http_client",
         return_value=fake_client,
     ):
         result = await post_bill_to_xero(_xero_connection(), _bill())

@@ -1,4 +1,4 @@
-from clearledgr.services.email_parser import EmailParser
+from solden.services.email_parser import EmailParser
 
 
 def test_payment_request_extracts_amount_via_fallback():

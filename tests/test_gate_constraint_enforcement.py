@@ -29,7 +29,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _make_invoice(**kwargs) -> Any:
-    from clearledgr.services.invoice_workflow import InvoiceData
+    from solden.services.invoice_workflow import InvoiceData
     defaults = dict(
         gmail_id="gmail_gate_001",
         subject="Invoice INV-GATE-001",
@@ -53,7 +53,7 @@ def _make_invoice(**kwargs) -> Any:
 
 
 def _make_decision(recommendation: str, **overrides) -> Any:
-    from clearledgr.services.ap_decision import APDecision
+    from solden.services.ap_decision import APDecision
     base: Dict[str, Any] = dict(
         recommendation=recommendation,
         reasoning="Original reasoning.",
@@ -75,7 +75,7 @@ class TestEnforceGateConstraintMatrix:
     """Exhaustive matrix for the defensive enforcement helper."""
 
     def test_none_gate_returns_decision_unchanged(self):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision("approve")
         result = enforce_gate_constraint(decision, None)
         assert result is decision
@@ -84,7 +84,7 @@ class TestEnforceGateConstraintMatrix:
         assert result.original_recommendation is None
 
     def test_passed_gate_returns_decision_unchanged(self):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision("approve")
         result = enforce_gate_constraint(
             decision, {"passed": True, "reason_codes": []}
@@ -94,7 +94,7 @@ class TestEnforceGateConstraintMatrix:
         assert result.gate_override is False
 
     def test_failed_gate_plus_approve_forces_escalate(self):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision(
             "approve",
             reasoning="Vendor is always safe and the amount looks right.",
@@ -120,7 +120,7 @@ class TestEnforceGateConstraintMatrix:
 
     @pytest.mark.parametrize("rec", ["escalate", "needs_info", "reject"])
     def test_failed_gate_plus_non_approve_passes_through(self, rec):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision(rec)
         result = enforce_gate_constraint(
             decision, {"passed": False, "reason_codes": ["po_required_missing"]}
@@ -131,7 +131,7 @@ class TestEnforceGateConstraintMatrix:
         assert result.original_recommendation is None
 
     def test_failed_gate_with_missing_reason_codes_still_overrides(self):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision("approve")
         result = enforce_gate_constraint(decision, {"passed": False})
         assert result.recommendation == "escalate"
@@ -139,7 +139,7 @@ class TestEnforceGateConstraintMatrix:
         assert "unknown" in result.reasoning.lower()
 
     def test_input_decision_is_not_mutated(self):
-        from clearledgr.services.ap_decision import enforce_gate_constraint
+        from solden.services.ap_decision import enforce_gate_constraint
         decision = _make_decision("approve", risk_flags=["low_history"])
         _ = enforce_gate_constraint(
             decision, {"passed": False, "reason_codes": ["duplicate_invoice"]}
@@ -161,7 +161,7 @@ class TestDecideServiceEnforcesGate:
         'approve' with a failed gate (a bug), `enforce_gate_constraint`
         must catch it at the `decide()` exit.
         """
-        from clearledgr.services.ap_decision import APDecision, APDecisionService
+        from solden.services.ap_decision import APDecision, APDecisionService
 
         def _broken_cascade(self, invoice, validation_gate, vendor_context_used=None, **kwargs):
             return APDecision(
@@ -195,7 +195,7 @@ class TestDecideServiceEnforcesGate:
         """Control: the rule cascade handles failed gates natively (step 2).
         `enforce_gate_constraint` is a no-op — gate_override stays False.
         """
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
 
         invoice = _make_invoice(confidence=0.97)
         svc = APDecisionService()
@@ -222,10 +222,10 @@ class TestProcessNewInvoiceNarrowWaistEnforcement:
     re-enforce the gate before routing."""
 
     def test_pre_computed_approve_plus_failed_gate_forces_escalate(self, tmp_path, monkeypatch):
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
-        from clearledgr.services.ap_decision import APDecision
-        from clearledgr.services.invoice_workflow import (
+        from solden.core.database import get_db
+        from solden.core import database as db_module
+        from solden.services.ap_decision import APDecision
+        from solden.services.invoice_workflow import (
             InvoiceData, InvoiceWorkflowService
         )
 

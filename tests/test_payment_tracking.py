@@ -27,7 +27,7 @@ def _fresh_db(tmp_path=None):
         path = str(tmp_path / "test_payments.db")
     os.environ["CLEARLEDGR_DB_PATH"] = path
 
-    import clearledgr.core.database as db_mod
+    import solden.core.database as db_mod
     db_mod._DB_INSTANCE = None
     db_mod._CLEARLEDGR_DB_IMPL = None
     db = db_mod.get_db()
@@ -41,7 +41,7 @@ def _fresh_db(tmp_path=None):
 
 
 def test_payment_record_to_dict():
-    from clearledgr.services.payment_models import PaymentRecord
+    from solden.services.payment_models import PaymentRecord
 
     rec = PaymentRecord(
         id="PAY-abc123",
@@ -68,7 +68,7 @@ def test_payment_record_to_dict():
 
 
 def test_payment_statuses_and_methods_are_frozen():
-    from clearledgr.services.payment_models import PAYMENT_STATUSES, PAYMENT_METHODS
+    from solden.services.payment_models import PAYMENT_STATUSES, PAYMENT_METHODS
 
     assert "ready_for_payment" in PAYMENT_STATUSES
     assert "scheduled" in PAYMENT_STATUSES
@@ -245,7 +245,7 @@ def test_build_worklist_item_includes_payment_fields_for_posted(tmp_path):
         },
     })
 
-    from clearledgr.services.ap_item_service import build_worklist_item
+    from solden.services.ap_item_service import build_worklist_item
 
     item = db.get_ap_item("AP-wl")
     result = build_worklist_item(db, item)
@@ -265,7 +265,7 @@ def test_build_worklist_item_no_payment_fields_for_received(tmp_path):
         "organization_id": "org-1",
     })
 
-    from clearledgr.services.ap_item_service import build_worklist_item
+    from solden.services.ap_item_service import build_worklist_item
 
     item = db.get_ap_item("AP-recv")
     result = build_worklist_item(db, item)

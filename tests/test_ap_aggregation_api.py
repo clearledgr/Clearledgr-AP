@@ -6,9 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from clearledgr.api import ops as ops_module
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import TokenData
+from solden.api import ops as ops_module
+from solden.core import database as db_module
+from solden.core.auth import TokenData
 
 
 @pytest.fixture()

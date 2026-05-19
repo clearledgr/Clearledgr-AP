@@ -35,17 +35,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import gdpr as gdpr_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.data_subject_request import (  # noqa: E402
+from solden.api import gdpr as gdpr_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.data_subject_request import (  # noqa: E402
     create_request,
     process_access_request,
     process_erasure_request,
     process_portability_request,
     reject_request,
 )
-from clearledgr.services.gdpr_retention import (  # noqa: E402
+from solden.services.gdpr_retention import (  # noqa: E402
     anonymize_vendor,
     identify_expired_vendors,
     run_retention_purge,

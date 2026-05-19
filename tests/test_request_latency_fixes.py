@@ -22,8 +22,8 @@ import time
 
 import pytest
 
-from clearledgr.core.auth import _looks_like_google_access_token
-from clearledgr.services import metrics as metrics_module
+from solden.core.auth import _looks_like_google_access_token
+from solden.services import metrics as metrics_module
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ def test_validate_google_token_does_not_call_httpx_for_non_google_token(monkeypa
     network. The original implementation paid ~1.7s/call to discover
     the same answer via httpx.
     """
-    from clearledgr.core import auth as auth_module
+    from solden.core import auth as auth_module
 
     sentinel = {"called": False}
 

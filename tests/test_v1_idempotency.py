@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from clearledgr.api import v1_idempotency
-from clearledgr.api.v1_idempotency import (
+from solden.api import v1_idempotency
+from solden.api.v1_idempotency import (
     extract_idempotency_key,
     hash_payload,
     lookup_cached_response,

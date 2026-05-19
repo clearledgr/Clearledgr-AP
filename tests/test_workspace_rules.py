@@ -26,10 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import workspace_rules as rule_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services import rule_engine  # noqa: E402
+from solden.api import workspace_rules as rule_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services import rule_engine  # noqa: E402
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────
@@ -508,7 +508,7 @@ class TestAPIntegration:
     the legacy 10-step cascade in APDecisionService."""
 
     def test_matched_rule_routes_via_decision_service(self, db):
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
         import asyncio
 
         # Create a rule that auto-approves under $1K USD.
@@ -546,7 +546,7 @@ class TestAPIntegration:
         assert any("rule_matched:" in f for f in decision.risk_flags)
 
     def test_no_matching_rule_falls_through_to_cascade(self, db):
-        from clearledgr.services.ap_decision import APDecisionService
+        from solden.services.ap_decision import APDecisionService
         import asyncio
 
         # Create a rule that only matches a different vendor.

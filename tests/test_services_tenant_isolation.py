@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
 
 
 @pytest.fixture()
@@ -33,37 +33,37 @@ def db():
 
 class TestAgentMemoryServiceTenantIsolation:
     def test_empty_string_org_rejected_in_init(self, db):
-        from clearledgr.services.agent_memory import AgentMemoryService
+        from solden.services.agent_memory import AgentMemoryService
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
             AgentMemoryService(organization_id="", db=db)
 
     def test_whitespace_org_rejected_in_init(self, db):
-        from clearledgr.services.agent_memory import AgentMemoryService
+        from solden.services.agent_memory import AgentMemoryService
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
             AgentMemoryService(organization_id="   ", db=db)
 
     def test_none_maps_to_default(self, db):
-        from clearledgr.services.agent_memory import AgentMemoryService
+        from solden.services.agent_memory import AgentMemoryService
         svc = AgentMemoryService(organization_id=None, db=db)
         assert svc.organization_id == "default"
 
     def test_default_kwarg_is_platform_mode(self, db):
-        from clearledgr.services.agent_memory import AgentMemoryService
+        from solden.services.agent_memory import AgentMemoryService
         svc = AgentMemoryService(db=db)
         assert svc.organization_id == "default"
 
     def test_real_org_constructs(self, db):
-        from clearledgr.services.agent_memory import AgentMemoryService
+        from solden.services.agent_memory import AgentMemoryService
         svc = AgentMemoryService(organization_id="orgX", db=db)
         assert svc.organization_id == "orgX"
 
     def test_get_agent_memory_service_rejects_empty(self, db):
-        from clearledgr.services.agent_memory import get_agent_memory_service
+        from solden.services.agent_memory import get_agent_memory_service
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
             get_agent_memory_service(organization_id="", db=db)
 
     def test_get_agent_memory_service_none_maps_to_default(self, db):
-        from clearledgr.services.agent_memory import get_agent_memory_service
+        from solden.services.agent_memory import get_agent_memory_service
         svc = get_agent_memory_service(organization_id=None, db=db)
         assert svc.organization_id == "default"
 
@@ -73,22 +73,22 @@ class TestAgentMemoryServiceTenantIsolation:
 
 class TestFinanceLearningServiceTenantIsolation:
     def test_empty_string_org_rejected(self):
-        from clearledgr.services.finance_learning import FinanceLearningService
+        from solden.services.finance_learning import FinanceLearningService
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
             FinanceLearningService(organization_id="")
 
     def test_none_maps_to_default(self):
-        from clearledgr.services.finance_learning import FinanceLearningService
+        from solden.services.finance_learning import FinanceLearningService
         svc = FinanceLearningService(organization_id=None)
         assert svc.organization_id == "default"
 
     def test_real_org_constructs(self):
-        from clearledgr.services.finance_learning import FinanceLearningService
+        from solden.services.finance_learning import FinanceLearningService
         svc = FinanceLearningService(organization_id="orgY")
         assert svc.organization_id == "orgY"
 
     def test_get_finance_learning_service_rejects_empty(self):
-        from clearledgr.services.finance_learning import (
+        from solden.services.finance_learning import (
             get_finance_learning_service,
         )
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
@@ -100,17 +100,17 @@ class TestFinanceLearningServiceTenantIsolation:
 
 class TestCorrectionLearningTenantIsolation:
     def test_empty_string_org_rejected_in_init(self, db):
-        from clearledgr.services.correction_learning import CorrectionLearningService
+        from solden.services.correction_learning import CorrectionLearningService
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
             CorrectionLearningService(organization_id="")
 
     def test_none_maps_to_default(self, db):
-        from clearledgr.services.correction_learning import CorrectionLearningService
+        from solden.services.correction_learning import CorrectionLearningService
         svc = CorrectionLearningService(organization_id=None)
         assert svc.organization_id == "default"
 
     def test_get_correction_learning_service_rejects_empty(self, db):
-        from clearledgr.services.correction_learning import (
+        from solden.services.correction_learning import (
             get_correction_learning_service,
         )
         with pytest.raises(ValueError, match="organization_id cannot be empty"):
@@ -122,12 +122,12 @@ class TestCorrectionLearningTenantIsolation:
 
 class TestErpReadinessTenantIsolation:
     def test_none_org_rejected(self, db):
-        from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
+        from solden.services.erp_readiness import evaluate_erp_connector_readiness
         with pytest.raises(ValueError, match="organization_id"):
             evaluate_erp_connector_readiness(organization_id=None, db=db)
 
     def test_empty_org_rejected(self, db):
-        from clearledgr.services.erp_readiness import evaluate_erp_connector_readiness
+        from solden.services.erp_readiness import evaluate_erp_connector_readiness
         with pytest.raises(ValueError, match="organization_id"):
             evaluate_erp_connector_readiness(organization_id="", db=db)
 
@@ -138,14 +138,14 @@ class TestErpReadinessTenantIsolation:
 class TestErpNativeApprovalPayloadTrust:
     def test_route_for_approval_rejects_missing_org(self):
         import asyncio
-        from clearledgr.services.erp_native_approval import route_for_approval
+        from solden.services.erp_native_approval import route_for_approval
         result = asyncio.run(route_for_approval({"id": "ap-1"}))
         assert result["ok"] is False
         assert result["reason"] == "missing_organization_id"
 
     def test_route_for_approval_rejects_empty_org(self):
         import asyncio
-        from clearledgr.services.erp_native_approval import route_for_approval
+        from solden.services.erp_native_approval import route_for_approval
         result = asyncio.run(
             route_for_approval({"id": "ap-1", "organization_id": "  "})
         )
@@ -171,7 +171,7 @@ class TestRuntimeInvoiceProcessingPayloadTrust:
         # tests). This test exists as a scope marker — the runtime
         # method invocation in finance_runtime_invoice_processing.py
         # was switched from a silent fallback to runtime._resolve_payload_org.
-        from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+        from solden.services.finance_agent_runtime import FinanceAgentRuntime
         runtime = FinanceAgentRuntime(
             organization_id="orgA", actor_id="u1", db=db,
         )
@@ -193,7 +193,7 @@ class TestPurchaseOrdersRowOrgGuard:
     refuse loudly so corruption is visible."""
 
     def test_po_from_dict_rejects_missing_org(self):
-        from clearledgr.services.purchase_orders import _po_from_dict
+        from solden.services.purchase_orders import _po_from_dict
         with pytest.raises(ValueError, match="purchase_orders.*organization_id"):
             _po_from_dict({
                 "po_id": "po-1",
@@ -204,7 +204,7 @@ class TestPurchaseOrdersRowOrgGuard:
             })
 
     def test_po_from_dict_rejects_empty_org(self):
-        from clearledgr.services.purchase_orders import _po_from_dict
+        from solden.services.purchase_orders import _po_from_dict
         with pytest.raises(ValueError, match="purchase_orders.*organization_id"):
             _po_from_dict({
                 "po_id": "po-1",
@@ -216,12 +216,12 @@ class TestPurchaseOrdersRowOrgGuard:
             })
 
     def test_po_from_dict_none_returns_none(self):
-        from clearledgr.services.purchase_orders import _po_from_dict
+        from solden.services.purchase_orders import _po_from_dict
         assert _po_from_dict(None) is None
         assert _po_from_dict({}) is None
 
     def test_po_from_dict_real_org_constructs(self):
-        from clearledgr.services.purchase_orders import _po_from_dict
+        from solden.services.purchase_orders import _po_from_dict
         po = _po_from_dict({
             "po_id": "po-1",
             "po_number": "PO-1",
@@ -234,7 +234,7 @@ class TestPurchaseOrdersRowOrgGuard:
         assert po.organization_id == "orgA"
 
     def test_gr_from_dict_rejects_missing_org(self):
-        from clearledgr.services.purchase_orders import _gr_from_dict
+        from solden.services.purchase_orders import _gr_from_dict
         with pytest.raises(ValueError, match="goods_receipts.*organization_id"):
             _gr_from_dict({
                 "gr_id": "gr-1",
@@ -247,7 +247,7 @@ class TestPurchaseOrdersRowOrgGuard:
             })
 
     def test_gr_from_dict_real_org_constructs(self):
-        from clearledgr.services.purchase_orders import _gr_from_dict
+        from solden.services.purchase_orders import _gr_from_dict
         gr = _gr_from_dict({
             "gr_id": "gr-1",
             "gr_number": "GR-1",
@@ -276,7 +276,7 @@ class TestSlackDeliveryRequiresOrg:
 
     def test_post_slack_dm_returns_false_on_missing_org(self):
         import asyncio
-        from clearledgr.services.slack_notifications import _post_slack_dm
+        from solden.services.slack_notifications import _post_slack_dm
         result = asyncio.run(
             _post_slack_dm(
                 user_email="alice@example.com",
@@ -289,7 +289,7 @@ class TestSlackDeliveryRequiresOrg:
 
     def test_post_slack_dm_returns_false_on_empty_org(self):
         import asyncio
-        from clearledgr.services.slack_notifications import _post_slack_dm
+        from solden.services.slack_notifications import _post_slack_dm
         result = asyncio.run(
             _post_slack_dm(
                 user_email="alice@example.com",

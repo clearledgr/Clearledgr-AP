@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.services.vendor_erp_sync import sync_vendors_from_erp
+from solden.core import database as db_module
+from solden.services.vendor_erp_sync import sync_vendors_from_erp
 
 
 # ---------------------------------------------------------------------------
@@ -59,11 +59,11 @@ def _mock_erp_vendors(*vendors):
 
 class TestVendorERPSync:
     def _run_sync(self, erp_vendors, erp_type="quickbooks"):
-        from clearledgr.integrations.erp_router import ERPConnection
+        from solden.integrations.erp_router import ERPConnection
         conn = ERPConnection(type=erp_type, access_token="tok", realm_id="r1")
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn):
-            with patch("clearledgr.integrations.erp_router.list_all_vendors", new_callable=AsyncMock, return_value=erp_vendors):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn):
+            with patch("solden.integrations.erp_router.list_all_vendors", new_callable=AsyncMock, return_value=erp_vendors):
                 return asyncio.run(sync_vendors_from_erp("sync-org"))
 
     def test_new_vendors_created(self, db):
@@ -136,18 +136,18 @@ class TestVendorERPSync:
         assert "Dormant Vendor" in summary["reactivated_vendors"]
 
     def test_no_erp_connection(self, db):
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=None):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             summary = asyncio.run(sync_vendors_from_erp("sync-org"))
 
         assert summary["synced_count"] == 0
         assert summary["reason"] == "no_erp_connection"
 
     def test_no_vendors_from_erp(self, db):
-        from clearledgr.integrations.erp_router import ERPConnection
+        from solden.integrations.erp_router import ERPConnection
         conn = ERPConnection(type="xero", access_token="tok", tenant_id="t1")
 
-        with patch("clearledgr.integrations.erp_router.get_erp_connection", return_value=conn):
-            with patch("clearledgr.integrations.erp_router.list_all_vendors", new_callable=AsyncMock, return_value=[]):
+        with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn):
+            with patch("solden.integrations.erp_router.list_all_vendors", new_callable=AsyncMock, return_value=[]):
                 summary = asyncio.run(sync_vendors_from_erp("sync-org"))
 
         assert summary["synced_count"] == 0
@@ -227,9 +227,9 @@ class TestVendorERPSync:
 
 class TestVendorSyncBackgroundWiring:
     def test_sync_function_is_called_in_background(self, db):
-        from clearledgr.services.agent_background import _sync_vendor_master_data
+        from solden.services.agent_background import _sync_vendor_master_data
 
-        with patch("clearledgr.services.vendor_erp_sync.sync_vendors_from_erp", new_callable=AsyncMock) as mock_sync:
+        with patch("solden.services.vendor_erp_sync.sync_vendors_from_erp", new_callable=AsyncMock) as mock_sync:
             mock_sync.return_value = {
                 "synced_count": 5,
                 "new_vendor_count": 2,

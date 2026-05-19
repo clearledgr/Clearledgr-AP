@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from clearledgr.services.email_parser import EmailParser
+from solden.services.email_parser import EmailParser
 
 
 DEFAULT_DATASET_PATHS: tuple[Path, ...] = (

@@ -37,8 +37,8 @@ SAMPLE_ADVERSARIAL = {
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -229,7 +229,7 @@ class TestVendorStoreFreezeAccessors:
 class TestIbanChangeFreezeService:
 
     def _service(self, db):
-        from clearledgr.services.iban_change_freeze import IbanChangeFreezeService
+        from solden.services.iban_change_freeze import IbanChangeFreezeService
         return IbanChangeFreezeService("org_t", db=db)
 
     def test_detect_no_change_when_details_match(self, tmp_db):
@@ -458,7 +458,7 @@ class TestValidationGateFreezeHooks:
     def _make_invoice(
         self, *, vendor: str = "Acme", bank_details: Dict[str, str] = None
     ):
-        from clearledgr.services.invoice_models import InvoiceData
+        from solden.services.invoice_models import InvoiceData
 
         inv = InvoiceData(
             gmail_id=f"gmail-{vendor}",
@@ -482,7 +482,7 @@ class TestValidationGateFreezeHooks:
         return inv
 
     def test_gate_auto_starts_freeze_on_iban_mismatch(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         _seed_established_vendor(tmp_db)
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(bank_details=SAMPLE_ADVERSARIAL)
@@ -498,10 +498,10 @@ class TestValidationGateFreezeHooks:
         assert gate["passed"] is False
 
     def test_gate_blocks_every_subsequent_invoice_for_frozen_vendor(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         _seed_established_vendor(tmp_db)
         # Freeze via the service directly (bypass the gate for setup)
-        from clearledgr.services.iban_change_freeze import get_iban_change_freeze_service
+        from solden.services.iban_change_freeze import get_iban_change_freeze_service
         freeze_svc = get_iban_change_freeze_service("org_t", db=tmp_db)
         freeze_svc.detect_and_maybe_freeze(
             vendor_name="Acme",
@@ -530,9 +530,9 @@ class TestValidationGateFreezeHooks:
     def test_gate_blocks_invoice_with_no_bank_details_when_frozen(self, tmp_db):
         """A frozen vendor blocks EVERY invoice, even ones that don't
         carry bank details in the extraction."""
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         _seed_established_vendor(tmp_db)
-        from clearledgr.services.iban_change_freeze import get_iban_change_freeze_service
+        from solden.services.iban_change_freeze import get_iban_change_freeze_service
         freeze_svc = get_iban_change_freeze_service("org_t", db=tmp_db)
         freeze_svc.detect_and_maybe_freeze(
             vendor_name="Acme",
@@ -547,7 +547,7 @@ class TestValidationGateFreezeHooks:
         assert gate["passed"] is False
 
     def test_gate_does_not_freeze_on_matching_details(self, tmp_db):
-        from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+        from solden.services.invoice_workflow import InvoiceWorkflowService
         _seed_established_vendor(tmp_db)
         service = InvoiceWorkflowService(organization_id="org_t")
         invoice = self._make_invoice(bank_details=SAMPLE_ORIGINAL)
@@ -565,8 +565,8 @@ class TestIbanVerificationAPI:
     @pytest.fixture
     def app_client(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
-        from clearledgr.core.database import get_db
-        from clearledgr.core import database as db_module
+        from solden.core.database import get_db
+        from solden.core import database as db_module
         import main
 
         db = get_db()
@@ -577,7 +577,7 @@ class TestIbanVerificationAPI:
         yield client, main, db
 
     def _override_user(self, main, role: str, org_id: str = "org_t"):
-        from clearledgr.core.auth import (
+        from solden.core.auth import (
             TokenData,
             get_current_user,
             require_cfo,
@@ -646,7 +646,7 @@ class TestIbanVerificationAPI:
             sender_domain="acme.com",
         )
         # Non-CFO user
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
         from datetime import datetime, timezone
 
         def _ap_manager():

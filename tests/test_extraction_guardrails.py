@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from clearledgr.services.invoice_validation import (
+from solden.services.invoice_validation import (
     _check_amount_range,
     _check_po_exists_in_erp,
     _check_reference_format,
@@ -162,7 +162,7 @@ class TestPOExistenceGuardrail:
     def test_po_exists_returns_true(self):
         po_service = MagicMock()
         po_service.get_po_by_number.return_value = {"po_id": "PO-123", "status": "open"}
-        with patch("clearledgr.services.purchase_orders.get_purchase_order_service",
+        with patch("solden.services.purchase_orders.get_purchase_order_service",
                    return_value=po_service):
             result = _check_po_exists_in_erp("org-test", "PO-2041")
         assert result is True
@@ -170,7 +170,7 @@ class TestPOExistenceGuardrail:
     def test_po_missing_returns_false(self):
         po_service = MagicMock()
         po_service.get_po_by_number.return_value = None
-        with patch("clearledgr.services.purchase_orders.get_purchase_order_service",
+        with patch("solden.services.purchase_orders.get_purchase_order_service",
                    return_value=po_service):
             result = _check_po_exists_in_erp("org-test", "PO-2041")
         assert result is False
@@ -181,7 +181,7 @@ class TestPOExistenceGuardrail:
 
     def test_service_error_returns_none(self):
         # Service error → None (fail-open) so the caller decides policy.
-        with patch("clearledgr.services.purchase_orders.get_purchase_order_service",
+        with patch("solden.services.purchase_orders.get_purchase_order_service",
                    side_effect=RuntimeError("erp down")):
             result = _check_po_exists_in_erp("org-test", "PO-2041")
         assert result is None

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.services.fx_conversion import (  # noqa: E402
+from solden.services.fx_conversion import (  # noqa: E402
     convert,
     get_exchange_rate,
     get_supported_currencies,
@@ -121,7 +121,7 @@ class TestGetSupportedCurrencies:
 class TestConvertWithMockedECB:
     def test_convert_usd_to_eur(self):
         """Mock: 1 EUR = 1.10 USD → 1 USD = 1/1.10 EUR."""
-        with patch("clearledgr.services.fx_conversion.httpx") as mock_httpx:
+        with patch("solden.services.fx_conversion.httpx") as mock_httpx:
             mock_httpx.get.return_value = _mock_ecb_response(1.10)
             result = convert(110.0, "USD", "EUR")
         assert result["converted_amount"] is not None
@@ -130,7 +130,7 @@ class TestConvertWithMockedECB:
 
     def test_convert_unknown_currency_returns_error(self):
         """If ECB returns 404 for an unknown currency, convert should return error."""
-        with patch("clearledgr.services.fx_conversion.httpx") as mock_httpx:
+        with patch("solden.services.fx_conversion.httpx") as mock_httpx:
             mock_httpx.get.return_value = _mock_ecb_error()
             result = convert(100.0, "XYZ", "EUR")
         assert result["converted_amount"] is None
@@ -139,7 +139,7 @@ class TestConvertWithMockedECB:
         assert "error" in result
 
     def test_convert_to_unknown_currency_returns_error(self):
-        with patch("clearledgr.services.fx_conversion.httpx") as mock_httpx:
+        with patch("solden.services.fx_conversion.httpx") as mock_httpx:
             mock_httpx.get.return_value = _mock_ecb_error()
             result = convert(100.0, "EUR", "XYZ")
         assert result["converted_amount"] is None
@@ -147,7 +147,7 @@ class TestConvertWithMockedECB:
 
     def test_convert_between_fallback_currencies(self):
         """NGN → KES should use fallback rates without any HTTP call."""
-        with patch("clearledgr.services.fx_conversion.httpx") as mock_httpx:
+        with patch("solden.services.fx_conversion.httpx") as mock_httpx:
             result = convert(16500.0, "NGN", "KES")
             mock_httpx.get.assert_not_called()
         assert result["converted_amount"] is not None

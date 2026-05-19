@@ -29,9 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import workspace_shell as ws  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
+from solden.api import workspace_shell as ws  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ def client_factory(db):
 def _seed_event(db, *, box_id="ap-fanout-1", event_type="state_transition", organization_id="org-test"):
     """Seed an event WITHOUT triggering fan-out — patches the dispatch
     task to no-op so tests can control timing."""
-    with patch("clearledgr.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
+    with patch("solden.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
         mock_dispatch.delay.return_value = None
         return db.append_audit_event({
             "box_id": box_id,
@@ -103,7 +103,7 @@ def test_append_audit_event_dispatches_fanout(db):
     """Successful audit insert enqueues the dispatch task. Best-effort:
     a Celery dispatch failure must not raise out of append_audit_event
     (the canonical audit write succeeds regardless)."""
-    with patch("clearledgr.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
+    with patch("solden.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
         mock_dispatch.delay.return_value = None
         event = db.append_audit_event({
             "box_id": "ap-dispatch-1",
@@ -125,7 +125,7 @@ def test_append_audit_event_swallows_dispatch_errors(db):
     audit write itself is the source of truth. Webhook delivery is
     downstream observability that can fail without taking the canonical
     write down with it."""
-    with patch("clearledgr.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
+    with patch("solden.services.celery_tasks.dispatch_audit_webhooks") as mock_dispatch:
         mock_dispatch.delay.side_effect = RuntimeError("broker unreachable")
         event = db.append_audit_event({
             "box_id": "ap-swallow-1",
@@ -150,9 +150,9 @@ def test_dispatch_skips_when_no_subscriptions(db):
     """Audit event for an org with zero matching subscriptions:
     dispatch returns 'noop' without scheduling deliveries."""
     event = _seed_event(db, event_type="state_transition")
-    from clearledgr.services.celery_tasks import dispatch_audit_webhooks
+    from solden.services.celery_tasks import dispatch_audit_webhooks
 
-    with patch("clearledgr.services.celery_tasks.deliver_audit_webhook") as mock_deliver:
+    with patch("solden.services.celery_tasks.deliver_audit_webhook") as mock_deliver:
         result = dispatch_audit_webhooks.run(event["id"])
     assert result["status"] == "noop"
     assert result["subscribers"] == 0
@@ -182,9 +182,9 @@ def test_dispatch_enqueues_one_task_per_matching_subscription(db):
     )
 
     event = _seed_event(db, event_type="state_transition")
-    from clearledgr.services.celery_tasks import dispatch_audit_webhooks
+    from solden.services.celery_tasks import dispatch_audit_webhooks
 
-    with patch("clearledgr.services.celery_tasks.deliver_audit_webhook") as mock_deliver:
+    with patch("solden.services.celery_tasks.deliver_audit_webhook") as mock_deliver:
         result = dispatch_audit_webhooks.run(event["id"])
 
     assert result["status"] == "dispatched"
@@ -207,12 +207,12 @@ def test_deliver_records_success_row(db):
     )
     event = _seed_event(db, event_type="state_transition")
 
-    from clearledgr.services.celery_tasks import deliver_audit_webhook
+    from solden.services.celery_tasks import deliver_audit_webhook
 
     async def _ok(*args, **kwargs):
         return True
 
-    with patch("clearledgr.services.webhook_delivery.deliver_webhook", side_effect=_ok):
+    with patch("solden.services.webhook_delivery.deliver_webhook", side_effect=_ok):
         result = deliver_audit_webhook.run(event["id"], sub["id"], 1)
 
     assert result["status"] == "success"
@@ -234,12 +234,12 @@ def test_deliver_records_failure_and_schedules_retry(db):
     )
     event = _seed_event(db, event_type="state_transition")
 
-    from clearledgr.services.celery_tasks import deliver_audit_webhook
+    from solden.services.celery_tasks import deliver_audit_webhook
 
     async def _fail(*args, **kwargs):
         return False
 
-    with patch("clearledgr.services.webhook_delivery.deliver_webhook", side_effect=_fail):
+    with patch("solden.services.webhook_delivery.deliver_webhook", side_effect=_fail):
         with patch.object(deliver_audit_webhook, "apply_async") as mock_retry:
             result = deliver_audit_webhook.run(event["id"], sub["id"], 1)
 
@@ -270,7 +270,7 @@ def test_deliver_terminal_failure_at_max_attempts(db):
     )
     event = _seed_event(db, event_type="state_transition")
 
-    from clearledgr.services.celery_tasks import (
+    from solden.services.celery_tasks import (
         _AUDIT_WEBHOOK_MAX_ATTEMPTS,
         deliver_audit_webhook,
     )
@@ -278,7 +278,7 @@ def test_deliver_terminal_failure_at_max_attempts(db):
     async def _fail(*args, **kwargs):
         return False
 
-    with patch("clearledgr.services.webhook_delivery.deliver_webhook", side_effect=_fail):
+    with patch("solden.services.webhook_delivery.deliver_webhook", side_effect=_fail):
         with patch.object(deliver_audit_webhook, "apply_async") as mock_retry:
             result = deliver_audit_webhook.run(
                 event["id"], sub["id"], _AUDIT_WEBHOOK_MAX_ATTEMPTS,
@@ -302,9 +302,9 @@ def test_deliver_skips_inactive_subscription(db):
     db.delete_webhook_subscription(sub["id"], "org-test")  # marks is_active=False per existing infra
     event = _seed_event(db, event_type="state_transition")
 
-    from clearledgr.services.celery_tasks import deliver_audit_webhook
+    from solden.services.celery_tasks import deliver_audit_webhook
 
-    with patch("clearledgr.services.webhook_delivery.deliver_webhook") as mock_deliver:
+    with patch("solden.services.webhook_delivery.deliver_webhook") as mock_deliver:
         result = deliver_audit_webhook.run(event["id"], sub["id"], 1)
     assert result["status"] == "skipped"
     mock_deliver.assert_not_called()

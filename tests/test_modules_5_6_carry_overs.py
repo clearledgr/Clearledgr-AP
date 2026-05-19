@@ -19,15 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import erp_connection_ops as erp_ops_routes  # noqa: E402
-from clearledgr.api import saml as saml_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user, ROLE_OWNER  # noqa: E402
-from clearledgr.integrations.erp_router import (  # noqa: E402
+from solden.api import erp_connection_ops as erp_ops_routes  # noqa: E402
+from solden.api import saml as saml_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user, ROLE_OWNER  # noqa: E402
+from solden.integrations.erp_router import (  # noqa: E402
     ERPConnection,
     set_erp_connection,
 )
-from clearledgr.services import saml_sso  # noqa: E402
+from solden.services import saml_sso  # noqa: E402
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ def _patch_http_get(captured: list, status: int = 200, body: dict = None):
         return FakeResp()
 
     return patch(
-        "clearledgr.core.http_client.get_http_client",
+        "solden.core.http_client.get_http_client",
         return_value=SimpleNamespace(get=fake_get, post=fake_get),
     )
 

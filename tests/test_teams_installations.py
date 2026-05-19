@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from clearledgr.core import database as db_module
+from solden.core import database as db_module
 
 
 @pytest.fixture()

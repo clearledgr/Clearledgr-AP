@@ -30,8 +30,8 @@ pytestmark = _vo_skip_pytest.mark.skip(
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -109,19 +109,19 @@ def _seed_to_bank_verified(db, org="org_t", vendor="Acme Ltd"):
 class TestHoursSince:
 
     def test_valid_timestamp(self):
-        from clearledgr.services.vendor_onboarding_lifecycle import _hours_since
+        from solden.services.vendor_onboarding_lifecycle import _hours_since
         two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         hours = _hours_since(two_hours_ago)
         assert hours is not None
         assert 1.9 <= hours <= 2.1
 
     def test_none_returns_none(self):
-        from clearledgr.services.vendor_onboarding_lifecycle import _hours_since
+        from solden.services.vendor_onboarding_lifecycle import _hours_since
         assert _hours_since(None) is None
         assert _hours_since("") is None
 
     def test_invalid_returns_none(self):
-        from clearledgr.services.vendor_onboarding_lifecycle import _hours_since
+        from solden.services.vendor_onboarding_lifecycle import _hours_since
         assert _hours_since("not-a-date") is None
 
 
@@ -133,14 +133,14 @@ class TestHoursSince:
 class TestChaseStaleSessionsLogic:
 
     def test_no_sessions_returns_zero_counts(self, tmp_db, monkeypatch):
-        from clearledgr.services.vendor_onboarding_lifecycle import chase_stale_sessions
+        from solden.services.vendor_onboarding_lifecycle import chase_stale_sessions
         # No sessions exist — should return empty result.
         result = asyncio.run(chase_stale_sessions(db=tmp_db))
         assert result.sessions_scanned == 0
         assert result.chases_sent == 0
 
     def test_fresh_session_not_chased(self, tmp_db, monkeypatch):
-        from clearledgr.services.vendor_onboarding_lifecycle import chase_stale_sessions
+        from solden.services.vendor_onboarding_lifecycle import chase_stale_sessions
         # Just invited — < 24h ago.
         _seed_session(tmp_db, invited_hours_ago=1)
         result = asyncio.run(chase_stale_sessions(db=tmp_db))
@@ -148,14 +148,14 @@ class TestChaseStaleSessionsLogic:
         assert result.chases_sent == 0
 
     def test_24h_session_chased(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_session(tmp_db, invited_hours_ago=25)
 
         # Mock the email dispatch so we don't need a real Gmail client.
         mock_dispatch = AsyncMock()
         monkeypatch.setattr(
-            "clearledgr.services.vendor_onboarding_email.dispatch_onboarding_chase",
+            "solden.services.vendor_onboarding_email.dispatch_onboarding_chase",
             mock_dispatch,
         )
 
@@ -186,13 +186,13 @@ class TestChaseStaleSessionsLogic:
         assert call_kwargs["chase_type"] == "chase_24h"
 
     def test_72h_session_escalated(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_session(tmp_db, invited_hours_ago=73)
 
         mock_dispatch = AsyncMock()
         monkeypatch.setattr(
-            "clearledgr.services.vendor_onboarding_email.dispatch_onboarding_chase",
+            "solden.services.vendor_onboarding_email.dispatch_onboarding_chase",
             mock_dispatch,
         )
 
@@ -203,7 +203,7 @@ class TestChaseStaleSessionsLogic:
         assert updated["state"] == "blocked"
 
     def test_30d_session_abandoned(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_session(tmp_db, invited_hours_ago=31 * 24)
 
@@ -224,7 +224,7 @@ class TestChaseStaleSessionsLogic:
 class TestActivateVendorInErp:
 
     def test_happy_path_bank_verified_to_active(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_to_bank_verified(tmp_db)
 
@@ -236,7 +236,7 @@ class TestActivateVendorInErp:
 
         # Mock Gmail so completion email doesn't crash.
         monkeypatch.setattr(
-            "clearledgr.services.vendor_onboarding_email._get_gmail_client_for_org",
+            "solden.services.vendor_onboarding_email._get_gmail_client_for_org",
             AsyncMock(return_value=None),
         )
 
@@ -250,7 +250,7 @@ class TestActivateVendorInErp:
         assert updated["erp_vendor_id"] == "QB-VND-12345"
 
     def test_erp_failure_stays_in_ready_for_erp(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_to_bank_verified(tmp_db)
 
@@ -268,7 +268,7 @@ class TestActivateVendorInErp:
         assert updated["is_active"] is True  # not terminal
 
     def test_tokens_revoked_on_activation(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_to_bank_verified(tmp_db)
         # Issue a token for this session.
@@ -283,7 +283,7 @@ class TestActivateVendorInErp:
 
         monkeypatch.setattr(mod, "_dispatch_erp_create_vendor", mock_erp)
         monkeypatch.setattr(
-            "clearledgr.services.vendor_onboarding_email._get_gmail_client_for_org",
+            "solden.services.vendor_onboarding_email._get_gmail_client_for_org",
             AsyncMock(return_value=None),
         )
 
@@ -292,7 +292,7 @@ class TestActivateVendorInErp:
         assert tmp_db.validate_onboarding_token(raw_token) is None
 
     def test_invalid_state_rejected(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
         # Session is in invited state — too early for activation.
         tmp_db.create_organization("org_t", name="X")
         tmp_db.upsert_vendor_profile("org_t", "Acme")
@@ -312,7 +312,7 @@ class TestActivateVendorInErp:
 class TestActivationAudit:
 
     def test_activation_emits_audit_event(self, tmp_db, monkeypatch):
-        from clearledgr.services import vendor_onboarding_lifecycle as mod
+        from solden.services import vendor_onboarding_lifecycle as mod
 
         session = _seed_to_bank_verified(tmp_db)
 
@@ -321,7 +321,7 @@ class TestActivationAudit:
 
         monkeypatch.setattr(mod, "_dispatch_erp_create_vendor", mock_erp)
         monkeypatch.setattr(
-            "clearledgr.services.vendor_onboarding_email._get_gmail_client_for_org",
+            "solden.services.vendor_onboarding_email._get_gmail_client_for_org",
             AsyncMock(return_value=None),
         )
 

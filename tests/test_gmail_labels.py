@@ -12,7 +12,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from clearledgr.services.gmail_labels import (
+from solden.services.gmail_labels import (
     CLEARLEDGR_LABELS,
     AP_STATE_TO_LABEL,
     _resolve_label_key,

@@ -11,15 +11,15 @@ from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-from clearledgr.services.exception_resolver import ExceptionResolver, get_exception_resolver
+from solden.services.exception_resolver import ExceptionResolver, get_exception_resolver
 
 # Common patch targets — lazy imports inside functions mean we patch
 # the canonical module, not the caller module.
-_PATCH_GET_DB = "clearledgr.core.database.get_db"
-_PATCH_LOOKUP_PO = "clearledgr.integrations.erp_router.lookup_purchase_order_from_erp"
-_PATCH_FIND_PAYABLES = "clearledgr.integrations.erp_router.find_open_payables_for_vendor"
-_PATCH_CREATE_VENDOR = "clearledgr.integrations.erp_router.create_vendor"
-_PATCH_GET_RESOLVER = "clearledgr.services.exception_resolver.get_exception_resolver"
+_PATCH_GET_DB = "solden.core.database.get_db"
+_PATCH_LOOKUP_PO = "solden.integrations.erp_router.lookup_purchase_order_from_erp"
+_PATCH_FIND_PAYABLES = "solden.integrations.erp_router.find_open_payables_for_vendor"
+_PATCH_CREATE_VENDOR = "solden.integrations.erp_router.create_vendor"
+_PATCH_GET_RESOLVER = "solden.services.exception_resolver.get_exception_resolver"
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +509,7 @@ class TestPostingExhausted:
 
 class TestBackgroundSweep:
     def test_sweep_resolves_items(self):
-        from clearledgr.services import agent_background as bg_mod
+        from solden.services import agent_background as bg_mod
 
         mock_db = MagicMock()
         items_with_exception = [
@@ -549,7 +549,7 @@ class TestBackgroundSweep:
         assert mock_db.append_audit_event.call_count == 1
 
     def test_sweep_caps_at_25(self):
-        from clearledgr.services import agent_background as bg_mod
+        from solden.services import agent_background as bg_mod
 
         mock_db = MagicMock()
         # Return 30 items for the first state
@@ -584,7 +584,7 @@ class TestBackgroundSweep:
         assert mock_resolver.resolve.call_count == 25
 
     def test_sweep_skips_items_without_exception_code(self):
-        from clearledgr.services import agent_background as bg_mod
+        from solden.services import agent_background as bg_mod
 
         mock_db = MagicMock()
         items = [
@@ -618,7 +618,7 @@ class TestBackgroundSweep:
         assert mock_resolver.resolve.call_count == 1
 
     def test_sweep_handles_db_error_gracefully(self):
-        from clearledgr.services import agent_background as bg_mod
+        from solden.services import agent_background as bg_mod
 
         with patch(
             _PATCH_GET_DB,

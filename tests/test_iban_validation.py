@@ -10,7 +10,7 @@ weaken it.
 """
 from __future__ import annotations
 
-from clearledgr.core.stores.bank_details import (
+from solden.core.stores.bank_details import (
     is_valid_iban,
     normalize_iban,
     validate_iban,

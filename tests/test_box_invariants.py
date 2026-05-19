@@ -29,7 +29,7 @@ class TestVendorOnboardingAtomicTransition:
     """
 
     def _fresh_db_with_session(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
@@ -79,7 +79,7 @@ class TestVendorOnboardingAtomicTransition:
         # conn.commit() — so the transaction is rolled back by the
         # `with self.connect() as conn` exit. Whatever the state
         # UPDATE did must vanish.
-        import clearledgr.core.stores.vendor_store as vs_mod
+        import solden.core.stores.vendor_store as vs_mod
         real_json_dumps = vs_mod.json.dumps
         call_count = {"n": 0}
 
@@ -135,7 +135,7 @@ class TestRule1PreWriteFailsClosed:
     """
 
     def _make_engine(self, append_side_effect):
-        from clearledgr.core.coordination_engine import CoordinationEngine
+        from solden.core.coordination_engine import CoordinationEngine
         engine = CoordinationEngine.__new__(CoordinationEngine)
         engine.organization_id = "test-org"
         engine.db = MagicMock()
@@ -144,7 +144,7 @@ class TestRule1PreWriteFailsClosed:
 
     def test_pre_write_success_returns_timeline_id_on_first_try(self):
         engine = self._make_engine(append_side_effect=None)
-        from clearledgr.core.plan import Action
+        from solden.core.plan import Action
         action = Action(name="classify_email", layer="LLM", params={}, description="test")
 
         timeline_id = asyncio.run(engine._pre_write("ap-123", action, step=0))
@@ -162,7 +162,7 @@ class TestRule1PreWriteFailsClosed:
             return None
 
         engine = self._make_engine(append_side_effect=_flaky)
-        from clearledgr.core.plan import Action
+        from solden.core.plan import Action
         action = Action(name="classify_email", layer="LLM", params={}, description="test")
 
         timeline_id = asyncio.run(engine._pre_write("ap-123", action, step=0))
@@ -170,9 +170,9 @@ class TestRule1PreWriteFailsClosed:
         assert calls["n"] == 3
 
     def test_pre_write_raises_after_three_failures(self):
-        from clearledgr.core.coordination_engine import _Rule1PreWriteFailed
+        from solden.core.coordination_engine import _Rule1PreWriteFailed
         engine = self._make_engine(append_side_effect=RuntimeError("persistent DB down"))
-        from clearledgr.core.plan import Action
+        from solden.core.plan import Action
         action = Action(name="post_bill", layer="DET", params={}, description="test")
 
         with pytest.raises(_Rule1PreWriteFailed) as exc_info:
@@ -188,7 +188,7 @@ class TestRule1PreWriteFailsClosed:
         # timeline entries. Still returns a timeline id so post_write
         # calls stay well-formed.
         engine = self._make_engine(append_side_effect=None)
-        from clearledgr.core.plan import Action
+        from solden.core.plan import Action
         action = Action(name="fetch_attachment", layer="DET", params={}, description="test")
 
         timeline_id = asyncio.run(engine._pre_write(None, action, step=0))
@@ -205,8 +205,8 @@ class TestExecutionLoopAbortsOnRule1Failure:
 
     @pytest.mark.asyncio
     async def test_plan_aborts_without_running_action_body(self):
-        from clearledgr.core.coordination_engine import CoordinationEngine
-        from clearledgr.core.plan import Action, Plan
+        from solden.core.coordination_engine import CoordinationEngine
+        from solden.core.plan import Action, Plan
 
         engine = CoordinationEngine.__new__(CoordinationEngine)
         engine.organization_id = "test-org"
@@ -255,7 +255,7 @@ class TestBoxKeyedAuditWrites:
     """
 
     def _fresh_db(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
         return db
@@ -377,7 +377,7 @@ class TestBoxKeyedAuditWrites:
 
     def test_llm_gateway_log_call_writes_box_keys(self, tmp_path, monkeypatch):
         db = self._fresh_db(tmp_path, monkeypatch)
-        from clearledgr.core.llm_gateway import LLMGateway, LLMAction
+        from solden.core.llm_gateway import LLMGateway, LLMAction
         gw = LLMGateway.__new__(LLMGateway)
         gw._db = db
 

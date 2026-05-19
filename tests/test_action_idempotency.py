@@ -5,9 +5,9 @@ import asyncio
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.core.coordination_engine import CoordinationEngine
-from clearledgr.core.plan import Action, Plan
+from solden.core.database import get_db
+from solden.core.coordination_engine import CoordinationEngine
+from solden.core.plan import Action, Plan
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ class TestPrePostValidateIdempotency:
     """§12.3: post_bill uses pre_post_validate to catch existing bills."""
 
     def test_pre_post_validate_catches_already_posted(self):
-        from clearledgr.integrations.erp_router import pre_post_validate
+        from solden.integrations.erp_router import pre_post_validate
         from unittest.mock import MagicMock
 
         mock_db = MagicMock()

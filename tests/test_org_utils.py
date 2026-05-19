@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from clearledgr.core.org_utils import (
+from solden.core.org_utils import (
     OrgIdMissing,
     assert_org_id,
     coerce_org_id,

@@ -10,8 +10,8 @@ Covers:
 from __future__ import annotations
 
 
-from clearledgr.core.database import SoldenDB
-from clearledgr.core.ap_entity_routing import (
+from solden.core.database import SoldenDB
+from solden.core.ap_entity_routing import (
     resolve_entity_routing,
     _db_entities_as_candidates,
 )
@@ -378,10 +378,10 @@ def test_erp_connection_entity_resolution(tmp_path, monkeypatch):
     )
     db.update_entity(entity["id"], erp_connection_id=conn_id)
 
-    from clearledgr.integrations.erp_router import get_erp_connection
+    from solden.integrations.erp_router import get_erp_connection
 
     # Without entity_id, should get org default (quickbooks)
-    monkeypatch.setattr("clearledgr.integrations.erp_router._get_db", lambda: db)
+    monkeypatch.setattr("solden.integrations.erp_router._get_db", lambda: db)
     org_conn = get_erp_connection("org-1")
     assert org_conn is not None
     assert org_conn.type == "quickbooks"
@@ -408,9 +408,9 @@ def test_erp_connection_entity_fallback_to_org(tmp_path, monkeypatch):
     entity = db.create_entity(organization_id="org-1", name="NG Entity", code="NG")
     # Entity has no erp_connection_id set
 
-    from clearledgr.integrations.erp_router import get_erp_connection
+    from solden.integrations.erp_router import get_erp_connection
 
-    monkeypatch.setattr("clearledgr.integrations.erp_router._get_db", lambda: db)
+    monkeypatch.setattr("solden.integrations.erp_router._get_db", lambda: db)
     conn = get_erp_connection("org-1", entity_id=entity["id"])
     assert conn is not None
     assert conn.type == "quickbooks"

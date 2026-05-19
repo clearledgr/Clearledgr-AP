@@ -1,0 +1,139 @@
+"""Agent Event System — Agent Design Specification §2.
+
+Formal event types and the AgentEvent data class. Every event that enters
+the system has a type, a source, and a payload. The planning engine
+dispatches on event type.
+
+Adding a new event type means:
+1. Add the enum value here
+2. Add a handler in the planning engine
+No other part of the system changes.
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Dict, Optional
+
+
+class AgentEventType(str, Enum):
+    """§2.2: Every event type the agent can process."""
+
+    # Core invoice lifecycle
+    EMAIL_RECEIVED = "email_received"
+    APPROVAL_RECEIVED = "approval_received"
+    ERP_GRN_CONFIRMED = "erp_grn_confirmed"
+    PAYMENT_CONFIRMED = "payment_confirmed"
+
+    # Vendor onboarding
+    VENDOR_RESPONSE_RECEIVED = "vendor_response_received"
+    KYC_DOCUMENT_RECEIVED = "kyc_document_received"
+    IBAN_CHANGE_SUBMITTED = "iban_change_submitted"
+
+    # Vendor onboarding v1.1 — spec §3 event types. New names sit
+    # alongside the originals so existing planner handlers for
+    # KYC_DOCUMENT_RECEIVED etc. keep working during the migration;
+    # the new handlers use the new names for clarity and spec
+    # alignment.
+    ONBOARDING_INITIATED = "onboarding_initiated"
+    VENDOR_PORTAL_ACCESSED = "vendor_portal_accessed"
+    VENDOR_SUBMISSION_RECEIVED = "vendor_submission_received"
+    KYC_CHECK_COMPLETED = "kyc_check_completed"
+    OPEN_BANKING_VERIFICATION_COMPLETED = "open_banking_verification_completed"
+    # VENDOR_CHASE_DUE removed: Solden sends zero email to vendors
+    # (memory: 2026-05-02). The chase-timer concept was the last
+    # remaining vendor-email surface; with the planner branch +
+    # dispatcher gone, the event type has no producer or consumer.
+    AP_MANAGER_DECISION_RECEIVED = "ap_manager_decision_received"
+    VENDOR_ACTIVATED = "vendor_activated"
+
+    # Commission clawback — V1.2 (Booking.com design partnership).
+    # Spec: commission-clawback-spec.md §3. Planner handlers land when
+    # the clawback pipeline ships; these enum values are reserved now
+    # so code paths that refer to them do not need retroactive edits.
+    REFUND_DETECTED = "refund_detected"
+    CLAWBACK_APPROVAL_RECEIVED = "clawback_approval_received"
+    PARTNER_DISPUTE_RECEIVED = "partner_dispute_received"
+    CLAWBACK_POSTED = "clawback_posted"
+    DISPUTE_WINDOW_EXPIRED = "dispute_window_expired"
+    ERP_COMMISSION_RECORD_FOUND = "erp_commission_record_found"
+
+    # Timer-based resumption
+    TIMER_FIRED = "timer_fired"
+
+    # Human-in-the-loop
+    MANUAL_CLASSIFICATION = "manual_classification"
+
+    # Override window
+    OVERRIDE_WINDOW_EXPIRED = "override_window_expired"
+
+    # Bidirectional Gmail label sync — user applies a Solden/* label
+    # in Gmail and the agent reacts (approve / reject / snooze / review).
+    # Phase 2 of the Gmail-labels-as-AP-pipeline workstream.
+    LABEL_CHANGED = "label_changed"
+
+
+@dataclass
+class AgentEvent:
+    """A single event entering the agent system.
+
+    Events are immutable after creation. They are enqueued into Redis Streams
+    and consumed by Celery workers.
+    """
+
+    type: AgentEventType
+    source: str  # "gmail_pubsub", "slack_callback", "timer", "manual", etc.
+    payload: Dict[str, Any]
+    organization_id: str
+    id: str = field(default_factory=lambda: f"EVT-{uuid.uuid4().hex[:12]}")
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    priority: str = "standard"  # "standard" | "high_priority"
+    idempotency_key: Optional[str] = None  # Gmail message ID for dedup
+
+    def to_dict(self) -> Dict[str, str]:
+        """Serialize for Redis Streams (all values must be strings)."""
+        import json
+
+        return {
+            "id": self.id,
+            "type": self.type.value,
+            "source": self.source,
+            "payload": json.dumps(self.payload),
+            "organization_id": self.organization_id,
+            "created_at": self.created_at,
+            "priority": self.priority,
+            "idempotency_key": self.idempotency_key or "",
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, str]) -> AgentEvent:
+        """Deserialize from Redis Streams.
+
+        ``organization_id`` is asserted via ``assert_org_id`` because
+        every event in the stream is tenant-bound — a missing org
+        means the producer didn't tag the event correctly, and silently
+        binding to a sentinel would lose the tenant attribution. Fail
+        loud at deserialisation so the producer is forced to fix the
+        write side rather than the consumer absorbing the bug.
+        """
+        import json
+
+        from solden.core.org_utils import assert_org_id
+
+        return cls(
+            id=data.get("id", f"EVT-{uuid.uuid4().hex[:12]}"),
+            type=AgentEventType(data["type"]),
+            source=data.get("source", "unknown"),
+            payload=json.loads(data.get("payload", "{}")),
+            organization_id=assert_org_id(
+                data.get("organization_id"),
+                context="AgentEvent.from_dict",
+            ),
+            created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            priority=data.get("priority", "standard"),
+            idempotency_key=data.get("idempotency_key") or None,
+        )

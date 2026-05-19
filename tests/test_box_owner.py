@@ -28,10 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import box_owner_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.box_owner import (  # noqa: E402
+from solden.api import box_owner_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.box_owner import (  # noqa: E402
     HUMAN_ACTION_STATES,
     apply_resolved_owner,
     reassign_manually,
@@ -119,7 +119,7 @@ def test_resolve_owner_returns_base_when_no_delegation(db):
 def test_resolve_owner_walks_delegation(db):
     _configure_routing(db, "orgOwn", {"needs_approval": "controller@example.com"})
     item = _make_ap_item(db, item_id="AP-own-delegate", state="needs_approval")
-    from clearledgr.services.approval_delegation import get_delegation_service
+    from solden.services.approval_delegation import get_delegation_service
     delegation = get_delegation_service(organization_id="orgOwn")
     delegation.create_rule(
         delegator_id="u-controller",
@@ -142,7 +142,7 @@ def test_resolve_owner_walks_multi_hop_delegation_chain(db):
     """A→B→C should deliver work to C, not to B (the previous bug)."""
     _configure_routing(db, "orgOwn", {"needs_approval": "a@example.com"})
     item = _make_ap_item(db, item_id="AP-own-multi-hop", state="needs_approval")
-    from clearledgr.services.approval_delegation import get_delegation_service
+    from solden.services.approval_delegation import get_delegation_service
     delegation = get_delegation_service(organization_id="orgOwn")
     delegation.create_rule(
         delegator_id="u-a", delegator_email="a@example.com",
@@ -168,7 +168,7 @@ def test_resolve_owner_breaks_delegation_cycle(db):
     """A→B→A is a cycle. Walk must stop at B and not infinite-loop."""
     _configure_routing(db, "orgOwn", {"needs_approval": "a2@example.com"})
     item = _make_ap_item(db, item_id="AP-own-cycle", state="needs_approval")
-    from clearledgr.services.approval_delegation import get_delegation_service
+    from solden.services.approval_delegation import get_delegation_service
     delegation = get_delegation_service(organization_id="orgOwn")
     delegation.create_rule(
         delegator_id="u-a2", delegator_email="a2@example.com",
@@ -325,7 +325,7 @@ def test_apply_resolved_owner_is_atomic_on_audit_failure(db, monkeypatch):
 
 def test_reassign_manually_bypasses_delegation(db):
     _configure_routing(db, "orgOwn", {"needs_approval": "controller@example.com"})
-    from clearledgr.services.approval_delegation import get_delegation_service
+    from solden.services.approval_delegation import get_delegation_service
     delegation = get_delegation_service(organization_id="orgOwn")
     delegation.create_rule(
         delegator_id="u-c",
@@ -398,7 +398,7 @@ def test_reassign_endpoint_404_for_missing_box(client_own):
 
 def test_state_class_groups_approval_states():
     """needs_approval and needs_second_approval share the approval class."""
-    from clearledgr.services.box_owner import state_class
+    from solden.services.box_owner import state_class
     assert state_class("needs_approval") == "approval"
     assert state_class("needs_second_approval") == "approval"
     assert state_class("needs_info") == "info"
@@ -412,7 +412,7 @@ def test_state_class_groups_approval_states():
 def test_state_class_partitions_human_action_states():
     """Different state classes must not collide; this is what makes
     cross-class transitions detectable."""
-    from clearledgr.services.box_owner import state_class
+    from solden.services.box_owner import state_class
     assert state_class("needs_info") != state_class("needs_approval")
     assert state_class("needs_info") != state_class("failed_post")
     assert state_class("needs_approval") != state_class("failed_post")

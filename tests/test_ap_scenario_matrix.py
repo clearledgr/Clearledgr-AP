@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.core.ap_states import IllegalTransitionError
-from clearledgr.services.approval_delegation import DelegationService
-from clearledgr.services.gmail_extension_support import build_needs_info_draft_payload
-from clearledgr.services.policy_compliance import PolicyAction, PolicyComplianceService
+from solden.core import database as db_module
+from solden.core.ap_states import IllegalTransitionError
+from solden.services.approval_delegation import DelegationService
+from solden.services.gmail_extension_support import build_needs_info_draft_payload
+from solden.services.policy_compliance import PolicyAction, PolicyComplianceService
 
 
 SCENARIO_ORG = "scenario-org"

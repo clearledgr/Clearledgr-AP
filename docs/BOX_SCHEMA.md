@@ -90,11 +90,11 @@ The `box` object identifies the workflow instance.
 
 | Field | Type | Notes |
 |---|---|---|
-| `type` | string | BoxType name. Currently `"ap_item"` or `"bank_match"`. Future BoxTypes register their name in `clearledgr.core.box_registry`. |
+| `type` | string | BoxType name. Currently `"ap_item"` or `"bank_match"`. Future BoxTypes register their name in `solden.core.box_registry`. |
 | `id` | string | Stable Box identifier. Opaque; treat as a string. |
 | `organization_id` | string | The owning tenant. Always populated. |
 | `entity_id` | string \| null | The owning entity inside the tenant (multi-entity organizations). Null when the Box is not entity-scoped. |
-| `state` | string | The current state in the BoxType's state machine. For `ap_item` see `clearledgr.core.ap_states.APState`. |
+| `state` | string | The current state in the BoxType's state machine. For `ap_item` see `solden.core.ap_states.APState`. |
 | `created_at` | ISO-8601 string | When the Box was opened. |
 | `updated_at` | ISO-8601 string | When the Box was last written. |
 | `fields` | object | Domain-specific fields. Stable per BoxType but additive — see § Box fields. |
@@ -147,7 +147,7 @@ in the export at `links.parent_box`. Stable keys on `fields`:
 | `metadata_json` | object | Matcher-specific structured fields. |
 
 `bank_match` states: `proposed`, `accepted` (terminal), `rejected`
-(terminal). See `clearledgr.core.bank_match_states.BankMatchState`.
+(terminal). See `solden.core.bank_match_states.BankMatchState`.
 
 ## History event
 
@@ -194,7 +194,7 @@ has not been tampered with after extraction.
 | `actor_type` | string | `agent`, `user`, `system`, `webhook`. |
 | `actor_id` | string | Email or identifier of the actor. |
 | `decision_reason` | string \| null | Free-text reason. |
-| `policy_version` | string \| null | Version of the policy that authorized the transition. `"v1"` is the current AP policy version; see `clearledgr.core.ap_states.CURRENT_AP_POLICY_VERSION`. |
+| `policy_version` | string \| null | Version of the policy that authorized the transition. `"v1"` is the current AP policy version; see `solden.core.ap_states.CURRENT_AP_POLICY_VERSION`. |
 | `governance_verdict` | string \| null | `should_execute`, `vetoed`, or a structured-policy verdict label. |
 | `agent_confidence` | number \| null | 0.0 to 1.0. Present on agent-authored events. |
 | `source` | string \| null | Code path that wrote the event (free-form; useful for support). |
@@ -243,7 +243,7 @@ The terminal outcome of the Box. `null` while the Box is open.
 
 For `ap_item` Boxes, terminal states are `posted_to_erp`, `reversed`,
 `closed`, and `rejected`. See
-`clearledgr.core.ap_states.TERMINAL_STATES` for the authoritative
+`solden.core.ap_states.TERMINAL_STATES` for the authoritative
 list.
 
 ## Links

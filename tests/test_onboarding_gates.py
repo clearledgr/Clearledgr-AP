@@ -13,13 +13,13 @@ Covers:
 from __future__ import annotations
 
 
-from clearledgr.api.erp_connections import _classify_erp_connect_error
-from clearledgr.api.workspace_shell import _is_ap_policy_configured
+from solden.api.erp_connections import _classify_erp_connect_error
+from solden.api.workspace_shell import _is_ap_policy_configured
 
 
 class TestAPPolicyGate:
     def test_missing_policy_is_not_configured(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
@@ -27,7 +27,7 @@ class TestAPPolicyGate:
         assert _is_ap_policy_configured("test-org") is False
 
     def test_partial_policy_is_not_configured(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
@@ -46,7 +46,7 @@ class TestAPPolicyGate:
         assert _is_ap_policy_configured("test-org") is False
 
     def test_complete_policy_is_configured(self, tmp_path, monkeypatch):
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 
@@ -65,7 +65,7 @@ class TestAPPolicyGate:
     def test_zero_threshold_is_a_valid_value(self, tmp_path, monkeypatch):
         # auto_approve_threshold=0 means "never auto-approve" — a
         # legitimate setting, not unconfigured.
-        import clearledgr.core.database as db_module
+        import solden.core.database as db_module
         db = db_module.get_db()
         db.initialize()
 

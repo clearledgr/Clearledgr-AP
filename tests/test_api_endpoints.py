@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from clearledgr.core.auth import TokenData, get_current_user
+from solden.core.auth import TokenData, get_current_user
 
 os.environ.setdefault("CLEARLEDGR_SKIP_DEFERRED_STARTUP", "true")
 
@@ -56,11 +56,11 @@ def _lazy_module(name: str) -> _LazyProxy:
 
 main_module = _lazy_module("main")
 app = _LazyProxy(lambda: main_module.app)
-gmail_extension_module = _lazy_module("clearledgr.api.gmail_extension")
-agent_intents_module = _lazy_module("clearledgr.api.agent_intents")
-gmail_webhooks_module = _lazy_module("clearledgr.api.gmail_webhooks")
-workspace_shell_module = _lazy_module("clearledgr.api.workspace_shell")
-auth_module = _lazy_module("clearledgr.api.auth")
+gmail_extension_module = _lazy_module("solden.api.gmail_extension")
+agent_intents_module = _lazy_module("solden.api.agent_intents")
+gmail_webhooks_module = _lazy_module("solden.api.gmail_webhooks")
+workspace_shell_module = _lazy_module("solden.api.workspace_shell")
+auth_module = _lazy_module("solden.api.auth")
 
 client = _LazyProxy(lambda: TestClient(main_module.app))
 
@@ -97,7 +97,7 @@ class TestAuthEndpoints:
 
     def _admin_override(self):
         """Override get_current_user with an admin TokenData."""
-        from clearledgr.core.auth import get_current_user
+        from solden.core.auth import get_current_user
         app.dependency_overrides[get_current_user] = lambda: TokenData(
             user_id="admin-user", email="admin@test.com", role="admin",
             organization_id="test-org",
@@ -216,8 +216,8 @@ class TestAuthEndpoints:
             organization_id="org-test",
             role="user",
         )
-        monkeypatch.setattr("clearledgr.core.auth.get_user_by_email", lambda _email: None)
-        monkeypatch.setattr("clearledgr.core.auth.create_user_from_google", lambda **_kwargs: fake_user)
+        monkeypatch.setattr("solden.core.auth.get_user_by_email", lambda _email: None)
+        monkeypatch.setattr("solden.core.auth.create_user_from_google", lambda **_kwargs: fake_user)
         response = client.get(
             "/auth/google/callback",
             params={"code": "google-code-1", "state": state},
@@ -280,9 +280,9 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[get_current_user] = self._fake_user
         try:
-            with patch("clearledgr.api.ap_items_action_routes.get_db", return_value=fake_db):
+            with patch("solden.api.ap_items_action_routes.get_db", return_value=fake_db):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
+                    "solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
                 ):
                     response = client.post("/api/ap/items/ap-1/retry-post?organization_id=org-test")
@@ -311,9 +311,9 @@ class TestAPRetryPostEndpoint:
 
         app.dependency_overrides[get_current_user] = self._fake_user
         try:
-            with patch("clearledgr.api.ap_items_action_routes.get_db", return_value=fake_db):
+            with patch("solden.api.ap_items_action_routes.get_db", return_value=fake_db):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
+                    "solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
                     _runtime_execute,
                 ):
                     response = client.post("/api/ap/items/ap-2/retry-post?organization_id=org-test")
@@ -891,7 +891,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Unknown",
@@ -903,7 +903,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -961,7 +961,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Cursor",
@@ -975,7 +975,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -1034,7 +1034,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Cursor",
@@ -1048,7 +1048,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -1104,7 +1104,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Cursor",
@@ -1118,7 +1118,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -1180,7 +1180,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Vendor Refresh Co",
@@ -1193,7 +1193,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -1250,7 +1250,7 @@ class TestGmailWebhooks:
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
-                "clearledgr.workflows.gmail_activities.extract_email_data_activity",
+                "solden.workflows.gmail_activities.extract_email_data_activity",
                 AsyncMock(
                     return_value={
                         "vendor": "Vendor Review Co",
@@ -1277,7 +1277,7 @@ class TestGmailWebhooks:
                 ),
             ):
                 with patch(
-                    "clearledgr.services.finance_agent_runtime.get_platform_finance_runtime",
+                    "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
                     with patch.object(
@@ -1566,7 +1566,7 @@ class TestGmailWebhooks:
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
                 with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailAPIClient):
-                    with patch("clearledgr.api.gmail_webhooks.process_single_email", AsyncMock(side_effect=_fake_process_single_email)) as process_mock:
+                    with patch("solden.api.gmail_webhooks.process_single_email", AsyncMock(side_effect=_fake_process_single_email)) as process_mock:
                         recover_response = client.post("/extension/by-thread/thread-school-1/recover", params={"organization_id": "org-test"})
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
@@ -1602,7 +1602,7 @@ class TestGmailWebhooks:
             def store(self, token):
                 stored["token"] = token
 
-        with patch("clearledgr.services.gmail_api.exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
+        with patch("solden.services.gmail_api.exchange_code_for_tokens", AsyncMock(return_value=fake_token)):
             with patch.object(gmail_extension_module, "get_user_by_email", return_value=fake_user):
                 with patch.object(gmail_extension_module, "_token_store", return_value=_TokenStore()):
                     with patch.object(gmail_extension_module, "_gmail_token_class", return_value=SimpleNamespace):
@@ -1990,7 +1990,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
             with patch(
-                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                "solden.services.gmail_triage_service.run_inline_gmail_triage",
                 AsyncMock(
                     return_value={
                         "email_id": "test-email-123",
@@ -2030,7 +2030,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
             with patch(
-                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                "solden.services.gmail_triage_service.run_inline_gmail_triage",
                 AsyncMock(
                     return_value={
                         "email_id": "process-inline-1",
@@ -2067,7 +2067,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_audit_service] = lambda: fake_audit
         try:
             with patch(
-                "clearledgr.services.gmail_triage_service.run_inline_gmail_triage",
+                "solden.services.gmail_triage_service.run_inline_gmail_triage",
                 AsyncMock(
                     side_effect=[
                         {
@@ -2113,7 +2113,7 @@ class TestExtensionEndpoints:
 
         fake_db = self._FakeExtensionDB()
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent",
             _runtime_execute,
         )
 
@@ -2170,11 +2170,11 @@ class TestExtensionEndpoints:
             }
 
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_ap_invoice_processing",
             _execute_processing,
         )
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.ap_auto_approve_threshold",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.ap_auto_approve_threshold",
             lambda self: 0.95,
         )
 
@@ -2259,7 +2259,7 @@ class TestExtensionEndpoints:
             }
 
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.escalate_invoice_review",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.escalate_invoice_review",
             _escalate,
         )
 
@@ -2779,7 +2779,7 @@ class TestExtensionEndpoints:
         app.dependency_overrides[gmail_extension_module.get_current_user] = self._fake_user
         try:
             with patch.object(gmail_extension_module, "_gmail_api_client", _FakeGmailClient):
-                with patch("clearledgr.services.gmail_labels.cleanup_legacy_labels", cleanup_mock):
+                with patch("solden.services.gmail_labels.cleanup_legacy_labels", cleanup_mock):
                     response = client.post(
                         "/extension/cleanup-gmail-labels",
                         json={
@@ -2830,7 +2830,7 @@ class TestExtensionEndpoints:
         )
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=_FakeDB()):
-                with patch("clearledgr.services.gmail_autopilot.ensure_gmail_autopilot_progress", AsyncMock(return_value={"started": True, "nudged": True})) as ensure_mock:
+                with patch("solden.services.gmail_autopilot.ensure_gmail_autopilot_progress", AsyncMock(return_value={"started": True, "nudged": True})) as ensure_mock:
                     response = client.get("/extension/worklist?organization_id=org-test")
         finally:
             app.dependency_overrides.pop(gmail_extension_module.get_current_user, None)
@@ -2992,7 +2992,7 @@ class TestExtensionEndpoints:
 
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
+                with patch("solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
                     response = client.post(
                         "/extension/approval-nudge",
                         json={
@@ -3030,7 +3030,7 @@ class TestExtensionEndpoints:
 
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
+                with patch("solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
                     response = client.post(
                         "/extension/budget-decision",
                         json={
@@ -3067,7 +3067,7 @@ class TestExtensionEndpoints:
 
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
+                with patch("solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
                     response = client.post(
                         "/extension/budget-decision",
                         json={
@@ -3103,7 +3103,7 @@ class TestExtensionEndpoints:
 
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
+                with patch("solden.services.finance_agent_runtime.FinanceAgentRuntime.execute_intent", _runtime_execute):
                     response = client.post(
                         "/extension/budget-decision",
                         json={
@@ -3190,7 +3190,7 @@ class TestExtensionEndpoints:
             }
 
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.share_finance_summary",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.share_finance_summary",
             _share,
         )
 
@@ -3330,7 +3330,7 @@ class TestExtensionEndpoints:
             }
 
         monkeypatch.setattr(
-            "clearledgr.services.finance_agent_runtime.FinanceAgentRuntime.record_field_correction",
+            "solden.services.finance_agent_runtime.FinanceAgentRuntime.record_field_correction",
             _record,
         )
 
@@ -3392,7 +3392,7 @@ class TestExtensionEndpoints:
 
         try:
             with patch.object(gmail_extension_module, "get_db", return_value=fake_db):
-                with patch("clearledgr.services.finance_skills.ap_skill.get_invoice_workflow", return_value=fake_workflow):
+                with patch("solden.services.finance_skills.ap_skill.get_invoice_workflow", return_value=fake_workflow):
                     first = client.post("/extension/route-low-risk-approval", json=body)
                     second = client.post("/extension/route-low-risk-approval", json=body)
         finally:
@@ -3704,7 +3704,7 @@ class TestAgentIntentEndpoints:
         # PG. The previous incarnation of this test used a hand-rolled
         # SQLite stub with a `_prepare_sql` passthrough, which broke
         # once the production SQL became %s-native (C.3).
-        from clearledgr.core.database import get_db
+        from solden.core.database import get_db
         db = get_db()
         db.upsert_vendor_profile(
             organization_id="org-test",

@@ -19,9 +19,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.services.invoice_models import InvoiceData
-from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+from solden.core.database import get_db
+from solden.services.invoice_models import InvoiceData
+from solden.services.invoice_workflow import InvoiceWorkflowService
 
 
 def _make_workflow(organization_id: str = "org-test") -> InvoiceWorkflowService:

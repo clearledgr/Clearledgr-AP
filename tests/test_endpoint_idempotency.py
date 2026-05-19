@@ -1,7 +1,7 @@
 """Endpoint-level idempotency contract tests.
 
 Covers:
-- The :mod:`clearledgr.core.idempotency` helper round-trip
+- The :mod:`solden.core.idempotency` helper round-trip
   (resolve_idempotency_key / load / save).
 - ``POST /api/ap/items/{id}/snooze`` end-to-end replay (the simplest
   endpoint that doesn't need a runtime mock — pure DB writes).
@@ -29,10 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import ap_items_action_routes as action_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import require_ops_user  # noqa: E402
-from clearledgr.core.idempotency import (  # noqa: E402
+from solden.api import ap_items_action_routes as action_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import require_ops_user  # noqa: E402
+from solden.core.idempotency import (  # noqa: E402
     load_idempotent_response,
     resolve_idempotency_key,
     save_idempotent_response,
@@ -196,7 +196,7 @@ class TestBulkApproveEndpointIdempotency:
 
     @pytest.fixture(autouse=True)
     def stub_finance_runtime(self, monkeypatch):
-        from clearledgr.services import ap_item_service as shared_mod
+        from solden.services import ap_item_service as shared_mod
 
         class _StubRuntime:
             execute_count = 0
@@ -251,7 +251,7 @@ class TestRetryPostHeaderIdempotency:
 
     @pytest.fixture(autouse=True)
     def stub_finance_runtime(self, monkeypatch):
-        from clearledgr.services import ap_item_service as shared_mod
+        from solden.services import ap_item_service as shared_mod
 
         class _StubRuntime:
             execute_count = 0

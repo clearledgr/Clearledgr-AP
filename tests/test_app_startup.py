@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from clearledgr.services import app_startup
+from solden.services import app_startup
 
 
 def test_schedule_deferred_startup_launches_on_next_loop_turn(monkeypatch):

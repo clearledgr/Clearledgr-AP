@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from clearledgr.core import database as db_module
-from clearledgr.services.learning_calibration import get_learning_calibration_service
+from solden.core import database as db_module
+from solden.services.learning_calibration import get_learning_calibration_service
 
 
 def _db(tmp_path, monkeypatch):

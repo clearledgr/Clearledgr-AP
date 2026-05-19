@@ -38,7 +38,7 @@ pytestmark_sqlite_only = pytest.mark.skipif(
 
 
 def _fresh_db(tmp_path, monkeypatch):
-    import clearledgr.core.database as db_module
+    import solden.core.database as db_module
     db = db_module.get_db()
     db.initialize()
     return db
@@ -58,7 +58,7 @@ def _column_names(db, table):
 
 
 def _rerun_v42(db):
-    from clearledgr.core.migrations import _MIGRATIONS
+    from solden.core.migrations import _MIGRATIONS
     _, _, fn = next(m for m in _MIGRATIONS if m[0] == 42)
     with db.connect() as conn:
         cur = conn.cursor()

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
-from clearledgr.services.slack_api import resolve_slack_runtime
+from solden.services.slack_api import resolve_slack_runtime
 
 router = APIRouter(prefix="/slack", tags=["slack"])
 
@@ -73,7 +73,7 @@ def _resolve_org_id_for_team(team_id: Optional[str]) -> str:
     if not team_id:
         return DEFAULT_ORG_ID
     try:
-        from clearledgr.core.database import get_db
+        from solden.core.database import get_db
 
         install = get_db().get_slack_installation_by_team(team_id)
         if install and install.get("organization_id"):
@@ -187,7 +187,7 @@ async def slack_events(request: Request):
         team_id = str(data.get("team_id") or event.get("team_id") or "").strip()
         if team_id:
             try:
-                from clearledgr.core.database import get_db
+                from solden.core.database import get_db
                 affected = get_db().deactivate_slack_installation(team_id)
                 logger.info(
                     "Slack %s for team=%s — deactivated %d installation row(s)",
@@ -558,7 +558,7 @@ async def ask_vita(question: str, user_id: str) -> str:
 
 async def get_forecast() -> str:
     """Get cash flow forecast."""
-    from clearledgr.services.cashflow_prediction import get_cashflow_predictor
+    from solden.services.cashflow_prediction import get_cashflow_predictor
     
     try:
         predictor = get_cashflow_predictor(DEFAULT_ORG_ID)
@@ -590,7 +590,7 @@ async def get_forecast() -> str:
 
 async def get_budget_status() -> str:
     """Get budget status."""
-    from clearledgr.services.budget_awareness import get_budget_awareness
+    from solden.services.budget_awareness import get_budget_awareness
     
     try:
         budget_service = get_budget_awareness(DEFAULT_ORG_ID)
@@ -623,8 +623,8 @@ async def get_budget_status() -> str:
 
 async def get_priority_queue() -> str:
     """Get invoice priority queue."""
-    from clearledgr.services.priority_detection import get_priority_detection
-    from clearledgr.core.database import get_db
+    from solden.services.priority_detection import get_priority_detection
+    from solden.core.database import get_db
     
     try:
         db = get_db()
@@ -678,7 +678,7 @@ async def get_priority_queue() -> str:
 
 async def handle_setup(user_id: str) -> str:
     """Show onboarding checklist with integration statuses."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     db = get_db()
     org_id = DEFAULT_ORG_ID
@@ -735,7 +735,7 @@ async def handle_setup(user_id: str) -> str:
 
 async def handle_config_channel(channel_arg: str, user_id: str) -> str:
     """Set the approval notification channel."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     if not channel_arg:
         return "Usage: `/clearledgr config channel #channel-name`"
@@ -802,7 +802,7 @@ Once you have the credentials, an admin can enter them at:
 
     # OAuth ERPs (QuickBooks, Xero)
     try:
-        from clearledgr.api.erp_connections import (
+        from solden.api.erp_connections import (
             _oauth_states,
             QUICKBOOKS_CLIENT_ID, QUICKBOOKS_REDIRECT_URI, QUICKBOOKS_AUTH_URL,
             XERO_CLIENT_ID, XERO_REDIRECT_URI, XERO_AUTH_URL,
@@ -844,12 +844,12 @@ Once you have the credentials, an admin can enter them at:
             return f"*Connect Xero*\n\nClick the link below to authorize Solden:\n{auth_url}"
 
     except ImportError:
-        return f"ERP connection module not available. Ensure `clearledgr.api.erp_connections` is installed."
+        return f"ERP connection module not available. Ensure `solden.api.erp_connections` is installed."
 
 
 async def handle_invite(email: str, role: str, user_id: str) -> str:
     """Invite a team member."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
     from datetime import datetime, timezone, timedelta
 
     if role not in ("admin", "member", "viewer"):
@@ -876,7 +876,7 @@ async def handle_invite(email: str, role: str, user_id: str) -> str:
 
 async def process_natural_language(text: str, user_id: str, channel_id: str) -> str:
     """Process a natural language command."""
-    from clearledgr.services.natural_language_commands import get_nlp_processor
+    from solden.services.natural_language_commands import get_nlp_processor
     
     try:
         processor = get_nlp_processor(DEFAULT_ORG_ID)
@@ -990,7 +990,7 @@ async def handle_invoice_approve(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle invoice approval button click from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     # Immediately show processing state — replaces buttons with status text
     await update_message(
@@ -1042,7 +1042,7 @@ async def handle_invoice_reject(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle invoice rejection button click from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     # Immediately show processing state
     await update_message(
@@ -1095,7 +1095,7 @@ async def handle_budget_override(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle budget override approval from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
@@ -1123,7 +1123,7 @@ async def handle_budget_adjustment(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle budget adjustment request from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
@@ -1149,7 +1149,7 @@ async def handle_budget_reject(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle over-budget rejection from Slack."""
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"
@@ -1176,7 +1176,7 @@ async def handle_invoice_flag(
     organization_id: str = DEFAULT_ORG_ID,
 ):
     """Handle invoice flag-for-review from Slack."""
-    from clearledgr.core.database import get_db
+    from solden.core.database import get_db
 
     try:
         db = get_db()
@@ -1210,7 +1210,7 @@ async def handle_dismiss_exception(exc_id: str, user_id: str, channel: str, mess
 
 async def check_for_expense(event: Dict):
     """Check if a Slack message is an expense request."""
-    from clearledgr.services.expense_workflow import get_expense_workflow
+    from solden.services.expense_workflow import get_expense_workflow
     
     text = event.get("text", "")
     user_id = event.get("user", "")
@@ -1248,7 +1248,7 @@ async def check_for_expense(event: Dict):
 
 async def handle_expense_approve(expense_id: str, user_id: str, channel: str, message_ts: str):
     """Handle expense approval button click."""
-    from clearledgr.services.expense_workflow import get_expense_workflow
+    from solden.services.expense_workflow import get_expense_workflow
     
     try:
         workflow = get_expense_workflow(DEFAULT_ORG_ID)
@@ -1392,9 +1392,9 @@ async def handle_clarifying_response(question_id: str, response_value: str, user
     Routes through the orchestrator so the agent can learn from answers
     and take autonomous action (approve, reject, flag, request more info).
     """
-    from clearledgr.services.conversational_agent import get_conversational_agent
-    from clearledgr.services.correction_learning import get_correction_learning
-    from clearledgr.services.invoice_workflow import get_invoice_workflow
+    from solden.services.conversational_agent import get_conversational_agent
+    from solden.services.correction_learning import get_correction_learning
+    from solden.services.invoice_workflow import get_invoice_workflow
 
     try:
         user_email = f"slack:{user_id}"

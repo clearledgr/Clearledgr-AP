@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import workspace_shell as ws  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
+from solden.api import workspace_shell as ws  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ def _run_task_inline(export_id: str):
     or ``.apply()`` is invoked, so the test calls ``.run(export_id)``
     directly — Celery handles the ``self`` plumbing for us.
     """
-    from clearledgr.services.celery_tasks import generate_audit_export
+    from solden.services.celery_tasks import generate_audit_export
     return generate_audit_export.run(export_id)
 
 
@@ -178,7 +178,7 @@ def test_export_full_lifecycle_writes_csv(db, client_factory):
     client = client_factory(_admin_user)
     # Mock out the Celery dispatch — the test runs the task inline
     # afterwards so we control timing.
-    with patch("clearledgr.services.celery_tasks.generate_audit_export") as mock_task:
+    with patch("solden.services.celery_tasks.generate_audit_export") as mock_task:
         # The endpoint references ``.delay``; make it a no-op.
         mock_task.delay.return_value = None
         post_resp = client.post(
@@ -244,7 +244,7 @@ def test_export_filters_apply_to_csv_content(db, client_factory):
     _seed_event(db, box_id="ap-filter-2", event_type="state_transition")
 
     client = client_factory(_admin_user)
-    with patch("clearledgr.services.celery_tasks.generate_audit_export") as mock_task:
+    with patch("solden.services.celery_tasks.generate_audit_export") as mock_task:
         mock_task.delay.return_value = None
         post_resp = client.post(
             "/api/workspace/audit/export",
@@ -274,7 +274,7 @@ def test_export_download_409_when_not_done(db, client_factory):
     """Downloading an export that's still queued returns 409 with
     a clear reason — UI shouldn't poll-then-download race."""
     client = client_factory(_admin_user)
-    with patch("clearledgr.services.celery_tasks.generate_audit_export") as mock_task:
+    with patch("solden.services.celery_tasks.generate_audit_export") as mock_task:
         mock_task.delay.return_value = None
         post_resp = client.post(
             "/api/workspace/audit/export",
@@ -293,7 +293,7 @@ def test_export_dispatch_failure_marks_failed(db, client_factory):
     """If Celery dispatch raises (broker outage etc), the row gets
     flipped to 'failed' rather than left in 'queued' forever."""
     client = client_factory(_admin_user)
-    with patch("clearledgr.services.celery_tasks.generate_audit_export") as mock_task:
+    with patch("solden.services.celery_tasks.generate_audit_export") as mock_task:
         mock_task.delay.side_effect = RuntimeError("broker unreachable")
         post_resp = client.post(
             "/api/workspace/audit/export",

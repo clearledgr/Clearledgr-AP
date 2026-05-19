@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.services import calendar_ooo
-from clearledgr.services.slack_notifications import _check_ooo_and_get_backup
+from solden.services import calendar_ooo
+from solden.services.slack_notifications import _check_ooo_and_get_backup
 
 
 @pytest.fixture(autouse=True)
@@ -108,7 +108,7 @@ class TestRoutingWithCalendarOOO:
         db = MagicMock()
         db.get_active_delegation.return_value = None
 
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: db)
+        monkeypatch.setattr("solden.core.database.get_db", lambda: db)
 
         org_settings = {
             "ooo_backups": {"cfo@acme.com": "controller@acme.com"},
@@ -124,7 +124,7 @@ class TestRoutingWithCalendarOOO:
 
         db = MagicMock()
         db.get_active_delegation.return_value = None
-        monkeypatch.setattr("clearledgr.core.database.get_db", lambda: db)
+        monkeypatch.setattr("solden.core.database.get_db", lambda: db)
 
         org_settings = {
             "ooo_backups": {"cfo@acme.com": "controller@acme.com"},

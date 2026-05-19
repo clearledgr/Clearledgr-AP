@@ -29,9 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import multi_invoice_split as split_routes  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.multi_invoice_splitter import (  # noqa: E402
+from solden.api import multi_invoice_split as split_routes  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.multi_invoice_splitter import (  # noqa: E402
     detect_invoice_boundaries,
     split_pdf_by_invoices,
     write_pdf_subset,

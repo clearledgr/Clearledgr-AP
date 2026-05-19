@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clearledgr.core import database as db_module
+from solden.core import database as db_module
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def outlook_env(monkeypatch):
 
 class TestOutlookToken:
     def test_not_expired(self):
-        from clearledgr.services.outlook_api import OutlookToken
+        from solden.services.outlook_api import OutlookToken
         token = OutlookToken(
             user_id="u1", access_token="at", refresh_token="rt",
             expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
@@ -55,7 +55,7 @@ class TestOutlookToken:
         assert token.is_expired() is False
 
     def test_expired(self):
-        from clearledgr.services.outlook_api import OutlookToken
+        from solden.services.outlook_api import OutlookToken
         token = OutlookToken(
             user_id="u1", access_token="at", refresh_token="rt",
             expires_at=datetime.now(timezone.utc) - timedelta(minutes=10),
@@ -64,7 +64,7 @@ class TestOutlookToken:
         assert token.is_expired() is True
 
     def test_near_expiry_considered_expired(self):
-        from clearledgr.services.outlook_api import OutlookToken
+        from solden.services.outlook_api import OutlookToken
         token = OutlookToken(
             user_id="u1", access_token="at", refresh_token="rt",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=3),
@@ -76,7 +76,7 @@ class TestOutlookToken:
 
 class TestOutlookTokenStore:
     def test_store_and_retrieve(self, db):
-        from clearledgr.services.outlook_api import OutlookToken, OutlookTokenStore
+        from solden.services.outlook_api import OutlookToken, OutlookTokenStore
         store = OutlookTokenStore()
         token = OutlookToken(
             user_id="store-test", access_token="secret-at", refresh_token="secret-rt",
@@ -92,7 +92,7 @@ class TestOutlookTokenStore:
         assert retrieved.email == "store@test.com"
 
     def test_delete(self, db):
-        from clearledgr.services.outlook_api import OutlookToken, OutlookTokenStore
+        from solden.services.outlook_api import OutlookToken, OutlookTokenStore
         store = OutlookTokenStore()
         token = OutlookToken(
             user_id="del-test", access_token="at", refresh_token="rt",
@@ -104,7 +104,7 @@ class TestOutlookTokenStore:
         assert store.get("del-test") is None
 
     def test_list_all(self, db):
-        from clearledgr.services.outlook_api import OutlookToken, OutlookTokenStore
+        from solden.services.outlook_api import OutlookToken, OutlookTokenStore
         store = OutlookTokenStore()
         for i in range(3):
             store.store(OutlookToken(
@@ -122,23 +122,23 @@ class TestOutlookTokenStore:
 
 class TestOutlookConfig:
     def test_is_configured_when_set(self, outlook_env):
-        from clearledgr.services.outlook_api import is_outlook_configured
+        from solden.services.outlook_api import is_outlook_configured
         assert is_outlook_configured() is True
 
     def test_is_not_configured_when_missing(self, monkeypatch):
         monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
         monkeypatch.delenv("MICROSOFT_CLIENT_SECRET", raising=False)
-        from clearledgr.services.outlook_api import is_outlook_configured
+        from solden.services.outlook_api import is_outlook_configured
         assert is_outlook_configured() is False
 
     def test_validate_raises_on_missing(self, monkeypatch):
         monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
-        from clearledgr.services.outlook_api import validate_microsoft_oauth_config
+        from solden.services.outlook_api import validate_microsoft_oauth_config
         with pytest.raises(ValueError, match="MICROSOFT_CLIENT_ID"):
             validate_microsoft_oauth_config()
 
     def test_generate_auth_url(self, outlook_env):
-        from clearledgr.services.outlook_api import generate_auth_url
+        from solden.services.outlook_api import generate_auth_url
         url = generate_auth_url(state="test-state")
         assert "login.microsoftonline.com" in url
         assert "test-client-id" in url
@@ -152,13 +152,13 @@ class TestOutlookConfig:
 
 class TestOutlookAPIClient:
     def test_ensure_authenticated_no_token(self, db):
-        from clearledgr.services.outlook_api import OutlookAPIClient
+        from solden.services.outlook_api import OutlookAPIClient
         client = OutlookAPIClient("nonexistent-user")
         result = asyncio.run(client.ensure_authenticated())
         assert result is False
 
     def test_parse_message(self):
-        from clearledgr.services.outlook_api import OutlookAPIClient
+        from solden.services.outlook_api import OutlookAPIClient
         data = {
             "id": "msg-123",
             "conversationId": "conv-456",
@@ -234,19 +234,19 @@ class TestOutlookAutopilot:
     def test_disabled_when_not_configured(self, db, monkeypatch):
         monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
         monkeypatch.delenv("MICROSOFT_CLIENT_SECRET", raising=False)
-        from clearledgr.services.outlook_autopilot import OutlookAutopilot
+        from solden.services.outlook_autopilot import OutlookAutopilot
         ap = OutlookAutopilot()
         assert ap.enabled is False
 
     def test_start_when_disabled(self, db, monkeypatch):
         monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
-        from clearledgr.services.outlook_autopilot import OutlookAutopilot
+        from solden.services.outlook_autopilot import OutlookAutopilot
         ap = OutlookAutopilot()
         asyncio.run(ap.start())
         assert ap.get_status()["state"] == "disabled"
 
     def test_tick_with_no_tokens(self, db, outlook_env):
-        from clearledgr.services.outlook_autopilot import OutlookAutopilot
+        from solden.services.outlook_autopilot import OutlookAutopilot
         ap = OutlookAutopilot()
         asyncio.run(ap._tick())
         assert ap.get_status()["detail"] == "no_tokens"
@@ -265,7 +265,7 @@ class TestOutlookRoutes:
         monkeypatch.setenv("FEATURE_OUTLOOK_ENABLED", "true")
 
         from main import app
-        from clearledgr.core.auth import TokenData, get_current_user
+        from solden.core.auth import TokenData, get_current_user
 
         def _fake_user():
             return TokenData(

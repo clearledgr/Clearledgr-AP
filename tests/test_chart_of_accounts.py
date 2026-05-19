@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from clearledgr.core import database as db_module
-from clearledgr.integrations.erp_router import (
+from solden.core import database as db_module
+from solden.integrations.erp_router import (
     ERPConnection,
     get_chart_of_accounts,
     get_chart_of_accounts_quickbooks,
@@ -131,7 +131,7 @@ class TestChartOfAccountsQuickBooks:
             }
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
 
         assert len(result) == 3
@@ -152,7 +152,7 @@ class TestChartOfAccountsQuickBooks:
         mock_client.get.side_effect = Exception("timeout")
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
         assert result == []
 
@@ -160,7 +160,7 @@ class TestChartOfAccountsQuickBooks:
         resp = MagicMock()
         resp.status_code = 401
         mock_client = _mock_async_client(resp)
-        with patch("clearledgr.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_quickbooks.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_quickbooks(_qb_connection()))
         assert result == []
 
@@ -201,7 +201,7 @@ class TestChartOfAccountsXero:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_xero.get_http_client", return_value=mock_client):
+        with patch("solden.integrations.erp_xero.get_http_client", return_value=mock_client):
             result = asyncio.run(get_chart_of_accounts_xero(_xero_connection()))
 
         assert len(result) == 3
@@ -250,8 +250,8 @@ class TestChartOfAccountsNetSuite:
             ]
         }
         mock_client = _mock_async_client(_ok_response(payload))
-        with patch("clearledgr.integrations.erp_netsuite.get_http_client", return_value=mock_client):
-            with patch("clearledgr.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
+        with patch("solden.integrations.erp_netsuite.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_netsuite._oauth_header", return_value="OAuth fake"):
                 result = asyncio.run(get_chart_of_accounts_netsuite(_netsuite_connection()))
 
         assert len(result) == 3
@@ -301,12 +301,12 @@ class TestChartOfAccountsSAP:
         }
 
         with patch(
-            "clearledgr.integrations.erp_sap._open_sap_service_layer_session",
+            "solden.integrations.erp_sap._open_sap_service_layer_session",
             new_callable=AsyncMock,
             return_value=session_resp,
         ):
             mock_client = _mock_async_client(_ok_response(coa_payload))
-            with patch("clearledgr.integrations.erp_sap.get_http_client", return_value=mock_client):
+            with patch("solden.integrations.erp_sap.get_http_client", return_value=mock_client):
                 result = asyncio.run(get_chart_of_accounts_sap(_sap_connection()))
 
         assert len(result) == 2
@@ -343,7 +343,7 @@ class TestChartOfAccountsDispatcher:
 
         mock_fetcher = AsyncMock(return_value=mock_accounts)
         with patch.dict(
-            "clearledgr.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
+            "solden.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
             {"quickbooks": mock_fetcher},
         ):
             result = asyncio.run(get_chart_of_accounts(org_id))
@@ -380,7 +380,7 @@ class TestChartOfAccountsDispatcher:
         )
 
         with patch(
-            "clearledgr.integrations.erp_router.get_chart_of_accounts_quickbooks",
+            "solden.integrations.erp_router.get_chart_of_accounts_quickbooks",
             new_callable=AsyncMock,
         ) as mock_fetch:
             result = asyncio.run(get_chart_of_accounts(org_id))
@@ -414,7 +414,7 @@ class TestChartOfAccountsDispatcher:
 
         mock_fetcher = AsyncMock(return_value=fresh_accounts)
         with patch.dict(
-            "clearledgr.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
+            "solden.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
             {"quickbooks": mock_fetcher},
         ):
             result = asyncio.run(get_chart_of_accounts(org_id))
@@ -447,7 +447,7 @@ class TestChartOfAccountsDispatcher:
 
         mock_fetcher = AsyncMock(return_value=fresh_accounts)
         with patch.dict(
-            "clearledgr.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
+            "solden.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
             {"xero": mock_fetcher},
         ):
             result = asyncio.run(get_chart_of_accounts(org_id, force_refresh=True))
@@ -472,7 +472,7 @@ class TestChartOfAccountsDispatcher:
 
         mock_fetcher = AsyncMock(side_effect=Exception("network error"))
         with patch.dict(
-            "clearledgr.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
+            "solden.integrations.erp_router._CHART_OF_ACCOUNTS_FETCHERS",
             {"quickbooks": mock_fetcher},
         ):
             result = asyncio.run(get_chart_of_accounts(org_id))
@@ -488,7 +488,7 @@ class TestAccountTypeNormalization:
     """Verify that raw ERP account types map to the standard set."""
 
     def test_quickbooks_type_mapping(self):
-        from clearledgr.integrations.erp_quickbooks import _QB_ACCOUNT_TYPE_MAP
+        from solden.integrations.erp_quickbooks import _QB_ACCOUNT_TYPE_MAP
         assert _QB_ACCOUNT_TYPE_MAP["expense"] == "expense"
         assert _QB_ACCOUNT_TYPE_MAP["income"] == "revenue"
         assert _QB_ACCOUNT_TYPE_MAP["bank"] == "asset"
@@ -496,7 +496,7 @@ class TestAccountTypeNormalization:
         assert _QB_ACCOUNT_TYPE_MAP["equity"] == "equity"
 
     def test_xero_type_mapping(self):
-        from clearledgr.integrations.erp_xero import _XERO_ACCOUNT_TYPE_MAP
+        from solden.integrations.erp_xero import _XERO_ACCOUNT_TYPE_MAP
         assert _XERO_ACCOUNT_TYPE_MAP["expense"] == "expense"
         assert _XERO_ACCOUNT_TYPE_MAP["revenue"] == "revenue"
         assert _XERO_ACCOUNT_TYPE_MAP["bank"] == "asset"
@@ -504,7 +504,7 @@ class TestAccountTypeNormalization:
         assert _XERO_ACCOUNT_TYPE_MAP["equity"] == "equity"
 
     def test_netsuite_type_mapping(self):
-        from clearledgr.integrations.erp_netsuite import _NS_ACCOUNT_TYPE_MAP
+        from solden.integrations.erp_netsuite import _NS_ACCOUNT_TYPE_MAP
         assert _NS_ACCOUNT_TYPE_MAP["expense"] == "expense"
         assert _NS_ACCOUNT_TYPE_MAP["income"] == "revenue"
         assert _NS_ACCOUNT_TYPE_MAP["bank"] == "asset"
@@ -512,7 +512,7 @@ class TestAccountTypeNormalization:
         assert _NS_ACCOUNT_TYPE_MAP["equity"] == "equity"
 
     def test_sap_group_code_mapping(self):
-        from clearledgr.integrations.erp_sap import _SAP_GROUP_CODE_MAP
+        from solden.integrations.erp_sap import _SAP_GROUP_CODE_MAP
         assert _SAP_GROUP_CODE_MAP["5"] == "expense"
         assert _SAP_GROUP_CODE_MAP["4"] == "revenue"
         assert _SAP_GROUP_CODE_MAP["1"] == "asset"
@@ -628,18 +628,18 @@ class TestChartOfAccountsEndpoint:
              "sub_type": "", "active": False, "currency": "USD"},
         ]
 
-        from clearledgr.api.workspace_shell import get_chart_of_accounts_endpoint
+        from solden.api.workspace_shell import get_chart_of_accounts_endpoint
 
         mock_user = MagicMock()
         mock_user.organization_id = org_id
         mock_user.role = "admin"
 
         with patch(
-            "clearledgr.api.workspace_shell._resolve_org_id",
+            "solden.api.workspace_shell._resolve_org_id",
             return_value=org_id,
         ):
             with patch(
-                "clearledgr.integrations.erp_router.get_chart_of_accounts",
+                "solden.integrations.erp_router.get_chart_of_accounts",
                 new_callable=AsyncMock,
                 return_value=mock_accounts,
             ):
@@ -668,15 +668,15 @@ class TestChartOfAccountsEndpoint:
              "sub_type": "", "active": True, "currency": ""},
         ]
 
-        from clearledgr.api.workspace_shell import get_chart_of_accounts_endpoint
+        from solden.api.workspace_shell import get_chart_of_accounts_endpoint
 
         mock_user = MagicMock()
         mock_user.organization_id = org_id
         mock_user.role = "admin"
 
-        with patch("clearledgr.api.workspace_shell._resolve_org_id", return_value=org_id):
+        with patch("solden.api.workspace_shell._resolve_org_id", return_value=org_id):
             with patch(
-                "clearledgr.integrations.erp_router.get_chart_of_accounts",
+                "solden.integrations.erp_router.get_chart_of_accounts",
                 new_callable=AsyncMock,
                 return_value=mock_accounts,
             ):

@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from clearledgr.services.rate_limit import (
+from solden.services.rate_limit import (
     _check_rate_limit_memory,
     _rate_limit_store,
     check_rate_limit,
@@ -46,7 +46,7 @@ def test_memory_backend_rejects_over_limit():
 
 def test_check_rate_limit_disabled():
     """When rate limiting is disabled, all requests pass."""
-    with patch("clearledgr.services.rate_limit.RATE_LIMIT_ENABLED", False):
+    with patch("solden.services.rate_limit.RATE_LIMIT_ENABLED", False):
         allowed, remaining, _ = check_rate_limit("any-client")
         assert allowed is True
         assert remaining == RATE_LIMIT_REQUESTS
@@ -82,7 +82,7 @@ def test_client_identifier_falls_back_to_ip():
 # ---------------------------------------------------------------------------
 
 
-@patch("clearledgr.services.rate_limit.RATE_LIMIT_REQUESTS", 3)
+@patch("solden.services.rate_limit.RATE_LIMIT_REQUESTS", 3)
 def test_rate_limit_429_on_exceeded():
     """Middleware should return 429 when limit is exceeded."""
     from main import app
@@ -120,7 +120,7 @@ def test_excluded_paths_bypass_rate_limit():
 
 def test_production_backend_requires_redis_by_default(monkeypatch):
     """Production-like ENV must fail startup if Redis limiter is unavailable."""
-    import clearledgr.services.rate_limit as rate_limit
+    import solden.services.rate_limit as rate_limit
 
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", raising=False)
@@ -134,7 +134,7 @@ def test_production_backend_requires_redis_by_default(monkeypatch):
 
 def test_production_backend_can_use_explicit_override(monkeypatch):
     """Escape hatch should be explicit and visible via backend status."""
-    import clearledgr.services.rate_limit as rate_limit
+    import solden.services.rate_limit as rate_limit
 
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", "true")
@@ -149,7 +149,7 @@ def test_production_backend_can_use_explicit_override(monkeypatch):
 
 def test_check_rate_limit_fails_closed_in_production_without_redis(monkeypatch):
     """Runtime requests must be denied when production limiter backend is unavailable."""
-    import clearledgr.services.rate_limit as rate_limit
+    import solden.services.rate_limit as rate_limit
 
     monkeypatch.setenv("ENV", "production")
     monkeypatch.delenv("AP_V1_ALLOW_IN_MEMORY_RATE_LIMIT_IN_PRODUCTION", raising=False)

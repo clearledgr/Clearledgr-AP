@@ -19,8 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import _apply_runtime_surface_profile, app
-from clearledgr.core import database as db_module
-from clearledgr.core.auth import create_access_token
+from solden.core import database as db_module
+from solden.core.auth import create_access_token
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ def test_metadata_merge_concurrent_safe(db):
 
 def test_approval_reminder_no_duplicate(db, monkeypatch):
     """Approval reminders already stored in metadata milestones are NOT re-sent."""
-    from clearledgr.services import agent_background
+    from solden.services import agent_background
 
     item_id = "dup-remind-1"
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -243,7 +243,7 @@ def test_approval_reminder_no_duplicate(db, monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "clearledgr.services.slack_notifications.send_approval_reminder",
+        "solden.services.slack_notifications.send_approval_reminder",
         _mock_send_reminder,
     )
 

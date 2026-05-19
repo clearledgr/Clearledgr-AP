@@ -12,8 +12,8 @@ still work because normalize_user_role upgrades them in place.
 
 from __future__ import annotations
 
-from clearledgr.api.workspace_shell import TeamInviteCreateRequest
-from clearledgr.core.auth import (
+from solden.api.workspace_shell import TeamInviteCreateRequest
+from solden.core.auth import (
     ROLE_AP_CLERK,
     ROLE_AP_MANAGER,
     ROLE_CFO,

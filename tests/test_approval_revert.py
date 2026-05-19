@@ -26,11 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import box_revert_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.ap_states import APState, validate_transition  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services.approval_revert import (  # noqa: E402
+from solden.api import box_revert_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.ap_states import APState, validate_transition  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services.approval_revert import (  # noqa: E402
     attempt_approval_revert,
 )
 

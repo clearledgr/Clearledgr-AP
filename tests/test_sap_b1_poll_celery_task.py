@@ -23,9 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.services import celery_app as celery_app_module  # noqa: E402
-from clearledgr.services import celery_tasks as celery_tasks_module  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.services import celery_app as celery_app_module  # noqa: E402
+from solden.services import celery_tasks as celery_tasks_module  # noqa: E402
 
 
 # ─── Beat registration ────────────────────────────────────────────
@@ -94,7 +94,7 @@ def test_task_walks_only_sap_orgs(db):
         }
 
     with patch(
-        "clearledgr.services.erp_payment_dispatcher.poll_sap_b1_payments",
+        "solden.services.erp_payment_dispatcher.poll_sap_b1_payments",
         new=fake_poll,
     ):
         result = celery_tasks_module.poll_sap_b1_payments_all_orgs()
@@ -119,7 +119,7 @@ def test_per_org_error_does_not_block_others(db):
         }
 
     with patch(
-        "clearledgr.services.erp_payment_dispatcher.poll_sap_b1_payments",
+        "solden.services.erp_payment_dispatcher.poll_sap_b1_payments",
         new=selective_poll,
     ):
         result = celery_tasks_module.poll_sap_b1_payments_all_orgs()
@@ -139,7 +139,7 @@ def test_aggregation_totals(db):
         }
 
     with patch(
-        "clearledgr.services.erp_payment_dispatcher.poll_sap_b1_payments",
+        "solden.services.erp_payment_dispatcher.poll_sap_b1_payments",
         new=fake_poll,
     ):
         result = celery_tasks_module.poll_sap_b1_payments_all_orgs()
@@ -157,7 +157,7 @@ def test_no_sap_orgs_returns_empty_summary(db):
         return {"polled": 0, "events_dispatched": 0, "duplicates": 0, "errors": 0}
 
     with patch(
-        "clearledgr.services.erp_payment_dispatcher.poll_sap_b1_payments",
+        "solden.services.erp_payment_dispatcher.poll_sap_b1_payments",
         new=fake_poll,
     ):
         result = celery_tasks_module.poll_sap_b1_payments_all_orgs()

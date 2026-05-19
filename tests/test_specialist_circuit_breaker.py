@@ -20,21 +20,21 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from clearledgr.services.specialist_agent import (
+from solden.services.specialist_agent import (
     SPECIALIST_STATUS_ERROR,
     SPECIALIST_STATUS_OK,
     SPECIALIST_STATUS_QUARANTINED,
     SPECIALIST_STATUS_UNROUTED,
     SpecialistAgent,
 )
-from clearledgr.services.specialist_circuit_breaker import (
+from solden.services.specialist_circuit_breaker import (
     BREAKER_STATE_CLOSED,
     BREAKER_STATE_HALF_OPEN,
     BREAKER_STATE_OPEN,
     BreakerConfig,
     SpecialistCircuitBreaker,
 )
-from clearledgr.services.specialist_router import SpecialistRouter
+from solden.services.specialist_router import SpecialistRouter
 
 
 # ─── Fakes ─────────────────────────────────────────────────────────
@@ -312,7 +312,7 @@ def test_router_emits_per_dispatch_metric_with_outcome(caplog):
     metrics logger so ops dashboards can aggregate without parsing.
     """
     import logging as _logging
-    target = _logging.getLogger("clearledgr.services.specialist_router.metrics")
+    target = _logging.getLogger("solden.services.specialist_router.metrics")
     prior_level = target.level
     prior_propagate = target.propagate
     target.setLevel(_logging.INFO)
@@ -324,10 +324,10 @@ def test_router_emits_per_dispatch_metric_with_outcome(caplog):
 
     try:
         caplog.set_level(_logging.INFO,
-                         logger="clearledgr.services.specialist_router.metrics")
+                         logger="solden.services.specialist_router.metrics")
         asyncio.run(router.dispatch(runtime=object(), intent="approve"))
         records = [r for r in caplog.records
-                   if r.name == "clearledgr.services.specialist_router.metrics"]
+                   if r.name == "solden.services.specialist_router.metrics"]
         assert records, "expected at least one metric record"
         rec = records[-1]
         # Structured fields on the record (extra=...).
@@ -342,7 +342,7 @@ def test_router_emits_per_dispatch_metric_with_outcome(caplog):
 
 def test_router_emits_metric_on_quarantined_dispatch(caplog):
     import logging as _logging
-    target = _logging.getLogger("clearledgr.services.specialist_router.metrics")
+    target = _logging.getLogger("solden.services.specialist_router.metrics")
     target.setLevel(_logging.INFO)
     target.propagate = True
 
@@ -357,11 +357,11 @@ def test_router_emits_metric_on_quarantined_dispatch(caplog):
     asyncio.run(router.dispatch(runtime=object(), intent="check"))
 
     caplog.set_level(_logging.INFO,
-                     logger="clearledgr.services.specialist_router.metrics")
+                     logger="solden.services.specialist_router.metrics")
     asyncio.run(router.dispatch(runtime=object(), intent="check"))
 
     records = [r for r in caplog.records
-               if r.name == "clearledgr.services.specialist_router.metrics"
+               if r.name == "solden.services.specialist_router.metrics"
                and getattr(r, "outcome", "") == SPECIALIST_STATUS_QUARANTINED]
     assert records
     assert records[-1].error_type == "breaker_open"

@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
-from clearledgr.core import database as db_module
+from solden.core import database as db_module
 
 
 @pytest.fixture()
@@ -129,7 +129,7 @@ class _InvoiceStub:
 
 
 def test_approval_routing_passes_invoice_context_for_gl_filtering(db):
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -167,7 +167,7 @@ def test_approval_routing_passes_invoice_context_for_gl_filtering(db):
 
 
 def test_approval_routing_preserves_structured_approver_targets(db):
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -200,7 +200,7 @@ def test_approval_routing_preserves_structured_approver_targets(db):
 
 
 def test_approval_routing_falls_back_to_amount_only_without_invoice(db):
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -232,7 +232,7 @@ def test_approval_routing_falls_back_to_amount_only_without_invoice(db):
 
 
 def test_approval_routing_vendor_and_department_filters(db):
-    from clearledgr.services.invoice_workflow import InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -265,7 +265,7 @@ def test_approval_routing_vendor_and_department_filters(db):
 
 
 def test_segregation_of_duties_blocks_submitter_from_approving():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_segregation_of_duties,
         resolve_action_precedence,
@@ -298,7 +298,7 @@ def test_segregation_of_duties_blocks_submitter_from_approving():
 
 
 def test_segregation_of_duties_allows_different_approver():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_segregation_of_duties,
         resolve_action_precedence,
@@ -330,7 +330,7 @@ def test_segregation_of_duties_allows_different_approver():
 
 
 def test_segregation_of_duties_allows_rejection_by_submitter():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_segregation_of_duties,
     )
@@ -357,7 +357,7 @@ def test_segregation_of_duties_allows_rejection_by_submitter():
 
 
 def test_segregation_of_duties_case_insensitive():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_segregation_of_duties,
     )
@@ -383,7 +383,7 @@ def test_segregation_of_duties_case_insensitive():
 
 
 def test_approver_authorization_blocks_unauthorized_actor():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
         resolve_action_precedence,
@@ -417,7 +417,7 @@ def test_approver_authorization_blocks_unauthorized_actor():
 
 
 def test_approver_authorization_allows_named_approver():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
         resolve_action_precedence,
@@ -449,7 +449,7 @@ def test_approver_authorization_allows_named_approver():
 
 
 def test_approver_authorization_allows_anyone_when_no_named_approvers():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
     )
@@ -477,7 +477,7 @@ def test_approver_authorization_allows_anyone_when_no_named_approvers():
 
 
 def test_approver_authorization_case_insensitive():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
     )
@@ -504,7 +504,7 @@ def test_approver_authorization_case_insensitive():
 
 
 def test_approver_authorization_allows_rejection_by_non_approver():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
     )
@@ -532,7 +532,7 @@ def test_approver_authorization_allows_rejection_by_non_approver():
 
 
 def test_approver_authorization_teams_actor_id_is_email():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         check_approver_authorization,
     )
@@ -560,7 +560,7 @@ def test_approver_authorization_teams_actor_id_is_email():
 
 def test_sod_checked_before_authorization():
     """SoD blocks before authorization check — submitter can't approve even if named."""
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         resolve_action_precedence,
     )
@@ -593,7 +593,7 @@ def test_sod_checked_before_authorization():
 
 
 def test_approval_action_precedence_prefers_duplicate_before_stale():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         resolve_action_precedence,
     )
@@ -625,7 +625,7 @@ def test_approval_action_precedence_prefers_duplicate_before_stale():
 
 
 def test_approval_action_precedence_marks_superseded_states_as_stale():
-    from clearledgr.core.approval_action_contract import (
+    from solden.core.approval_action_contract import (
         NormalizedApprovalAction,
         resolve_action_precedence,
     )
@@ -656,8 +656,8 @@ def test_approval_action_precedence_marks_superseded_states_as_stale():
 
 
 def test_slack_and_teams_card_builders_include_request_info_action():
-    from clearledgr.services.slack_api import SlackAPIClient
-    from clearledgr.services.teams_api import TeamsAPIClient
+    from solden.services.slack_api import SlackAPIClient
+    from solden.services.teams_api import TeamsAPIClient
 
     slack_blocks = SlackAPIClient.build_approval_blocks(
         title="Invoice Approval",
@@ -714,7 +714,7 @@ def test_slack_and_teams_card_builders_include_request_info_action():
 
 
 def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_budget_paths(monkeypatch, db):
-    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -795,7 +795,7 @@ def test_invoice_workflow_slack_blocks_include_request_info_for_standard_and_bud
 
 
 def test_approval_surface_copy_tunes_what_happens_next_for_confidence_validation_and_duplicate(db):
-    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -837,7 +837,7 @@ def test_approval_surface_copy_tunes_what_happens_next_for_confidence_validation
 
 
 def test_approval_surface_copy_tunes_budget_hard_block_next_steps(db):
-    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -872,7 +872,7 @@ def test_approval_surface_copy_tunes_budget_hard_block_next_steps(db):
 
 
 def test_approval_surface_copy_uses_po_and_vendor_queue_context_in_why_summary(db):
-    from clearledgr.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
+    from solden.services.invoice_workflow import InvoiceData, InvoiceWorkflowService
 
     svc = InvoiceWorkflowService(organization_id="org-test")
     svc.db = db
@@ -917,7 +917,7 @@ def test_slack_interactive_rejects_invalid_signature_and_audits(monkeypatch, cli
     async def _raise_invalid(_request):
         raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _raise_invalid)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _raise_invalid)
     payload = {
         "user": {"id": "U1", "username": "approver"},
         "channel": {"id": "C1"},
@@ -949,7 +949,7 @@ def test_slack_interactive_invalid_payload_audits(monkeypatch, client, db):
     async def _return_body(request):
         return await request.body()
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
 
     malformed_body = b"payload=%7Bnot-json"
     response = client.post(
@@ -981,11 +981,11 @@ def test_slack_interactive_request_info_duplicate_and_stale(monkeypatch, client,
     async def _return_body(request):
         return await request.body()
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-1",
@@ -1062,9 +1062,9 @@ def test_slack_interactive_response_url_path_acks_fast_and_completes_in_backgrou
         })
         return True
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._post_to_response_url", _fake_post)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._post_to_response_url", _fake_post)
 
     payload = {
         "callback_id": "run-slack-response-url-1",
@@ -1119,9 +1119,9 @@ def test_slack_interactive_forwards_resolved_actor_identity(monkeypatch, client,
             "slack_user_id": "U_MO",
         }
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._resolve_slack_actor_identity", _fake_identity)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._resolve_slack_actor_identity", _fake_identity)
 
     payload = {
         "callback_id": "run-slack-actor-identity-1",
@@ -1174,9 +1174,9 @@ def test_legacy_slack_interactions_alias_routes_to_same_handler(monkeypatch, cli
     async def _fake_post(response_url, payload, *, organization_id="org-test", ap_item_id=None):
         return True
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._post_to_response_url", _fake_post)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._post_to_response_url", _fake_post)
 
     payload = {
         "callback_id": "run-slack-legacy-alias-1",
@@ -1211,11 +1211,11 @@ def test_slack_interactive_duplicate_storm_is_idempotent(monkeypatch, client, db
     async def _return_body(request):
         return await request.body()
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-storm-1",
@@ -1263,8 +1263,8 @@ def test_slack_interactive_approve_surfaces_field_review_block(monkeypatch, clie
             "result": {"status": "blocked", "reason": "field_review_required"},
         }
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-field-review-1",
@@ -1326,7 +1326,7 @@ def test_teams_interactive_invalid_payload_audits(monkeypatch, client, db):
 
     monkeypatch.setattr(db, "append_audit_event", _spy_append)
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices._verify_teams_token",
+        "solden.api.teams_invoices._verify_teams_token",
         lambda _auth: _stub_teams_claims(),
     )
 
@@ -1355,13 +1355,13 @@ def test_teams_interactive_common_contract_request_info_duplicate_invalid_and_st
     item = _create_ap_item(db, gmail_id="thread-teams-1")
     runtime = _RuntimeStub()
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices._verify_teams_token",
+        "solden.api.teams_invoices._verify_teams_token",
         lambda _auth: _stub_teams_claims(),
     )
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.teams_invoices._dispatch_runtime_intent", _runtime_execute)
 
     headers = {"Authorization": "Bearer test-token"}
     payload = {
@@ -1425,7 +1425,7 @@ def test_teams_interactive_marks_superseded_approval_cards_as_stale(monkeypatch,
     db.update_ap_item(item["id"], state="approved")
 
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices._verify_teams_token",
+        "solden.api.teams_invoices._verify_teams_token",
         lambda _auth: _stub_teams_claims(),
     )
 
@@ -1470,11 +1470,11 @@ def test_slack_interactive_blocks_actions_when_rollout_control_disables_slack(mo
     async def _return_body(request):
         return await request.body()
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._require_slack_signature", _return_body)
+    monkeypatch.setattr("solden.api.slack_invoices._require_slack_signature", _return_body)
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    monkeypatch.setattr("clearledgr.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.slack_invoices._dispatch_runtime_intent", _runtime_execute)
 
     payload = {
         "callback_id": "run-slack-blocked-1",
@@ -1520,13 +1520,13 @@ def test_teams_interactive_blocks_actions_when_rollout_control_disables_teams(mo
     )
     runtime = _RuntimeStub()
     monkeypatch.setattr(
-        "clearledgr.api.teams_invoices._verify_teams_token",
+        "solden.api.teams_invoices._verify_teams_token",
         lambda _auth: _stub_teams_claims(),
     )
     async def _runtime_execute(self, intent, payload=None, *, idempotency_key=None):
         return await runtime.execute_intent(intent, payload, idempotency_key=idempotency_key)
 
-    monkeypatch.setattr("clearledgr.api.teams_invoices._dispatch_runtime_intent", _runtime_execute)
+    monkeypatch.setattr("solden.api.teams_invoices._dispatch_runtime_intent", _runtime_execute)
 
     response = client.post(
         "/teams/invoices/interactive",

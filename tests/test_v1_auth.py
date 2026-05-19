@@ -17,14 +17,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from clearledgr.api.v1_auth import (
+from solden.api.v1_auth import (
     AgentIdentity,
     _parse_scopes,
     _row_is_expired,
     _row_is_revoked,
     resolve_agent_key,
 )
-from clearledgr.core.authorization import AuthorizationDenied
+from solden.core.authorization import AuthorizationDenied
 
 
 # ─── AgentIdentity ──────────────────────────────────────────────

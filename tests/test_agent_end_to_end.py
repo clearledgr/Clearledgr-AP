@@ -8,11 +8,11 @@ import asyncio
 
 import pytest
 
-from clearledgr.core.database import get_db
-from clearledgr.core.events import AgentEvent, AgentEventType
-from clearledgr.core.coordination_engine import CoordinationEngine
-from clearledgr.core.planning_engine import DeterministicPlanningEngine
-from clearledgr.core.plan import Action, Plan
+from solden.core.database import get_db
+from solden.core.events import AgentEvent, AgentEventType
+from solden.core.coordination_engine import CoordinationEngine
+from solden.core.planning_engine import DeterministicPlanningEngine
+from solden.core.plan import Action, Plan
 
 
 @pytest.fixture
@@ -133,7 +133,7 @@ class TestEventQueueIntegration:
 
     def test_in_memory_queue_claim_order(self):
         """Claim returns high_priority events first."""
-        from clearledgr.core.event_queue import InMemoryEventQueue
+        from solden.core.event_queue import InMemoryEventQueue
         queue = InMemoryEventQueue()
 
         standard = AgentEvent(

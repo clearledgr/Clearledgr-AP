@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from clearledgr.services import agent_retry_jobs as retry_jobs_module
-from clearledgr.services.finance_agent_runtime import FinanceAgentRuntime
+from solden.services import agent_retry_jobs as retry_jobs_module
+from solden.services.finance_agent_runtime import FinanceAgentRuntime
 
 
 class _FakeRetryDB:
@@ -77,7 +77,7 @@ def test_runtime_resume_pending_agent_tasks_uses_retry_drain(monkeypatch):
         return {"claimed": 1, "completed": 1, "rescheduled": 0, "dead_letter": 0}
 
     monkeypatch.setattr(
-        "clearledgr.services.agent_retry_jobs.drain_agent_retry_jobs",
+        "solden.services.agent_retry_jobs.drain_agent_retry_jobs",
         _fake_drain,
     )
 

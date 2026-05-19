@@ -42,8 +42,8 @@ pytestmark = _vo_skip_pytest.mark.skip(
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    from clearledgr.core.database import get_db
-    from clearledgr.core import database as db_module
+    from solden.core.database import get_db
+    from solden.core import database as db_module
 
     db = get_db()
     db.initialize()
@@ -67,7 +67,7 @@ def _seed_vendor(db, org="org_t", vendor="Acme Ltd", **kwargs):
 class TestStateMachineEnum:
 
     def test_all_thesis_stages_present(self):
-        from clearledgr.core.vendor_onboarding_states import VendorOnboardingState
+        from solden.core.vendor_onboarding_states import VendorOnboardingState
         # DESIGN_THESIS.md §9 names four stages — Invited, KYC, Bank
         # Verify, Active. The enum has those plus operational sub-states.
         members = {s.value for s in VendorOnboardingState}
@@ -93,7 +93,7 @@ class TestStateMachineEnum:
         assert "microdeposit_pending" not in members
 
     def test_terminal_states_have_no_outbound_edges(self):
-        from clearledgr.core.vendor_onboarding_states import (
+        from solden.core.vendor_onboarding_states import (
             TERMINAL_STATES,
             VALID_TRANSITIONS,
         )
@@ -101,7 +101,7 @@ class TestStateMachineEnum:
             assert VALID_TRANSITIONS[state] == frozenset()
 
     def test_pre_active_states_excludes_terminal_and_recovery(self):
-        from clearledgr.core.vendor_onboarding_states import (
+        from solden.core.vendor_onboarding_states import (
             PRE_ACTIVE_STATES,
             VendorOnboardingState,
         )
@@ -120,7 +120,7 @@ class TestStateMachineEnum:
 class TestValidTransitions:
 
     def test_happy_path_invited_to_active(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
+        from solden.core.vendor_onboarding_states import validate_transition
         path = [
             ("invited", "kyc"),
             ("kyc", "bank_verify"),
@@ -132,7 +132,7 @@ class TestValidTransitions:
             assert validate_transition(current, target), f"{current}->{target}"
 
     def test_skip_stages_blocked(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
+        from solden.core.vendor_onboarding_states import validate_transition
         # Cannot leap from invited straight to active
         assert not validate_transition("invited", "active")
         # Cannot skip bank verification
@@ -140,7 +140,7 @@ class TestValidTransitions:
         assert not validate_transition("kyc", "bank_verified")
 
     def test_terminal_states_have_no_forward_edges(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
+        from solden.core.vendor_onboarding_states import validate_transition
         # active is terminal — no escape
         assert not validate_transition("active", "invited")
         assert not validate_transition("active", "blocked")
@@ -153,7 +153,7 @@ class TestValidTransitions:
         assert not validate_transition("abandoned", "invited")
 
     def test_escalated_can_recover_to_any_pre_active(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
+        from solden.core.vendor_onboarding_states import validate_transition
         for target in (
             "invited",
             "kyc",
@@ -164,20 +164,20 @@ class TestValidTransitions:
             assert validate_transition("blocked", target), f"escalated->{target}"
 
     def test_unknown_states_rejected(self):
-        from clearledgr.core.vendor_onboarding_states import validate_transition
+        from solden.core.vendor_onboarding_states import validate_transition
         assert not validate_transition("unknown", "active")
         assert not validate_transition("invited", "made_up_state")
         assert not validate_transition("", "invited")
 
     def test_normalize_state_lowercases_and_strips(self):
-        from clearledgr.core.vendor_onboarding_states import normalize_state
+        from solden.core.vendor_onboarding_states import normalize_state
         assert normalize_state("  INVITED ") == "invited"
         assert normalize_state("Awaiting_KYC") == "kyc"
         # Unknown values pass through unchanged for downstream rejection
         assert normalize_state("garbage") == "garbage"
 
     def test_transition_or_raise_includes_session_id(self):
-        from clearledgr.core.vendor_onboarding_states import (
+        from solden.core.vendor_onboarding_states import (
             IllegalVendorOnboardingTransitionError,
             transition_or_raise,
         )
@@ -189,7 +189,7 @@ class TestValidTransitions:
         assert "active" in str(ei.value)
 
     def test_predicates(self):
-        from clearledgr.core.vendor_onboarding_states import is_pre_active, is_terminal
+        from solden.core.vendor_onboarding_states import is_pre_active, is_terminal
         assert is_terminal("active") is True
         assert is_terminal("closed_unsuccessful") is True
         # Legacy aliases — normalize to closed_unsuccessful which is terminal.
@@ -253,7 +253,7 @@ class TestMigrationV17:
             assert col in columns, f"missing column {col}"
 
     def test_migration_v17_idempotent(self, tmp_db):
-        from clearledgr.core.migrations import _MIGRATIONS
+        from solden.core.migrations import _MIGRATIONS
         m17 = next(m for m in _MIGRATIONS if m[0] == 17)
         with tmp_db.connect() as conn:
             conn.autocommit = True
@@ -398,7 +398,7 @@ class TestStateTransitions:
         assert second["state"] == "invited"
 
     def test_illegal_transition_raises(self, tmp_db):
-        from clearledgr.core.vendor_onboarding_states import (
+        from solden.core.vendor_onboarding_states import (
             IllegalVendorOnboardingTransitionError,
         )
         org, vendor = _seed_vendor(tmp_db)
@@ -633,7 +633,7 @@ class TestAuditEmission:
 class TestVendorSuggestionPayload:
 
     def test_empty_when_no_vendors(self, tmp_db):
-        from clearledgr.services.gmail_extension_support import (
+        from solden.services.gmail_extension_support import (
             build_vendor_suggestion_payload,
         )
         tmp_db.create_organization("org_t", name="X")
@@ -646,7 +646,7 @@ class TestVendorSuggestionPayload:
         assert result["is_new_vendor"] is True
 
     def test_extraction_match_above_threshold(self, tmp_db):
-        from clearledgr.services.gmail_extension_support import (
+        from solden.services.gmail_extension_support import (
             build_vendor_suggestion_payload,
         )
         tmp_db.create_organization("org_t", name="X")
@@ -661,7 +661,7 @@ class TestVendorSuggestionPayload:
         assert result["has_suggestion"] is True
 
     def test_email_domain_match(self, tmp_db):
-        from clearledgr.services.gmail_extension_support import (
+        from solden.services.gmail_extension_support import (
             build_vendor_suggestion_payload,
         )
         tmp_db.create_organization("org_t", name="X")
@@ -678,7 +678,7 @@ class TestVendorSuggestionPayload:
         assert result["primary"]["source"] == "email_domain"
 
     def test_no_double_count_same_vendor(self, tmp_db):
-        from clearledgr.services.gmail_extension_support import (
+        from solden.services.gmail_extension_support import (
             build_vendor_suggestion_payload,
         )
         tmp_db.create_organization("org_t", name="X")
@@ -698,7 +698,7 @@ class TestVendorSuggestionPayload:
         assert all_names.count("Acme Ltd") == 1
 
     def test_unrelated_vendor_not_returned(self, tmp_db):
-        from clearledgr.services.gmail_extension_support import (
+        from solden.services.gmail_extension_support import (
             build_vendor_suggestion_payload,
         )
         tmp_db.create_organization("org_t", name="X")
@@ -714,4 +714,4 @@ class TestVendorSuggestionPayload:
     def test_vendor_management_module_is_gone(self):
         """The deleted in-memory module must not be importable."""
         with pytest.raises(ImportError):
-            import clearledgr.services.vendor_management  # noqa: F401
+            import solden.services.vendor_management  # noqa: F401

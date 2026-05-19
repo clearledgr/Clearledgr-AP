@@ -43,8 +43,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.core.events import AgentEvent, AgentEventType  # noqa: E402
-from clearledgr.core.planning_engine import (  # noqa: E402
+from solden.core.events import AgentEvent, AgentEventType  # noqa: E402
+from solden.core.planning_engine import (  # noqa: E402
     DeterministicPlanningEngine,
     _DEPRECATED_VO_EVENTS,
 )

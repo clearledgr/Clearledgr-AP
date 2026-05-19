@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 
-from clearledgr.core.auth import TokenData, _reconcile_token_data
+from solden.core.auth import TokenData, _reconcile_token_data
 
 
 class _DummyDb:
@@ -23,7 +23,7 @@ def test_reconcile_token_data_prefers_canonical_user_role(monkeypatch):
         "role": "admin",
     }
     monkeypatch.setattr(
-        "clearledgr.core.auth._get_db",
+        "solden.core.auth._get_db",
         lambda: _DummyDb(by_id={"USR-admin": canonical}),
     )
     token_data = TokenData(
@@ -56,7 +56,7 @@ def test_reconcile_token_data_falls_back_to_email_when_user_id_is_stale(monkeypa
         "role": "admin",
     }
     monkeypatch.setattr(
-        "clearledgr.core.auth._get_db",
+        "solden.core.auth._get_db",
         lambda: _DummyDb(by_email={"mo@clearledgr.com": canonical}),
     )
     token_data = TokenData(

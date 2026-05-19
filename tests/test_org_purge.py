@@ -28,7 +28,7 @@ def fresh_db(monkeypatch):
     tmp.close()
     monkeypatch.setenv("CLEARLEDGR_DB_PATH", tmp.name)
     # Reset the module-level singleton so get_db() picks up the new path.
-    import clearledgr.core.database as db_module
+    import solden.core.database as db_module
     db_module._DB_INSTANCE = None
     db = db_module.get_db()
     yield db

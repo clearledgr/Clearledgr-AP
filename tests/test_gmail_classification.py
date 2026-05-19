@@ -1,6 +1,6 @@
 
-from clearledgr.services.ap_classifier import classify_ap_email
-from clearledgr.services.email_parser import EmailParser
+from solden.services.ap_classifier import classify_ap_email
+from solden.services.email_parser import EmailParser
 
 
 def test_invoice_classification():

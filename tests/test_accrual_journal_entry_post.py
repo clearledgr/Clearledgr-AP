@@ -36,14 +36,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from clearledgr.api import accrual_journal_entry as accrual_routes  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import get_current_user  # noqa: E402
-from clearledgr.services import celery_app as celery_app_module  # noqa: E402
-from clearledgr.services.accrual_journal_entry import (  # noqa: E402
+from solden.api import accrual_journal_entry as accrual_routes  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import get_current_user  # noqa: E402
+from solden.services import celery_app as celery_app_module  # noqa: E402
+from solden.services.accrual_journal_entry import (  # noqa: E402
     build_accrual_je_proposal,
 )
-from clearledgr.services.accrual_journal_entry_post import (  # noqa: E402
+from solden.services.accrual_journal_entry_post import (  # noqa: E402
     _proposal_to_erp_entry,
     _proposal_to_reversal_entry,
     get_accrual_run,
@@ -51,7 +51,7 @@ from clearledgr.services.accrual_journal_entry_post import (  # noqa: E402
     post_pending_reversals,
     run_month_end_close,
 )
-from clearledgr.services.purchase_orders import (  # noqa: E402
+from solden.services.purchase_orders import (  # noqa: E402
     get_purchase_order_service,
 )
 
@@ -114,7 +114,7 @@ def _seed_po_and_gr(
         }],
         currency="USD",
     )
-    from clearledgr.services.purchase_orders import _po_to_store_dict
+    from solden.services.purchase_orders import _po_to_store_dict
     svc._db.save_purchase_order(_po_to_store_dict(po))
     svc.approve_po(po.po_id, approved_by="ops@" + org)
     gr = svc.create_goods_receipt(
@@ -194,7 +194,7 @@ def _patch_post_je(success: bool = True, entry_id: str = "ERP-JE-1"):
             "reason": "rate_limited",
         }
     return patch(
-        "clearledgr.integrations.erp_router.post_journal_entry",
+        "solden.integrations.erp_router.post_journal_entry",
         new=fake,
     )
 

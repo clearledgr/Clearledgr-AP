@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from clearledgr.services.box_cas import (
+from solden.services.box_cas import (
     BoxConflict,
     update_box_with_cas,
 )

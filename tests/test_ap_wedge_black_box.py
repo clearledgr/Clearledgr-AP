@@ -12,9 +12,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from main import app  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import create_access_token  # noqa: E402
-from clearledgr.services.invoice_workflow import InvoiceWorkflowService  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import create_access_token  # noqa: E402
+from solden.services.invoice_workflow import InvoiceWorkflowService  # noqa: E402
 
 
 def _jwt_for(org_id: str, user_id: str = "ops-user", role: str = "owner") -> str:

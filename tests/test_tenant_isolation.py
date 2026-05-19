@@ -5,7 +5,7 @@ Every multi-tenant API must satisfy two contracts:
 1. **Query-param spoofing is blocked.** If a user authenticated for
    org-A passes ``?organization_id=org-B`` on any endpoint, the
    request is rejected with 403 — not transparently filtered or
-   silently accepted. Source: :func:`clearledgr.api.deps.soft_org_guard`.
+   silently accepted. Source: :func:`solden.api.deps.soft_org_guard`.
 
 2. **Resource-level org mismatch is blocked.** If a user authenticated
    for org-A passes a path param (``/api/ap/items/{id}``) where the
@@ -35,8 +35,8 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import main as _main  # noqa: E402
-from clearledgr.core import database as db_module  # noqa: E402
-from clearledgr.core.auth import TokenData, get_current_user  # noqa: E402
+from solden.core import database as db_module  # noqa: E402
+from solden.core.auth import TokenData, get_current_user  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

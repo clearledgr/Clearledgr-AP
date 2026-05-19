@@ -16,7 +16,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from clearledgr.services.agent_anomaly_detection import (
+from solden.services.agent_anomaly_detection import (
     detect_volume_anomalies,
     explain_volume_anomaly,
 )
@@ -85,7 +85,7 @@ class TestExplainAnomaly:
         # Gateway raises — augmenter must preserve the rule output.
         fake_gateway = SimpleNamespace(call=AsyncMock(side_effect=RuntimeError("no api key")))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(
@@ -119,7 +119,7 @@ class TestExplainAnomaly:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(
@@ -165,7 +165,7 @@ class TestExplainAnomaly:
         ))
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(
@@ -192,7 +192,7 @@ class TestExplainAnomaly:
         fake_resp = SimpleNamespace(content="not actually json at all")
         fake_gateway = SimpleNamespace(call=AsyncMock(return_value=fake_resp))
         monkeypatch.setattr(
-            "clearledgr.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
+            "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
         out = asyncio.run(
@@ -208,7 +208,7 @@ class TestExplainAnomaly:
 
 class TestActionRegistryEntry:
     def test_explain_anomaly_action_registered(self):
-        from clearledgr.core.llm_gateway import ACTION_REGISTRY, LLMAction
+        from solden.core.llm_gateway import ACTION_REGISTRY, LLMAction
 
         assert LLMAction.EXPLAIN_ANOMALY in ACTION_REGISTRY
         cfg = ACTION_REGISTRY[LLMAction.EXPLAIN_ANOMALY]
