@@ -711,6 +711,7 @@ STRICT_PROFILE_ALLOWED_AUTH_PATHS = {
     "/auth/microsoft/start",
     "/auth/microsoft/callback",
     "/auth/invites/accept",
+    "/auth/invites/preview",
     "/auth/login",
     "/auth/logout",
     "/auth/me",

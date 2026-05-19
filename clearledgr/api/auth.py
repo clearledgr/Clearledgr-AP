@@ -1188,6 +1188,49 @@ async def google_oauth_popup_complete():
     return HTMLResponse(content=html)
 
 
+@router.get("/invites/preview")
+async def preview_invite(token: str = Query(..., min_length=1)) -> Dict[str, Any]:
+    """Non-sensitive metadata for an invite token.
+
+    Used by the SPA's ``/signup/accept`` landing page so the invitee
+    can be told *which* email the invite is for before they accept.
+    Without this, an already-signed-in user was silently redirected
+    to their own home and never saw the invite — losing the invitee's
+    intended attribution.
+
+    The token itself is the capability: high-entropy, 7-day TTL. Anyone
+    holding it can already accept the invite (via /auth/invites/accept
+    or /auth/google/start?invite_token=...), so exposing the read-side
+    metadata is no broader surface. We intentionally do NOT expose
+    organization_id (capability scope), expires_at exact value, or any
+    secret material — just enough for the SPA to render the right copy.
+    """
+    from clearledgr.core.database import get_db
+
+    db = get_db()
+    invite = db.get_team_invite_by_token(token)
+    if not invite:
+        raise HTTPException(status_code=404, detail="invite_not_found")
+
+    organization_name: Optional[str] = None
+    org_id = str(invite.get("organization_id") or "").strip()
+    if org_id:
+        try:
+            org = db.get_organization(org_id) or {}
+            organization_name = (
+                str(org.get("name") or "").strip() or None
+            )
+        except Exception:
+            organization_name = None
+
+    return {
+        "email": str(invite.get("email") or "").lower().strip(),
+        "role": invite.get("role"),
+        "status": invite.get("status"),
+        "organization_name": organization_name,
+    }
+
+
 @router.post("/invites/accept")
 async def accept_invite(request: InviteAcceptRequest, response: Response):
     """Accept an invite-link and create/join user account."""

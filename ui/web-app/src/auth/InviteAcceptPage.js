@@ -2,42 +2,71 @@ import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { html } from '../utils/htm.js';
 import { api, ApiError } from '../api/client.js';
-import { refreshSession, useSession } from './useSession.js';
+import { logout, refreshSession, useSession } from './useSession.js';
 import { BrandMark } from '../shell/BrandMark.js';
 
 /**
  * /signup/accept?token=<invite-token>
  *
- * Lands a teammate who clicked an admin's invite link into the org.
- * Posts to /auth/invites/accept which:
- *   - looks up the invite row by token
- *   - if the user already exists: updates org/role and signs them in
- *   - if not: creates the user with the password they set here and
- *     signs them in
+ * Lands a teammate who clicked an admin's invite link. Three states:
  *
- * Cookies are set by the backend in the same response — useSession
- * picks up the new session immediately via refreshSession() and the
- * AuthGate redirects to the post-accept destination.
+ *   1. Not signed in. Show OAuth (Google / Microsoft) + email+password
+ *      form. All three honour the invite_token and bind the new
+ *      account to the invited email.
+ *   2. Signed in AS THE INVITED EMAIL. Auto-accept (call /auth/invites/
+ *      accept with just the token — the existing-user branch doesn't
+ *      need a password) and continue to the workspace.
+ *   3. Signed in AS A DIFFERENT EMAIL. Block silently bouncing them
+ *      to their own home (which silently lost the invitee's
+ *      attribution). Show "this invite is for X, you're Y" with a
+ *      sign-out button.
+ *
+ * Pre-fix the page ALWAYS redirected authenticated users to /, which
+ * meant an admin clicking their own invite-test link (or any user who
+ * already had a Solden session) never saw the invite at all and the
+ * invite stayed pending forever.
  */
 export function InviteAcceptPage() {
-  const { isAuthenticated, isLoading } = useSession();
+  const { session, isAuthenticated, isLoading } = useSession();
   const [, navigate] = useLocation();
 
   const [token] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return (params.get('token') || '').trim();
   });
+
+  // Preview state: undefined = not yet fetched, null = fetch errored,
+  // object = present.
+  const [preview, setPreview] = useState(undefined);
+  const [previewError, setPreviewError] = useState('');
+
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Fetch invite metadata on mount. Without this we can't tell
+  // which email the invite is intended for and can't make a smart
+  // decision about already-authenticated visitors.
   useEffect(() => {
-    if (isAuthenticated && !submitting) {
-      navigate('/', { replace: true });
-    }
-  }, [isAuthenticated, submitting, navigate]);
+    if (!token) return undefined;
+    let cancelled = false;
+    api(`/auth/invites/preview?token=${encodeURIComponent(token)}`, { retry: false })
+      .then((res) => { if (!cancelled) setPreview(res); })
+      .catch((err) => {
+        if (cancelled) return;
+        const code = err instanceof ApiError ? err.status : 0;
+        const detail = err?.payload?.detail;
+        if (code === 404 || detail === 'invite_not_found') {
+          setPreviewError('This invite link is no longer valid. Ask your admin to resend.');
+        } else {
+          setPreviewError(err?.message || 'Could not load the invite.');
+        }
+        setPreview(null);
+      });
+    return () => { cancelled = true; };
+  }, [token]);
 
   if (!token) {
     return html`
@@ -46,15 +75,128 @@ export function InviteAcceptPage() {
           <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
           <h1 class="cl-auth-title">Invite link incomplete</h1>
           <p class="cl-auth-sub">
-            The invite token is missing from this URL. Open the link from
-            your invite email exactly as it was sent, or ask your admin
-            to send a new one.
+            The invite token is missing from this URL. Open the link
+            from your invite email exactly as it was sent, or ask
+            your admin to send a new one.
           </p>
         </div>
       </main>
     `;
   }
 
+  if (isLoading || preview === undefined) {
+    return html`<div class="cl-auth-loading">Loading…</div>`;
+  }
+
+  if (preview === null) {
+    return html`
+      <main class="cl-auth-shell">
+        <div class="cl-auth-card">
+          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <h1 class="cl-auth-title">Invite unavailable</h1>
+          <p class="cl-auth-sub">${previewError}</p>
+        </div>
+      </main>
+    `;
+  }
+
+  if (preview.status && preview.status !== 'pending') {
+    const message = preview.status === 'accepted'
+      ? 'This invite was already accepted. Sign in normally to reach your workspace.'
+      : 'This invite is no longer active. Ask your admin to send a fresh one.';
+    return html`
+      <main class="cl-auth-shell">
+        <div class="cl-auth-card">
+          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <h1 class="cl-auth-title">Invite ${preview.status}</h1>
+          <p class="cl-auth-sub">${message}</p>
+        </div>
+      </main>
+    `;
+  }
+
+  const inviteEmail = (preview.email || '').toLowerCase().trim();
+  const sessionEmail = (session?.email || '').toLowerCase().trim();
+  const sameUser = isAuthenticated && sessionEmail && sessionEmail === inviteEmail;
+  const wrongUser = isAuthenticated && sessionEmail && sessionEmail !== inviteEmail;
+  const orgLabel = preview.organization_name || 'your team';
+
+  // ── Signed in as the invited email. Accept + continue. ─────────
+  const acceptAsCurrentUser = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await api('/auth/invites/accept', {
+        method: 'POST',
+        body: { token },
+        retry: false,
+      });
+      await refreshSession();
+      navigate('/', { replace: true });
+    } catch (err) {
+      const detail = err?.payload?.detail;
+      setError(detail || err?.message || 'Could not accept invite.');
+      setSubmitting(false);
+    }
+  };
+
+  if (sameUser) {
+    return html`
+      <main class="cl-auth-shell">
+        <div class="cl-auth-card">
+          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <h1 class="cl-auth-title">Welcome to ${orgLabel}</h1>
+          <p class="cl-auth-sub">
+            You're already signed in as <strong>${inviteEmail}</strong>.
+            Accept the invite to bind this account to the workspace.
+          </p>
+          ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
+          <button
+            class="cl-auth-btn cl-auth-btn-primary"
+            onClick=${acceptAsCurrentUser}
+            disabled=${submitting}>
+            ${submitting ? 'Accepting…' : 'Accept invite'}
+          </button>
+        </div>
+      </main>
+    `;
+  }
+
+  // ── Signed in as a different email. Don't silently bounce. ─────
+  if (wrongUser) {
+    const signOutAndStay = async () => {
+      try {
+        await logout();
+      } catch { /* swallow — logout best-effort */ }
+      // Refresh the page so useSession reloads as unauthenticated and
+      // the invite token / preview both rehydrate from the URL.
+      try {
+        window.location.reload();
+      } catch { /* old browsers — no-op */ }
+    };
+    return html`
+      <main class="cl-auth-shell">
+        <div class="cl-auth-card">
+          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <h1 class="cl-auth-title">This invite is for someone else</h1>
+          <p class="cl-auth-sub">
+            The invite was sent to <strong>${inviteEmail}</strong>, but
+            you're signed in as <strong>${sessionEmail}</strong>. Sign
+            out first, then re-open the invite link and sign in with
+            ${inviteEmail}.
+          </p>
+          <button
+            class="cl-auth-btn cl-auth-btn-primary"
+            onClick=${signOutAndStay}>
+            Sign out
+          </button>
+        </div>
+      </main>
+    `;
+  }
+
+  // ── Not signed in. OAuth + email+password. ─────────────────────
   const submit = async (e) => {
     e.preventDefault();
     if (submitting) return;
@@ -97,14 +239,10 @@ export function InviteAcceptPage() {
     }
   };
 
-  if (isLoading) return html`<div class="cl-auth-loading">Loading…</div>`;
-
-  // Pre-built OAuth start URLs that thread the invite token through.
-  // The backend Google + Microsoft callbacks both honour
-  // invite_token in the signed state payload (see
-  // clearledgr/api/auth.py — google/start at L636, microsoft/start
-  // at L884). The SPA proxies /auth/* to the api service so a
-  // relative path works in dev + production identically.
+  // OAuth-start URLs thread the invite token through the signed state
+  // payload (Google: auth.py L636; Microsoft: auth.py L884). The SPA
+  // proxies /auth/* to the api service so relative paths work in dev +
+  // production identically.
   const googleStart = `/auth/google/start?invite_token=${encodeURIComponent(token)}`;
   const microsoftStart = `/auth/microsoft/start?invite_token=${encodeURIComponent(token)}`;
 
@@ -112,10 +250,10 @@ export function InviteAcceptPage() {
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
         <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
-        <h1 class="cl-auth-title">Join your team</h1>
+        <h1 class="cl-auth-title">Join ${orgLabel}</h1>
         <p class="cl-auth-sub">
-          Pick how you want to sign in. Whichever option you choose,
-          you'll land in the same workspace.
+          You've been invited as <strong>${inviteEmail}</strong>. Pick
+          how you want to sign in — Google, Microsoft, or set a password.
         </p>
 
         ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
@@ -125,14 +263,12 @@ export function InviteAcceptPage() {
             class="cl-auth-btn cl-auth-btn-secondary"
             href=${googleStart}
             style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
-            <span aria-hidden="true">🟦</span>
             <span>Continue with Google</span>
           </a>
           <a
             class="cl-auth-btn cl-auth-btn-secondary"
             href=${microsoftStart}
             style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
-            <span aria-hidden="true">⬛</span>
             <span>Continue with Microsoft</span>
           </a>
         </div>
