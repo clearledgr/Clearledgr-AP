@@ -4,6 +4,7 @@ import { html } from '../utils/htm.js';
 import { useSession, refreshSession } from './useSession.js';
 import { api, ApiError } from '../api/client.js';
 import { BrandMark } from '../shell/BrandMark.js';
+import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
 const MICROSOFT_START_PATH = '/auth/microsoft/start';
@@ -90,19 +91,29 @@ export function LoginPage() {
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
         <div class="cl-auth-brand">
-          <${BrandMark} height=${40} />
+          <${BrandMark} height=${28} />
         </div>
         <h1 class="cl-auth-title">Sign in</h1>
         <p class="cl-auth-sub">Coordination layer for finance teams.</p>
 
         ${error ? html`<div class="cl-auth-error">${error}</div>` : null}
 
-        <button class="cl-auth-btn cl-auth-btn-primary" onClick=${startGoogle} disabled=${submitting}>
-          Continue with Google
+        <button
+          class="cl-auth-btn cl-auth-btn-primary"
+          onClick=${startGoogle}
+          disabled=${submitting}
+          style="display:flex;align-items:center;justify-content:center;gap:10px">
+          <${GoogleMark} />
+          <span>Continue with Google</span>
         </button>
 
-        <button class="cl-auth-btn cl-auth-btn-secondary" onClick=${startMicrosoft} disabled=${submitting}>
-          Continue with Microsoft
+        <button
+          class="cl-auth-btn cl-auth-btn-secondary"
+          onClick=${startMicrosoft}
+          disabled=${submitting}
+          style="display:flex;align-items:center;justify-content:center;gap:10px">
+          <${MicrosoftMark} />
+          <span>Continue with Microsoft</span>
         </button>
 
         <div class="cl-auth-divider"><span>or</span></div>

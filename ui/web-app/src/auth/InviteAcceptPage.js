@@ -4,6 +4,7 @@ import { html } from '../utils/htm.js';
 import { api, ApiError } from '../api/client.js';
 import { logout, refreshSession, useSession } from './useSession.js';
 import { BrandMark } from '../shell/BrandMark.js';
+import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
 
 /**
  * /signup/accept?token=<invite-token>
@@ -72,7 +73,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
           <h1 class="cl-auth-title">Invite link incomplete</h1>
           <p class="cl-auth-sub">
             The invite token is missing from this URL. Open the link
@@ -92,7 +93,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
           <h1 class="cl-auth-title">Invite unavailable</h1>
           <p class="cl-auth-sub">${previewError}</p>
         </div>
@@ -107,7 +108,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
           <h1 class="cl-auth-title">Invite ${preview.status}</h1>
           <p class="cl-auth-sub">${message}</p>
         </div>
@@ -145,7 +146,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
           <h1 class="cl-auth-title">Welcome to ${orgLabel}</h1>
           <p class="cl-auth-sub">
             You're already signed in as <strong>${inviteEmail}</strong>.
@@ -178,7 +179,7 @@ export function InviteAcceptPage() {
     return html`
       <main class="cl-auth-shell">
         <div class="cl-auth-card">
-          <div class="cl-auth-brand"><${BrandMark} height=${36} /></div>
+          <div class="cl-auth-brand"><${BrandMark} height=${28} /></div>
           <h1 class="cl-auth-title">This invite is for someone else</h1>
           <p class="cl-auth-sub">
             The invite was sent to <strong>${inviteEmail}</strong>, but
@@ -263,12 +264,14 @@ export function InviteAcceptPage() {
             class="cl-auth-btn cl-auth-btn-secondary"
             href=${googleStart}
             style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
+            <${GoogleMark} />
             <span>Continue with Google</span>
           </a>
           <a
             class="cl-auth-btn cl-auth-btn-secondary"
             href=${microsoftStart}
             style="display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none">
+            <${MicrosoftMark} />
             <span>Continue with Microsoft</span>
           </a>
         </div>
