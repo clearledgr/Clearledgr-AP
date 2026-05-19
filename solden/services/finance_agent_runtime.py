@@ -2235,7 +2235,7 @@ def get_platform_finance_runtime(organization_id: str) -> FinanceAgentRuntime:
         runtime = FinanceAgentRuntime(
             organization_id=org_id,
             actor_id="system",
-            actor_email="system@clearledgr.local",
+            actor_email="system@solden.local",
             db=get_db(),
             is_platform=True,
         )

@@ -110,7 +110,7 @@ def _portal_base_url() -> str:
     """
     from solden.core.secrets import optional_secret
 
-    return optional_secret("SOLDEN_PORTAL_BASE_URL", default="https://onboard.clearledgr.com").rstrip("/")
+    return optional_secret("SOLDEN_PORTAL_BASE_URL", default="https://onboard.soldenai.com").rstrip("/")
 
 
 def _build_magic_link(token: str) -> str:

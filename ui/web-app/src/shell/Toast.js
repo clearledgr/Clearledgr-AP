@@ -47,8 +47,8 @@ export function ToastProvider({ children }) {
       const message = detail.message || 'Action failed';
       toast(message, { variant: 'error' });
     };
-    window.addEventListener('clearledgr:action-error', handler);
-    return () => window.removeEventListener('clearledgr:action-error', handler);
+    window.addEventListener('solden:action-error', handler);
+    return () => window.removeEventListener('solden:action-error', handler);
   }, [toast]);
 
   return html`

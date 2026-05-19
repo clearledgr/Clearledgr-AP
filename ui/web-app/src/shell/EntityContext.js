@@ -28,7 +28,7 @@ const EntityContext = createContext({
   loading: false,
 });
 
-const STORAGE_KEY = 'clearledgr_active_entity_id';
+const STORAGE_KEY = 'solden_active_entity_id';
 
 function readPersisted() {
   try {

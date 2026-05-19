@@ -373,7 +373,7 @@ def _assert_org_not_deleted(token_data: TokenData) -> TokenData:
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_workspace_access"),
+    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="solden_workspace_access"),
 ) -> TokenData:
     """
     Get current authenticated user.
@@ -1105,7 +1105,7 @@ ROLE_RANK: Dict[str, int] = WORKSPACE_ROLE_RANK
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="clearledgr_workspace_access"),
+    workspace_access_cookie: Optional[str] = Cookie(default=None, alias="solden_workspace_access"),
 ) -> Optional[TokenData]:
     """Get current user if authenticated, None otherwise."""
     try:

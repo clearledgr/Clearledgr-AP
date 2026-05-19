@@ -1,6 +1,6 @@
 """Inbound demo-request leads from the marketing site.
 
-The marketing site at clearledgr.com posts form submissions here when
+The marketing site at soldenai.com posts form submissions here when
 a prospect fills the demo-request form on /contact. Replaces the
 Netlify Forms integration after the marketing site moved to Railway.
 
@@ -82,7 +82,7 @@ async def submit_lead(payload: LeadIn, request: Request) -> Dict[str, Any]:
                 _sanitize(payload.role),
                 _sanitize(payload.volume),
                 _sanitize(payload.message),
-                _sanitize(payload.source) or "clearledgr.com",
+                _sanitize(payload.source) or "soldenai.com",
                 json.dumps(metadata),
                 now,
             ))
@@ -95,6 +95,6 @@ async def submit_lead(payload: LeadIn, request: Request) -> Dict[str, Any]:
         "marketing_lead id=%s email=%s company=%s source=%s",
         lead_id, email.lower(),
         _sanitize(payload.company) or "-",
-        _sanitize(payload.source) or "clearledgr.com",
+        _sanitize(payload.source) or "soldenai.com",
     )
     return {"ok": True, "id": lead_id}

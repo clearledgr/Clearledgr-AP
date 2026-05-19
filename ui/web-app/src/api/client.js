@@ -12,7 +12,7 @@
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const RETRY_BACKOFFS_MS = [400, 1200, 2400];
 
-const CSRF_COOKIE_NAME = 'clearledgr_workspace_csrf';
+const CSRF_COOKIE_NAME = 'solden_workspace_csrf';
 
 export class ApiError extends Error {
   constructor(status, payload) {
@@ -95,7 +95,7 @@ export async function api(path, options = {}) {
         // Skip /auth/me itself — its 401 is the normal logged-out
         // signal that loadSession() handles directly.
         if (response.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/me')) {
-          try { window.dispatchEvent(new CustomEvent('clearledgr:session-stale')); } catch { /* old browsers */ }
+          try { window.dispatchEvent(new CustomEvent('solden:session-stale')); } catch { /* old browsers */ }
         }
         throw new ApiError(response.status, json);
       }

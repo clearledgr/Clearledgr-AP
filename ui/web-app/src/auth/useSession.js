@@ -105,7 +105,7 @@ async function loadSession({ force = false } = {}) {
 // API call silently 401s.
 if (typeof window !== 'undefined') {
   let probing = false;
-  window.addEventListener('clearledgr:session-stale', async () => {
+  window.addEventListener('solden:session-stale', async () => {
     if (probing) return;
     probing = true;
     try { await loadSession(); } finally { probing = false; }

@@ -1156,11 +1156,11 @@ class WorkspaceSessionCSRFMiddleware(BaseHTTPMiddleware):
         if request.headers.get("authorization"):
             return await call_next(request)
 
-        access_cookie = request.cookies.get("clearledgr_workspace_access")
+        access_cookie = request.cookies.get("solden_workspace_access")
         if not access_cookie:
             return await call_next(request)
 
-        csrf_cookie = str(request.cookies.get("clearledgr_workspace_csrf") or "").strip()
+        csrf_cookie = str(request.cookies.get("solden_workspace_csrf") or "").strip()
         csrf_header = str(request.headers.get("X-CSRF-Token") or "").strip()
         if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
             return JSONResponse(

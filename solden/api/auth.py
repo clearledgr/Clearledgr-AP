@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-WORKSPACE_ACCESS_COOKIE_NAME = "clearledgr_workspace_access"
-WORKSPACE_CSRF_COOKIE_NAME = "clearledgr_workspace_csrf"
+WORKSPACE_ACCESS_COOKIE_NAME = "solden_workspace_access"
+WORKSPACE_CSRF_COOKIE_NAME = "solden_workspace_csrf"
 SESSION_TOKEN_PLACEHOLDER = "__cookie_session__"
 
 

@@ -1,6 +1,6 @@
 import { readLocalStorage, writeLocalStorage } from './formatters.js';
 
-export const ACTIVE_RECORD_ID_STORAGE_KEY = 'clearledgr_active_ap_item_id';
+export const ACTIVE_RECORD_ID_STORAGE_KEY = 'solden_active_ap_item_id';
 
 function safeDecode(value) {
   const text = String(value || '').trim();

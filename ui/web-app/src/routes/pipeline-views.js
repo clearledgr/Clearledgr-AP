@@ -1,9 +1,9 @@
 import { getExceptionLabel, getIssueSummary } from '../utils/formatters.js';
 import { getWorkStateNotice, hasErpPostingConnection } from '../utils/work-actions.js';
 
-const LEGACY_STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v1';
-const STORAGE_PREFIX = 'clearledgr_pipeline_view_preferences_v2';
-const NAVIGATION_PREFIX = 'clearledgr_pipeline_navigation_v1';
+const LEGACY_STORAGE_PREFIX = 'solden_pipeline_view_preferences_v1';
+const STORAGE_PREFIX = 'solden_pipeline_view_preferences_v2';
+const NAVIGATION_PREFIX = 'solden_pipeline_navigation_v1';
 const MAX_CUSTOM_VIEWS = 8;
 const MAX_PINNED_VIEW_REFS = 6;
 

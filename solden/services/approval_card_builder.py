@@ -46,16 +46,16 @@ def _build_source_link(invoice: Any) -> str:
         or getattr(invoice, "gmail_id", "")
     )
     import os
-    base = os.getenv("APP_BASE_URL", "https://workspace.clearledgr.com").rstrip("/")
+    base = os.getenv("APP_BASE_URL", "https://workspace.soldenai.com").rstrip("/")
     # The web-app routes records at /records/:id (see ui/web-app/src/App.js);
     # /items/:id and /ap-items/:id are legacy paths and would 404 in the SPA.
-    clearledgr_fallback = f"{base}/records/{ap_item_id}" if ap_item_id else base
+    solden_fallback = f"{base}/records/{ap_item_id}" if ap_item_id else base
 
     if source_type == "gmail":
         gid = str(getattr(invoice, "gmail_id", "") or "").strip()
         if gid:
             return f"https://mail.google.com/mail/u/0/#search/{gid}"
-        return clearledgr_fallback
+        return solden_fallback
 
     if source_type == "netsuite":
         account_id = str(erp_metadata.get("ns_account_id") or "").strip()
@@ -66,7 +66,7 @@ def _build_source_link(invoice: Any) -> str:
                 f"https://{account_segment}.app.netsuite.com"
                 f"/app/accounting/transactions/vendbill.nl?id={ns_internal_id}"
             )
-        return clearledgr_fallback
+        return solden_fallback
 
     if source_type == "sap_s4hana":
         fiori_host = str(erp_metadata.get("sap_fiori_host") or "").strip()
@@ -79,9 +79,9 @@ def _build_source_link(invoice: Any) -> str:
                 f"#SupplierInvoice-display"
                 f"?CompanyCode={cc}&SupplierInvoice={doc}&FiscalYear={fy}"
             )
-        return clearledgr_fallback
+        return solden_fallback
 
-    return clearledgr_fallback
+    return solden_fallback
 
 
 def _source_link_label(invoice: Any) -> str:

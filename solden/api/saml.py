@@ -335,7 +335,7 @@ async def saml_acs(
         target_path = RelayState.split("?")[0].split("#")[0]
     response = RedirectResponse(url=target_path, status_code=302)
     response.set_cookie(
-        key="clearledgr_session",
+        key="solden_session",
         value=token,
         httponly=True,
         secure=True,
@@ -373,7 +373,7 @@ def saml_logout_initiate(
         # workspace login. Operators of non-SAML tenants shouldn't be
         # able to hit a 404 from a "sign out" button.
         response = RedirectResponse(url="/workspace/login", status_code=302)
-        response.delete_cookie("clearledgr_session", path="/")
+        response.delete_cookie("solden_session", path="/")
         return response
 
     _audit_saml(
@@ -392,7 +392,7 @@ def saml_logout_initiate(
     else:
         # No IdP SLO endpoint configured — local-only logout.
         response = RedirectResponse(url="/workspace/login", status_code=302)
-    response.delete_cookie("clearledgr_session", path="/")
+    response.delete_cookie("solden_session", path="/")
     return response
 
 
@@ -440,5 +440,5 @@ async def saml_slo_callback(
     )
 
     response = Response(status_code=200, content="")
-    response.delete_cookie("clearledgr_session", path="/")
+    response.delete_cookie("solden_session", path="/")
     return response

@@ -41,7 +41,7 @@ const LOCALE = 'en-GB';
 // ==================== AUTH / API ====================
 
 function clearSession() {
-  document.cookie = 'clearledgr_workspace_access=; Max-Age=0; path=/';
+  document.cookie = 'solden_workspace_access=; Max-Age=0; path=/';
   document.cookie = 'clearledgr_workspace_refresh=; Max-Age=0; path=/';
   document.cookie = 'clearledgr_workspace_csrf=; Max-Age=0; path=/';
 }

@@ -50,10 +50,10 @@ const html = htm.bind(h);
 const APP_ID = 'sdk_Solden2026_dc12c60472';
 const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
-const STORAGE_ACTIVE_AP_ITEM_ID = 'clearledgr_active_ap_item_id';
+const STORAGE_ACTIVE_AP_ITEM_ID = 'solden_active_ap_item_id';
 const STORAGE_PENDING_DIRECT_ROUTE = '__clearledgr_pending_direct_route_v1';
 const STORAGE_RELOAD_ROUTE = '__clearledgr_reload_route_v1';
-const ATTR_PENDING_DIRECT_ROUTE = 'data-clearledgr-pending-direct-route';
+const ATTR_PENDING_DIRECT_ROUTE = 'data-solden-pending-direct-route';
 
 let sdk = null;
 let queueManager = null;

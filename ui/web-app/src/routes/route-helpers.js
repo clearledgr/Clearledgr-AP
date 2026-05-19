@@ -137,7 +137,7 @@ export function useAction(fn) {
       if (typeof window !== 'undefined') {
         try {
           window.dispatchEvent(
-            new CustomEvent('clearledgr:action-error', {
+            new CustomEvent('solden:action-error', {
               detail: {
                 message: _errorMessage(err),
                 status: err?.status ?? null,

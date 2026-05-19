@@ -356,7 +356,7 @@ def test_saml_logout_no_config_clears_cookie_and_redirects(db, client_saml):
     assert resp.status_code == 302
     # Cookie cleared (Set-Cookie with deletion flag)
     set_cookie = resp.headers.get("set-cookie", "")
-    assert "clearledgr_session" in set_cookie
+    assert "solden_session" in set_cookie
     assert resp.headers["location"].endswith("/workspace/login")
 
 
@@ -368,7 +368,7 @@ def test_saml_logout_with_idp_slo_url_redirects_there(db, client_saml):
     assert resp.status_code == 302
     assert resp.headers["location"] == "https://idp.example/saml/logout"
     set_cookie = resp.headers.get("set-cookie", "")
-    assert "clearledgr_session" in set_cookie
+    assert "solden_session" in set_cookie
 
 
 def test_saml_logout_emits_audit(db, client_saml):
@@ -387,7 +387,7 @@ def test_saml_slo_callback_clears_cookie_logout_request(db, client_saml):
     )
     assert resp.status_code == 200
     set_cookie = resp.headers.get("set-cookie", "")
-    assert "clearledgr_session" in set_cookie
+    assert "solden_session" in set_cookie
 
 
 def test_saml_slo_callback_classifies_logout_request_vs_response(db, client_saml):

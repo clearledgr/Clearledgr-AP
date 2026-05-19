@@ -34,7 +34,7 @@ import { SoldenQueueManager } from './queue-manager.js';
   }
 
   function toast(message, type = 'info') {
-    emit('clearledgr:toast', { message, type });
+    emit('solden:toast', { message, type });
   }
 
   function normalizeBackendUrl(raw) {

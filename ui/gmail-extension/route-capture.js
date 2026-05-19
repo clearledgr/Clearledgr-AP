@@ -1,6 +1,6 @@
 (function captureSoldenRouteIntent() {
   var STORAGE_KEY = '__clearledgr_pending_direct_route_v1';
-  var ATTRIBUTE_NAME = 'data-clearledgr-pending-direct-route';
+  var ATTRIBUTE_NAME = 'data-solden-pending-direct-route';
 
   function writePendingRouteToExtensionStorage(payload) {
     try {

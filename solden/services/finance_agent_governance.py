@@ -76,7 +76,7 @@ def _autonomous_requested(runtime: Any, payload: Optional[Dict[str, Any]] = None
     actor_email = str(getattr(runtime, "actor_email", "") or "").strip().lower()
     return actor_id in {"system", "agent_runtime"} or actor_email in {
         "system",
-        "system@clearledgr.local",
+        "system@solden.local",
     }
 
 
