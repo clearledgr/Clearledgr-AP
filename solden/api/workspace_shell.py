@@ -68,9 +68,17 @@ def _request_origin_base_url(request: Optional["Request"]) -> Optional[str]:
     for suffix in _PUBLIC_BASE_URL_KNOWN_SUFFIXES:
         apex = suffix.lstrip(".")
         if host == apex or host.endswith(suffix):
-            scheme = getattr(request.url, "scheme", "https") or "https"
-            netloc = getattr(request.url, "netloc", host) or host
-            return f"{scheme}://{netloc}".rstrip("/")
+            # Production hosts (*.soldenai.com / *.clearledgr.com) are
+            # always behind Railway TLS termination, so the request seen
+            # by the app is HTTP even when the customer's browser made an
+            # HTTPS request. Honour ``X-Forwarded-Proto`` when present,
+            # otherwise force ``https`` because we know these hostnames
+            # are HTTPS-only in every environment that serves them.
+            forwarded_proto = (
+                request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+            )
+            scheme = forwarded_proto or "https"
+            return f"{scheme}://{host}".rstrip("/")
     return None
 
 

@@ -151,9 +151,19 @@ def _google_oauth_redirect_uri(request: Optional[Request] = None) -> str:
         for suffix in _GOOGLE_OAUTH_KNOWN_HOST_SUFFIXES:
             apex = suffix.lstrip(".")
             if host == apex or host.endswith(suffix):
-                scheme = getattr(request.url, "scheme", "https") or "https"
-                netloc = getattr(request.url, "netloc", host) or host
-                return f"{scheme}://{netloc}/auth/google/callback"
+                # Production hosts always run behind Railway TLS edge
+                # termination — the upstream sees HTTP. Honour
+                # X-Forwarded-Proto, else force HTTPS because these
+                # hostnames are HTTPS-only in every deployed environment.
+                # Google rejects http://... redirect URIs even when
+                # registered as https://... so getting this scheme right
+                # is the difference between working OAuth and a
+                # redirect_uri_mismatch error.
+                forwarded_proto = (
+                    request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+                )
+                scheme = forwarded_proto or "https"
+                return f"{scheme}://{host}/auth/google/callback"
     return os.getenv(
         "GOOGLE_CONSOLE_REDIRECT_URI",
         f"{os.getenv('API_BASE_URL', 'http://127.0.0.1:8010').rstrip('/')}/auth/google/callback",
