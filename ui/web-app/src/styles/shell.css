@@ -347,10 +347,15 @@
 
 .cl-auth-card {
   width: 100%;
-  max-width: 320px;
-  /* No bg, border, shadow — elements float on the page bg.
-     The "card" class is preserved only for layout (width + padding)
-     so existing class names keep their meaning. */
+  /* 380px is the comfortable industry default (Stripe, Slack,
+     Notion). Linear sits at ~290px because their auth is heavily
+     OAuth-first (one email field for magic links, no password);
+     we accept email + password + optional display name so a
+     wider column reads better. No bg / border / shadow — elements
+     float on the page bg. The "card" class is preserved only for
+     layout (width + padding) so existing class names keep their
+     meaning. */
+  max-width: 380px;
   padding: 8px 0;
 }
 
