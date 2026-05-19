@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+// `api` + `html` are imported below; the ImplementationChecklist
+// component uses both. No new imports needed beyond the existing
+// header — pre-existing.
 import { useLocation } from 'wouter-preact';
 import { html } from '../../utils/htm.js';
 import { api } from '../../api/client.js';
@@ -172,6 +175,8 @@ export function HomePage() {
           `
         : null}
 
+      <${ImplementationChecklist} orgId=${orgId} navigate=${navigate} />
+
       <section class="cl-home-stat-strip" aria-label="Coordination layer at a glance">
         <${StatTile}
           label="In flight"
@@ -315,6 +320,68 @@ export function HomePage() {
         agentLastAction=${agentLastAction}
         navigate=${navigate} />
     </div>
+  `;
+}
+
+
+// ─── Implementation checklist (moved here from SettingsPage) ─────
+//
+// First-time admins land on Home. Onboarding tasks belong here, not
+// buried at the bottom of Settings where most users will never scroll.
+// The component hides itself entirely once every step is complete so
+// it stops taking visual real estate from veteran admins.
+
+function ImplementationChecklist({ orgId, navigate }) {
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    if (!orgId) return undefined;
+    let cancelled = false;
+    api(
+      `/api/workspace/implementation/status?organization_id=${encodeURIComponent(orgId)}`,
+      { silent: true },
+    )
+      .then((data) => { if (!cancelled) setStatus(data); })
+      .catch(() => { /* hide quietly on error */ });
+    return () => { cancelled = true; };
+  }, [orgId]);
+
+  if (!status || !Array.isArray(status.steps) || status.all_complete) {
+    return null;
+  }
+  const steps = status.steps;
+  const completedCount = steps.filter((s) => s.completed).length;
+  const total = steps.length;
+
+  return html`
+    <section class="cl-home-checklist" aria-label="Implementation checklist">
+      <header class="cl-home-checklist-head">
+        <div>
+          <strong>Finish setting up Solden</strong>
+          <span class="cl-home-checklist-progress muted small">
+            ${completedCount} of ${total} done
+          </span>
+        </div>
+        <button class="cl-home-btn cl-home-btn-secondary" onClick=${() => navigate('/settings')}>
+          Open settings
+        </button>
+      </header>
+      <ol class="cl-home-checklist-list">
+        ${steps.map((step) => html`
+          <li
+            key=${step.id}
+            class=${`cl-home-checklist-item ${step.completed ? 'is-done' : ''}`}>
+            <span class="cl-home-checklist-dot" aria-hidden="true">
+              ${step.completed ? '✓' : ''}
+            </span>
+            <div class="cl-home-checklist-copy">
+              <div class="cl-home-checklist-name">${step.name}</div>
+              <div class="muted small">${step.description}</div>
+            </div>
+          </li>
+        `)}
+      </ol>
+    </section>
   `;
 }
 

@@ -3780,6 +3780,37 @@ def create_team_invite(
 
     expires_at = (_utcnow() + timedelta(days=request.expires_in_days)).isoformat()
     db = get_db()
+
+    # Idempotency: a previous "Send invite" click on the same email
+    # used to create a fresh row each time. Two pending invites for
+    # the same address is confusing (the admin doesn't know which
+    # to share) and inflates the pending-invites stat. Reject the
+    # duplicate at the route boundary with the existing invite id
+    # so the SPA can offer to revoke+resend.
+    normalized_email = str(request.email or "").lower().strip()
+    if normalized_email:
+        try:
+            existing_invites = db.list_team_invites(org_id) or []
+        except Exception:
+            existing_invites = []
+        for prior in existing_invites:
+            if (
+                str(prior.get("status") or "").lower() == "pending"
+                and str(prior.get("email") or "").lower().strip() == normalized_email
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "reason": "invite_already_pending",
+                        "email": normalized_email,
+                        "invite_id": prior.get("id"),
+                        "message": (
+                            f"A pending invite for {normalized_email} already "
+                            "exists. Revoke it first if you want to resend."
+                        ),
+                    },
+                )
+
     invite = db.create_team_invite(
         organization_id=org_id,
         email=request.email,

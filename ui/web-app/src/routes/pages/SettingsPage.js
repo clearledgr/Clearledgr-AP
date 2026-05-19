@@ -564,7 +564,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
   // --- Approval Rules state ---
   const [approvalRules, setApprovalRules] = useState([]);
   const [billingSummary, setBillingSummary] = useState(null);
-  const [implStatus, setImplStatus] = useState(null);
+  // implStatus moved to HomePage's ImplementationChecklist component
+  // (commit moves checklist out of Settings).
 
   // --- GL Mapping state ---
   // The AP pipeline posts bills against per-tenant GL codes stored in
@@ -634,14 +635,13 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     toast?.('GL mapping saved.', 'success');
   });
 
-  // §13: Fetch metered billing summary + implementation status
+  // §13: Fetch metered billing summary. Implementation status is now
+  // fetched on the Home page via the ImplementationChecklist
+  // component — first-time admins land there, not here.
   useEffect(() => {
     if (!orgId) return;
     api(`/api/workspace/subscription/billing-summary?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
       .then((data) => setBillingSummary(data))
-      .catch(() => {});
-    api(`/api/workspace/implementation/status?organization_id=${encodeURIComponent(orgId)}`, { silent: true })
-      .then((data) => setImplStatus(data))
       .catch(() => {});
   }, [orgId]);
   const [showAddRule, setShowAddRule] = useState(false);
