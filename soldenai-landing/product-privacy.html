@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <title>Product privacy · Solden</title>
+    <meta name="description" content="What the Solden product — workspace, Gmail extension, Outlook add-in, Slack and Teams surfaces — does with your data. Short, direct, no surprises." />
+    <meta name="theme-color" content="#F9F5EC" />
+
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v=6" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v=6" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon.png?v=6" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
+
+    <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/Geist-Variable.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/assets/fonts/GeistMono-Variable.woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css?v=32" />
+    <link rel="stylesheet" href="/manifesto.css?v=74" />
+    <link rel="stylesheet" href="/pages.css" />
+  </head>
+  <body class="theme-manifesto-light theme-subpage-light">
+    <header class="topbar">
+      <div class="shell topbar__row">
+        <a class="brand" href="/" aria-label="Solden home">
+          <img class="brand__lockup" src="/assets/solden-lockup-dark.png" alt="Solden" />
+          <img class="brand__mark" src="/assets/favicon.png" alt="" aria-hidden="true" />
+        </a>
+        <nav class="topbar__cta" aria-label="Primary">
+          <a class="nav__link nav__link--manifesto" href="/manifesto.html">Manifesto</a>
+          <a class="btn btn--primary" href="/contact.html">Talk to us</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="page-cover">
+      <div class="page-cover__glow" aria-hidden="true"></div>
+      <div class="shell shell--narrow page-cover__inner">
+        <p class="page-cover__eyebrow">Product privacy · v1.0 · May 2026</p>
+        <h1 class="page-cover__title">
+          What the <span class="page-cover__title-accent">product</span> does with your data.
+        </h1>
+        <p class="page-cover__hint">Workspace. Gmail extension. Outlook add-in. Slack and Teams surfaces. What we collect. What we do with it. How long we keep it.</p>
+      </div>
+    </section>
+
+    <section class="page-section">
+      <div class="shell">
+        <article class="privacy">
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Scope of this page</h2>
+            <p>This page covers data the Solden product touches once a customer installs it: the workspace at workspace.clearledgr.com, the Gmail extension, the Outlook add-in, and the Slack and Teams integrations. Marketing-site data (the contact form, server logs on soldenai.com) is covered separately on <a href="/privacy.html">soldenai.com/privacy</a>.</p>
+            <p>Solden Technologies Ltd. is the data processor for tenant data; the customer organization is the controller. The terms of that processing live in the data processing agreement (DPA) we sign before any production data flows.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">What the workspace collects</h2>
+            <p>Workspace identity: the email address, name, organization, and role of every user the customer adds. Authentication metadata: last sign-in time, OAuth tokens (Google or Microsoft, encrypted at rest), session timestamps, audit-event author records.</p>
+            <p>Workflow data: AP records (vendor, amount, due date, line items, extracted fields, attachments), vendor master records, approval decisions, ERP posting state, the agent's reasoning + governance verdict for every routing decision, and the append-only audit chain.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">What the Gmail extension does</h2>
+            <p>The extension is a contextual sidebar on Gmail threads that look like invoice activity. When you open an invoice email with the extension installed, Solden reads the email's content and metadata so the agent can extract bill details, run validation, and route the record for approval through the Slack or Teams card the approver sees.</p>
+            <p>Specifically, the extension uses the <code>gmail.modify</code> Google API scope to:</p>
+            <ul>
+              <li>Read the email subject, sender, headers, body, and attachments on the active thread.</li>
+              <li>Read invoice attachments (PDF, image) and pass them to Solden's extraction pipeline.</li>
+              <li>Apply a Solden label to threads that have been processed.</li>
+              <li>Archive threads after the agent posts the corresponding bill to your ERP (configurable per workspace).</li>
+            </ul>
+            <p>What the extension does <em>not</em> do: read inbox contents beyond the threads you open with the sidebar; collect your contacts; send emails on your behalf; mark threads as read on Solden's behalf without an explicit operator action.</p>
+            <p>The extension never approves or rejects invoices from Gmail. Approve and reject decisions are routed to Slack and Teams approval cards, where the approver decides; the Gmail sidebar shows the decision state and surfaces the deep link.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">What the Outlook add-in does</h2>
+            <p>Mirror of the Gmail extension for Microsoft 365 customers. Uses the Microsoft Graph <code>Mail.Read</code> and <code>Mail.ReadWrite</code> delegated scopes to read invoice email content + attachments and label processed threads. Same boundary: never approves, never sends email on your behalf, never reads beyond invoice threads.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">What the Slack and Teams surfaces do</h2>
+            <p>The Slack app and Teams bot deliver approval cards to the channels the workspace admin configures. They read the approval click + the operator's optional note; they don't read channel history, DMs, or membership beyond what's required to verify the responding user is on the workspace's approver list.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Where it lives</h2>
+            <p>Solden operates on Railway-managed infrastructure in the US and EU regions. Each customer organization has its own logical tenant; rows are scoped by <code>organization_id</code> and writes are gated by per-table CHECK constraints. Customer data is encrypted in transit (TLS 1.3) and at rest (AES-256). Database backups are retained for 30 days with the same encryption.</p>
+            <p>Email tokens (Gmail OAuth refresh tokens, Microsoft Graph tokens) are encrypted at rest with Fernet using a per-deployment key. The keys live in the runtime environment, not in the database. Token rotation is automatic on Google or Microsoft's refresh schedule.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Sub-processors</h2>
+            <ul>
+              <li><strong>Railway</strong> — managed hosting (US and EU regions).</li>
+              <li><strong>Postgres on Railway</strong> — primary database; managed backups.</li>
+              <li><strong>Google Workspace / Microsoft 365</strong> — inbox access via OAuth, only when the customer connects Gmail or Outlook.</li>
+              <li><strong>Slack / Microsoft Teams</strong> — approval-card delivery, only when the customer connects the relevant surface.</li>
+              <li><strong>Anthropic</strong> — Claude API for the narrative summaries that surface in operator views. Deterministic AP routing (matching, validation, approval gating, ERP posting) does not call any LLM.</li>
+              <li><strong>Resend</strong> — transactional email (team invites, system notices).</li>
+              <li><strong>Sentry</strong> — error tracking. PII is scrubbed at the application boundary before transmission.</li>
+              <li><strong>The customer's ERP</strong> — QuickBooks Online, Xero, NetSuite, or SAP. Solden writes bills, payments, and journal entries the customer configures and reads master data the customer authorises.</li>
+            </ul>
+            <p>The current list is the source of truth on <a href="mailto:privacy@soldenai.com">privacy@soldenai.com</a> if anything ships in flight. We post material changes here and notify customers per the DPA.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">How long we keep it</h2>
+            <p>Tenant data lives for the lifetime of the customer relationship. The append-only audit chain is retained per the customer's chosen retention policy (default 7 years, configurable in workspace settings to meet sector requirements). On contract termination, we delete tenant data within 30 days unless the customer requests an export window first; legal-hold data is retained per the DPA's specific terms.</p>
+            <p>Customer-uploaded attachments live alongside the AP record they belong to. Deletion of an AP record deletes its attachments.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Operator control</h2>
+            <p>Workspace owners can disconnect any integration from Settings → Connections at any time. Disconnecting Gmail or Outlook revokes the stored OAuth token immediately; Solden stops polling within the next agent cycle (under 60 seconds). Disconnecting Slack or Teams stops approval card delivery.</p>
+            <p>Workspace owners can request an export or deletion of the tenant's data at any time. Email <a href="mailto:privacy@soldenai.com">privacy@soldenai.com</a> from a verified workspace owner address; we respond within 30 days.</p>
+            <p>Individual users covered by a workspace can request access to their personal data (email, role, action history). The workspace owner authorises the response.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Data sharing</h2>
+            <p>We do not sell, syndicate, or share customer or end-user data with anyone outside the sub-processor list above. Aggregated, de-identified usage statistics may inform product improvements; no row of personal or tenant data leaves Solden's control for any other purpose.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Security</h2>
+            <p>The full security posture lives in our DPA and the trust-center documentation we share under NDA. High-level: TLS 1.3 in transit, AES-256 at rest, encrypted secrets via the runtime environment, append-only hash-chained audit log, per-table CHECK constraints enforcing tenant isolation, M19 + M21 tenant-isolation passes verified in CI. Security questions: <a href="mailto:security@soldenai.com">security@soldenai.com</a>.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Changes</h2>
+            <p>If anything material shifts, we update this page and bump the version stamp at the top. Material changes are notified to workspace owners via email. Last reviewed: 19 May 2026.</p>
+          </section>
+
+          <section class="privacy__section">
+            <h2 class="privacy__h">Contact</h2>
+            <p>Product privacy questions: <a href="mailto:privacy@soldenai.com">privacy@soldenai.com</a>. Security: <a href="mailto:security@soldenai.com">security@soldenai.com</a>. Looking for the marketing-site privacy posture? See <a href="/privacy.html">soldenai.com/privacy</a>.</p>
+          </section>
+
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer footer--mr">
+      <div class="shell footer__inner">
+        <div class="footer__top">
+          <p class="footer__tagline">The workflow runtime for the back office.</p>
+          <nav class="footer__cols" aria-label="Footer">
+            <div class="footer__col">
+              <p class="footer__col-title">Product</p>
+              <ul>
+                <li><a href="/#how-solden-works">How it works</a></li>
+                <li><a href="/#scope">Scope</a></li>
+              </ul>
+            </div>
+            <div class="footer__col">
+              <p class="footer__col-title">Company</p>
+              <ul>
+                <li><a href="/manifesto.html">Manifesto</a></li>
+                <li><a href="/contact.html">Contact</a></li>
+              </ul>
+            </div>
+          </nav>
+        </div>
+
+        <div class="footer__wordmark" aria-hidden="true">solden</div>
+
+        <div class="footer__legal">
+          <div class="footer__social">
+            <a href="https://www.linkedin.com/company/solden-technologies" target="_blank" rel="noopener noreferrer" aria-label="Solden on LinkedIn">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.38-1.85 3.61 0 4.27 2.38 4.27 5.47v6.27zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>
+            </a>
+            <a href="https://x.com/soldenai" target="_blank" rel="noopener noreferrer" aria-label="Solden on X">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644z"/></svg>
+            </a>
+          </div>
+          <span class="footer__copyright"><a href="/privacy.html">Privacy</a> · <a href="/product-privacy.html">Product privacy</a> · © <span data-year>2026</span> Solden. All rights reserved.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/site.js?v=10" defer></script>
+  </body>
+</html>
