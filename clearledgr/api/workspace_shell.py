@@ -3789,7 +3789,13 @@ def create_team_invite(
         entity_restrictions=request.entity_restrictions,
     )
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
-    invite_link = f"{base}/api/auth/google/start?invite_token={invite.get('token')}"
+    # The auth router mounts at /auth (no /api prefix — see
+    # clearledgr/api/auth.py:34). Building /api/auth/... here was a
+    # subtle prefix mismatch that 404'd through the strict-profile
+    # filter as "endpoint_disabled_in_ap_v1_profile" instead of
+    # reaching the real handler. Match the list-endpoint shape at
+    # line 3651 above.
+    invite_link = f"{base}/auth/google/start?invite_token={invite.get('token')}"
 
     # Send the invite email via the SMTP relay. The transactional
     # service short-circuits to skipped=True when SMTP isn't
