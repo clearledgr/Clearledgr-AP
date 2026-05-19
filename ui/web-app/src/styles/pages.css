@@ -110,6 +110,11 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  /* Cards sit at the TOP of their grid track instead of stretching to
+     match the tallest sibling. Without this, a short "Connected" badge
+     card grows ~120px of orphaned whitespace just because a peer card
+     happens to have a longer description. */
+  align-items: start;
 }
 
 .settings-summary-card {
@@ -3190,10 +3195,26 @@
 }
 
 .cl-notif-table input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   accent-color: var(--cl-mint);
   cursor: pointer;
+}
+
+/* Notification matrix layout: give the Event column most of the
+   width, distribute the channel columns evenly so the headers don't
+   crowd against each other and the checkboxes sit in clear visual
+   columns. Centred header text matches the centred cell content. */
+.cl-notif-table thead th:not(:first-child) {
+  text-align: center;
+  min-width: 100px;
+}
+.cl-notif-table tbody td:first-child {
+  width: 50%;
+}
+.cl-notif-table tbody td:not(:first-child) {
+  width: 16.66%;
+  text-align: center;
 }
 
 

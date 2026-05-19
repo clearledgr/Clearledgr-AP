@@ -1295,9 +1295,18 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           </div>
         </div>
 
-        <!-- §13: Plan comparison + upgrade inside Gmail -->
+        <!-- §13: Plan comparison + upgrade. The current-plan highlight
+             only fires when sub.plan matches one of the three paid
+             tiers below; on the Free tier (most new workspaces) it
+             showed nothing, leaving "Current plan" invisible. Banner
+             surfaces it instead. -->
         ${canManagePlan ? html`
           <div style="margin-top:16px;border-top:1px solid var(--cl-border, #e2e8f0);padding-top:16px;">
+            ${(sub.plan || '').toLowerCase() === 'free' ? html`
+              <div style="background:#ECFDF5;border:1px solid #BBF7D0;color:#065F46;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px">
+                You're on the <strong>Free</strong> plan. Pick a tier below to upgrade.
+              </div>
+            ` : null}
             <strong style="font-size:13px;">Change plan</strong>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;">
               ${[
@@ -2710,7 +2719,7 @@ function FraudThresholdsPanel({ api, orgId, toast, canManage }) {
               type="number"
               step=${f.step || '1'}
               value=${merged[f.key] ?? ''}
-              placeholder=${String(defaults[f.key])}
+              placeholder=${defaults[f.key] != null ? String(defaults[f.key]) : ''}
               onInput=${setField(f.key)}
               disabled=${!canManage || saving} />
             <small class="muted">${f.help}</small>
