@@ -61,8 +61,8 @@ export default function ActivityPage({ api, orgId, onRefresh, navigate }) {
           <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>
             ${refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
-          <button class="btn-primary btn-sm" onClick=${() => navigate?.('/pipeline')}>
-            Open pipeline
+          <button class="btn-primary btn-sm" onClick=${() => navigate?.('/records')}>
+            Open records
           </button>
         </div>
       </header>

@@ -158,7 +158,7 @@ export default function ExceptionsPage({ api }) {
                         return;
                       }
                       if (row.box_type === 'ap_item' && row.box_id) {
-                        window.location.hash = `#/items/${encodeURIComponent(row.box_id)}`;
+                        window.location.hash = `#/records/${encodeURIComponent(row.box_id)}`;
                       }
                     };
                     return html`

@@ -4,16 +4,18 @@
 - **What this is:** Solden is an embedded finance-ops execution layer. It coordinates work across the systems finance teams already use instead of forcing them into a new standalone back office.
 - **Product analogy:** The current Gmail/AP wedge should feel like Streak for finance ops, but that is the MVP interaction model, not the full product boundary.
 - **Who it's for:** Finance teams at growing companies who need execution, follow-up, approvals, and system-of-record updates to happen across inbox, chat, ERP, and other finance surfaces.
-- **Primary product truth:** Clearledgr is broader than Gmail and broader than AP. Gmail-first AP is the first production wedge.
+- **Primary product truth:** Solden is broader than Gmail and broader than AP. Gmail-first AP is the first production wedge.
 - **Core promise:** Work gets identified, routed, executed, and audited where finance already operates.
-- **Primary surfaces today:** Gmail thread panel, Pipeline, Home, Review, Upcoming, and lightweight setup/admin pages.
-- **Broader surface model:** Slack/Teams, ERP-native follow-ons, reconciliation surfaces, and future finance workbenches should all inherit the same embedded-work doctrine.
+- **Primary surfaces today:**
+  - **Render targets** (where decisions happen): Gmail thread panel, Slack and Teams approval cards, NetSuite SuiteApp, SAP Fiori extension, ERP-native follow-ons.
+  - **Coordination layer** (`workspace.clearledgr.com`): Home (live agent activity ribbon), Activity, Exceptions, Records (read-only directory), Vendors, Reports, Audit log, Approval rules, Connections, API keys, Settings.
+- **Broader surface model:** Every render target inherits the same embedded-work doctrine. The workspace is not a render target — it's the control center that watches the render targets and intervenes when the agent escalates.
 
 ## Core UX Doctrine
-1. **Embedded work, not dashboard migration.** Clearledgr should live inside the systems where finance work already happens.
+1. **Embedded work, not dashboard migration.** Solden lives inside the systems where finance work already happens — Gmail, Slack, Teams, the ERP.
 2. **Streak is the Gmail interaction model.** The Gmail/AP wedge should feel like the finance-operations version of Streak inside Gmail.
 3. **The thread panel is for execution.** It handles the current record only: state, blockers, evidence, one primary action, a few secondary actions.
-4. **Pipeline is the hero surface.** The main list view is where finance operators sort, filter, batch, and reopen work.
+4. **The workspace SPA is the coordination-layer control center.** The hero is the live agent activity ribbon. The workspace is not a workflow desktop and not a second pipeline UI; routine approve/reject/post/snooze decisions belong in the render targets (Slack/Teams/Gmail/ERP). The workspace exists for (1) live situational awareness, (2) policy + identity configuration, (3) intervention when the agent escalates, (4) audit + governance, (5) connections to render targets.
 5. **Home is a hub, not a dashboard.** It is for quick access, recent work, upcoming follow-ups, and secondary tools. It should not lead with KPI cards or setup sprawl.
 6. **Admin tools stay secondary.** Connections, rules, team, plan, status, and similar pages should be discoverable but never dominate the main work path.
 7. **Copy should be operational and plain.** Use short labels and direct task language. Avoid internal platform wording or technical explanations.
@@ -161,16 +163,17 @@
   - **Modal jobs** — running work primary, history secondary
   - **Stripe Dashboard** — typography discipline + tabular numerals (carries over from prior doctrine)
   - **Anti-references**: BILL.com, Ramp admin, Mixmax overview, generic SaaS dashboards.
-- The **hero** of the page is the **agent activity ribbon** — a live SSE-driven stream of recent agent / operator actions across every surface. Each row: tone-dot + verb + subject + timestamp + actor + surface. The page literally changes while the leader watches.
-- Stat tiles **return** as a compact control-center row (four dense tiles, each ~90px tall, tabular-nums, with a small live-pulse dot in the corner). Not a big BILL.com KPI row — a calm Linear / Vercel-style strip.
+- The **hero** of the page is the **agent activity ribbon** — a live SSE-driven stream of recent agent / operator actions across every surface. Each row: tone-dot + verb + subject + timestamp + actor + surface. The page literally changes while the leader watches. The ribbon renders **above** the stat strip so render order matches its hero status; stats are context for the live signal, not the lead.
+- Stat tiles return as a compact control-center row (four dense tiles, each ~90px tall, tabular-nums, with a small live-pulse dot in the corner). Not a big BILL.com KPI row — a calm Linear / Vercel-style strip.
 - Order on the workspace Home:
-  1. Welcome header with date eyebrow, name, "coordination layer" sub, and one secondary + one primary action button
+  1. Welcome header with date eyebrow, name, "coordination layer" sub, and one secondary + one primary action button (default secondary: `Open activity`; default primary: `Review exceptions`)
   2. Onboarding banner (only when `onboarding.completed === false`)
-  3. **Compact stat strip** — 4 tiles: In flight · Awaiting approval · Processed this week · Agent exceptions
+  3. Implementation checklist (only when setup is incomplete)
   4. **Agent activity ribbon (hero)** — live stream of last ~20 agent / operator actions
-  5. Two-column main panels: Exception queue (1.4fr) + Top vendors (1fr)
-  6. Approver workload (logistics, not scoring)
-  7. System status footer (agent + Gmail + approval surface + ERP)
+  5. **Compact stat strip** — 4 tiles: In flight · Awaiting approval · Processed this week · Agent exceptions
+  6. Two-column main panels: Exception queue (1.4fr) + Top vendors (1fr)
+  7. Approver workload (logistics, not scoring)
+  8. System status footer (agent + Gmail + approval surface + ERP)
 - The Workspace Home does **not** carry a horizontal "quick-access cards" strip. Quick navigation lives in the header buttons + the `⌘K` palette. Linear / Vercel / Datadog do not surface a quick-action card row on their landing pages.
 - Anti-patterns specific to the workspace Home:
   - **Foyer framing** — calling the page a "lightweight foyer" or "hub" understates what it does. The workspace is where the leader watches the coordination layer; framing it as a foyer leads to a static page with no live signal.
@@ -181,12 +184,19 @@
 ## Home Pattern (Gmail surface only)
 - The §Home Pattern above (welcome → quick-access strip → 2-col panels) applies to the **Gmail extension's Home route**, where Streak's foyer model is the right reference. The Workspace Surface Pattern (this section) supersedes it for `workspace.clearledgr.com/`.
 
-## Pipeline Pattern
-- Pipeline is the main operating surface for finance teams.
-- It should be denser than Home and optimized for sorting, filtering, batch work, and reopening records.
-- Queue slices and saved views should feel native, fast, and reusable.
-- Pipeline should be the default landing route for daily AP work.
-- If Home is the foyer, Pipeline is the factory floor.
+## Records Pattern (workspace)
+- The workspace `/records` page is a **read-only directory** of AP records. It is for search, filter, and inspection, not for batch decisions. The workspace doesn't run the workflow — it surfaces state and intervenes when the agent escalates.
+- Keep: search, filter sheet (vendor / due / blocker / ERP status / amount / approval age / sort), saved views, scope toggle (All open / Exceptions / Overdue), click-to-detail.
+- Strip (do not reintroduce): Kanban columns, bulk-action toolbars, per-row Approve / Reject / Post / Snooze / Retry-post / Escalate, "route low-risk approval" inline actions. Those decisions live in Slack and Teams (approval cards) and in Gmail (vendor follow-up). The earlier "Live AP queue" Kanban with a `BatchOps` toolbar was a Streak / BILL-shaped workflow desktop and is the anti-pattern.
+- Density target: flat table or list, monospace where it helps, one row per record with vendor / reference / amount / state / blocker / age / due. Linear / Datadog grammar.
+- The detail page (`/records/:id`) is the intervention surface — read-only by default, mutating action bar only when the agent has escalated the record (state ∈ {needs_info, needs_approval, needs_second_approval, pending_approval, failed_post} or open exception) or the 15-minute override window is still open for an autonomous ERP post.
+- Render-target handoff strip sits above the action bar with deep links to Slack / Teams / Gmail / ERP when those URLs are on the payload — the durable answer to "where do decisions actually live?"
+- Anti-patterns specific to the records detail page:
+  - **Approve / Reject buttons in the workspace.** Those are Slack and Teams affordances; the workspace shouldn't double as a third approval surface.
+  - **Workflow-desktop ergonomics** (session timers, cleared-counters, auto-advance, "burst mode"). The workspace is a control center, not an inbox-zero processor.
+
+## Gmail Pipeline Pattern (Gmail extension only)
+- The Gmail extension still ships a Pipeline route (Streak's foyer + queue model is right for the Gmail surface). The workspace Records page is **not** that — it's the coordination-layer companion, not the daily processing surface.
 
 ## Thread Panel Pattern
 - One record at a time

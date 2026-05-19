@@ -26,13 +26,13 @@ export function rememberRecordRouteId(recordId) {
 /**
  * SPA navigation: `navigate` here is the wouter-preact location setter
  * (the second tuple element from `useLocation()`), which accepts a
- * path string. The extension version took an InboxSDK route id +
- * params dict; the SPA route is `/items/:id`.
+ * path string. The SPA route is `/records/:id` — the listing lives at
+ * `/records` and the detail surface at `/records/<id>`.
  */
 export function navigateToRecordDetail(navigate, recordId) {
   const normalized = rememberRecordRouteId(recordId);
   if (!normalized || typeof navigate !== 'function') return false;
-  navigate(`/items/${encodeURIComponent(normalized)}`);
+  navigate(`/records/${encodeURIComponent(normalized)}`);
   return true;
 }
 
@@ -41,7 +41,7 @@ export function resolveRecordRouteId(params = {}, hash = '') {
   if (paramId) return paramId;
 
   const hashText = String(hash || '');
-  const hashMatch = hashText.match(/items\/([^/?#]+)/);
+  const hashMatch = hashText.match(/records\/([^/?#]+)/);
   const hashId = normalizeRecordRouteId(hashMatch?.[1]);
   if (hashId) return hashId;
 

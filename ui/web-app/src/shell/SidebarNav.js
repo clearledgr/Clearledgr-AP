@@ -3,36 +3,43 @@ import { html } from '../utils/htm.js';
 import { BrandMark } from './BrandMark.js';
 
 /**
- * Hub navigation. The route IDs match the existing Gmail-extension
- * route registry (`ui/gmail-extension/src/routes/route-registry.js`)
- * so deep links from the sidebar/banners can navigate here without
- * a translation table.
+ * Sidebar nav for the coordination-layer control center.
+ *
+ * Three groups, ordered by what the operator does here:
+ *   primary  — live state of the coordination layer (Home, Activity, Exceptions)
+ *   data     — directories and read-only surfaces (Records, Vendors, Reports, Audit log)
+ *   admin    — policy + identity + render-target config (Rules, Connections, API keys, Settings)
+ *
+ * The earlier "WORK" group (Records / Review queue / Exceptions / Vendors)
+ * mirrored Streak/BILL grammar — a workflow desktop. The workspace
+ * is not a workflow desktop. Approvals + vendor follow-up happen in
+ * Slack/Teams/Gmail; the workspace shows live state, lets the
+ * operator intervene when the agent escalates, and configures policy.
  */
 export const NAV_ITEMS = [
   { path: '/', label: 'Home', group: 'primary' },
-  { path: '/pipeline', label: 'Records', group: 'work' },
-  { path: '/review', label: 'Review queue', group: 'work' },
-  { path: '/exceptions', label: 'Exceptions', group: 'work' },
-  { path: '/vendors', label: 'Vendors', group: 'work' },
-  { path: '/activity', label: 'Activity', group: 'ops' },
-  { path: '/audit', label: 'Audit log', group: 'ops' },
-  { path: '/reports', label: 'Reports', group: 'ops' },
-  { path: '/rules', label: 'Approval rules', group: 'ops' },
-  { path: '/connections', label: 'Connections', group: 'ops' },
-  { path: '/api-keys', label: 'API keys', group: 'ops' },
-  { path: '/settings', label: 'Settings', group: 'ops' },
+  { path: '/activity', label: 'Activity', group: 'primary' },
+  { path: '/exceptions', label: 'Exceptions', group: 'primary' },
+  { path: '/records', label: 'Records', group: 'data' },
+  { path: '/vendors', label: 'Vendors', group: 'data' },
+  { path: '/reports', label: 'Reports', group: 'data' },
+  { path: '/audit', label: 'Audit log', group: 'data' },
+  { path: '/rules', label: 'Approval rules', group: 'admin' },
+  { path: '/connections', label: 'Connections', group: 'admin' },
+  { path: '/api-keys', label: 'API keys', group: 'admin' },
+  { path: '/settings', label: 'Settings', group: 'admin' },
 ];
 
 const GROUP_LABELS = {
   primary: '',
-  work: 'WORK',
-  ops: 'OPERATE',
+  data: 'DATA',
+  admin: 'ADMIN',
 };
 
 export function SidebarNav() {
   const [pathname] = useLocation();
 
-  const groups = ['primary', 'work', 'ops'];
+  const groups = ['primary', 'data', 'admin'];
 
   return html`
     <nav class="cl-sidebar-nav" aria-label="Primary">

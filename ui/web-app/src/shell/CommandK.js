@@ -21,13 +21,17 @@ import { useOrgId } from './BootstrapContext.js';
 
 const NAV_ENTRIES = [
   { kind: 'nav', label: 'Home', sub: 'Workspace overview', path: '/', tokens: ['home', 'overview', 'dashboard'] },
-  { kind: 'nav', label: 'Records', sub: 'AP records by stage', path: '/pipeline', tokens: ['records', 'pipeline', 'invoices', 'ap'] },
-  { kind: 'nav', label: 'Review queue', sub: 'Items needing attention', path: '/review', tokens: ['review', 'queue'] },
-  { kind: 'nav', label: 'Exceptions', sub: 'Items with blockers', path: '/exceptions', tokens: ['exceptions', 'errors', 'blockers'] },
+  { kind: 'nav', label: 'Activity', sub: 'Live agent activity ribbon', path: '/activity', tokens: ['activity', 'live', 'feed', 'agent'] },
+  { kind: 'nav', label: 'Exceptions', sub: 'Records the agent escalated for human judgment', path: '/exceptions', tokens: ['exceptions', 'errors', 'blockers', 'review', 'queue', 'attention'] },
+  { kind: 'nav', label: 'Records', sub: 'Search and inspect AP records', path: '/records', tokens: ['records', 'pipeline', 'invoices', 'ap'] },
   { kind: 'nav', label: 'Vendors', sub: 'Vendor directory', path: '/vendors', tokens: ['vendors', 'suppliers'] },
-  { kind: 'nav', label: 'Activity', sub: 'Audit trail', path: '/activity', tokens: ['activity', 'audit', 'history'] },
+  { kind: 'nav', label: 'Reports', sub: 'Volume, agent performance, cycle, exceptions, vendor quality', path: '/reports', tokens: ['reports', 'analytics', 'metrics'] },
+  { kind: 'nav', label: 'Audit log', sub: 'Append-only governance trail', path: '/audit', tokens: ['audit', 'history', 'governance'] },
+  { kind: 'nav', label: 'Approval rules', sub: 'Configure agent routing policy', path: '/rules', tokens: ['rules', 'policy', 'approval'] },
   { kind: 'nav', label: 'Connections', sub: 'ERP, Slack, Teams, Gmail', path: '/connections', tokens: ['connections', 'integrations', 'erp', 'slack', 'teams', 'gmail'] },
+  { kind: 'nav', label: 'API keys', sub: 'Agent identity, scopes, rotation', path: '/api-keys', tokens: ['api', 'keys', 'tokens', 'agent', 'identity'] },
   { kind: 'nav', label: 'Settings', sub: 'Org, users, policies, billing', path: '/settings', tokens: ['settings', 'config', 'preferences', 'billing'] },
+  { kind: 'nav', label: 'Plan', sub: 'Subscription, usage, billing', path: '/plan', tokens: ['plan', 'billing', 'subscription'] },
   { kind: 'nav', label: 'Status', sub: 'Operational health', path: '/status', tokens: ['status', 'health', 'uptime', 'incidents'] },
   { kind: 'nav', label: 'Onboarding', sub: 'Setup wizard', path: '/onboarding', tokens: ['onboarding', 'setup', 'wizard'] },
 ];
@@ -109,7 +113,7 @@ export function CommandK() {
           label: item.vendor_name || item.vendor || 'Vendor not extracted',
           sub: [item.invoice_number ? `#${item.invoice_number}` : '', item.state ? item.state.replace(/_/g, ' ') : '']
             .filter(Boolean).join(' · '),
-          path: `/items/${encodeURIComponent(item.id)}`,
+          path: `/records/${encodeURIComponent(item.id)}`,
         }));
         setLiveResults(items);
         setSearchError(false);

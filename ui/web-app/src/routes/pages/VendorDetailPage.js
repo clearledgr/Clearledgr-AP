@@ -400,7 +400,7 @@ function RecentInvoicesPanel({ invoices, navigate }) {
         <tbody>
           ${invoices.slice(0, 25).map((inv) => html`
             <tr key=${inv.id || inv.invoice_number} class="cl-vendor-invoice-row"
-              onClick=${() => navigate(`/items/${encodeURIComponent(inv.id)}`)}>
+              onClick=${() => navigate(`/records/${encodeURIComponent(inv.id)}`)}>
               <td><code>${inv.invoice_number || inv.id}</code></td>
               <td class="cl-record-muted">
                 ${inv.invoice_date ? fmtDate(inv.invoice_date)

@@ -6,16 +6,13 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtDateTime, useAction } from '../route-helpers.js';
 import { formatAmount } from '../../utils/formatters.js';
-import { clearPipelineNavigation, readPipelinePreferences, writePipelinePreferences } from '../pipeline-views.js';
-import { writeReviewPreferences } from '../review-preferences.js';
 import { navigateToVendorRecord } from '../../utils/vendor-route.js';
 import { getExceptionLabel } from '../../utils/formatters.js';
 import { EmptyState, LoadingSkeleton, ErrorRetry } from '../../components/StatePrimitives.js';
 
 const html = htm.bind(h);
 
-export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) {
-  const pipelineScope = useMemo(() => ({ orgId, userEmail }), [orgId, userEmail]);
+export default function VendorsPage({ api, orgId, navigate, toast }) {
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -58,31 +55,6 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
     navigateToVendorRecord(navigate, vendorName);
   };
 
-  const openVendorPipeline = (vendor) => {
-    const vendorName = String(vendor?.vendor_name || '').trim();
-    if (!vendorName) return;
-    const current = readPipelinePreferences(pipelineScope);
-    clearPipelineNavigation(pipelineScope);
-    writePipelinePreferences(pipelineScope, {
-      ...current,
-      activeSliceId: 'all_open',
-      sortCol: 'updated_at',
-      sortDir: 'desc',
-      filters: {
-        ...current.filters,
-        vendor: vendorName,
-      },
-    });
-    navigate('clearledgr/invoices');
-  };
-
-  const openVendorIssues = (vendor) => {
-    const vendorName = String(vendor?.vendor_name || '').trim();
-    if (!vendorName) return;
-    writeReviewPreferences(pipelineScope, { searchQuery: vendorName });
-    navigate('clearledgr/review');
-  };
-
   if (loading) {
     return html`<div class="panel"><${LoadingSkeleton} rows=${5} label="Loading vendor directory" /></div>`;
   }
@@ -99,12 +71,11 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
     <div class="secondary-banner">
       <div class="secondary-banner-copy">
         <h3>Vendor directory</h3>
-        <p class="muted">See past invoices, open issues, and recent activity for each vendor, then jump back into the queue when you need to act.</p>
+        <p class="muted">Vendor master and recent activity. Open a vendor for its profile, verified bank details, and exception history.</p>
       </div>
       <div class="secondary-banner-actions">
         <button class="btn-secondary btn-sm" onClick=${refresh} disabled=${refreshing}>${refreshing ? 'Refreshing…' : 'Refresh'}</button>
         <button class="btn-secondary btn-sm" onClick=${() => setBulkImportOpen(true)}>Bulk import</button>
-        <button class="btn-primary btn-sm" onClick=${() => navigate('clearledgr/invoices')}>Open invoices</button>
       </div>
     </div>
 
@@ -223,8 +194,6 @@ export default function VendorsPage({ api, orgId, userEmail, navigate, toast }) 
                 </div>
                 <div class="secondary-card-actions">
                   <button class="btn-secondary btn-sm" onClick=${() => openVendorRecord(vendor)}>Open vendor record</button>
-                  <button class="btn-secondary btn-sm" onClick=${() => openVendorIssues(vendor)}>Review issues</button>
-                  <button class="btn-ghost btn-sm" onClick=${() => openVendorPipeline(vendor)}>Open in invoices</button>
                   <${VendorStatusButton}
                     api=${api}
                     orgId=${orgId}

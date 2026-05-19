@@ -49,7 +49,7 @@ import {
 import { navigateInboxRoute } from '../utils/inbox-route.js';
 import { navigateToRecordDetail } from '../utils/record-route.js';
 import { navigateToVendorRecord } from '../utils/vendor-route.js';
-import { workspaceItemUrl, workspacePipelineUrl } from '../utils/workspace-link.js';
+import { workspaceItemUrl, workspaceRecordsUrl } from '../utils/workspace-link.js';
 
 const html = htm.bind(h);
 const LOGO_PATH = 'icons/icon48.png';

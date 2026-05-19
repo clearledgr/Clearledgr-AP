@@ -225,7 +225,7 @@ def _build_email(
         f"Reason:\n{reason}\n"
         "\n"
         "Open the dashboard to resolve:\n"
-        f"  https://workspace.clearledgr.com/items/{box_id}\n"
+        f"  https://workspace.clearledgr.com/records/{box_id}\n"
         "\n"
         "Once the underlying exception is resolved, no further escalations "
         "fire for this item."

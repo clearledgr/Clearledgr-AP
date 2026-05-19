@@ -6,7 +6,8 @@
  * Onboarding). The JSX came across but the CSS didn't; without these
  * definitions the pages render against browser defaults.
  *
- * Brand-aligned: mint #00D67E + navy #0A1628 + Inter body. Calm,
+ * Brand-aligned: navy (sampled from solden-lockup-dark.png) + teal
+ * (--cl-teal-500) + Inter body. Calm,
  * dense-but-readable, professional — closer to Linear / Mercury than
  * any Bootstrap-flavoured admin template.
  */
@@ -2013,25 +2014,148 @@
 .cl-record-state-payment_executed,
 .cl-record-state-closed { background: var(--cl-mint-soft); color: #14532D; }
 
-/* ------- Action bar ------- */
+/* ------- Render-target handoff strip -------
+ * Always visible above the action bar (when at least one render-target
+ * link is on the payload). The workspace doesn't run routine workflow
+ * decisions; this strip is the durable answer for where they live.
+ */
+
+.cl-record-handoff {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  flex-wrap: wrap;
+}
+.cl-record-handoff-copy {
+  flex: 1 1 280px;
+  min-width: 200px;
+}
+.cl-record-handoff-copy strong {
+  display: block;
+  font-size: 13px;
+  color: var(--cl-navy);
+  margin-bottom: 2px;
+}
+.cl-record-handoff-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--cl-ink-muted);
+}
+.cl-record-handoff-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cl-record-handoff-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--cl-border);
+  background: #fff;
+  color: var(--cl-navy);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cl-record-handoff-link:hover {
+  background: #F1F5F9;
+}
+
+/* ------- Intervention action bar -------
+ * Only renders when the agent has escalated this record (state in
+ * the escalated set or an open exception) OR the override window is
+ * still open. Otherwise the page is read-only; decisions live in
+ * Slack / Teams / Gmail / the ERP (see handoff strip above).
+ */
 
 .cl-record-action-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--cl-surface);
-  border: 1px solid var(--cl-border);
-  border-radius: var(--cl-radius);
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
-.cl-record-action-bar-empty {
-  justify-content: center;
+/* Override-window block — the only affordance is "Reverse posting" */
+.cl-record-action-window {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: var(--cl-radius);
+  flex-wrap: wrap;
 }
-.cl-record-action-bar-empty-msg {
-  margin: 0;
+.cl-record-action-window-copy {
+  flex: 1 1 280px;
+  min-width: 200px;
+}
+.cl-record-action-window-copy strong {
+  display: block;
   font-size: 13px;
+  color: #92400E;
+  margin-bottom: 2px;
+}
+.cl-record-action-window-copy p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400E;
+}
+.cl-record-action-reverse {
+  background: #D97706;
+  border-color: #D97706;
+  color: #fff;
+  font-weight: 600;
+}
+.cl-record-action-reverse:hover:not(:disabled) {
+  background: #B45309;
+  border-color: #B45309;
+}
+
+/* Escalation block — agent handed this record to a human */
+.cl-record-action-escalation {
+  padding: 16px 18px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-left: 3px solid #B45309;
+  border-radius: var(--cl-radius);
+}
+.cl-record-action-escalation-copy {
+  margin-bottom: 14px;
+}
+.cl-record-action-escalation-copy strong {
+  display: block;
+  font-size: 14px;
+  color: var(--cl-navy);
+  margin-bottom: 4px;
+}
+.cl-record-action-escalation-copy p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--cl-ink-muted);
+}
+.cl-record-action-escalation-aside {
+  font-size: 12px !important;
+  color: var(--cl-ink-muted);
+}
+.cl-record-action-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .cl-record-action-primary {
@@ -3811,7 +3935,7 @@
 }
 
 .cl-record-erp-link {
-  color: #0A1628;
+  color: var(--cl-navy);
   text-decoration: none;
   border-bottom: 1px dashed rgba(10, 22, 40, 0.4);
 }
@@ -4343,7 +4467,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: none;
-  color: #0A1628;
+  color: var(--cl-navy);
   overflow: hidden;
 }
 .cl-rules-json-textarea {
@@ -4352,7 +4476,7 @@
   border: none;
   background: transparent;
   color: transparent;
-  caret-color: #0A1628;
+  caret-color: var(--cl-navy);
   font-family: 'Geist Mono', monospace;
   font-size: 13px;
   line-height: 1.45;

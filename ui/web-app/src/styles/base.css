@@ -3,14 +3,16 @@
   --cl-surface: #FFFFFF;
   --cl-border: #E2E8F0;
   --cl-border-strong: #CBD5E1;
-  --cl-ink-primary: #0A1F44;
+  --cl-ink-primary: #001137;
   --cl-ink-secondary: #475569;
   --cl-ink-muted: #94A3B8;
 
-  /* Solden brand (rebrand active 2026-05-02). Navy is the primary
-     ink, teal-500 is the accent. teal-400 / teal-600 are gradient
+  /* Solden brand (rebrand active 2026-05-02). Navy is sampled from
+     the canonical brand lockup (`public/solden-lockup-dark.png`) so
+     workspace chrome, body ink, and the wordmark all share the same
+     hex. teal-500 is the accent; teal-400 / teal-600 are gradient
      stops for hover + emphasis surfaces. */
-  --cl-navy:        #0A1F44;
+  --cl-navy:        #001137;
   --cl-teal-400:    #1FC7B6;
   --cl-teal-500:    #18BFB0;
   --cl-teal-600:    #12B3A6;
@@ -29,8 +31,8 @@
   --cl-radius-sm: 6px;
   --cl-radius: 10px;
   --cl-radius-lg: 16px;
-  --cl-shadow-sm: 0 1px 2px rgba(10, 31, 68, 0.04);
-  --cl-shadow: 0 4px 12px rgba(10, 31, 68, 0.06);
+  --cl-shadow-sm: 0 1px 2px rgba(0, 17, 55, 0.04);
+  --cl-shadow: 0 4px 12px rgba(0, 17, 55, 0.06);
   --cl-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --cl-font-brand: 'Inter', system-ui, -apple-system, sans-serif;
   --cl-font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;

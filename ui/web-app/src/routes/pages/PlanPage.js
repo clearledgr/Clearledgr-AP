@@ -263,7 +263,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
         <h3>${planLabel} plan</h3>
         <p class="muted">
           ${canManagePlan
-            ? 'Manage workspace entitlement, track usage against limits, and change the plan without leaving Gmail.'
+            ? 'Manage workspace entitlement, track usage against limits, and change the plan from the workspace.'
             : 'Review workspace entitlement and usage here. Only admins can change the plan.'}
         </p>
         <div class="billing-hero-meta">
@@ -277,7 +277,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
       </div>
       <div class="secondary-banner-actions">
         ${navigate
-          ? html`<button class="btn-secondary" onClick=${() => navigate('clearledgr/settings')}>Open settings</button>`
+          ? html`<button class="btn-secondary" onClick=${() => navigate('/settings')}>Open settings</button>`
           : null}
         ${canManagePlan && !sub.trial_started_at && status !== 'trialing'
           ? html`<button class="btn-primary" onClick=${() => changePlan('trial')} disabled=${changingPlan}>
@@ -435,7 +435,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
         <div class="panel">
           <h3 style="margin-top:0">What changes when you switch</h3>
           <div class="secondary-note">
-            Plan changes update workspace entitlement immediately for Solden features, limits, and approval tooling. Billing cadence stays ${String(sub.billing_cycle || 'monthly').toLowerCase() === 'yearly' ? 'annual' : 'monthly'} unless your team changes it outside this Gmail surface.
+            Plan changes update workspace entitlement immediately for Solden features, limits, and approval tooling. Billing cadence stays ${String(sub.billing_cycle || 'monthly').toLowerCase() === 'yearly' ? 'annual' : 'monthly'} unless your team changes it from the billing portal.
           </div>
         </div>
 

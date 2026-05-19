@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:681996e909cb257829e6b29d3f01ae607c127e526b00afa2fd70bb79ddca4931 */
+/* clearledgr-source-fingerprint:4c3f9dd261abe4f615192bf8f4618df5a71ce811a4d6c57813c471acc465f719 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -53418,7 +53418,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     } catch (_2) {}
   }
 
-  class ClearledgrQueueManager {
+  class SoldenQueueManager {
     constructor() {
       this.queue = [];
       this.listeners = [];
@@ -53529,7 +53529,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return this.kpiSnapshot || null;
     }
     getUiActionDisabledReason(action, state) {
-      const allowed = ClearledgrQueueManager.ACTION_STATES[action] || [];
+      const allowed = SoldenQueueManager.ACTION_STATES[action] || [];
       if (!state)
         return "Action unavailable";
       if (!allowed.includes(state))
@@ -54143,7 +54143,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (code === "backend_auth_cooldown") {
         const retryAfter = Number(result?.retry_after_seconds || this.getBackendAuthRetryAfterSeconds());
         return {
-          toast: `Clearledgr sign-in is cooling down after repeated failures. Try again in ${Math.max(1, retryAfter)}s.`,
+          toast: `Solden sign-in is cooling down after repeated failures. Try again in ${Math.max(1, retryAfter)}s.`,
           severity: "warning"
         };
       }
@@ -58156,6 +58156,23 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     });
     return normalizedCurrency ? `${normalizedCurrency} ${amountLabel}` : amountLabel;
   }
+  function formatTimeAgo(iso) {
+    if (!iso)
+      return "";
+    try {
+      const d3 = new Date(iso);
+      const now = new Date;
+      const hours = Math.floor((now - d3) / 3600000);
+      if (hours < 1)
+        return "just now";
+      if (hours < 24)
+        return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      return `${days}d ago`;
+    } catch {
+      return "";
+    }
+  }
   function readLocalStorage(key) {
     try {
       return String(window?.localStorage?.getItem(key) || "").trim();
@@ -58178,9 +58195,157 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return "";
     }
   }
+  function getReasonSheetDefaults(actionType = "generic") {
+    const n3 = String(actionType || "").trim().toLowerCase();
+    if (n3 === "reject" || n3 === "budget_reject")
+      return { chips: ["Duplicate invoice", "Incorrect amount", "Missing required docs", "Out of policy"], required: true };
+    if (n3 === "approve_override" || n3 === "budget_override")
+      return { chips: ["Reviewed with approver", "Urgent vendor payment", "Policy exception approved", "Business critical"], required: true };
+    if (n3 === "budget_adjustment")
+      return { chips: ["Threshold update needed", "Seasonal spend spike", "Project budget exception", "One-off adjustment"], required: false };
+    if (n3 === "approval_route" || n3 === "approval_nudge")
+      return { chips: ["Approver unavailable", "SLA at risk", "Waiting on budget owner", "Escalation requested"], required: false };
+    return { chips: ["Reviewed", "Needs follow-up", "Policy requirement", "Other"], required: true };
+  }
 
   // src/components/ActionDialog.js
   var html = htm_module_default.bind(_);
+  function useActionDialog() {
+    const [state, setState] = d2({ visible: false, config: {}, resolve: null });
+    const open = q2((config = {}) => {
+      return new Promise((resolve) => {
+        setState({ visible: true, config, resolve });
+      });
+    }, []);
+    const close = q2((value) => {
+      setState((prev) => {
+        prev.resolve?.(value);
+        return { visible: false, config: {}, resolve: null };
+      });
+    }, []);
+    return [{ ...state, onClose: close }, open];
+  }
+  function ActionDialog({ visible, config, onClose }) {
+    const inputRef = A2(null);
+    const confirmRef = A2(null);
+    const dialogRef = A2(null);
+    const [value, setValue] = d2("");
+    const {
+      actionType = "generic",
+      dialogMode = "input",
+      title = "Add context",
+      label = "Reason",
+      message = "",
+      previewLines = [],
+      placeholder = "",
+      defaultValue = "",
+      confirmLabel = "Confirm",
+      cancelLabel = "Cancel",
+      required: requiredProp,
+      chips: chipsProp
+    } = config || {};
+    const defaults = getReasonSheetDefaults(actionType);
+    const chipList = Array.isArray(chipsProp) && chipsProp.length ? chipsProp : defaults.chips;
+    const isRequired = requiredProp !== undefined ? Boolean(requiredProp) : Boolean(defaults.required);
+    const isConfirmOnly = dialogMode === "confirm";
+    y2(() => {
+      if (!visible)
+        return;
+      setValue(defaultValue || "");
+      const focusTimer = setTimeout(() => {
+        if (isConfirmOnly)
+          confirmRef.current?.focus();
+        else
+          inputRef.current?.focus();
+      }, 0);
+      return () => clearTimeout(focusTimer);
+    }, [visible, defaultValue, isConfirmOnly]);
+    const handleConfirm = q2(() => {
+      if (isConfirmOnly) {
+        onClose?.(true);
+        return;
+      }
+      const trimmed = value.trim();
+      if (isRequired && !trimmed) {
+        inputRef.current?.focus();
+        return;
+      }
+      onClose?.(trimmed);
+    }, [isConfirmOnly, value, isRequired, onClose]);
+    const handleCancel = q2(() => onClose?.(null), [onClose]);
+    const handleKeyDown = q2((e3) => {
+      if (e3.key === "Escape") {
+        e3.preventDefault();
+        handleCancel();
+      } else if (e3.key === "Enter" && !e3.shiftKey) {
+        e3.preventDefault();
+        handleConfirm();
+      }
+    }, [handleCancel, handleConfirm]);
+    const handleChip = q2((chip) => {
+      setValue((prev) => {
+        const existing = prev.trim();
+        return existing ? `${existing}; ${chip}` : chip;
+      });
+      inputRef.current?.focus();
+    }, []);
+    const handleBackdrop = q2((e3) => {
+      if (e3.target === dialogRef.current)
+        handleCancel();
+    }, [handleCancel]);
+    const handleDialogKeyDown = q2((e3) => {
+      if (e3.key !== "Tab")
+        return;
+      const focusable = dialogRef.current?.querySelectorAll('button:not([disabled]), input, [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length)
+        return;
+      const first = focusable[0];
+      const last2 = focusable[focusable.length - 1];
+      if (e3.shiftKey && document.activeElement === first) {
+        e3.preventDefault();
+        last2.focus();
+      } else if (!e3.shiftKey && document.activeElement === last2) {
+        e3.preventDefault();
+        first.focus();
+      }
+    }, []);
+    if (!visible)
+      return null;
+    return html`
+    <div ref=${dialogRef} class="cl-action-dialog" style="display:flex" aria-hidden="false"
+      onClick=${handleBackdrop} onKeyDown=${handleDialogKeyDown}>
+      <div class="cl-action-dialog-card" role="dialog" aria-modal="true" aria-labelledby="cl-dialog-title">
+        <div class="cl-action-dialog-title" id="cl-dialog-title">${title}</div>
+        ${message && html`<div class="cl-action-dialog-message">${message}</div>`}
+        ${Array.isArray(previewLines) && previewLines.length > 0 && html`
+          <div class="cl-action-dialog-preview">
+            ${previewLines.map((line, index) => html`<div key=${index} class="cl-action-dialog-preview-line">${line}</div>`)}
+          </div>
+        `}
+        ${!isConfirmOnly && html`
+          <label class="cl-action-dialog-label" id="cl-dialog-label">${label}</label>
+          <div class="cl-action-dialog-chips">
+            ${chipList.map((chip, i3) => html`
+              <button key=${i3} type="button" class="cl-action-chip"
+                onClick=${() => handleChip(chip)}>${chip}</button>
+            `)}
+          </div>
+          <input ref=${inputRef} class="cl-action-dialog-input" type="text"
+            value=${value} onInput=${(e3) => setValue(e3.target.value)}
+            onKeyDown=${handleKeyDown} placeholder=${placeholder}
+            aria-labelledby="cl-dialog-label" />
+          <div class="cl-action-dialog-hint">
+            ${isRequired ? "A reason is required for this action." : "Optional note. Choose a quick reason or type your own."}
+          </div>
+        `}
+        <div class="cl-action-dialog-actions">
+          <button class="cl-btn cl-btn-secondary" onClick=${handleCancel}>${cancelLabel}</button>
+          <button ref=${confirmRef} class="cl-btn" onClick=${handleConfirm}>${confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  }
   // node_modules/htm/preact/index.module.js
   var m3 = htm_module_default.bind(_);
 
@@ -58497,10 +58662,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const id = String(itemId || "").trim();
     if (!id)
       return WORKSPACE_URL;
-    return `${WORKSPACE_URL}/items/${encodeURIComponent(id)}`;
+    return `${WORKSPACE_URL}/records/${encodeURIComponent(id)}`;
   }
-  function workspacePipelineUrl() {
-    return `${WORKSPACE_URL}/pipeline`;
+  function workspaceRecordsUrl() {
+    return `${WORKSPACE_URL}/records`;
   }
 
   // src/components/ThreadSidebar.js
@@ -58600,6 +58765,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   background: #FEFCE8; color: #92400E;
   font: 500 12px/1.2 'DM Sans', sans-serif; cursor: pointer;
 }
+
+/* Action bar — canonical intent buttons (Approve / Reject / Send to person
+   / etc.). Mirrors the workspace RecordDetailPage action bar but laid out
+   for the narrow Gmail sidebar (~340px) — wraps to two rows when needed.
+   Primary action gets dark-fill treatment; secondary actions are bordered.
+   busy=true disables every button while dispatch is in flight. */
+.cl-ts-actionbar { padding: 12px 16px; border-bottom: 1px solid #E2E8F0; }
+.cl-ts-actionbar-buttons {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+}
+.cl-ts-actionbtn {
+  font: 500 12px/1.2 'DM Sans', sans-serif;
+  padding: 7px 12px; border-radius: 6px;
+  border: 1px solid #CBD5E1; background: #FFFFFF; color: #0F172A;
+  cursor: pointer; transition: background 100ms ease, border-color 100ms ease;
+}
+.cl-ts-actionbtn:hover:not(:disabled) { background: #F8FAFC; border-color: #94A3B8; }
+.cl-ts-actionbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cl-ts-actionbtn--primary {
+  background: #0F172A; color: #FFFFFF; border-color: #0F172A;
+}
+.cl-ts-actionbtn--primary:hover:not(:disabled) {
+  background: #1E293B; border-color: #1E293B;
+}
 .cl-ts-snoozed-notice {
   font: 500 11px/1.3 'DM Sans', sans-serif; color: #CA8A04; padding: 4px 0;
 }
@@ -58665,6 +58854,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   background: #00D67E; margin-left: 2px; animation: cl-ts-blink 0.9s steps(2) infinite;
 }
 @keyframes cl-ts-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Paragraph break in rendered markdown answer body. CSP-friendly
+   alternative to inline style="height:4px". */
+.cl-ts-qa-a .cl-ts-pbreak { height: 4px; }
 
 /* Flash highlight when a reference chip scrolls an audit row into view */
 .cl-ts-audit-flash {
@@ -58823,15 +59016,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   function formatAmount2(amount, currency) {
     if (amount == null || amount === "")
       return "—";
-    try {
-      const num = parseFloat(amount);
-      if (isNaN(num))
-        return "—";
-      const cur = String(currency || "USD").toUpperCase();
-      return `${cur} ${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    } catch {
-      return "—";
-    }
+    const out = formatAmount(amount, currency);
+    return out === "Amount unavailable" ? "—" : out;
   }
   function formatDate(iso) {
     if (!iso)
@@ -58841,23 +59027,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return d3.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
     } catch {
       return iso;
-    }
-  }
-  function formatTimeAgo(iso) {
-    if (!iso)
-      return "";
-    try {
-      const d3 = new Date(iso);
-      const now = new Date;
-      const hours = Math.floor((now - d3) / 3600000);
-      if (hours < 1)
-        return "just now";
-      if (hours < 24)
-        return `${hours}h ago`;
-      const days = Math.floor(hours / 24);
-      return `${days}d ago`;
-    } catch {
-      return "";
     }
   }
   function formatCountdown(targetIso, nowMs) {
@@ -59020,7 +59189,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         if (trimmed.length > 0) {
           blocks.push(m3`<div key=${`p-${i3}`}>${renderInlineMarkdown(line, { references, onReferenceClick })}</div>`);
         } else if (blocks.length > 0) {
-          blocks.push(m3`<div key=${`br-${i3}`} style="height:4px"></div>`);
+          blocks.push(m3`<div key=${`br-${i3}`} class="cl-ts-pbreak"></div>`);
         }
       }
     });
@@ -59172,6 +59341,52 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           class="cl-ts-banner-btn-onboard"
           onClick=${onInvite}
         >Invite to onboarding</button>
+      </div>
+    </div>
+  `;
+  }
+  var THREAD_SIDEBAR_INTENT_LABELS = {
+    approve_invoice: "Approve",
+    reject_invoice: "Reject",
+    request_info: "Send back for info",
+    escalate_approval: "Escalate",
+    reassign_approval: "Send to person",
+    request_approval: "Send for approval",
+    snooze_invoice: "Snooze",
+    unsnooze_invoice: "Unsnooze",
+    post_to_erp: "Post to ERP",
+    reverse_invoice_post: "Reverse posting",
+    manually_classify_invoice: "Reclassify",
+    resubmit_invoice: "Resubmit"
+  };
+  function labelForIntent(intent) {
+    return THREAD_SIDEBAR_INTENT_LABELS[intent] || intent;
+  }
+  function ActionBarSection({ actions, busy, onIntent }) {
+    const available = Array.isArray(actions?.available) ? actions.available : [];
+    if (available.length === 0 || typeof onIntent !== "function")
+      return null;
+    const primary = actions?.primary && available.includes(actions.primary) ? actions.primary : null;
+    const secondary = available.filter((i3) => i3 !== primary);
+    return m3`
+    <div class="cl-ts-section cl-ts-actionbar" role="toolbar" aria-label="Record actions">
+      <div class="cl-ts-section-title">Actions</div>
+      <div class="cl-ts-actionbar-buttons">
+        ${primary ? m3`
+          <button
+            class="cl-ts-actionbtn cl-ts-actionbtn--primary"
+            disabled=${busy}
+            onClick=${() => onIntent(primary)}
+          >${labelForIntent(primary)}</button>
+        ` : null}
+        ${secondary.map((intent) => m3`
+          <button
+            class="cl-ts-actionbtn"
+            key=${intent}
+            disabled=${busy}
+            onClick=${() => onIntent(intent)}
+          >${labelForIntent(intent)}</button>
+        `)}
       </div>
     </div>
   `;
@@ -59458,7 +59673,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     loading,
     budgetStatus,
     onBudgetOverride,
-    budgetOverridePending
+    budgetOverridePending,
+    actions,
+    actionBusy,
+    onIntent
   }) {
     const [boxLinks, setBoxLinks] = d2([]);
     const [onboardingStatus, setOnboardingStatus] = d2(null);
@@ -59727,6 +59945,12 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       <${OverrideWindowBanner} window_=${item.override_window} onUndo=${onUndoOverride} nowMs=${nowMs} />
       <${WaitingBanner} waiting=${item.waiting_condition} />
       <${FraudFlagsBanner} flags=${item.fraud_flags} />
+
+      <${ActionBarSection}
+        actions=${actions}
+        busy=${actionBusy}
+        onIntent=${onIntent}
+      />
       <${VendorOnboardingPromptBanner}
         status=${onboardingStatus}
         onInvite=${() => setInviteOpen(true)}
@@ -59824,7 +60048,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             href=${workspaceItemUrl(item.id)}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open this invoice in the Clearledgr workspace"
+            title="Open this invoice in the Solden workspace"
           >Open in workspace ↗</a>
         ` : ""}
         <button type="button" class="cl-ts-footer-link" onClick=${openFeedback}>
@@ -59955,7 +60179,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return { error };
     }
     componentDidCatch(error, info) {
-      console.error("[Clearledgr]", error, info?.componentStack || "");
+      console.error("[Solden]", error, info?.componentStack || "");
     }
     render() {
       if (this.state.error) {
@@ -60038,7 +60262,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     let text = "";
     let tone = "";
     if (state === "initializing")
-      text = "Setting up Clearledgr…";
+      text = "Setting up Solden…";
     else if (state === "scanning")
       text = "Checking inbox for new invoices…";
     else if (state === "auth_required") {
@@ -60050,9 +60274,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     } else if (state === "error") {
       const err = String(status?.error || "");
       if (err.includes("backend"))
-        text = "Unable to reach Clearledgr.";
+        text = "Unable to reach Solden.";
       else if (err.includes("temporal"))
-        text = "Clearledgr service is temporarily unavailable. Try again shortly.";
+        text = "Solden service is temporarily unavailable. Try again shortly.";
       else if (err.includes("processing")) {
         const failedCount = Number(status?.failedCount || 0);
         text = failedCount > 0 ? `${failedCount} email(s) need another try.` : "Something needs another try.";
@@ -60100,7 +60324,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     <div class="cl-section cl-auth-panel">
       <div class="cl-section-title">Connect Gmail</div>
       <div class="cl-auth-copy">
-        ${gmail?.requires_reconnect ? "Reconnect Gmail to keep this inbox connected." : "Connect Gmail once so Clearledgr can keep working in this inbox."}
+        ${gmail?.requires_reconnect ? "Reconnect Gmail to keep this inbox connected." : "Connect Gmail once so Solden can keep working in this inbox."}
       </div>
       <div class="cl-thread-actions">
         <button class="cl-btn cl-primary-cta" onClick=${authorize} disabled=${pending}>
@@ -60161,7 +60385,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           showToast("Finance record created from this email.", "success");
           return;
         }
-        showToast("Clearledgr could not create a finance record from this email yet.", "warning");
+        showToast("Solden could not create a finance record from this email yet.", "warning");
       } finally {
         setRecovering(false);
       }
@@ -60187,7 +60411,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!canMutate) {
         return html4`<div class="cl-section"><div class="cl-empty">
         <p>No finance record is linked to this email yet.</p>
-        <p class="cl-muted">Open the queue to review records Clearledgr already found. Only operators can create or link records from Gmail.</p>
+        <p class="cl-muted">Open the queue to review records Solden already found. Only operators can create or link records from Gmail.</p>
         <div class="cl-thread-actions cl-empty-actions">
           <button class="cl-btn cl-btn-secondary cl-btn-small" onClick=${openPipeline}>Open invoices</button>
         </div>
@@ -60277,6 +60501,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     </div>
   </div></div>`;
   }
+  var SIDEBAR_INTENT_LABELS = {
+    approve_invoice: "Approve",
+    reject_invoice: "Reject",
+    request_info: "Send back for info",
+    escalate_approval: "Escalate",
+    reassign_approval: "Send to person",
+    request_approval: "Send for approval",
+    snooze_invoice: "Snooze",
+    unsnooze_invoice: "Unsnooze",
+    post_to_erp: "Post to ERP",
+    reverse_invoice_post: "Reverse posting",
+    manually_classify_invoice: "Reclassify",
+    resubmit_invoice: "Resubmit"
+  };
+  var SIDEBAR_INTENTS_REQUIRING_REASON = new Set([
+    "reject_invoice",
+    "request_info",
+    "escalate_approval"
+  ]);
   function SidebarApp({ queueManager }) {
     const s3 = useStore();
     const item = s3.getPrimaryItem();
@@ -60501,6 +60744,75 @@ Reason (required — logged to the audit trail):`);
         queueManager.fetchItemContext(item.id).catch(() => {});
       }
     }, [item?.id, queueManager]);
+    const sidebarContextPayload = item?.id ? s3.contextState?.get?.(item.id) || null : null;
+    const sidebarActions = sidebarContextPayload?.actions || null;
+    const [sidebarActionBusy, setSidebarActionBusy] = d2(false);
+    const [sidebarActionDialog, openSidebarActionDialog] = useActionDialog();
+    const handleSidebarIntent = q2(async (intent, extraInput = {}) => {
+      if (!item || sidebarActionBusy)
+        return;
+      let inputExtras = { ...extraInput || {} };
+      if (intent === "reassign_approval" && !inputExtras.new_owner_email) {
+        const raw = await openSidebarActionDialog({
+          actionType: "generic",
+          dialogMode: "input",
+          title: "Send to person",
+          label: "Email of approver",
+          placeholder: "alex@your-co.example",
+          confirmLabel: "Send to person"
+        });
+        if (!raw)
+          return;
+        const email = (typeof raw === "string" ? raw : raw?.value || "").trim();
+        if (!email.includes("@") || email.length < 5) {
+          showToast("That email looks off — try again.", "error");
+          return;
+        }
+        inputExtras.new_owner_email = email;
+      } else if (SIDEBAR_INTENTS_REQUIRING_REASON.has(intent) && !inputExtras.reason) {
+        const reason = await openSidebarActionDialog({
+          actionType: intent === "reject_invoice" ? "reject" : "generic",
+          title: SIDEBAR_INTENT_LABELS[intent] || intent,
+          label: "Reason",
+          placeholder: "Why?",
+          confirmLabel: SIDEBAR_INTENT_LABELS[intent] || "Confirm"
+        });
+        if (!reason)
+          return;
+        inputExtras.reason = typeof reason === "string" ? reason : reason?.value || "";
+      }
+      setSidebarActionBusy(true);
+      try {
+        const backendUrl = queueManager.runtimeConfig?.backendUrl || "";
+        const orgId = queueManager.runtimeConfig?.organizationId || "default";
+        const resp = await queueManager.backendFetch(backendUrl + "/api/agent/intents/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent,
+            organization_id: orgId,
+            input: {
+              ap_item_id: item.id,
+              actor: "gmail_sidebar",
+              ...inputExtras
+            }
+          })
+        });
+        const ok = resp && resp.ok !== false && !resp.detail;
+        const label = SIDEBAR_INTENT_LABELS[intent] || intent;
+        showToast(ok ? `${label} recorded.` : resp?.detail || `${label} failed.`, ok ? "success" : "error");
+        if (ok) {
+          await queueManager.refreshQueue();
+          try {
+            await queueManager.fetchItemContext(item.id, { refresh: true });
+          } catch (_2) {}
+        }
+      } catch (err) {
+        showToast("Action failed: " + (err?.message || err), "error");
+      } finally {
+        setSidebarActionBusy(false);
+      }
+    }, [item, sidebarActionBusy, queueManager, openSidebarActionDialog]);
     y2(() => {
       if (item?.id && queueManager?.fetchItemTasks) {
         queueManager.fetchItemTasks(item.id).catch(() => {});
@@ -60545,8 +60857,8 @@ Reason (required — logged to the audit trail):`);
 
       <div class="cl-header">
         <div class="cl-title">
-          ${logoUrl && html4`<img class="cl-logo" src=${logoUrl} alt="Clearledgr" onError=${(e3) => e3.target.remove()} />`}
-          Clearledgr AP
+          ${logoUrl && html4`<img class="cl-logo" src=${logoUrl} alt="Solden" onError=${(e3) => e3.target.remove()} />`}
+          Solden AP
         </div>
         <div class="cl-header-right">
           ${hasQueueNavigation ? html4`
@@ -60596,6 +60908,9 @@ Reason (required — logged to the audit trail):`);
                 auditEvents=${store_default.auditState?.events || []}
                 orgId=${queueManager.runtimeConfig?.organizationId || "default"}
                 toast=${showToast}
+                actions=${sidebarActions}
+                actionBusy=${sidebarActionBusy}
+                onIntent=${handleSidebarIntent}
                 fetchBoxLinks=${async (boxId, boxType) => {
       try {
         const url = queueManager.runtimeConfig?.backendUrl + "/api/box-links?box_id=" + encodeURIComponent(boxId) + "&box_type=" + encodeURIComponent(boxType);
@@ -60611,16 +60926,7 @@ Reason (required — logged to the audit trail):`);
                 budgetStatus=${s3.llmBudgetStatus}
                 onBudgetOverride=${onBudgetOverride}
                 budgetOverridePending=${s3.llmBudgetOverridePending}
-                onSnooze=${async (snoozeItem) => {
-      try {
-        const result = await queueManager.backendFetch(queueManager.runtimeConfig?.backendUrl + "/api/ap/items/" + snoozeItem.id + "/snooze?organization_id=" + encodeURIComponent(queueManager.runtimeConfig?.organizationId || "default"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration_minutes: 240 }) });
-        showToast(result?.ok ? "Snoozed for 4 hours" : "Snooze failed", result?.ok ? "success" : "error");
-        if (result?.ok)
-          await queueManager.refreshQueue();
-      } catch (err) {
-        showToast("Snooze failed: " + (err.message || err), "error");
-      }
-    }}
+                onSnooze=${() => handleSidebarIntent("snooze_invoice", { duration_minutes: 240 })}
                 onQuery=${agentQuery}
                 onSubmitFeedback=${async ({ message, kind, ap_item_id, page }) => {
       const orgId = queueManager.runtimeConfig?.organizationId || "default";
@@ -60643,28 +60949,11 @@ Reason (required — logged to the audit trail):`);
       }
       return resp.json();
     }}
-                onUndoOverride=${async (window_) => {
-      try {
-        const orgId = queueManager.runtimeConfig?.organizationId || "default";
-        const url = queueManager.runtimeConfig?.backendUrl + "/api/ap/items/" + encodeURIComponent(item.id) + "/reverse?organization_id=" + encodeURIComponent(orgId);
-        const result = await queueManager.backendFetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            reason: "sidebar_undo",
-            actor_surface: "gmail_sidebar"
-          })
-        });
-        const ok = result && result.reversed !== false && !result.detail;
-        showToast(ok ? "Post reversed" : result?.detail || "Reverse failed", ok ? "success" : "error");
-        if (ok)
-          await queueManager.refreshQueue();
-      } catch (err) {
-        showToast("Reverse failed: " + (err.message || err), "error");
-      }
-    }}
+                onUndoOverride=${() => handleSidebarIntent("reverse_invoice_post", { reason: "sidebar_undo" })}
               />`}` : html4`<${EmptyState} queueCount=${queueCount} queueManager=${queueManager} />`}
       <//>
+
+      <${ActionDialog} ...${sidebarActionDialog} />
     </div>
   `;
   }
@@ -60719,7 +61008,7 @@ Reason (required — logged to the audit trail):`);
     tab.id = SETTINGS_TAB_ID;
     tab.className = "f0";
     tab.href = "#settings/clearledgr";
-    tab.textContent = "Clearledgr";
+    tab.textContent = "Solden";
     tab.style.cssText = "cursor:pointer;";
     tab.addEventListener("click", (e3) => {
       e3.preventDefault();
@@ -60751,7 +61040,7 @@ Reason (required — logged to the audit trail):`);
     const orgId = String(queueManager?.runtimeConfig?.organizationId || "default");
     const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || "http://127.0.0.1:8010").replace(/\/+$/, "");
     container.innerHTML = `
-    <h2 style="font-size:18px;font-weight:500;margin:0 0 24px;color:#202124">Clearledgr Settings</h2>
+    <h2 style="font-size:18px;font-weight:500;margin:0 0 24px;color:#202124">Solden Settings</h2>
 
     <div style="margin-bottom:24px">
       <h3 style="font-size:14px;font-weight:500;margin:0 0 12px;color:#202124">Invoice Processing</h3>
@@ -60941,13 +61230,12 @@ Reason (required — logged to the audit trail):`);
 
   // src/inboxsdk-layer.js
   var html7 = htm_module_default.bind(_);
-  var APP_ID = "sdk_Clearledgr2026_dc12c60472";
+  var APP_ID = "sdk_Solden2026_dc12c60472";
   var INIT_KEY = "__clearledgr_ap_v1_inboxsdk_initialized";
   var LOGO_PATH2 = "icons/icon48.png";
   var STORAGE_ACTIVE_AP_ITEM_ID = "clearledgr_active_ap_item_id";
   var sdk = null;
   var queueManager = null;
-  var _pendingComposePrefill = null;
   var sidebarContainer = null;
   var sidebarPanelView = null;
   var sidebarPanelViewPromise = null;
@@ -61002,7 +61290,7 @@ Reason (required — logged to the audit trail):`);
       return null;
     const logoUrl = getAssetUrl(LOGO_PATH2);
     sidebarPanelViewPromise = sdk.Global.addSidebarContentPanel({
-      title: "Clearledgr AP",
+      title: "Solden AP",
       iconUrl: logoUrl || null,
       el: sidebarContainer,
       hideTitleBar: false
@@ -61027,23 +61315,6 @@ Reason (required — logged to the audit trail):`);
     }
     if (panelView.isActive())
       panelView.close();
-  }
-  async function openComposeWithPrefill(prefill = {}) {
-    if (!sdk?.Compose || typeof sdk.Compose.openNewComposeView !== "function") {
-      throw new Error("compose_unavailable");
-    }
-    _pendingComposePrefill = {
-      to: prefill?.to || "",
-      subject: prefill?.subject || "",
-      body: prefill?.body || "",
-      recordContext: prefill?.recordContext || null
-    };
-    try {
-      await sdk.Compose.openNewComposeView();
-    } catch (error) {
-      _pendingComposePrefill = null;
-      throw error;
-    }
   }
   function buildComposeRecordContext(item = null) {
     if (!item?.id)
@@ -61130,7 +61401,7 @@ Reason (required — logged to the audit trail):`);
       recordContext.invoiceNumber ? `Invoice ${recordContext.invoiceNumber}` : "",
       recordContext.amountLabel || ""
     ].filter(Boolean).join(" · ");
-    copy.textContent = `Clearledgr: linked finance record${summary ? ` — ${summary}` : ""}`;
+    copy.textContent = `Solden: linked finance record${summary ? ` — ${summary}` : ""}`;
     bar.appendChild(copy);
     if (recordContext.apItemId) {
       const button = document.createElement("button");
@@ -61170,7 +61441,7 @@ Reason (required — logged to the audit trail):`);
     const topRow = document.createElement("div");
     topRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap";
     const copy = document.createElement("div");
-    copy.textContent = "Clearledgr: no finance record linked to this draft yet.";
+    copy.textContent = "Solden: no finance record linked to this draft yet.";
     topRow.appendChild(copy);
     const actions = document.createElement("div");
     actions.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
@@ -61418,6 +61689,7 @@ Reason (required — logged to the audit trail):`);
     const state = String(item.state || "").toLowerCase();
     const vendor = item.vendor_name || item.vendor || "Unknown vendor";
     const amountLabel = formatAmount(item.amount, item.currency);
+    const ageLabel = formatTimeAgo(item.created_at);
     const stateConfig = {
       needs_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Needs approval" },
       pending_approval: { bg: "#fef9ee", border: "#d97706", text: "#92400e", label: "Pending approval" },
@@ -61439,6 +61711,12 @@ Reason (required — logged to the audit trail):`);
     summary.style.cssText = "flex:1; font-weight:500;";
     summary.textContent = amountLabel === "Amount unavailable" ? vendor : `${vendor} — ${amountLabel}`;
     el.appendChild(summary);
+    if (ageLabel) {
+      const age = document.createElement("span");
+      age.style.cssText = "font-size:11px; opacity:0.75; font-weight:500;";
+      age.textContent = ageLabel;
+      el.appendChild(age);
+    }
     const pill = document.createElement("span");
     pill.style.cssText = `
     font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px;
@@ -61452,7 +61730,7 @@ Reason (required — logged to the audit trail):`);
       cursor:pointer; background:${bg}; color:${color}; font-family:inherit;
     `;
       const openBtn = document.createElement("button");
-      openBtn.textContent = "Open in invoices";
+      openBtn.textContent = "Open in workspace";
       openBtn.style.cssText = btnStyle("transparent", cfg.text, `1px solid ${cfg.border}`);
       openBtn.addEventListener("click", () => {
         openItemInPipeline(item, "thread_banner");
@@ -61539,30 +61817,6 @@ Reason (required — logged to the audit trail):`);
     }
     el.appendChild(left);
     if (item?.id) {
-      const btnGroup = document.createElement("div");
-      btnGroup.style.cssText = "display:flex; align-items:center; gap:8px;";
-      const replyBtn = document.createElement("button");
-      replyBtn.textContent = "Suggest reply";
-      replyBtn.style.cssText = `
-      border:none; border-radius:6px;
-      padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
-      background:${cfg.border}; color:#fff; font-family:inherit;
-    `;
-      replyBtn.addEventListener("click", () => {
-        replyBtn.disabled = true;
-        const originalText = replyBtn.textContent;
-        replyBtn.textContent = "Drafting…";
-        Promise.resolve().then(() => suggestReplyForItem(item)).catch((err) => {
-          console.warn("[Clearledgr] Suggest reply failed:", err);
-          if (typeof showToast === "function") {
-            showToast("Could not generate draft. Try again from the sidebar.", "error");
-          }
-        }).finally(() => {
-          replyBtn.disabled = false;
-          replyBtn.textContent = originalText;
-        });
-      });
-      btnGroup.appendChild(replyBtn);
       const detailsBtn = document.createElement("button");
       detailsBtn.textContent = "View details";
       detailsBtn.style.cssText = `
@@ -61573,41 +61827,9 @@ Reason (required — logged to the audit trail):`);
       detailsBtn.addEventListener("click", () => {
         openItemInPipeline(item, "thread_exception_banner");
       });
-      btnGroup.appendChild(detailsBtn);
-      el.appendChild(btnGroup);
+      el.appendChild(detailsBtn);
     }
     threadView.addNoticeBar({ el });
-  }
-  async function suggestReplyForItem(item) {
-    if (!item?.id)
-      return;
-    if (!queueManager)
-      throw new Error("queue_manager_unavailable");
-    const backendUrl = String(queueManager?.runtimeConfig?.backendUrl || "").replace(/\/+$/, "");
-    if (!backendUrl)
-      throw new Error("backend_url_unavailable");
-    const response = await queueManager.backendFetch(`${backendUrl}/extension/draft-reply`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ap_item_id: String(item.id),
-        thread_id: String(item.thread_id || store_default.currentThreadId || ""),
-        organization_id: queueManager?.runtimeConfig?.organizationId || "default"
-      })
-    });
-    if (!response?.ok) {
-      throw new Error(`draft_reply_http_${response?.status || "unknown"}`);
-    }
-    const draft = await response.json();
-    if (!draft || !draft.subject && !draft.body) {
-      throw new Error("draft_reply_empty");
-    }
-    await openComposeWithPrefill({
-      to: draft.to || "",
-      subject: draft.subject || "",
-      body: draft.body || "",
-      recordContext: buildComposeRecordContext(item)
-    });
   }
   function _itemAwaitsApproval(item) {
     if (!item)
@@ -61748,7 +61970,7 @@ Reason (required — logged to the audit trail):`);
             if (typeof threadRowView.addActionButton === "function") {
               threadRowView.addActionButton({
                 type: "ICON_ONLY",
-                title: "Open in invoices",
+                title: "Open in workspace",
                 iconUrl: getAssetUrl(LOGO_PATH2) || undefined,
                 onClick: () => {
                   openItemInPipeline(item, "thread_row");
@@ -61801,7 +62023,7 @@ Reason (required — logged to the audit trail):`);
       headsUpEl.style.display = "flex";
       headsUpEl.innerHTML = `
       <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
-      <span><strong>Clearledgr</strong> · ${parts.join(" · ")}</span>
+      <span><strong>Solden</strong> · ${parts.join(" · ")}</span>
       <span style="margin-left:auto;opacity:0.6;font-size:11px">Open invoices ›</span>
     `;
     };
@@ -61823,7 +62045,7 @@ Reason (required — logged to the audit trail):`);
       return;
     try {
       sdk.Toolbars.registerToolbarButtonForList({
-        title: "Process with Clearledgr",
+        title: "Process with Solden",
         iconUrl: getAssetUrl(LOGO_PATH2) || undefined,
         section: "METADATA_STATE",
         hasDropdown: false,
@@ -61848,7 +62070,7 @@ Reason (required — logged to the audit trail):`);
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ organization_id: orgId, email_ids: ids })
             }).then(() => {
-              showToast(`Processing ${ids.length} email${ids.length > 1 ? "s" : ""} with Clearledgr`, "success");
+              showToast(`Processing ${ids.length} email${ids.length > 1 ? "s" : ""} with Solden`, "success");
             }).catch(() => {
               showToast("Bulk processing failed", "error");
             });
@@ -61856,7 +62078,7 @@ Reason (required — logged to the audit trail):`);
         }
       });
     } catch (err) {
-      console.warn("[Clearledgr] Bulk action registration failed:", err);
+      console.warn("[Solden] Bulk action registration failed:", err);
     }
   }
   function registerToolbarIcon() {
@@ -61865,17 +62087,17 @@ Reason (required — logged to the audit trail):`);
     try {
       const logoUrl = getAssetUrl(LOGO_PATH2);
       sdk.Toolbars.registerToolbarButtonForList({
-        title: "Clearledgr workspace",
+        title: "Solden workspace",
         iconUrl: logoUrl || undefined,
         section: "METADATA_STATE",
         onClick: () => {
           try {
-            window.open(workspacePipelineUrl(), "_blank", "noopener,noreferrer");
+            window.open(workspaceRecordsUrl(), "_blank", "noopener,noreferrer");
           } catch (_2) {}
         }
       });
     } catch (err) {
-      console.warn("[Clearledgr] Toolbar icon registration failed:", err);
+      console.warn("[Solden] Toolbar icon registration failed:", err);
     }
   }
   async function _hydrateErpRuntimeConfig(qm) {
@@ -61907,7 +62129,7 @@ Reason (required — logged to the audit trail):`);
   }
   function registerThreadToolbarButtons() {
     if (!sdk?.Toolbars || typeof sdk.Toolbars.registerThreadButton !== "function") {
-      console.warn("[Clearledgr] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar");
+      console.warn("[Solden] sdk.Toolbars.registerThreadButton not available — skipping thread toolbar");
       return;
     }
     sdk.Toolbars.registerThreadButton({
@@ -62023,16 +62245,16 @@ Reason (required — logged to the audit trail):`);
         }
         if ("clearledgr".includes(q3) || "invoice".includes(q3) || "ap".includes(q3)) {
           suggestions.push({
-            name: "Clearledgr workspace",
+            name: "Solden workspace",
             description: "Open the AP control plane",
-            externalURL: workspacePipelineUrl(),
+            externalURL: workspaceRecordsUrl(),
             iconUrl: getAssetUrl(LOGO_PATH2) || undefined
           });
         }
         return suggestions.slice(0, 5);
       });
     } catch (err) {
-      console.warn("[Clearledgr] Search suggestions failed:", err);
+      console.warn("[Solden] Search suggestions failed:", err);
     }
   }
   function registerKeyboardShortcuts() {
@@ -62044,23 +62266,23 @@ Reason (required — logged to the audit trail):`);
           window.open(`${WORKSPACE_URL}${path}`, "_blank", "noopener,noreferrer");
         } catch (_2) {}
       };
-      const goPipeline = sdk.Keyboard.createShortcutHandle({
+      const goRecords = sdk.Keyboard.createShortcutHandle({
         chord: "g c",
-        description: "Open Clearledgr workspace pipeline"
+        description: "Open Solden workspace records"
       });
-      goPipeline.on("activate", () => openWorkspace("/pipeline"));
+      goRecords.on("activate", () => openWorkspace("/records"));
       const goActivity = sdk.Keyboard.createShortcutHandle({
         chord: "g a",
-        description: "Open Clearledgr workspace activity"
+        description: "Open Solden workspace activity"
       });
       goActivity.on("activate", () => openWorkspace("/activity"));
       const goHomeView = sdk.Keyboard.createShortcutHandle({
         chord: "g h",
-        description: "Open Clearledgr workspace home"
+        description: "Open Solden workspace home"
       });
       goHomeView.on("activate", () => openWorkspace("/"));
     } catch (err) {
-      console.warn("[Clearledgr] Keyboard shortcuts failed:", err);
+      console.warn("[Solden] Keyboard shortcuts failed:", err);
     }
   }
   async function bootstrap() {
@@ -62074,25 +62296,12 @@ Reason (required — logged to the audit trail):`);
         globalErrorLogging: false
       });
     } catch (error) {
-      console.error("[Clearledgr] InboxSDK failed to load", error);
+      console.error("[Solden] InboxSDK failed to load", error);
       return;
     }
     sdk.Compose.registerComposeViewHandler((composeView) => {
       let composeRecordContext = null;
       let composeStatusHandle = null;
-      if (_pendingComposePrefill) {
-        const prefill = _pendingComposePrefill;
-        _pendingComposePrefill = null;
-        composeRecordContext = prefill.recordContext || null;
-        try {
-          if (prefill.to)
-            composeView.setToRecipients([{ emailAddress: prefill.to }]);
-          if (prefill.subject)
-            composeView.setSubject(prefill.subject);
-          if (prefill.body)
-            composeView.setBodyHTML(prefill.body.replace(/\n/g, "<br>"));
-        } catch (_2) {}
-      }
       const mountComposeRecordStatus = (recordContext) => {
         if (typeof composeView?.addStatusBar !== "function")
           return;
@@ -62151,7 +62360,7 @@ Reason (required — logged to the audit trail):`);
                   el: (() => {
                     const bar = document.createElement("div");
                     bar.style.cssText = "padding:6px 14px;font-size:12px;color:#92400e;background:#fef9ee;border-bottom:1px solid #f3e8d0;font-family:inherit;";
-                    bar.textContent = `Clearledgr: ${vendor} has ${count} record${count > 1 ? "s" : ""} in your AP queue.`;
+                    bar.textContent = `Solden: ${vendor} has ${count} record${count > 1 ? "s" : ""} in your AP queue.`;
                     return bar;
                   })()
                 });
@@ -62162,7 +62371,7 @@ Reason (required — logged to the audit trail):`);
         });
       } catch (_2) {}
     });
-    queueManager = new ClearledgrQueueManager;
+    queueManager = new SoldenQueueManager;
     await queueManager.init();
     _hydrateErpRuntimeConfig(queueManager).catch(() => {});
     queueManager.onQueueUpdated((queue, status, agentSessions, tabs, agentInsights, sources, contexts, tasks, notes, comments, files) => {
@@ -62279,7 +62488,7 @@ Reason (required — logged to the audit trail):`);
   function registerAppMenuAndRoutes() {}
   bootstrap();
   console.log(`
-%cClearledgr
+%cSolden
 %cThe Gmail AP Workspace
 for Finance Teams
 
@@ -62290,5 +62499,3 @@ So do we.
 %chttps://clearledgr.com
 `, "font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;", "font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;", "font-size:14px;color:#6B7280;line-height:1.5;", "font-size:13px;color:#00D67E;font-weight:600;");
 })();
-
-//# debugId=6A6B8C347746FEF264756E2164756E21

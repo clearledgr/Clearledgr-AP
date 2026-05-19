@@ -1,16 +1,28 @@
 /**
- * Record detail — Module 2 (Exception Detail and Resolution).
+ * Record detail — intervention surface for an escalated AP record.
  *
- * Where the leader applies judgment. Renders the full payload from
- * `GET /api/workspace/ap-items/{id}/detail` as one cohesive surface:
- * header, action bar, agent reasoning panel (the harness made
- * legible), bill detail, three-way match, workflow timeline.
+ * The workspace is the coordination-layer control center, not a
+ * workflow desktop. Routine approve / reject / post / snooze decisions
+ * belong to Slack and Teams approval cards (where the approver lives)
+ * and to Gmail (where vendor follow-up lives). This page is for:
+ *
+ *   1. Reading the agent's reasoning + audit trail (always available)
+ *   2. Intervening when the agent has escalated the record to a human
+ *      (gated by escalation state OR an open exception)
+ *   3. Reversing an autonomous ERP post within the 15-minute override
+ *      window (gated by posted_to_erp + clock)
+ *
+ * The visible action set is intentionally narrow: Escalate to
+ * controller, Reassign approver, Reclassify, Resubmit, Reverse
+ * posting, Mark as duplicate, Override and post. Approve / Reject /
+ * Send-back / Post-to-ERP / Snooze are stripped — those happen in
+ * the render targets, not here.
  *
  * Sub-components are colocated because they all consume the same
  * detail payload — splitting across files would force prop-drilling
  * the same object through five wrapper layers without buying anything.
  *
- * Action buttons route through `runtime.execute_intent` via
+ * Intervention actions route through `runtime.execute_intent` via
  * `/api/agent/intents/execute`, the same path Slack/Teams/Gmail use,
  * so every workspace decision lands on the canonical audit chain.
  */
@@ -28,33 +40,48 @@ const html = htm.bind(h);
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-// Operator-facing intent copy. Keep these in lockstep with
-// finance_skills/ap_skill.py — the backend is the source of truth for
-// the intent vocabulary; this map is just the human label.
+// Operator-facing label for every intervention intent the workspace
+// surfaces. These are the judgment calls that legitimately happen in
+// the control center — handoffs, reclassification, override-post,
+// and the override-window reversal.
+//
+// Approve / Reject / Send-back / Post-to-ERP / Snooze / request_info
+// are intentionally absent: those are routine workflow decisions and
+// belong in Slack / Teams / Gmail, not the workspace.
 const INTENT_LABELS = {
-  approve_invoice: 'Approve',
-  reject_invoice: 'Reject',
-  request_info: 'Send back for info',
   escalate_approval: 'Escalate to controller',
-  // Module 2 spec line 99 — "send to specific person". Maps to the
-  // existing reassign_approval intent (handler at
-  // ap_intent_handlers.py:1056); the dialog collects a target email.
-  reassign_approval: 'Send to person',
-  request_approval: 'Send for approval',
-  snooze_invoice: 'Snooze',
-  unsnooze_invoice: 'Unsnooze',
-  post_to_erp: 'Post to ERP',
-  reverse_invoice_post: 'Reverse posting',
+  reassign_approval: 'Reassign approver',
   manually_classify_invoice: 'Reclassify',
   resubmit_invoice: 'Resubmit',
+  reverse_invoice_post: 'Reverse posting',
 };
 
-// Module 2 spec line 99 — additional named actions that invoke
-// existing intents with structured extra payload:
-//   - mark_duplicate → reject_invoice + duplicate-of metadata
-//   - override_post → post_to_erp + override_validation flag
-// These aren't separate intents on the backend; they're UI
-// affordances that route the same handlers with the right inputs.
+// Whitelist enforced on the frontend. `actions.available` from the
+// backend is the upper bound (it knows state-validity); this set is
+// the policy bound (what the workspace surfaces vs. delegates to the
+// render targets).
+const INTERVENTION_INTENTS = new Set(Object.keys(INTENT_LABELS));
+
+// Workflow states where the agent has handed the record to a human.
+// In any of these states, the intervention bar may show.
+const ESCALATED_STATES = new Set([
+  'needs_info',
+  'needs_approval',
+  'pending_approval',
+  'needs_second_approval',
+  'failed_post',
+]);
+
+// 15-minute override window for autonomous ERP posts. After this
+// elapsed time, the post is finalized and only an out-of-band
+// intervention (manual credit note, etc.) can undo it.
+const OVERRIDE_WINDOW_MS = 15 * 60 * 1000;
+
+// Two named intervention affordances that route existing intents with
+// extra payload. Each requires a small dialog (duplicate target /
+// override reason) before submission.
+//   - mark_duplicate  → reject_invoice + duplicate metadata
+//   - override_post   → post_to_erp + override_validation flag
 const SPECIAL_ACTIONS = {
   mark_duplicate: {
     label: 'Mark as duplicate',
@@ -67,6 +94,58 @@ const SPECIAL_ACTIONS = {
     requiresState: new Set(['received', 'validated', 'needs_info', 'needs_approval', 'pending_approval', 'approved', 'ready_to_post', 'failed_post']),
   },
 };
+
+function isEscalated(item) {
+  if (!item) return false;
+  const state = String(item.state || '').toLowerCase();
+  if (ESCALATED_STATES.has(state)) return true;
+  if (item.exception_code) return true;
+  if (item.has_unresolved_exception) return true;
+  return false;
+}
+
+function overrideWindowStatus(item) {
+  if (!item) return null;
+  const state = String(item.state || '').toLowerCase();
+  if (state !== 'posted_to_erp') return null;
+  const postedAt = item.posted_to_erp_at || item.posted_at || item.erp_posted_at;
+  if (!postedAt) return null;
+  const ms = new Date(postedAt).getTime();
+  if (!Number.isFinite(ms)) return null;
+  const elapsed = Date.now() - ms;
+  if (elapsed < 0 || elapsed >= OVERRIDE_WINDOW_MS) return null;
+  return {
+    minutesRemaining: Math.max(0, Math.ceil((OVERRIDE_WINDOW_MS - elapsed) / 60000)),
+    postedAt,
+  };
+}
+
+// Render-target handoff. Returns whichever links are present on the
+// detail payload — never fabricates URLs.
+function getHandoffLinks(item) {
+  if (!item) return [];
+  const links = [];
+  if (item.slack_thread_url) {
+    links.push({ kind: 'slack', label: 'Open in Slack', url: item.slack_thread_url });
+  }
+  if (item.teams_thread_url) {
+    links.push({ kind: 'teams', label: 'Open in Teams', url: item.teams_thread_url });
+  }
+  if (item.gmail_thread_url) {
+    links.push({ kind: 'gmail', label: 'Open in Gmail', url: item.gmail_thread_url });
+  } else if (item.thread_id) {
+    // The agent stores a Gmail thread id; build the canonical URL.
+    links.push({
+      kind: 'gmail',
+      label: 'Open in Gmail',
+      url: `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(item.thread_id)}`,
+    });
+  }
+  if (item.erp_invoice_url) {
+    links.push({ kind: 'erp', label: 'Open in ERP', url: item.erp_invoice_url });
+  }
+  return links;
+}
 
 const VERDICT_TONE = {
   allow: 'success',
@@ -156,7 +235,7 @@ export default function RecordDetailPage({
   }, [api, orgId, detail, loadDetail, toast, actionBusy]);
 
   const onBack = useCallback(() => {
-    navigate('/pipeline');
+    navigate('/records');
   }, [navigate]);
 
   if (loading && !detail) {
@@ -170,6 +249,7 @@ export default function RecordDetailPage({
   }
 
   const { item, reasoning, match, timeline, actions } = detail;
+  const handoffLinks = getHandoffLinks(item);
 
   return html`
     <div class="cl-record-detail">
@@ -182,11 +262,14 @@ export default function RecordDetailPage({
 
       <${RecordHeader} item=${item} />
 
+      <${HandoffStrip} links=${handoffLinks} />
+
       <${ActionBar}
         actions=${actions}
         onIntent=${onIntent}
         item=${item}
         busy=${actionBusy}
+        handoffLinks=${handoffLinks}
       />
 
       <${RecordStatePanel} item=${item} timeline=${timeline} />
@@ -211,6 +294,43 @@ export default function RecordDetailPage({
 
       <${WorkflowTimeline} events=${timeline} />
     </div>
+  `;
+}
+
+
+// ─── Handoff strip ──────────────────────────────────────────────────
+//
+// Always visible (when at least one render target link is on the
+// payload). Routine approve / reject / send-back / post / snooze
+// decisions don't happen in the workspace — they happen in Slack /
+// Teams / Gmail / the ERP. This strip is the durable reminder of
+// where those decisions live, plus the deep links to get there.
+
+function HandoffStrip({ links }) {
+  if (!Array.isArray(links) || links.length === 0) return null;
+  return html`
+    <section class="cl-record-handoff" aria-label="Render target handoffs">
+      <div class="cl-record-handoff-copy">
+        <strong>Day-to-day decisions live in the render targets.</strong>
+        <p class="cl-record-handoff-sub">
+          Approvals in Slack and Teams. Vendor follow-up in Gmail. Posting in your ERP.
+          Use this page when the agent escalates or you need to intervene.
+        </p>
+      </div>
+      <div class="cl-record-handoff-links">
+        ${links.map((link) => html`
+          <a
+            key=${link.kind}
+            class=${`cl-record-handoff-link cl-record-handoff-link-${link.kind}`}
+            href=${link.url}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            ${link.label} <span aria-hidden="true">↗</span>
+          </a>
+        `)}
+      </div>
+    </section>
   `;
 }
 
@@ -299,25 +419,54 @@ function RecordHeader({ item }) {
 }
 
 
-// ─── Action bar ─────────────────────────────────────────────────────
+// ─── Action bar — intervention-only ─────────────────────────────────
+//
+// Renders only when the workspace has a legitimate reason to surface
+// mutating affordances:
+//   - The agent has escalated this record (state in ESCALATED_STATES
+//     or there is an open exception). The intervention set is the
+//     judgment work that doesn't fit Slack/Teams approval cards:
+//     reassign, escalate further, reclassify, resubmit after the
+//     external resolution, mark-duplicate, override-and-post.
+//   - The record was just autonomously posted to the ERP and the
+//     15-minute override window is still open. The only affordance
+//     here is "Reverse posting"; everything else is finalized.
+//
+// In the default state (received, validated, approved, ready_to_post,
+// posted_to_erp-after-window, snoozed, closed, reversed, etc.) no
+// action bar renders. The handoff strip above is the durable answer
+// for where to act.
 
-function ActionBar({ actions, onIntent, item, busy }) {
-  const available = (actions && actions.available) || [];
-  const primary = (actions && actions.primary) || null;
-  const [dialog, setDialog] = useState(null); // {kind, intent, defaultValues}
+function ActionBar({ actions, onIntent, item, busy, handoffLinks }) {
+  const available = Array.isArray(actions?.available) ? actions.available : [];
+  const primary = actions?.primary || null;
+  const [dialog, setDialog] = useState(null);
   const state = String(item?.state || '').toLowerCase();
 
-  if (available.length === 0) {
-    return html`
-      <section class="cl-record-action-bar cl-record-action-bar-empty">
-        <p class="cl-record-action-bar-empty-msg">
-          This record is in a terminal state. No further actions available.
-        </p>
-      </section>
-    `;
-  }
+  const escalated = isEscalated(item);
+  const overrideWindow = overrideWindowStatus(item);
 
-  const orderedSecondary = available.filter((intent) => intent !== primary);
+  // Filter against the workspace policy whitelist.
+  const interventionAvailable = available.filter((intent) => INTERVENTION_INTENTS.has(intent));
+  const interventionPrimary = primary && INTERVENTION_INTENTS.has(primary) ? primary : null;
+
+  const reverseAvailable = interventionAvailable.includes('reverse_invoice_post');
+  const showMarkDuplicate = escalated && SPECIAL_ACTIONS.mark_duplicate.requiresState.has(state);
+  const showOverridePost = escalated && SPECIAL_ACTIONS.override_post.requiresState.has(state);
+
+  // If nothing applies, render nothing. The HandoffStrip already
+  // covers the "decisions live elsewhere" message.
+  const hasIntervention = escalated && (
+    interventionAvailable.length > 0 || showMarkDuplicate || showOverridePost
+  );
+  const hasReverse = !!overrideWindow && reverseAvailable;
+  if (!hasIntervention && !hasReverse) return null;
+
+  const orderedSecondary = interventionAvailable
+    .filter((intent) => intent !== interventionPrimary)
+    // Reverse posting renders in its own (window-gated) row, not the
+    // intervention grid.
+    .filter((intent) => intent !== 'reverse_invoice_post');
 
   const openDialog = (kind, intent) => setDialog({ kind, intent });
   const closeDialog = () => setDialog(null);
@@ -327,51 +476,109 @@ function ActionBar({ actions, onIntent, item, busy }) {
     setDialog(null);
   };
 
-  // Special actions visible when state allows them.
-  const showMarkDuplicate = SPECIAL_ACTIONS.mark_duplicate.requiresState.has(state);
-  const showOverridePost = SPECIAL_ACTIONS.override_post.requiresState.has(state);
-  const showSendToPerson = available.includes('reassign_approval');
-
   const intentClick = (intent) => {
-    if (intent === 'reassign_approval') return openDialog('send_to_person', intent);
+    if (intent === 'reassign_approval') return openDialog('reassign_approval', intent);
     return onIntent(intent);
   };
 
+  const escalationReason = describeEscalation(item);
+
   return html`
-    <section class="cl-record-action-bar" role="toolbar" aria-label="Record actions">
-      ${primary ? html`
-        <button
-          class="btn btn-primary cl-record-action-primary"
-          onClick=${() => intentClick(primary)}
-          disabled=${busy}
-        >${INTENT_LABELS[primary] || primary}</button>
+    <section class="cl-record-action-bar" role="toolbar" aria-label="Intervention actions">
+      ${hasReverse ? html`
+        <div class="cl-record-action-window">
+          <div class="cl-record-action-window-copy">
+            <strong>Override window open · ${overrideWindow.minutesRemaining} min left.</strong>
+            <p>
+              This record was autonomously posted to the ERP. You can reverse the post
+              before the window expires; after that the post is finalized.
+            </p>
+          </div>
+          <button
+            class="btn btn-warning cl-record-action-reverse"
+            onClick=${() => onIntent('reverse_invoice_post')}
+            disabled=${busy}>
+            ${busy ? 'Working…' : 'Reverse posting'}
+          </button>
+        </div>
       ` : null}
-      ${orderedSecondary.map((intent) => html`
-        <button
-          key=${intent}
-          class="btn btn-secondary"
-          onClick=${() => intentClick(intent)}
-          disabled=${busy}
-        >${INTENT_LABELS[intent] || intent}</button>
-      `)}
-      ${showSendToPerson && primary !== 'reassign_approval' && !orderedSecondary.includes('reassign_approval') ? html`
-        <button class="btn btn-secondary" onClick=${() => openDialog('send_to_person', 'reassign_approval')} disabled=${busy}>
-          Send to person
-        </button>
+
+      ${hasIntervention ? html`
+        <div class="cl-record-action-escalation">
+          <div class="cl-record-action-escalation-copy">
+            <strong>Agent escalated this to you.</strong>
+            <p>${escalationReason}</p>
+            ${handoffLinks?.length ? html`
+              <p class="cl-record-action-escalation-aside">
+                If this should be handled by the approver or vendor instead,
+                hand off via Slack, Teams, or Gmail above.
+              </p>
+            ` : null}
+          </div>
+          <div class="cl-record-action-grid">
+            ${interventionPrimary ? html`
+              <button
+                class="btn btn-primary cl-record-action-primary"
+                onClick=${() => intentClick(interventionPrimary)}
+                disabled=${busy}>
+                ${INTENT_LABELS[interventionPrimary] || interventionPrimary}
+              </button>
+            ` : null}
+            ${orderedSecondary.map((intent) => html`
+              <button
+                key=${intent}
+                class="btn btn-secondary"
+                onClick=${() => intentClick(intent)}
+                disabled=${busy}>
+                ${INTENT_LABELS[intent] || intent}
+              </button>
+            `)}
+            ${showMarkDuplicate ? html`
+              <button
+                class="btn btn-secondary"
+                onClick=${() => openDialog('mark_duplicate', 'reject_invoice')}
+                disabled=${busy}>
+                Mark as duplicate
+              </button>
+            ` : null}
+            ${showOverridePost ? html`
+              <button
+                class="btn btn-secondary cl-record-action-override"
+                onClick=${() => openDialog('override_post', 'post_to_erp')}
+                disabled=${busy}>
+                Override and post
+              </button>
+            ` : null}
+          </div>
+        </div>
       ` : null}
-      ${showMarkDuplicate ? html`
-        <button class="btn btn-secondary" onClick=${() => openDialog('mark_duplicate', 'reject_invoice')} disabled=${busy}>
-          Mark as duplicate
-        </button>
-      ` : null}
-      ${showOverridePost ? html`
-        <button class="btn btn-secondary cl-record-action-override" onClick=${() => openDialog('override_post', 'post_to_erp')} disabled=${busy}>
-          Override and post
-        </button>
-      ` : null}
+
       ${dialog ? html`<${ActionDialog} kind=${dialog.kind} onCancel=${closeDialog} onSubmit=${submitDialog} busy=${busy} />` : null}
     </section>
   `;
+}
+
+// Human-readable reason the intervention bar is visible.
+function describeEscalation(item) {
+  if (!item) return 'The agent flagged this for human judgment.';
+  const state = String(item.state || '').toLowerCase();
+  if (item.exception_code) {
+    const code = String(item.exception_code).replace(/_/g, ' ');
+    return `Exception raised: ${code}. The agent can't progress this record without a human call.`;
+  }
+  if (state === 'needs_info') {
+    return 'The agent needs information from the vendor or operator before this record can move forward. Respond in Gmail; the agent will resubmit when the answer arrives.';
+  }
+  if (state === 'needs_approval' || state === 'pending_approval') {
+    return 'The record is waiting on an approver. The approver should respond in Slack or Teams; intervene here only to reassign, escalate, or override.';
+  }
+  if (state === 'needs_second_approval') {
+    return 'High-value record awaiting a second, distinct approver. The next approver should respond in Slack or Teams; intervene here only to reassign or escalate.';
+  }
+  if (state === 'failed_post') {
+    return 'Posting to the ERP failed. Investigate, reclassify if needed, or override and post once you have a real reason.';
+  }
+  return 'The agent escalated this record. Apply your judgment, or hand off to a render target.';
 }
 
 
@@ -383,7 +590,7 @@ function ActionDialog({ kind, onCancel, onSubmit, busy }) {
 
   const onConfirm = (e) => {
     e?.preventDefault?.();
-    if (kind === 'send_to_person') {
+    if (kind === 'reassign_approval') {
       const trimmed = email.trim();
       if (!trimmed) return;
       onSubmit({ assignee: trimmed, note: note.trim() || undefined });
@@ -405,12 +612,12 @@ function ActionDialog({ kind, onCancel, onSubmit, busy }) {
   };
 
   const titles = {
-    send_to_person: 'Send for approval to a specific person',
+    reassign_approval: 'Reassign the current approval step',
     mark_duplicate: 'Mark as duplicate',
     override_post: 'Override validation and post anyway',
   };
   const subs = {
-    send_to_person: 'Hands off the current approval step to the named approver. Recorded in the audit trail.',
+    reassign_approval: 'Hands off the current approval step to the named approver. Recorded in the audit trail.',
     mark_duplicate: 'Closes this invoice with a duplicate marker. Optionally link the original.',
     override_post: 'Skips the eligibility gate and posts to the ERP. The override + reason are recorded; CFO and audit trail will see this.',
   };
@@ -423,7 +630,7 @@ function ActionDialog({ kind, onCancel, onSubmit, busy }) {
           <p class="cl-record-dialog-sub">${subs[kind]}</p>
         </header>
         <div class="cl-record-dialog-body">
-          ${kind === 'send_to_person' ? html`
+          ${kind === 'reassign_approval' ? html`
             <label class="cl-record-dialog-field">
               <span>Approver email</span>
               <input

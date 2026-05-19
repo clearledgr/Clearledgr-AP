@@ -16,7 +16,7 @@ export const WORKSPACE_URL = (() => {
 export function workspaceItemUrl(itemId) {
   const id = String(itemId || '').trim();
   if (!id) return WORKSPACE_URL;
-  return `${WORKSPACE_URL}/items/${encodeURIComponent(id)}`;
+  return `${WORKSPACE_URL}/records/${encodeURIComponent(id)}`;
 }
 
 export function workspaceVendorUrl(vendorName) {
@@ -25,6 +25,6 @@ export function workspaceVendorUrl(vendorName) {
   return `${WORKSPACE_URL}/vendors/${encodeURIComponent(name)}`;
 }
 
-export function workspacePipelineUrl() {
-  return `${WORKSPACE_URL}/pipeline`;
+export function workspaceRecordsUrl() {
+  return `${WORKSPACE_URL}/records`;
 }

@@ -10,9 +10,8 @@ import './styles/footer.css';
 import './styles/entity.css';
 import './styles/cmdk.css';
 import './styles/pages.css';
-import './styles/review.css';
 import './styles/vendors.css';
-import './styles/pipeline.css';
+import './styles/records.css';
 import './styles/billing.css';
 import './styles/mobile.css';
 

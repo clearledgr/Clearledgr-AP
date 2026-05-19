@@ -14,10 +14,9 @@ import { StatusPage } from './routes/pages/StatusPage.js';
 import { PrivacyPage, TermsPage, RequestDemoPage } from './auth/LegalPages.js';
 import { PlaceholderPage } from './pages/PlaceholderPage.js';
 
-import { PipelineRoute } from './routes/pages/PipelineRoute.js';
+import { RecordsRoute } from './routes/pages/RecordsRoute.js';
 import { RecordDetailRoute } from './routes/pages/RecordDetailRoute.js';
 import { ReportsRoute } from './routes/pages/ReportsRoute.js';
-import { ReviewRoute } from './routes/pages/ReviewRoute.js';
 import { RulesRoute } from './routes/pages/RulesRoute.js';
 import { VendorDetailRoute } from './routes/pages/VendorDetailRoute.js';
 import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
@@ -50,8 +49,7 @@ export function App() {
                     <${Route} path="/onboarding"><${OnboardingPage} /><//>
                     <${Route} path="/"><${HomePage} /><//>
                     <${Route} path="/plan"><${PlanRoute} /><//>
-                    <${Route} path="/pipeline"><${PipelineRoute} /><//>
-                    <${Route} path="/review"><${ReviewRoute} /><//>
+                    <${Route} path="/records"><${RecordsRoute} /><//>
                     <${Route} path="/exceptions"><${ExceptionsRoute} /><//>
                     <${Route} path="/vendors"><${VendorsRoute} /><//>
                     <${Route} path="/vendors/:name">
@@ -69,7 +67,7 @@ export function App() {
                     <${Route} path="/api-keys"><${ApiKeysRoute} /><//>
                     <${Route} path="/health"><${HealthRoute} /><//>
                     <${Route} path="/status"><${StatusPage} /><//>
-                    <${Route} path="/items/:id">
+                    <${Route} path="/records/:id">
                       ${(params) => html`<${RecordDetailRoute} recordId=${params.id} />`}
                     <//>
                     <${Route}><${PlaceholderPage} title="Page not found" /><//>

@@ -23,9 +23,11 @@ import { AgentActivityRibbon } from '../../components/AgentActivityRibbon.js';
  * Page order:
  *   1. Welcome header + primary actions
  *   2. Onboarding banner (only if onboarding incomplete)
- *   3. Compact stat strip (4 dense tiles, live-pulse indicators)
- *   4. Agent activity ribbon (the hero — live stream of agent / op
- *      actions across all surfaces)
+ *   3. Agent activity ribbon — the hero. Live SSE stream of agent /
+ *      operator actions across every render target. The whole page is
+ *      organized around this primary surface; everything below is
+ *      either context (stats) or follow-up work (exceptions, vendors).
+ *   4. Compact stat strip (4 dense tiles, live-pulse indicators)
  *   5. 2-col panels: Exception queue + Top vendors
  *   6. Approver workload
  *   7. System status footer
@@ -153,8 +155,8 @@ export function HomePage() {
           <p class="cl-home-sub">${orgName} · coordination layer</p>
         </div>
         <div class="cl-home-actions">
-          <button class="cl-home-btn cl-home-btn-secondary" onClick=${() => navigate('/pipeline')}>
-            Open pipeline
+          <button class="cl-home-btn cl-home-btn-secondary" onClick=${() => navigate('/activity')}>
+            Open activity
           </button>
           <button class="cl-home-btn cl-home-btn-primary" onClick=${() => navigate('/exceptions')}>
             Review exceptions
@@ -177,6 +179,12 @@ export function HomePage() {
 
       <${ImplementationChecklist} orgId=${orgId} navigate=${navigate} />
 
+      <${AgentActivityRibbon}
+        state=${activity}
+        items=${activityItems}
+        live=${!!liveActivity}
+        navigate=${navigate} />
+
       <section class="cl-home-stat-strip" aria-label="Coordination layer at a glance">
         <${StatTile}
           label="In flight"
@@ -184,7 +192,7 @@ export function HomePage() {
           sub=${inFlight === 0 ? 'No invoices in progress' : 'Across all open states'}
           tone="brand"
           live=${streamPulse > 0}
-          onClick=${() => navigate('/pipeline')}
+          onClick=${() => navigate('/records')}
         />
         <${StatTile}
           label="Awaiting approval"
@@ -192,7 +200,7 @@ export function HomePage() {
           sub=${awaitingApproval === 0 ? 'No bottleneck' : 'In approver queues'}
           tone=${awaitingApproval > 0 ? 'pending' : 'good'}
           live=${streamPulse > 0}
-          onClick=${() => navigate('/pipeline?scope=approvals')}
+          onClick=${() => navigate('/records?scope=approvals')}
         />
         <${StatTile}
           label="Processed this week"
@@ -210,12 +218,6 @@ export function HomePage() {
           onClick=${() => exceptionCount > 0 && navigate('/exceptions')}
         />
       </section>
-
-      <${AgentActivityRibbon}
-        state=${activity}
-        items=${activityItems}
-        live=${!!liveActivity}
-        navigate=${navigate} />
 
       <section class="cl-home-grid">
         <div class="cl-home-panel">
@@ -489,7 +491,7 @@ function ApproverWorkloadStrip({ state, navigate }) {
       <ul class="cl-home-workload-list">
         ${approvers.slice(0, 8).map((a) => html`
           <li class="cl-home-workload-row" key=${a.approver_id}
-            onClick=${() => navigate(`/pipeline?approver=${encodeURIComponent(a.email || a.approver_id)}`)}>
+            onClick=${() => navigate(`/records?approver=${encodeURIComponent(a.email || a.approver_id)}`)}>
             <div class="cl-home-workload-main">
               <div class="cl-home-workload-name">${a.name || a.email || a.approver_id}</div>
               ${a.email && a.email !== a.name ? html`

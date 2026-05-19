@@ -1,0 +1,435 @@
+/* Records — read-only directory of AP records.
+ *
+ * Linear / Datadog grammar: dense flat list, monospace where it helps,
+ * filter chrome that hides until invoked. No Kanban, no bulk-action
+ * toolbar — the workspace doesn't run the workflow, it surfaces state.
+ */
+
+.cl-records {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 28px;
+  max-width: 1280px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.cl-records-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.cl-records-title {
+  font: 700 24px/1.2 var(--font-display, 'DM Sans'), sans-serif;
+  color: var(--cl-navy);
+  margin: 0 0 4px;
+}
+
+.cl-records-sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-muted, #64748B);
+  margin: 0;
+  max-width: 640px;
+}
+
+.cl-records-head-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cl-records-search input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--cl-border, #E2E8F0);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+  transition: border-color 120ms;
+}
+.cl-records-search input:focus {
+  outline: none;
+  border-color: var(--cl-navy);
+}
+
+/* Focused thread row — when the operator arrived from a Gmail thread,
+ * surface that record's status so they keep context.
+ */
+.cl-records-focus {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 10px;
+}
+.cl-records-focus-copy {
+  flex: 1;
+  min-width: 200px;
+}
+.cl-records-focus-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.cl-records-focus-head strong {
+  font-size: 13px;
+  color: #92400E;
+}
+.cl-records-focus-meta {
+  color: var(--ink-muted, #64748B);
+  font-size: 12px;
+}
+.cl-records-focus-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Scope toggle pills */
+.cl-records-scope {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cl-records-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font: 600 12px/1 inherit;
+  border: 1px solid #E2E8F0;
+  background: #fff;
+  color: var(--cl-navy);
+  cursor: pointer;
+}
+.cl-records-scope-pill.is-active {
+  background: var(--cl-navy);
+  color: #fff;
+  border-color: var(--cl-navy);
+}
+.cl-records-scope-count {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #F1F5F9;
+  color: #64748B;
+  min-width: 16px;
+  text-align: center;
+}
+.cl-records-scope-pill.is-active .cl-records-scope-count {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+/* State pill — reused inside the table and the focused-thread row */
+.cl-records-state {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Flat table — CSS grid columns, click-to-detail rows */
+.cl-records-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cl-border, #E2E8F0);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.cl-records-row {
+  display: grid;
+  grid-template-columns:
+    minmax(160px, 1.4fr)  /* vendor */
+    minmax(120px, 1fr)    /* reference */
+    minmax(100px, 0.8fr)  /* amount */
+    minmax(120px, 0.9fr)  /* state */
+    minmax(140px, 1.2fr)  /* blocker */
+    minmax(60px, 0.5fr)   /* age */
+    minmax(110px, 0.8fr); /* due */
+  gap: 12px;
+  align-items: center;
+  padding: 11px 16px;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--cl-navy);
+  cursor: pointer;
+  border-bottom: 1px solid #F1F5F9;
+}
+.cl-records-row:last-child {
+  border-bottom: 0;
+}
+.cl-records-row:hover:not(.cl-records-row-header) {
+  background: #F8FAFC;
+}
+.cl-records-row-header {
+  background: #F8FAFC;
+  color: var(--ink-muted, #64748B);
+  font: 600 11px/1.4 inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: default;
+}
+.cl-records-row-header:hover {
+  background: #F8FAFC;
+}
+
+.cl-records-cell-vendor {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-records-cell-ref code {
+  font: 12px/1.2 var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--ink-muted, #64748B);
+}
+.cl-records-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cl-records-cell-blocker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.cl-records-blocker {
+  display: inline-block;
+  font: 600 11px/1.2 inherit;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #FFF7ED;
+  border: 1px solid #FED7AA;
+  color: #9A3412;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cl-records-blocker-extra {
+  font: 600 10px/1 inherit;
+  color: var(--ink-muted, #64748B);
+}
+.cl-records-cell-age {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted, #64748B);
+  font-size: 12px;
+}
+.cl-records-due {
+  display: inline-block;
+  font: 700 10px/1.2 inherit;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.cl-records-empty {
+  background: #fff;
+  border: 1px dashed var(--cl-border, #E2E8F0);
+  border-radius: 10px;
+  padding: 36px 24px;
+  text-align: center;
+}
+.cl-records-empty strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--cl-navy);
+}
+.cl-records-empty p {
+  margin: 0 0 12px;
+}
+
+/* Popovers + drawer */
+.cl-records-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 22, 40, 0.28);
+  z-index: 9500;
+}
+.cl-records-popover {
+  position: absolute;
+  top: 80px;
+  right: 28px;
+  width: 340px;
+  max-width: calc(100vw - 56px);
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--cl-border, #E2E8F0);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(10, 22, 40, 0.2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cl-records-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cl-records-popover-label {
+  font: 600 11px/1 inherit;
+  color: var(--ink-muted, #64748B);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+.cl-records-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cl-records-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--cl-navy);
+  cursor: pointer;
+  text-align: left;
+}
+.cl-records-popover-row:hover {
+  background: #F1F5F9;
+}
+.cl-records-popover-row.is-active {
+  background: #ECFDF5;
+  color: #059669;
+}
+.cl-records-popover-count {
+  font: 700 11px/1 inherit;
+  color: var(--ink-muted, #64748B);
+}
+.cl-records-popover-saved {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.cl-records-popover-saved.is-active {
+  background: #ECFDF5;
+}
+.cl-records-popover-saved-name {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 2px;
+  color: inherit;
+}
+.cl-records-popover-save {
+  display: flex;
+  gap: 6px;
+}
+.cl-records-popover-save input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--cl-border, #E2E8F0);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* Right-side filter drawer */
+.cl-records-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 100vw;
+  background: #fff;
+  border-left: 1px solid var(--cl-border, #E2E8F0);
+  box-shadow: -12px 0 32px rgba(10, 22, 40, 0.12);
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cl-records-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font: inherit;
+}
+.cl-records-field > span {
+  font: 600 11px/1 inherit;
+  color: var(--ink-muted, #64748B);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.cl-records-field input,
+.cl-records-field select {
+  padding: 8px 12px;
+  border: 1px solid var(--cl-border, #E2E8F0);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  background: #fff;
+}
+.cl-records-field small {
+  font-size: 11px;
+}
+.cl-records-drawer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cl-records-drawer-actions button {
+  flex: 1;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .cl-records {
+    padding: 16px 14px;
+  }
+  .cl-records-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+  .cl-records-row-header {
+    display: none;
+  }
+  .cl-records-cell-vendor {
+    grid-column: 1 / -1;
+    font-size: 14px;
+  }
+  .cl-records-cell-ref { display: none; }
+  .cl-records-cell-amount { font-size: 14px; font-weight: 600; }
+  .cl-records-cell-age { font-size: 11px; }
+}

@@ -18,9 +18,11 @@ import { useBootstrap } from './BootstrapContext.js';
  *     /terms) so invite-accept flows + public deep links work pre-
  *     bootstrap.
  *
- * Daily-work surfaces (/pipeline, /review, /exceptions, /vendors,
- * /activity) intentionally stay gated — there's no meaningful work
- * to do on them before integrations are connected.
+ * Coordination surfaces (/records, /exceptions, /vendors, /activity,
+ * /reports, /rules) stay reachable pre-onboarding — the workspace
+ * owner needs to inspect their own data while the wizard is still
+ * incomplete. Empty-state messages do the teaching when there's
+ * no data yet.
  *
  * The gate is opt-in via bootstrap.onboarding.completed === false.
  * If bootstrap is unloaded or the field is missing, render through
@@ -35,27 +37,15 @@ const ONBOARDING_PASSTHROUGH = new Set([
   '/audit',
   '/plan',
   '/health',
-  // Daily-work surfaces. The original gate kept these locked until
-  // onboarding_completed flipped server-side, but the wizard itself
-  // is best-effort (steps 3+4 are integration go-lives the user may
-  // already have done, step 4 is optional). Locking the workspace
-  // owner out of their own Pipeline/Reports/Vendors while we wait
-  // for a counter to advance is hostile. Pages render empty-state
-  // messages when there's no data — that's the right teaching moment.
+  // Coordination surfaces — see header for rationale.
   '/home',
-  '/pipeline',
-  '/review',
+  '/records',
   '/exceptions',
   '/vendors',
   '/activity',
   '/reports',
   '/rules',
-  // Record detail (drill-in from the Records / Review queue / Exceptions
-  // lists). Gating /items/:id would bounce an unboarded user to the
-  // onboarding wizard every time they click a row, which is hostile —
-  // they need to be able to inspect their own data while the wizard is
-  // still incomplete.
-  '/items',
+  '/api-keys',
   // Public + auth flows
   '/signup/accept',
   '/status',

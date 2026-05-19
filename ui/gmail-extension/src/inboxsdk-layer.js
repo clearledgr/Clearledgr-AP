@@ -42,7 +42,7 @@ import { getCapabilities } from './routes/route-helpers.js';
 import { watchForSettingsPage } from './settings-tab.js';
 import {
   workspaceItemUrl,
-  workspacePipelineUrl,
+  workspaceRecordsUrl,
   WORKSPACE_URL,
 } from './utils/workspace-link.js';
 
@@ -1310,7 +1310,7 @@ function registerToolbarIcon() {
         // B.2: in-Gmail pipeline page no longer exists. Open the
         // workspace SPA in a new tab.
         try {
-          window.open(workspacePipelineUrl(), '_blank', 'noopener,noreferrer');
+          window.open(workspaceRecordsUrl(), '_blank', 'noopener,noreferrer');
         } catch (_) { /* popup blocked */ }
       },
     });
@@ -1519,7 +1519,7 @@ function registerSearchSuggestions() {
         suggestions.push({
           name: 'Solden workspace',
           description: 'Open the AP control plane',
-          externalURL: workspacePipelineUrl(),
+          externalURL: workspaceRecordsUrl(),
           iconUrl: getAssetUrl(LOGO_PATH) || undefined,
         });
       }
@@ -1543,12 +1543,12 @@ function registerKeyboardShortcuts() {
       } catch (_) { /* popup blocked */ }
     };
 
-    // G then C → Pipeline (in workspace)
-    const goPipeline = sdk.Keyboard.createShortcutHandle({
+    // G then C → Records (in workspace)
+    const goRecords = sdk.Keyboard.createShortcutHandle({
       chord: 'g c',
-      description: 'Open Solden workspace pipeline',
+      description: 'Open Solden workspace records',
     });
-    goPipeline.on('activate', () => openWorkspace('/pipeline'));
+    goRecords.on('activate', () => openWorkspace('/records'));
 
     // G then A → Activity (in workspace)
     const goActivity = sdk.Keyboard.createShortcutHandle({
@@ -1908,7 +1908,7 @@ function registerInboxSavedViewSections() {
 //
 // Toolbar button, search suggestions, keyboard chords, and the
 // sidebar's "open in pipeline" gesture all open the workspace SPA
-// in a new tab now (see workspaceItemUrl / workspacePipelineUrl).
+// in a new tab now (see workspaceItemUrl / workspaceRecordsUrl).
 
 function registerAppMenuAndRoutes() {
   // Intentional no-op: see B.2 comment block above.
