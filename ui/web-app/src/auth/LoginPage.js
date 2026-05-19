@@ -4,6 +4,7 @@ import { html } from '../utils/htm.js';
 import { useSession, refreshSession } from './useSession.js';
 import { api, ApiError } from '../api/client.js';
 import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
+import { SoldenMark } from './SoldenMark.js';
 
 const GOOGLE_START_PATH = '/auth/google/start';
 const MICROSOFT_START_PATH = '/auth/microsoft/start';
@@ -90,8 +91,7 @@ export function LoginPage() {
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
         <div class="cl-auth-brand">
-          <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
-               style="display:block;width:36px;height:36px" />
+          <${SoldenMark} size=${36} />
         </div>
         <h1 class="cl-auth-title">Sign in to Solden</h1>
 

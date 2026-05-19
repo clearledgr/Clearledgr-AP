@@ -4,6 +4,7 @@ import { html } from '../utils/htm.js';
 import { api, ApiError } from '../api/client.js';
 import { logout, refreshSession, useSession } from './useSession.js';
 import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
+import { SoldenMark } from './SoldenMark.js';
 
 /**
  * /signup/accept?token=<invite-token>
@@ -128,7 +129,14 @@ export function InviteAcceptPage() {
   const sessionEmail = (session?.email || '').toLowerCase().trim();
   const sameUser = isAuthenticated && sessionEmail && sessionEmail === inviteEmail;
   const wrongUser = isAuthenticated && sessionEmail && sessionEmail !== inviteEmail;
-  const orgLabel = preview.organization_name || 'your team';
+  // Display the org name with a leading capital so "Join solden" reads
+  // as "Join Solden" in sentence context. We only touch the first
+  // letter — names like "iRobot" or "Acme Corp" preserve their
+  // intended casing.
+  const _rawOrg = (preview.organization_name || '').trim();
+  const orgLabel = _rawOrg
+    ? _rawOrg.charAt(0).toUpperCase() + _rawOrg.slice(1)
+    : 'your team';
 
   // ── Signed in as the invited email. Accept + continue. ─────────
   const acceptAsCurrentUser = async () => {
@@ -265,8 +273,7 @@ export function InviteAcceptPage() {
     <main class="cl-auth-shell">
       <div class="cl-auth-card">
         <div class="cl-auth-brand">
-          <img src="/favicon.png?v=7" alt="Solden" height="36" width="36"
-               style="display:block;width:36px;height:36px" />
+          <${SoldenMark} size=${36} />
         </div>
         <h1 class="cl-auth-title">Join ${orgLabel}</h1>
         <p class="cl-auth-sub">
