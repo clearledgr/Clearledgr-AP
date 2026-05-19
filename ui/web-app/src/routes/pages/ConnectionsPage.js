@@ -132,7 +132,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
       body: JSON.stringify({ organization_id: orgId, redirect_path: '/workspace' }),
     });
     if (payload?.auth_url) {
-      oauthBridge.startOAuth(payload.auth_url, 'gmail');
+      oauthBridge.open(payload.auth_url);
       return;
     }
     navigate?.('/records');
@@ -145,7 +145,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
       body: JSON.stringify({ organization_id: orgId, redirect_path: '/connections' }),
     });
     if (payload?.auth_url) {
-      oauthBridge.startOAuth(payload.auth_url, 'outlook');
+      oauthBridge.open(payload.auth_url);
       return;
     }
     navigate?.('/records');
@@ -164,7 +164,7 @@ export default function ConnectionsPage({ bootstrap, api, toast, orgId, onRefres
   const [connectSlack, slackPending] = useAction(async () => {
     if (!canEditConnections) return;
     const p = await api('/api/workspace/integrations/slack/install/start', { method: 'POST', body: JSON.stringify({ organization_id: orgId, mode: 'per_org', redirect_path: '/workspace' }) });
-    oauthBridge.startOAuth(p.auth_url, 'slack');
+    oauthBridge.open(p.auth_url);
   });
   const [saveChannel, saveChannelPending] = useAction(async () => {
     if (!canEditConnections) return;
@@ -442,7 +442,7 @@ function ERPConnectionCard({
     });
     if (payload?.method === 'oauth' && payload?.auth_url) {
       setErpFormValues({});
-      oauthBridge.startOAuth(payload.auth_url, erpType);
+      oauthBridge.open(payload.auth_url);
       return;
     }
     if (payload?.method === 'form' && Array.isArray(payload?.fields)) {
