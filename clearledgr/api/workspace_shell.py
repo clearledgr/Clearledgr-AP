@@ -279,43 +279,162 @@ def _require_ops_access(user: TokenData) -> None:
         raise HTTPException(status_code=403, detail="ops_role_required")
 
 
-def _workspace_capabilities(role: Optional[str]) -> Dict[str, bool]:
-    # Phase 2.3: the capability matrix reads role via the rank
-    # predicates so legacy values get normalized transparently.
+def _workspace_capabilities(
+    role: Optional[str],
+    *,
+    workspace_role: Optional[str] = None,
+    ap_role: Optional[str] = None,
+) -> Dict[str, bool]:
+    """Flat (legacy) capability matrix.
+
+    Preserves the pre-v89 dict shape the frontend already consumes —
+    every key is preserved, the values are recomputed from the two
+    axes. The new tree shape is produced by ``_workspace_capabilities_tree``;
+    the two are kept in sync for the sweep window.
+
+    ``workspace_role`` and ``ap_role`` are the canonical inputs.
+    ``role`` is preserved as a legacy fallback so old callers that
+    still pass a single positional value continue to resolve via
+    ``normalize_workspace_role``.
+    """
     from clearledgr.core.auth import (
-        has_admin_access,
-        has_ops_access,
-        normalize_user_role,
+        has_ap_approver,
+        has_ap_clerk,
+        has_ap_controller,
+        has_workspace_admin,
+        has_workspace_member,
+        normalize_ap_role,
+        normalize_workspace_role,
     )
-    normalized_role = normalize_user_role(role)
-    has_workspace_role = bool(normalized_role)
-    is_admin = has_admin_access(role)
-    is_ops = has_ops_access(role)
+
+    resolved_workspace = (
+        normalize_workspace_role(workspace_role)
+        or normalize_workspace_role(role)
+        or ""
+    )
+    resolved_ap = (
+        normalize_ap_role(ap_role)
+        or normalize_ap_role(role)
+        or ""
+    )
+
+    has_any = bool(resolved_workspace)
+    is_admin = has_workspace_admin(resolved_workspace)
+    is_member = has_workspace_member(resolved_workspace)
+    ap_clerk_plus = has_ap_clerk(resolved_ap)
+    ap_approver_plus = has_ap_approver(resolved_ap)
+    ap_controller = has_ap_controller(resolved_ap)
 
     return {
+        # Workspace-axis views — everyone authenticated sees navigation.
         "view_home": True,
         "view_pipeline": True,
-        "view_review": has_workspace_role,
-        "view_upcoming": has_workspace_role,
-        "view_activity": has_workspace_role,
-        "view_vendors": has_workspace_role,
-        "view_templates": has_workspace_role,
-        "view_connections": has_workspace_role,
-        "view_rules": has_workspace_role,
-        "view_team": has_workspace_role,
-        "view_company": has_workspace_role,
-        "view_plan": has_workspace_role,
-        "view_reconciliation": has_workspace_role,
-        "view_system_status": has_workspace_role,
-        "view_reports": has_workspace_role,
-        "view_ops_workspace": is_ops,
-        "operate_records": is_ops,
+        "view_review": has_any,
+        "view_upcoming": has_any,
+        "view_activity": has_any,
+        "view_vendors": has_any,
+        "view_templates": has_any,
+        "view_connections": has_any,
+        "view_rules": has_any,
+        "view_team": has_any,
+        "view_company": has_any,
+        "view_plan": has_any,
+        "view_reconciliation": has_any,
+        "view_system_status": has_any,
+        "view_reports": has_any,
+        # Workspace-axis ops + manage gates. ``view_ops_workspace`` /
+        # ``operate_records`` historically meant "AP Manager or above"
+        # (pre-v89) — under the two-axis model that's "workspace member
+        # plus AP clerk-or-above on at least one Box". Membership-only
+        # users still see workspace nav but can't act on AP records
+        # without an AP role assignment.
+        "view_ops_workspace": is_member and ap_clerk_plus,
+        "operate_records": is_member and ap_clerk_plus,
         "manage_connections": is_admin,
         "manage_rules": is_admin,
         "manage_team": is_admin,
         "manage_company": is_admin,
         "manage_plan": is_admin,
         "manage_admin_pages": is_admin,
+        # AP-axis box-specific actions surfaced here so the frontend
+        # can check a single dict on each render. New code should
+        # consume the tree shape (``capabilities.ap_item.*``) instead.
+        "approve_invoice": ap_approver_plus,
+        "post_to_erp": ap_approver_plus,
+        "reverse_invoice_post": ap_controller,
+        "override_post": ap_controller,
+        "mark_duplicate": ap_approver_plus,
+        "reclassify_invoice": ap_clerk_plus,
+        "resubmit_invoice": ap_clerk_plus,
+    }
+
+
+def _workspace_capabilities_tree(
+    workspace_role: Optional[str],
+    ap_role: Optional[str],
+) -> Dict[str, Dict[str, bool]]:
+    """Tree-shaped capability matrix for the v89 bootstrap response.
+
+    ``{ workspace: { manage_users: bool, ... }, ap_item: { approve: ... } }``.
+    When a second Box type ships, it adds a sibling key (``procurement``,
+    ``audit_engagement``, etc.) with its own capability set. Each Box
+    declares its capability list at the registry layer.
+    """
+    from clearledgr.core.auth import (
+        has_ap_approver,
+        has_ap_clerk,
+        has_ap_controller,
+        has_ap_viewer,
+        has_workspace_admin,
+        has_workspace_member,
+        has_workspace_owner,
+        has_workspace_read_only,
+    )
+
+    is_owner = has_workspace_owner(workspace_role)
+    is_admin = has_workspace_admin(workspace_role)
+    is_member = has_workspace_member(workspace_role)
+    has_any = has_workspace_read_only(workspace_role)
+
+    return {
+        "workspace": {
+            "view_workspace": has_any,
+            "view_records": has_any,
+            "view_vendors": has_any,
+            "view_reports": has_any,
+            "view_audit_log": has_any,
+            "view_activity": has_any,
+            "view_exceptions": has_any,
+            "view_plan": has_any,
+            "view_settings": is_member,
+            "view_connections": is_member,
+            "view_rules": is_member,
+            "view_api_keys": is_admin,
+            "manage_users": is_admin,
+            "manage_connections": is_admin,
+            "manage_rules": is_admin,
+            "manage_settings": is_admin,
+            "manage_plan": is_admin,
+            "manage_api_keys": is_admin,
+            "manage_workspace": is_owner,
+        },
+        "ap_item": {
+            "view_ap_records": has_ap_viewer(ap_role) or is_member,
+            "edit_ap_record": has_ap_clerk(ap_role),
+            "manually_classify_invoice": has_ap_clerk(ap_role),
+            "resubmit_invoice": has_ap_clerk(ap_role),
+            "approve_invoice": has_ap_approver(ap_role),
+            "reject_invoice": has_ap_approver(ap_role),
+            "escalate_approval": has_ap_approver(ap_role),
+            "reassign_approval": has_ap_approver(ap_role),
+            "request_info": has_ap_approver(ap_role),
+            "request_approval": has_ap_approver(ap_role),
+            "post_to_erp": has_ap_approver(ap_role),
+            "snooze_invoice": has_ap_approver(ap_role),
+            "mark_duplicate": has_ap_approver(ap_role),
+            "override_post": has_ap_controller(ap_role),
+            "reverse_invoice_post": has_ap_controller(ap_role),
+        },
     }
 
 
@@ -951,17 +1070,17 @@ class OrgSettingsPatchRequest(BaseModel):
 class TeamInviteCreateRequest(BaseModel):
     organization_id: Optional[str] = None
     email: EmailStr
-    # Role validation happens inside the handler via
-    # ``normalize_user_role`` + ``ROLE_RANK`` rather than a Pydantic
-    # regex — the canonical thesis vocabulary (ap_clerk, ap_manager,
-    # financial_controller, cfo, read_only) coexists with legacy
-    # tokens (admin/member/viewer/user/operator) that the SPA may
-    # still send from older builds, and the normalizer handles both.
-    # Hardcoding a regex here was a stale shim from Phase 1 that
-    # silently 422'd every SPA invite after the role taxonomy
-    # migration. ``default="member"`` is intentional — it normalises
-    # to ``ap_clerk`` if the caller omits the field.
+    # Legacy single-axis ``role`` (pre-v89). Normalised through the
+    # workspace-role mapping at handler time. Kept on the wire for the
+    # sweep window so older SPA builds still hit a valid request.
     role: str = Field(default="member")
+    # v89 two-axis fields. ``workspace_role`` is the org-governance
+    # axis ({owner, admin, member, read_only}); ``box_roles`` is a
+    # ``{box_type: role}`` map for per-Box-type domain rank. When the
+    # caller omits these, the handler derives them from ``role`` via
+    # the legacy mapping.
+    workspace_role: Optional[str] = None
+    box_roles: Optional[Dict[str, str]] = None
     expires_in_days: int = Field(default=7, ge=1, le=30)
     # Module 6 Pass D — optional restriction to specific legal entities.
     # On invite accept the auth handler writes one user_entity_roles
@@ -1045,6 +1164,7 @@ async def get_admin_bootstrap(
     current_user = db.get_user(user.user_id) or {}
     integrations = [
         _gmail_status_for_org(org_id, user),
+        _outlook_status_for_org(org_id, user),
         _slack_status_for_org(org_id),
         _teams_status_for_org(org_id),
         _erp_status_for_org(org_id),
@@ -1067,7 +1187,11 @@ async def get_admin_bootstrap(
         status = str(info.get("status") or "").lower()
         return bool(info.get("connected")) or status in {"connected", "active", "ready"}
 
+    # Intake channel: Gmail or Outlook satisfies the inbox-source side
+    # of onboarding. Either is sufficient for the AP pipeline to flow.
     gmail_connected = _is_connected("gmail")
+    outlook_connected = _is_connected("outlook")
+    inbox_connected = gmail_connected or outlook_connected
     erp_connected = _is_connected("erp") or any(
         _is_connected(n) for n in ("quickbooks", "xero", "netsuite", "sap")
     )
@@ -1092,7 +1216,7 @@ async def get_admin_bootstrap(
         derived_step = 2
     if derived_step >= 2 and slack_or_teams_connected:
         derived_step = 3
-    if derived_step >= 3 and gmail_connected:
+    if derived_step >= 3 and inbox_connected:
         derived_step = 4
 
     persisted_step = int(subscription.get("onboarding_step") or 0)
@@ -1129,15 +1253,44 @@ async def get_admin_bootstrap(
             },
             {
                 "id": 4,
-                "name": "Install Gmail extension",
-                "description": "Optional. Adds a contextual sidebar in Gmail when an invoice email is open. ERP-native customers (SAP S/4HANA, NetSuite-only intake) can skip.",
+                "name": "Connect intake channel",
+                "description": "Connect Gmail or Outlook so invoices arriving by email flow into Solden. Install the matching browser sidebar (Gmail extension / Outlook add-in) for per-thread context. ERP-native customers (SAP S/4HANA, NetSuite-only intake) can skip.",
                 "time_estimate": "2 minutes",
                 "required": False,
             },
         ],
     }
-    current_role = current_user.get("role") or user.role
-    capabilities = _workspace_capabilities(current_role)
+    # v89 two-axis auth: emit workspace_role + box_roles on the user,
+    # plus a tree-shaped capability matrix that splits workspace vs.
+    # per-Box-type. The flat ``capabilities`` dict stays for the sweep
+    # window so the frontend's pre-v89 ``hasCapability(bootstrap, 'X')``
+    # calls continue to resolve.
+    from clearledgr.core.auth import (
+        WORKSPACE_ROLE_MEMBER,
+        get_user_box_roles,
+        normalize_ap_role,
+        normalize_workspace_role,
+    )
+    current_role = current_user.get("role") or getattr(user, "role", None)
+    current_workspace_role = (
+        normalize_workspace_role(current_user.get("workspace_role"))
+        or normalize_workspace_role(getattr(user, "workspace_role", None))
+        or normalize_workspace_role(current_role)
+        or WORKSPACE_ROLE_MEMBER
+    )
+    box_roles = get_user_box_roles(
+        current_user.get("id") or user.user_id,
+        org_id,
+    )
+    current_ap_role = normalize_ap_role(box_roles.get("ap_item")) or normalize_ap_role(current_role) or ""
+    capabilities = _workspace_capabilities(
+        current_role,
+        workspace_role=current_workspace_role,
+        ap_role=current_ap_role,
+    )
+    capabilities_tree = _workspace_capabilities_tree(
+        current_workspace_role, current_ap_role,
+    )
 
     return {
         "organization": {
@@ -1151,12 +1304,16 @@ async def get_admin_bootstrap(
             "id": current_user.get("id") or user.user_id,
             "email": current_user.get("email") or user.email,
             "name": current_user.get("name") or user.email.split("@")[0],
-            "role": current_role,
+            "role": current_role,  # DEPRECATED post-v89
+            "workspace_role": current_workspace_role,
+            "box_roles": box_roles,
             "organization_id": org_id,
             "preferences": _load_user_preferences(current_user),
             "capabilities": capabilities,
+            "capabilities_tree": capabilities_tree,
         },
         "capabilities": capabilities,
+        "capabilities_tree": capabilities_tree,
         "integrations": integrations,
         "onboarding": onboarding,
         "subscription": subscription,
@@ -3763,20 +3920,82 @@ def create_team_invite(
     _require_admin(user)
     org_id = _resolve_org_id(user, request.organization_id)
 
-    # Role normalisation: matches the contract used by
-    # /api/auth/users/invite (auth.py:599). normalize_user_role()
-    # upgrades legacy tokens (member→ap_clerk, admin→financial_controller,
-    # etc.) to the canonical thesis vocabulary; unknown tokens stay
-    # unknown and fail the ROLE_RANK membership check below. ``owner``
-    # is reserved for the org creator and cannot be granted via invite.
-    from clearledgr.core.auth import ROLE_RANK, normalize_user_role
+    # v89 two-axis role resolution. Prefer the new workspace_role +
+    # box_roles fields; fall back to legacy ``role`` via the workspace
+    # mapping. ``owner`` is reserved for the org creator and cannot
+    # be granted via invite.
+    from clearledgr.core.auth import (
+        AP_ROLE_CLERK,
+        AP_ROLES,
+        WORKSPACE_ROLE_MEMBER,
+        WORKSPACE_ROLE_OWNER,
+        WORKSPACE_ROLES,
+        normalize_ap_role,
+        normalize_workspace_role,
+    )
 
-    normalized_role = normalize_user_role(request.role)
-    if not normalized_role or normalized_role not in ROLE_RANK or normalized_role == "owner":
+    normalized_workspace = (
+        normalize_workspace_role(request.workspace_role)
+        or normalize_workspace_role(request.role)
+        or WORKSPACE_ROLE_MEMBER
+    )
+    if normalized_workspace not in WORKSPACE_ROLES or normalized_workspace == WORKSPACE_ROLE_OWNER:
         raise HTTPException(
             status_code=400,
-            detail={"reason": "invalid_role", "role": request.role},
+            detail={
+                "reason": "invalid_workspace_role",
+                "workspace_role": request.workspace_role or request.role,
+            },
         )
+
+    # Per-Box role assignments. Today only ``ap_item`` is registered;
+    # when more Box types ship they get keys in this dict and the
+    # validation loop below picks them up automatically.
+    requested_box_roles = dict(request.box_roles or {})
+    if "ap_item" not in requested_box_roles:
+        # Derive AP-side role from the legacy single-axis ``role``
+        # value so older SPA builds get the right rank assignment.
+        derived_ap = normalize_ap_role(request.role) or AP_ROLE_CLERK
+        requested_box_roles["ap_item"] = derived_ap
+
+    normalized_box_roles: Dict[str, str] = {}
+    for box_type, raw_role in requested_box_roles.items():
+        if box_type == "ap_item":
+            normalized = normalize_ap_role(raw_role)
+            if not normalized or normalized not in AP_ROLES:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "reason": "invalid_box_role",
+                        "box_type": box_type,
+                        "role": raw_role,
+                    },
+                )
+            normalized_box_roles[box_type] = normalized
+        # Other Box types: pass through; validation happens when they
+        # register their role enum at the registry layer.
+
+    # Encode the (workspace_role, ap_role) pair as a single legacy
+    # role string for the team_invites.role column. The accept handler
+    # passes this through to ``create_user``, which uses the legacy
+    # mapping to derive both axes. v90 will swap this for a structured
+    # column on the invite row.
+    _AP_ROLE_BY_BOX = normalized_box_roles.get("ap_item", AP_ROLE_CLERK)
+    _PAIR_TO_LEGACY = {
+        (WORKSPACE_ROLE_OWNER, "controller"): "owner",
+        ("admin", "controller"): "cfo",
+        ("admin", "approver"): "financial_controller",
+        ("member", "approver"): "ap_manager",
+        ("member", "clerk"): "ap_clerk",
+        ("read_only", "viewer"): "read_only",
+    }
+    normalized_role = _PAIR_TO_LEGACY.get(
+        (normalized_workspace, _AP_ROLE_BY_BOX),
+        # Fall back to the workspace value when the combo doesn't
+        # have a single legacy alias. create_user's legacy mapping
+        # will derive the AP role from there.
+        normalized_workspace,
+    )
 
     expires_at = (_utcnow() + timedelta(days=request.expires_in_days)).isoformat()
     db = get_db()

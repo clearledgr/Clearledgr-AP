@@ -102,23 +102,39 @@ def _get_db():
 
 
 class TokenData(BaseModel):
-    """JWT token payload."""
+    """JWT token payload.
+
+    Migration v89: ``workspace_role`` is the canonical org-governance
+    axis. ``role`` survives as the legacy single-axis field so
+    in-flight tokens / older callsites continue to deserialize.
+    Helpers below (``_workspace_role_of``) prefer ``workspace_role``
+    and fall back to ``role`` when only the legacy field is set.
+    """
 
     user_id: str
     email: str
     organization_id: str
-    role: str = "user"
+    role: str = "user"  # DEPRECATED post-v89; read via _workspace_role_of()
+    workspace_role: str = ""
     exp: datetime
 
 
 class User(BaseModel):
-    """User model."""
+    """User model.
+
+    Migration v89: ``workspace_role`` is the canonical org-governance
+    axis. ``role`` is the legacy single-axis value, retained on the
+    model for the sweep window so callers that still read ``user.role``
+    don't 500. Both fields are written by ``_row_to_user`` from the DB
+    columns ``users.role`` (legacy) and ``users.workspace_role`` (new).
+    """
 
     id: str
     email: EmailStr
     name: str
     organization_id: str
-    role: str = "user"
+    role: str = "user"  # DEPRECATED post-v89
+    workspace_role: str = ""
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -173,18 +189,32 @@ def create_access_token(
     email: str,
     organization_id: str,
     role: str = "user",
+    workspace_role: Optional[str] = None,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
-    """Create a JWT access token."""
+    """Create a JWT access token.
+
+    Migration v89: ``workspace_role`` is the canonical org-governance
+    axis on the wire. ``role`` continues to be written for the sweep
+    window so JWTs that hit older callers still decode usefully.
+    If only ``role`` is supplied (legacy callers), workspace_role is
+    derived via ``normalize_workspace_role``.
+    """
     if expires_delta is None:
         expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     expire = datetime.now(timezone.utc) + expires_delta
+    resolved_workspace = (
+        workspace_role
+        or normalize_workspace_role(role)
+        or WORKSPACE_ROLE_MEMBER
+    )
     payload = {
         "sub": user_id,
         "email": email,
         "org": organization_id,
         "role": role,
+        "workspace_role": resolved_workspace,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": "access",
@@ -205,14 +235,26 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 
 def _token_data_from_payload(payload: Dict[str, Any]) -> TokenData:
-    # Phase 2.3: normalize legacy role strings on every token decode
-    # so predicates only ever see canonical thesis values.
-    raw_role = payload.get("role") or ROLE_AP_CLERK
+    """Decode JWT payload into TokenData.
+
+    Migration v89: prefer the new ``workspace_role`` claim; fall back
+    to deriving from the legacy ``role`` claim for tokens minted
+    before the cutover. ``role`` is preserved on the model so legacy
+    callers still see something useful.
+    """
+    raw_role = payload.get("role") or ""
+    raw_workspace = payload.get("workspace_role") or ""
+    workspace_role = (
+        normalize_workspace_role(raw_workspace)
+        or normalize_workspace_role(raw_role)
+        or WORKSPACE_ROLE_MEMBER
+    )
     return TokenData(
         user_id=payload["sub"],
         email=payload["email"],
         organization_id=payload["org"],
-        role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
+        role=raw_role or workspace_role,
+        workspace_role=workspace_role,
         exp=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
     )
 
@@ -260,10 +302,19 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
                 detail="user_deactivated",
             )
 
+        # Prefer the DB's new workspace_role column; fall back to
+        # legacy role if workspace_role hasn't been backfilled yet
+        # (v89 backfill runs as part of run_migrations on boot).
+        raw_workspace = row.get("workspace_role") or ""
         raw_role = (
             row.get("role")
             or getattr(token_data, "role", None)
-            or ROLE_AP_CLERK
+            or ""
+        )
+        workspace_role = (
+            normalize_workspace_role(raw_workspace)
+            or normalize_workspace_role(raw_role)
+            or WORKSPACE_ROLE_MEMBER
         )
         return TokenData(
             user_id=str(row.get("id") or user_id or email or "unknown"),
@@ -277,7 +328,8 @@ def _reconcile_token_data(token_data: TokenData) -> TokenData:
                 or getattr(token_data, "organization_id", None)
                 or "_unprovisioned"
             ),
-            role=normalize_user_role(raw_role) or ROLE_AP_CLERK,
+            role=raw_role or workspace_role,
+            workspace_role=workspace_role,
             exp=token_data.exp,
         )
     except HTTPException:
@@ -358,7 +410,8 @@ def get_current_user(
                 user_id=key_record.get("user_id", "api_user"),
                 email="api@system",
                 organization_id=key_record["organization_id"],
-                role="api",
+                role=WORKSPACE_ROLE_API,
+                workspace_role=WORKSPACE_ROLE_API,
                 exp=datetime.now(timezone.utc) + timedelta(hours=1),
             ))
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -477,12 +530,20 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
             logger.info("Auto-provisioned user from Google OAuth: %s org=%s", email, provision_org)
 
         user_id = user.get("id") or user.get("user_id") or email
+        raw_workspace = user.get("workspace_role") or ""
+        raw_role = user.get("role") or ""
+        workspace_role = (
+            normalize_workspace_role(raw_workspace)
+            or normalize_workspace_role(raw_role)
+            or WORKSPACE_ROLE_MEMBER
+        )
         token_data = TokenData(
             user_id=user_id,
             email=email,
             # M20: same sentinel as the auto-provision path above.
             organization_id=user.get("organization_id", "_unprovisioned"),
-            role=user.get("role", "operator"),
+            role=raw_role or workspace_role,
+            workspace_role=workspace_role,
             exp=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
@@ -513,178 +574,486 @@ def _validate_google_token(token: str) -> Optional[TokenData]:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2.3 — Five-role thesis taxonomy (DESIGN_THESIS.md §17)
+# Two-axis auth model (migration v89, 2026-05-19)
 # ---------------------------------------------------------------------------
 #
-# The thesis defines five human roles plus an ``owner`` superuser and a
-# service-account ``api`` role. Permissions are additive-upward: a CFO
-# has every permission an AP Manager has, etc. Each role has an integer
-# rank and a predicate ``has_<role>(role) → bool`` that returns True for
-# the role itself AND any role with a higher rank.
+# The pre-v89 single-axis enum (ap_clerk → ap_manager → financial_controller
+# → cfo → owner) conflated two distinct concerns in one column:
 #
-# Role canonical values:
-#     read_only             — view-only seat
-#     ap_clerk              — default write seat; day-to-day invoice entry
-#     ap_manager            — ops surface; approve within auto-approve limits
-#     financial_controller  — configure org settings + high-value approvals
-#     cfo                   — fraud control parameters + autonomy tier changes
-#     owner                 — org creator; universal superuser
-#     api                   — service account; equivalent to owner for automation
+#   1. Org governance — who can manage users / connections / settings /
+#      plan / API keys. Independent of which Box types are registered.
+#   2. AP workflow rank — who can approve invoices / post to ERP /
+#      override validation. Specific to the ap_item Box type.
 #
-# Legacy role strings (``user``, ``admin``, ``operator``, ``viewer``,
-# ``member``) are normalized to their thesis equivalent at every read
-# boundary via ``normalize_user_role``. The same transformation is
-# applied in place by migration v15 so database rows match the normalized
-# shape. There is no backward-compat shim: after the migration runs,
-# ``admin`` is not a canonical value anywhere in the system — it's
-# silently upgraded to ``financial_controller`` at read time if it
-# still appears on a stale JWT.
+# Migration v89 split that into:
+#
+#   * ``users.workspace_role`` — org-governance axis. Values:
+#     {owner, admin, member, read_only, api}. Pinned by a DB CHECK
+#     constraint (M21 doctrine — catch stale writes at the DB).
+#
+#   * ``user_box_roles`` — per-Box-type domain rank, looked up from DB
+#     via ``get_user_box_role(user_id, org_id, box_type)``. For
+#     box_type='ap_item' the values are {viewer, clerk, approver,
+#     controller}. When a second Box type ships it declares its role
+#     enum at the box-registry layer and adds rows here; no other
+#     auth code needs to change.
+#
+# When the 2nd Box ships (procurement / audit / etc.), it just registers
+# its role enum + permissions and the AP-side helpers below get a
+# sibling module (e.g. ``procurement_roles.py``). The workspace_role
+# axis is stable forever.
 
-ROLE_READ_ONLY = "read_only"
-ROLE_AP_CLERK = "ap_clerk"
-ROLE_AP_MANAGER = "ap_manager"
-ROLE_FINANCIAL_CONTROLLER = "financial_controller"
-ROLE_CFO = "cfo"
-ROLE_OWNER = "owner"
-ROLE_API = "api"
+# ─── Workspace role enum (org governance axis) ────────────────────────
 
-# Canonical rank map. Higher = more powerful. Missing/unknown roles
-# get rank 0, which fails every ``has_at_least`` check.
-ROLE_RANK: Dict[str, int] = {
-    ROLE_READ_ONLY: 10,
-    ROLE_AP_CLERK: 20,
-    ROLE_AP_MANAGER: 40,
-    ROLE_FINANCIAL_CONTROLLER: 60,
-    ROLE_CFO: 80,
-    ROLE_OWNER: 100,
-    # Service accounts equivalent to owner for automation paths.
-    ROLE_API: 100,
+WORKSPACE_ROLE_READ_ONLY = "read_only"
+WORKSPACE_ROLE_MEMBER = "member"
+WORKSPACE_ROLE_ADMIN = "admin"
+WORKSPACE_ROLE_OWNER = "owner"
+WORKSPACE_ROLE_API = "api"
+
+WORKSPACE_ROLES: frozenset = frozenset({
+    WORKSPACE_ROLE_READ_ONLY,
+    WORKSPACE_ROLE_MEMBER,
+    WORKSPACE_ROLE_ADMIN,
+    WORKSPACE_ROLE_OWNER,
+    WORKSPACE_ROLE_API,
+})
+
+# Rank map for workspace roles. Higher = more org-governance authority.
+# api shares the top rank with owner because service accounts route
+# through the same permission gates as the org creator.
+WORKSPACE_ROLE_RANK: Dict[str, int] = {
+    WORKSPACE_ROLE_READ_ONLY: 10,
+    WORKSPACE_ROLE_MEMBER:    30,
+    WORKSPACE_ROLE_ADMIN:     70,
+    WORKSPACE_ROLE_OWNER:     100,
+    WORKSPACE_ROLE_API:       100,
 }
 
-# Mapping from legacy role strings → thesis canonical values. Applied
-# by ``normalize_user_role`` at every read boundary. Migration v15
-# rewrites the ``users.role`` column in place so stored values match
-# the normalized shape going forward.
-_LEGACY_ROLE_MAP: Dict[str, str] = {
-    "user": ROLE_AP_CLERK,
-    "member": ROLE_AP_CLERK,
-    "operator": ROLE_AP_MANAGER,
-    "admin": ROLE_FINANCIAL_CONTROLLER,
-    "viewer": ROLE_READ_ONLY,
+# Map any legacy single-axis value (pre-v89) or stale JWT claim onto a
+# canonical workspace_role. Applied at every read boundary by
+# ``normalize_workspace_role`` so an in-flight JWT minted before the
+# migration doesn't 500 the auth pipeline.
+_LEGACY_TO_WORKSPACE: Dict[str, str] = {
+    # Direct survivors
+    "owner":                WORKSPACE_ROLE_OWNER,
+    "api":                  WORKSPACE_ROLE_API,
+    "admin":                WORKSPACE_ROLE_ADMIN,
+    "member":               WORKSPACE_ROLE_MEMBER,
+    "read_only":            WORKSPACE_ROLE_READ_ONLY,
+    # Legacy AP-flavoured names — drop the AP-rank meaning; keep only
+    # the workspace-governance signal.
+    "cfo":                  WORKSPACE_ROLE_ADMIN,
+    "financial_controller": WORKSPACE_ROLE_ADMIN,
+    "ap_manager":           WORKSPACE_ROLE_MEMBER,
+    "ap_clerk":             WORKSPACE_ROLE_MEMBER,
+    "operator":             WORKSPACE_ROLE_MEMBER,
+    "user":                 WORKSPACE_ROLE_MEMBER,
+    "viewer":               WORKSPACE_ROLE_READ_ONLY,
 }
 
 
-def normalize_user_role(role: Optional[str]) -> str:
-    """Return the canonical thesis role for a potentially-legacy input.
+def normalize_workspace_role(role: Optional[str]) -> str:
+    """Return the canonical ``workspace_role`` for a potentially-legacy input.
 
-    Empty, None, or unknown inputs return an empty string — callers
-    that need a default seat should explicitly fall back to
-    ``ROLE_AP_CLERK``. This function is intentionally conservative:
-    it never promotes an unknown role to a default, because that
-    would be a privilege-escalation vector on malformed tokens.
+    Empty, None, or fully-unknown inputs return an empty string — every
+    ``has_workspace_*`` predicate rejects an empty role, so an unknown
+    token fails closed rather than escalating to a default seat.
     """
     raw = str(role or "").strip().lower()
     if not raw:
         return ""
-    if raw in ROLE_RANK:
+    if raw in WORKSPACE_ROLES:
         return raw
-    if raw in _LEGACY_ROLE_MAP:
-        return _LEGACY_ROLE_MAP[raw]
-    return raw  # preserve unknown values so predicates reject them
+    return _LEGACY_TO_WORKSPACE.get(raw, "")
 
 
-def has_at_least(role: Optional[str], minimum: str) -> bool:
-    """Return True iff ``role`` has at least the rank of ``minimum``."""
-    normalized = normalize_user_role(role)
-    min_normalized = normalize_user_role(minimum)
-    return ROLE_RANK.get(normalized, 0) >= ROLE_RANK.get(min_normalized, 0)
+def has_workspace_role(role: Optional[str], minimum: str) -> bool:
+    """Return True iff ``role`` has at least the rank of ``minimum`` on the
+    workspace-governance axis.
+    """
+    rn = normalize_workspace_role(role)
+    mn = normalize_workspace_role(minimum)
+    return WORKSPACE_ROLE_RANK.get(rn, 0) >= WORKSPACE_ROLE_RANK.get(mn, 0)
 
 
-def has_read_only(role: Optional[str]) -> bool:
-    return has_at_least(role, ROLE_READ_ONLY)
+def has_workspace_read_only(role: Optional[str]) -> bool:
+    return has_workspace_role(role, WORKSPACE_ROLE_READ_ONLY)
+
+
+def has_workspace_member(role: Optional[str]) -> bool:
+    return has_workspace_role(role, WORKSPACE_ROLE_MEMBER)
+
+
+def has_workspace_admin(role: Optional[str]) -> bool:
+    """Manages users, connections, plan, API keys, settings."""
+    return has_workspace_role(role, WORKSPACE_ROLE_ADMIN)
+
+
+def has_workspace_owner(role: Optional[str]) -> bool:
+    return has_workspace_role(role, WORKSPACE_ROLE_OWNER)
+
+
+# ─── AP Box-type role enum (workflow domain axis) ────────────────────
+
+AP_ROLE_VIEWER = "viewer"
+AP_ROLE_CLERK = "clerk"
+AP_ROLE_APPROVER = "approver"
+AP_ROLE_CONTROLLER = "controller"
+
+AP_ROLES: frozenset = frozenset({
+    AP_ROLE_VIEWER, AP_ROLE_CLERK, AP_ROLE_APPROVER, AP_ROLE_CONTROLLER,
+})
+
+AP_ROLE_RANK: Dict[str, int] = {
+    AP_ROLE_VIEWER:     10,
+    AP_ROLE_CLERK:      30,
+    AP_ROLE_APPROVER:   50,
+    AP_ROLE_CONTROLLER: 90,
+}
+
+# Legacy single-axis AP names that pre-v89 code may still emit.
+_LEGACY_TO_AP_ROLE: Dict[str, str] = {
+    "ap_clerk":             AP_ROLE_CLERK,
+    "ap_manager":           AP_ROLE_APPROVER,
+    "financial_controller": AP_ROLE_CONTROLLER,
+    "cfo":                  AP_ROLE_CONTROLLER,
+    "owner":                AP_ROLE_CONTROLLER,
+    "read_only":            AP_ROLE_VIEWER,
+    "viewer":               AP_ROLE_VIEWER,
+    "operator":             AP_ROLE_APPROVER,
+    "user":                 AP_ROLE_CLERK,
+    "member":               AP_ROLE_CLERK,
+    "admin":                AP_ROLE_CONTROLLER,
+}
+
+
+def normalize_ap_role(role: Optional[str]) -> str:
+    raw = str(role or "").strip().lower()
+    if not raw:
+        return ""
+    if raw in AP_ROLES:
+        return raw
+    return _LEGACY_TO_AP_ROLE.get(raw, "")
+
+
+def has_ap_role(role: Optional[str], minimum: str) -> bool:
+    rn = normalize_ap_role(role)
+    mn = normalize_ap_role(minimum)
+    return AP_ROLE_RANK.get(rn, 0) >= AP_ROLE_RANK.get(mn, 0)
+
+
+def has_ap_viewer(role: Optional[str]) -> bool:
+    return has_ap_role(role, AP_ROLE_VIEWER)
 
 
 def has_ap_clerk(role: Optional[str]) -> bool:
-    return has_at_least(role, ROLE_AP_CLERK)
+    """Clerk or above on the AP axis (clerk / approver / controller)."""
+    return has_ap_role(role, AP_ROLE_CLERK)
 
 
-def has_ap_manager(role: Optional[str]) -> bool:
-    return has_at_least(role, ROLE_AP_MANAGER)
+def has_ap_approver(role: Optional[str]) -> bool:
+    return has_ap_role(role, AP_ROLE_APPROVER)
 
 
-def has_financial_controller(role: Optional[str]) -> bool:
-    return has_at_least(role, ROLE_FINANCIAL_CONTROLLER)
+def has_ap_controller(role: Optional[str]) -> bool:
+    return has_ap_role(role, AP_ROLE_CONTROLLER)
 
 
-def has_cfo(role: Optional[str]) -> bool:
-    """Return True for CFO, owner, or api roles."""
-    return has_at_least(role, ROLE_CFO)
+# ─── DB-backed per-Box lookup ─────────────────────────────────────────
 
+def get_user_ap_role(
+    user_id: Optional[str],
+    organization_id: Optional[str],
+    db: Any = None,
+) -> str:
+    """Return the user's AP role from ``user_box_roles``, or '' if none.
 
-def has_owner(role: Optional[str]) -> bool:
-    return has_at_least(role, ROLE_OWNER)
-
-
-# ---------------------------------------------------------------------------
-# Legacy predicates — kept at the same names but delegate to the rank
-# system. The semantic mapping is documented inline so future reviewers
-# understand why ``has_ops_access`` means "AP Manager or higher".
-# ---------------------------------------------------------------------------
-
-
-def has_ops_access(role: Optional[str]) -> bool:
-    """Ops surface access — AP Manager rank or higher.
-
-    Historically ``has_ops_access`` gated on ``{owner, admin, operator, api}``.
-    Under the thesis taxonomy these map to ``{owner, financial_controller,
-    ap_manager, api}`` — all rank ≥ 40, which is ``ap_manager``.
+    Helpers and FastAPI deps below use this to evaluate AP-specific
+    permission gates. The lookup is read-light (one indexed point read
+    on ``user_box_roles``); call sites that already hold a db handle
+    can pass it through to avoid re-acquiring the singleton.
     """
-    return has_at_least(role, ROLE_AP_MANAGER)
+    if not user_id or not organization_id:
+        return ""
+    if db is None:
+        try:
+            db = _get_db()
+        except Exception:
+            return ""
+    try:
+        row = db.get_user_box_role(user_id, organization_id, "ap_item")
+    except Exception:
+        return ""
+    if not row:
+        return ""
+    return normalize_ap_role(row.get("role"))
 
 
-def has_admin_access(role: Optional[str]) -> bool:
-    """Admin surface access — Financial Controller rank or higher.
+def get_user_box_roles(
+    user_id: Optional[str],
+    organization_id: Optional[str],
+    db: Any = None,
+) -> Dict[str, str]:
+    """Return the full ``{box_type: role}`` map for a user in an org."""
+    if not user_id or not organization_id:
+        return {}
+    if db is None:
+        try:
+            db = _get_db()
+        except Exception:
+            return {}
+    try:
+        rows = db.list_user_box_roles(user_id, organization_id) or []
+    except Exception:
+        return {}
+    out: Dict[str, str] = {}
+    for row in rows:
+        box_type = str(row.get("box_type") or "").strip()
+        role = str(row.get("role") or "").strip().lower()
+        if box_type and role:
+            out[box_type] = role
+    return out
 
-    Historically ``has_admin_access`` gated on ``{owner, admin, api}``.
-    Under the thesis taxonomy these map to ``{owner, financial_controller, api}``
-    — all rank ≥ 60, which is ``financial_controller``.
-    """
-    return has_at_least(role, ROLE_FINANCIAL_CONTROLLER)
 
+# ─── FastAPI dependencies — workspace axis ───────────────────────────
 
-def has_fraud_control_admin(role: Optional[str]) -> bool:
-    """Alias for ``has_cfo``. Kept for readability at call sites that
-    want to emphasize the fraud-control intent (e.g., Phase 1.2a's
-    /fraud-controls API). Semantically identical.
-    """
-    return has_cfo(role)
-
-
-def require_ops_user(user: TokenData = Depends(get_current_user)) -> TokenData:
-    if not has_ops_access(getattr(user, "role", None)):
-        raise HTTPException(status_code=403, detail="ap_manager_role_required")
-    return user
-
-
-def require_admin_user(user: TokenData = Depends(get_current_user)) -> TokenData:
-    if not has_admin_access(getattr(user, "role", None)):
+def require_workspace_member(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """Any authenticated org member with at least workspace_role=member."""
+    if not has_workspace_member(_workspace_role_of(user)):
         raise HTTPException(
-            status_code=403, detail="financial_controller_role_required"
+            status_code=403, detail="workspace_member_role_required",
         )
     return user
 
 
-def require_cfo(user: TokenData = Depends(get_current_user)) -> TokenData:
-    """FastAPI dependency: CFO or owner role required.
-
-    Used for fraud-control parameter modification, IBAN change
-    verification, vendor trusted-domain allowlist writes, and any
-    other CFO-level write surface per DESIGN_THESIS.md §17.
-    """
-    if not has_cfo(getattr(user, "role", None)):
+def require_workspace_admin(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """Manages users / connections / plan / API keys / settings."""
+    if not has_workspace_admin(_workspace_role_of(user)):
         raise HTTPException(
-            status_code=403,
-            detail="cfo_role_required",
+            status_code=403, detail="workspace_admin_role_required",
+        )
+    return user
+
+
+def require_workspace_owner(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """Org creator / billing controller only."""
+    if not has_workspace_owner(_workspace_role_of(user)):
+        raise HTTPException(
+            status_code=403, detail="workspace_owner_role_required",
+        )
+    return user
+
+
+# ─── FastAPI dependencies — AP box axis ──────────────────────────────
+
+def _ap_role_for_user(user: Any) -> str:
+    """Resolve the user's AP role from the DB (``user_box_roles``) with
+    a derivation fallback for callers without a stored row.
+
+    The DB is the source of truth — every user created post-v89 has a
+    ``user_box_roles`` entry. The fallback handles three legitimate
+    edge cases:
+
+      1. Test fixtures that construct a TokenData directly without
+         seeding ``user_box_roles``.
+      2. In-flight requests during the v89 backfill window (every
+         live user has been backfilled, but a brand-new user whose
+         creation transaction hasn't committed yet may not yet).
+      3. Service accounts (``workspace_role=api``) that intentionally
+         carry no box-role row.
+
+    The fallback derives the AP role from the user's stored
+    single-axis ``role`` (legacy) or ``workspace_role`` (canonical)
+    via the same ``_LEGACY_TO_AP_ROLE`` table that migration v89's
+    backfill used. That keeps test fixtures + JWT-only auth paths
+    working under the same contract as the DB-backed lookup.
+    """
+    ap_from_db = get_user_ap_role(
+        getattr(user, "user_id", None),
+        getattr(user, "organization_id", None),
+    )
+    if ap_from_db:
+        return ap_from_db
+    # Derive from the legacy single-axis role field on the TokenData /
+    # User. ``role`` is preferred since it carries the pre-v89 AP
+    # rank; fall back to ``workspace_role`` for callers that only
+    # set the canonical axis.
+    return (
+        normalize_ap_role(getattr(user, "role", None))
+        or normalize_ap_role(getattr(user, "workspace_role", None))
+        or ""
+    )
+
+
+def require_ap_clerk(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """AP clerk or above (clerk / approver / controller)."""
+    if not has_ap_clerk(_ap_role_for_user(user)):
+        raise HTTPException(
+            status_code=403, detail="ap_clerk_role_required",
+        )
+    return user
+
+
+def require_ap_approver(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """AP approver or controller — can approve / reject / route."""
+    if not has_ap_approver(_ap_role_for_user(user)):
+        raise HTTPException(
+            status_code=403, detail="ap_approver_role_required",
+        )
+    return user
+
+
+def require_ap_controller(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """AP controller — override-post, reverse-post, mark-duplicate."""
+    if not has_ap_controller(_ap_role_for_user(user)):
+        raise HTTPException(
+            status_code=403, detail="ap_controller_role_required",
+        )
+    return user
+
+
+def _workspace_role_of(user: Any) -> Optional[str]:
+    """Best-effort read of a user's workspace_role, with legacy fallback.
+
+    Prefer the new ``workspace_role`` field; fall back to the legacy
+    ``role`` field on stale TokenData objects so an in-flight JWT minted
+    before the v89 cutover doesn't 500. The legacy value is normalized
+    through ``normalize_workspace_role``.
+    """
+    explicit = getattr(user, "workspace_role", None)
+    if explicit:
+        return explicit
+    legacy = getattr(user, "role", None)
+    return normalize_workspace_role(legacy) if legacy else None
+
+
+# ─── Compatibility shims (TEMPORARY — scheduled to remove with v90) ──
+#
+# A handful of older callers import ``normalize_user_role``,
+# ``has_admin_access``, ``has_ops_access``, ``require_admin_user``,
+# ``require_ops_user``, ``require_financial_controller``,
+# ``require_cfo``, ``require_ap_manager``. They mean
+# "workspace admin", "workspace member", and AP-axis approver/controller
+# respectively under the new model. Aliases here keep the existing
+# import paths working through the sweep; each alias gets removed when
+# its last caller is migrated to the new helper name.
+
+
+def normalize_user_role(role: Optional[str]) -> str:
+    """DEPRECATED. Use ``normalize_workspace_role`` or
+    ``normalize_ap_role`` depending on which axis you mean.
+    Kept temporarily so legacy imports continue to resolve.
+    """
+    return normalize_workspace_role(role)
+
+
+def has_at_least(role: Optional[str], minimum: str) -> bool:
+    """DEPRECATED alias for ``has_workspace_role``. Pre-v89 callers
+    treated rank as a single dimension; under the new model ``role``
+    here refers to the workspace_role axis.
+    """
+    return has_workspace_role(role, minimum)
+
+
+def has_admin_access(role: Optional[str]) -> bool:
+    """DEPRECATED alias for ``has_workspace_admin``."""
+    return has_workspace_admin(role)
+
+
+def has_ops_access(role: Optional[str]) -> bool:
+    """DEPRECATED. Historically gated AP Manager+ access. Use either
+    ``has_workspace_member`` (workspace nav / view) or
+    ``has_ap_approver`` (AP-specific write).
+    """
+    return has_workspace_member(role)
+
+
+def has_financial_controller(role: Optional[str]) -> bool:
+    """DEPRECATED alias for ``has_workspace_admin``."""
+    return has_workspace_admin(role)
+
+
+def has_cfo(role: Optional[str]) -> bool:
+    """DEPRECATED. Gates fraud-control + autonomy parameters. Use
+    ``has_workspace_admin`` (org governance) or
+    ``has_ap_controller`` (AP-specific override authority).
+    """
+    return has_workspace_admin(role)
+
+
+def has_owner(role: Optional[str]) -> bool:
+    """DEPRECATED alias for ``has_workspace_owner``."""
+    return has_workspace_owner(role)
+
+
+def has_ap_manager(role: Optional[str]) -> bool:
+    """DEPRECATED alias for ``has_ap_approver`` (rank renamed)."""
+    return has_ap_approver(role)
+
+
+def has_read_only(role: Optional[str]) -> bool:
+    """DEPRECATED alias for ``has_workspace_read_only``."""
+    return has_workspace_read_only(role)
+
+
+def has_fraud_control_admin(role: Optional[str]) -> bool:
+    """DEPRECATED. Same semantic as ``has_workspace_admin``."""
+    return has_workspace_admin(role)
+
+
+def require_ops_user(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """DEPRECATED. Pre-v89 callers gated AP-Manager-or-above access.
+    Under the new model that's ``has_ap_approver`` on the AP-box axis.
+    Error string preserved as ``ap_manager_role_required`` so existing
+    integration tests + API consumers keep their detail key.
+    """
+    if not has_ap_approver(_ap_role_for_user(user)):
+        raise HTTPException(
+            status_code=403, detail="ap_manager_role_required",
+        )
+    return user
+
+
+def require_admin_user(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """DEPRECATED. Workspace admin authority. Error string preserved
+    as ``financial_controller_role_required`` for pre-v89 contract.
+    """
+    if not has_workspace_admin(_workspace_role_of(user)):
+        raise HTTPException(
+            status_code=403, detail="financial_controller_role_required",
+        )
+    return user
+
+
+def require_cfo(
+    user: TokenData = Depends(get_current_user),
+) -> TokenData:
+    """DEPRECATED. Pre-v89 CFO-gated surfaces required CFO rank or
+    above (CFO / owner / api). Under v89 that collapses to workspace
+    admin — every CFO is an org admin. Error string preserved as
+    ``cfo_role_required`` for fraud-control + IBAN-verify endpoint
+    contracts.
+    """
+    if not has_workspace_admin(_workspace_role_of(user)):
+        raise HTTPException(
+            status_code=403, detail="cfo_role_required",
         )
     return user
 
@@ -692,11 +1061,12 @@ def require_cfo(user: TokenData = Depends(get_current_user)) -> TokenData:
 def require_financial_controller(
     user: TokenData = Depends(get_current_user),
 ) -> TokenData:
-    """FastAPI dependency: Financial Controller, CFO, or owner required."""
-    if not has_financial_controller(getattr(user, "role", None)):
+    """DEPRECATED. Workspace-admin gate with the legacy error string
+    callers expect.
+    """
+    if not has_workspace_admin(_workspace_role_of(user)):
         raise HTTPException(
-            status_code=403,
-            detail="financial_controller_role_required",
+            status_code=403, detail="financial_controller_role_required",
         )
     return user
 
@@ -704,32 +1074,32 @@ def require_financial_controller(
 def require_ap_manager(
     user: TokenData = Depends(get_current_user),
 ) -> TokenData:
-    """FastAPI dependency: AP Manager, Controller, CFO, or owner required."""
-    if not has_ap_manager(getattr(user, "role", None)):
+    """DEPRECATED. AP-Manager-or-above semantic maps to AP approver
+    rank under v89. Error string preserved.
+    """
+    if not has_ap_approver(_ap_role_for_user(user)):
         raise HTTPException(
-            status_code=403,
-            detail="ap_manager_role_required",
+            status_code=403, detail="ap_manager_role_required",
         )
     return user
 
 
-def require_ap_clerk(
-    user: TokenData = Depends(get_current_user),
-) -> TokenData:
-    """FastAPI dependency: any write-capable human role (clerk or above)."""
-    if not has_ap_clerk(getattr(user, "role", None)):
-        raise HTTPException(
-            status_code=403,
-            detail="ap_clerk_role_required",
-        )
-    return user
+# Legacy ROLE_* names — point at workspace-axis equivalents so the
+# import sites resolve. Migration v89 has already rewritten the DB
+# column values; these constants survive only so existing imports
+# in tests + service modules still load. Every legacy import gets
+# removed in the sweep below.
+ROLE_READ_ONLY = WORKSPACE_ROLE_READ_ONLY
+ROLE_AP_CLERK = WORKSPACE_ROLE_MEMBER  # was "ap_clerk"
+ROLE_AP_MANAGER = WORKSPACE_ROLE_MEMBER  # was "ap_manager"
+ROLE_FINANCIAL_CONTROLLER = WORKSPACE_ROLE_ADMIN  # was "financial_controller"
+ROLE_CFO = WORKSPACE_ROLE_ADMIN  # was "cfo"
+ROLE_OWNER = WORKSPACE_ROLE_OWNER
+ROLE_API = WORKSPACE_ROLE_API
 
-
-# Phase 2.3 hard cutover: ``require_fraud_control_admin`` is removed.
-# Every caller migrated to ``require_cfo`` in the same commit so there
-# is no backcompat shim. If a future reviewer wants to track fraud-
-# control surfaces specifically, grep for ``require_cfo`` (which is
-# what every current CFO-gated endpoint uses).
+# Rank map — kept for the few stores that read it directly. New code
+# should call has_workspace_role / has_ap_role instead.
+ROLE_RANK: Dict[str, int] = WORKSPACE_ROLE_RANK
 
 
 def get_optional_user(
@@ -799,12 +1169,20 @@ def _row_to_user(row: Dict[str, Any]) -> User:
         except (ValueError, TypeError):
             pass
 
+    raw_workspace = row.get("workspace_role") or ""
+    raw_role = row.get("role") or ""
+    workspace_role = (
+        normalize_workspace_role(raw_workspace)
+        or normalize_workspace_role(raw_role)
+        or WORKSPACE_ROLE_MEMBER
+    )
     return User(
         id=str(row.get("id")),
         email=str(row.get("email")),
         name=str(row.get("name") or ""),
         organization_id=str(row.get("organization_id")),
-        role=str(row.get("role") or "user"),
+        role=str(raw_role or workspace_role),
+        workspace_role=workspace_role,
         is_active=bool(row.get("is_active", True)),
         created_at=created_at,
     )

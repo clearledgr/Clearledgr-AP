@@ -502,33 +502,44 @@ class AuthStore:
         email: str,
         name: str,
         organization_id: str,
-        role: str = "ap_clerk",
+        role: str = "member",
+        workspace_role: Optional[str] = None,
+        ap_role: Optional[str] = None,
         password_hash: Optional[str] = None,
         google_id: Optional[str] = None,
         is_active: bool = True,
     ) -> Dict[str, Any]:
-        """Create a user row with a canonical Phase 2.3 thesis role.
+        """Create a user row.
 
-        The ``role`` parameter is normalized via ``normalize_user_role``
-        before persistence, so legacy values (``user``, ``member``,
-        ``admin``, ``operator``, ``viewer``) are automatically upgraded
-        to their thesis equivalents (``ap_clerk``, ``ap_clerk``,
-        ``financial_controller``, ``ap_manager``, ``read_only``).
-        Unknown values are preserved so predicates can reject them.
-        Default seat is ``ap_clerk``.
+        Migration v89: writes both legacy ``users.role`` and the new
+        ``users.workspace_role`` column. When ``workspace_role`` is
+        omitted, derive it from ``role`` via the legacy mapping. AP-
+        side role is written to ``user_box_roles`` for box_type
+        ``ap_item`` so the two-axis lookup works from the first
+        request.
         """
         self.initialize()
-        from clearledgr.core.auth import normalize_user_role, ROLE_AP_CLERK
+        from clearledgr.core.auth import (
+            AP_ROLE_CLERK,
+            WORKSPACE_ROLE_MEMBER,
+            normalize_ap_role,
+            normalize_workspace_role,
+        )
 
-        normalized_role = normalize_user_role(role) or ROLE_AP_CLERK
+        normalized_workspace = (
+            normalize_workspace_role(workspace_role)
+            or normalize_workspace_role(role)
+            or WORKSPACE_ROLE_MEMBER
+        )
+        normalized_ap = normalize_ap_role(ap_role) or normalize_ap_role(role) or AP_ROLE_CLERK
 
         now = datetime.now(timezone.utc).isoformat()
         user_id = f"USR-{uuid.uuid4().hex}"
         sql = (
             """
             INSERT INTO users
-            (id, email, name, organization_id, role, password_hash, google_id, is_active, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, email, name, organization_id, role, workspace_role, password_hash, google_id, is_active, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         with self.connect() as conn:
@@ -540,7 +551,8 @@ class AuthStore:
                     email.lower().strip(),
                     name,
                     organization_id,
-                    normalized_role,
+                    role,  # legacy column — preserved for the sweep window
+                    normalized_workspace,
                     password_hash,
                     google_id,
                     1 if is_active else 0,
@@ -548,6 +560,28 @@ class AuthStore:
                     now,
                 ),
             )
+            # Write the AP-side box role row. Skip for service accounts
+            # (workspace_role=api) — agents drive permissions through
+            # API-key scopes, not user_box_roles.
+            from clearledgr.core.auth import WORKSPACE_ROLE_API
+            if normalized_workspace != WORKSPACE_ROLE_API and organization_id:
+                cur.execute(
+                    """
+                    INSERT INTO user_box_roles
+                    (id, user_id, organization_id, box_type, role)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, organization_id, box_type) DO UPDATE
+                        SET role = EXCLUDED.role,
+                            updated_at = now()
+                    """,
+                    (
+                        f"ubr-{uuid.uuid4().hex}",
+                        user_id,
+                        organization_id,
+                        "ap_item",
+                        normalized_ap,
+                    ),
+                )
             conn.commit()
         return self.get_user(user_id) or {}
 
@@ -855,8 +889,9 @@ class AuthStore:
         return result
 
     _USER_ALLOWED_COLUMNS = frozenset({
-        "name", "email", "password_hash", "role", "is_active",
-        "organization_id", "google_id", "preferences_json", "preferences",
+        "name", "email", "password_hash", "role", "workspace_role",
+        "is_active", "organization_id", "google_id",
+        "preferences_json", "preferences",
         "updated_at", "last_seen_at", "slack_user_id",
         # §5.4 Archived Users
         "archived_at", "archived_by",
@@ -872,6 +907,25 @@ class AuthStore:
         if bad_keys:
             raise ValueError(f"Disallowed columns for user update: {bad_keys}")
         payload = dict(kwargs)
+
+        # v89: keep the legacy ``role`` and the new ``workspace_role``
+        # columns in lockstep. If the caller updates one but not the
+        # other, derive the missing side through the legacy mapping so
+        # a row that started as ap_clerk doesn't end up as workspace
+        # admin just because the caller used a single-axis update.
+        from clearledgr.core.auth import (
+            WORKSPACE_ROLE_MEMBER,
+            normalize_workspace_role,
+        )
+        if "role" in payload and "workspace_role" not in payload:
+            derived = normalize_workspace_role(payload["role"])
+            if derived:
+                payload["workspace_role"] = derived
+        elif "workspace_role" in payload and "role" not in payload:
+            # Don't downgrade the legacy column; just preserve whatever
+            # is on disk by not writing role at all.
+            pass
+
         if "is_active" in payload:
             payload["is_active"] = 1 if bool(payload["is_active"]) else 0
         if "preferences" in payload and "preferences_json" not in payload:
@@ -884,6 +938,109 @@ class AuthStore:
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (*payload.values(), user_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Per-Box roles (v89 two-axis auth model)
+    # ------------------------------------------------------------------
+
+    def get_user_box_role(
+        self,
+        user_id: str,
+        organization_id: str,
+        box_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the user's role for a given Box type in an org.
+
+        Returns ``None`` when the user has no row for this Box type.
+        Used by ``has_ap_*`` / ``require_ap_*`` to evaluate AP-axis
+        gates without round-tripping the role through the user row.
+        """
+        self.initialize()
+        sql = (
+            "SELECT * FROM user_box_roles "
+            "WHERE user_id = %s AND organization_id = %s AND box_type = %s "
+            "LIMIT 1"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (user_id, organization_id, box_type))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def list_user_box_roles(
+        self,
+        user_id: str,
+        organization_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Return every Box-type role a user holds in an org."""
+        self.initialize()
+        sql = (
+            "SELECT * FROM user_box_roles "
+            "WHERE user_id = %s AND organization_id = %s"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (user_id, organization_id))
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def set_user_box_role(
+        self,
+        user_id: str,
+        organization_id: str,
+        box_type: str,
+        role: str,
+    ) -> Dict[str, Any]:
+        """Upsert the user's role for a Box type. Returns the resulting row.
+
+        Role normalization is the caller's job; this store trusts the
+        input. The DB CHECK constraint added in v89 rejects unknown
+        values for ``ap_item`` Boxes — other Box types are unconstrained
+        until they ship their own CHECK.
+        """
+        self.initialize()
+        sql = (
+            """
+            INSERT INTO user_box_roles
+            (id, user_id, organization_id, box_type, role)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, organization_id, box_type) DO UPDATE
+                SET role = EXCLUDED.role,
+                    updated_at = now()
+            RETURNING *
+            """
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                sql,
+                (f"ubr-{uuid.uuid4().hex}", user_id, organization_id, box_type, role),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return dict(row) if row else {}
+
+    def delete_user_box_role(
+        self,
+        user_id: str,
+        organization_id: str,
+        box_type: str,
+    ) -> bool:
+        """Remove a user's role for a Box type. Returns True if a row was removed.
+
+        Used by offboarding flows + invite-revocation. Other axes
+        (workspace_role) are untouched.
+        """
+        self.initialize()
+        sql = (
+            "DELETE FROM user_box_roles "
+            "WHERE user_id = %s AND organization_id = %s AND box_type = %s"
+        )
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, (user_id, organization_id, box_type))
             conn.commit()
             return cur.rowcount > 0
 

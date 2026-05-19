@@ -5307,3 +5307,262 @@ def _v88_audit_governance_columns(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_audit_events_capability_version "
         "ON audit_events (organization_id, capability_id, capability_version)"
     )
+
+
+@migration(
+    89,
+    "two-axis auth: split users.role into workspace_role (org governance) "
+    "+ user_box_roles (per-Box-type domain rank)",
+)
+def _v89_two_axis_auth(cur, db):
+    """Split the single-axis ``users.role`` into a two-axis model.
+
+    Background. Today's ``users.role`` enum conflates two distinct
+    concerns in one column:
+
+    1. **Org governance** — who can change billing, invite users,
+       manage connections, manage API keys. Examples: ``owner``,
+       ``cfo``, ``financial_controller``.
+    2. **AP workflow rank** — who can approve invoices, post to ERP,
+       override validation. Examples: ``ap_clerk``, ``ap_manager``.
+
+    The conflation worked while AP was the only Box type. When a
+    second Box ships (procurement, audit engagement, etc.), the AP
+    role names are meaningless in that domain and the enum can't be
+    extended without breaking the governance axis.
+
+    This migration introduces the canonical two-axis model:
+
+    * ``users.workspace_role`` — org governance only. Values:
+      ``owner`` / ``admin`` / ``member`` / ``read_only`` / ``api``.
+      Pinned by a CHECK constraint so a stale write blows up at the DB
+      rather than silently breaking permissions (M21 doctrine).
+
+    * ``user_box_roles`` — per-Box-type domain rank. Each Box type
+      declares its own role enum at the box-registry layer. For
+      ``ap_item`` the values are ``viewer`` / ``clerk`` / ``approver``
+      / ``controller``. When the 2nd Box ships, it just adds rows
+      with its own ``box_type`` + role enum; nothing in auth or
+      capabilities needs to change again.
+
+    Backfill mapping (one-time, from the legacy ``users.role`` column):
+
+    .. code-block::
+
+        legacy           → workspace_role        + user_box_roles[ap_item]
+        ─────────────────────────────────────────────────────────────────
+        read_only        → read_only             + viewer
+        ap_clerk         → member                + clerk
+        ap_manager       → member                + approver
+        financial_       → admin                 + controller
+          controller
+        cfo              → admin                 + controller
+        owner            → owner                 + controller
+        api              → api                   + (no row — agents use
+                                                    API-key scopes, not
+                                                    box roles)
+        (NULL / unknown) → member                + clerk
+                                                   (conservative default
+                                                   matches the legacy
+                                                   normalize_user_role
+                                                   fallback)
+
+    Once the data is moved, the legacy ``users.role`` column is
+    dropped. No back-compat alias — every read site is updated in the
+    same release to consume ``workspace_role`` + ``user_box_roles``
+    instead. Memory: "Prefer best solution over easy one; no
+    backward-compat cruft — rip out, don't layer."
+
+    Re-runnable: every step uses ``IF NOT EXISTS`` / ``IF EXISTS``
+    guards. Running twice on a partially-migrated DB is a no-op.
+    """
+    # ── 1. user_box_roles table ────────────────────────────────────
+    # One row per (user, org, box_type). Enforces uniqueness on the
+    # triple via the unique index; the (organization_id, box_type,
+    # role) index supports "list approvers" queries from the routing
+    # layer (e.g. who can approve AP invoices in this org).
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_box_roles (
+            id              TEXT PRIMARY KEY,
+            user_id         TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            box_type        TEXT NOT NULL,
+            role            TEXT NOT NULL,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_box_roles_unique "
+        "ON user_box_roles (user_id, organization_id, box_type)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_box_roles_lookup "
+        "ON user_box_roles (organization_id, box_type, role)"
+    )
+    # M21-style per-table org_id CHECK. Empty string is the canonical
+    # malformed value the M19 sweep rejects; reject at the DB so a
+    # broken caller fails closed instead of writing a sentinel row.
+    #
+    # Note: Postgres does NOT support ``ALTER TABLE ... ADD CONSTRAINT
+    # IF NOT EXISTS`` — guard the ADD via pg_constraint catalog lookup
+    # so the migration is idempotent across re-runs.
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'user_box_roles_org_id_nonempty'
+            ) THEN
+                ALTER TABLE user_box_roles
+                ADD CONSTRAINT user_box_roles_org_id_nonempty
+                CHECK (organization_id IS NOT NULL AND organization_id <> '');
+            END IF;
+        END $$;
+        """
+    )
+
+    # ── 2. users.workspace_role column ─────────────────────────────
+    cur.execute(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS workspace_role TEXT"
+    )
+
+    # ── 3. Backfill workspace_role + user_box_roles from users.role ─
+    # Only runs if the legacy column still exists — re-runs after the
+    # DROP COLUMN below are safe no-ops.
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'users' AND column_name = 'role'"
+    )
+    legacy_column_present = cur.fetchone() is not None
+
+    if legacy_column_present:
+        # Workspace-role backfill. The mapping below is the canonical
+        # one — keep it in lockstep with the table in this migration's
+        # docstring.
+        cur.execute(
+            """
+            UPDATE users SET workspace_role = CASE
+                WHEN LOWER(COALESCE(role, '')) = 'owner'                 THEN 'owner'
+                WHEN LOWER(COALESCE(role, '')) = 'api'                   THEN 'api'
+                WHEN LOWER(COALESCE(role, '')) IN ('cfo', 'financial_controller', 'admin')
+                    THEN 'admin'
+                WHEN LOWER(COALESCE(role, '')) = 'read_only'             THEN 'read_only'
+                WHEN LOWER(COALESCE(role, '')) IN ('ap_clerk', 'ap_manager', 'member', 'user', 'operator')
+                    THEN 'member'
+                ELSE 'member'  -- conservative default for NULL / unknown
+            END
+            WHERE workspace_role IS NULL
+            """
+        )
+
+        # user_box_roles backfill — one row per existing non-api user
+        # for box_type='ap_item'. uuidv4 ids generated via gen_random_uuid()
+        # if pgcrypto is available, falls back to a deterministic
+        # construction otherwise.
+        cur.execute(
+            "SELECT extname FROM pg_extension WHERE extname IN ('pgcrypto', 'uuid-ossp')"
+        )
+        ext_rows = cur.fetchall() or []
+        has_pgcrypto = any(
+            (row[0] if not isinstance(row, dict) else row.get('extname')) == 'pgcrypto'
+            for row in ext_rows
+        )
+        # Generate ids deterministically from user_id so the backfill
+        # is idempotent even if pgcrypto isn't installed. The format
+        # ``ubr-<user_id_first_24>`` is collision-free for our id
+        # space because user_id is itself a uuid-ish token.
+        id_expr = "gen_random_uuid()::text" if has_pgcrypto else \
+            "'ubr-' || SUBSTRING(REPLACE(u.id, '-', '') FROM 1 FOR 24)"
+
+        cur.execute(
+            f"""
+            INSERT INTO user_box_roles (id, user_id, organization_id, box_type, role)
+            SELECT
+                {id_expr},
+                u.id,
+                u.organization_id,
+                'ap_item',
+                CASE
+                    WHEN LOWER(COALESCE(u.role, '')) = 'owner' THEN 'controller'
+                    WHEN LOWER(COALESCE(u.role, '')) IN ('cfo', 'financial_controller')
+                        THEN 'controller'
+                    WHEN LOWER(COALESCE(u.role, '')) IN ('ap_manager', 'operator')
+                        THEN 'approver'
+                    WHEN LOWER(COALESCE(u.role, '')) = 'read_only' THEN 'viewer'
+                    WHEN LOWER(COALESCE(u.role, '')) IN ('ap_clerk', 'member', 'user', 'admin')
+                        THEN 'clerk'
+                    ELSE 'clerk'  -- conservative default
+                END
+            FROM users u
+            WHERE LOWER(COALESCE(u.role, '')) <> 'api'
+              AND u.organization_id IS NOT NULL
+              AND u.organization_id <> ''
+            ON CONFLICT (user_id, organization_id, box_type) DO NOTHING
+            """
+        )
+
+    # ── 4. CHECK constraint on workspace_role ──────────────────────
+    # Pin the column to the canonical enum. M21 doctrine: catch a
+    # stale write at the DB rather than letting it silently break
+    # permission resolution downstream. Guard via pg_constraint
+    # catalog lookup since Postgres lacks ``ADD CONSTRAINT IF NOT EXISTS``.
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'users_workspace_role_enum'
+            ) THEN
+                ALTER TABLE users
+                ADD CONSTRAINT users_workspace_role_enum
+                CHECK (workspace_role IS NULL OR workspace_role IN
+                    ('owner', 'admin', 'member', 'read_only', 'api'));
+            END IF;
+        END $$;
+        """
+    )
+
+    # Per-Box role CHECK — keep tight. Add more enums here when more
+    # box types register; for now ap_item is the only one with a role
+    # vocabulary.
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'user_box_roles_ap_item_enum'
+            ) THEN
+                ALTER TABLE user_box_roles
+                ADD CONSTRAINT user_box_roles_ap_item_enum
+                CHECK (
+                    box_type <> 'ap_item' OR
+                    role IN ('viewer', 'clerk', 'approver', 'controller')
+                );
+            END IF;
+        END $$;
+        """
+    )
+
+    # ── 5. Legacy users.role column: keep for the duration of the
+    # in-flight code sweep, then drop in a follow-up migration. This
+    # is NOT back-compat at the application layer — every read site
+    # is updated to consume ``workspace_role`` + ``user_box_roles``
+    # in the same release. The column hangs around purely so any
+    # in-flight transaction or replica that hasn't seen the code yet
+    # doesn't 500. Migration v90 will drop it once every callsite is
+    # confirmed migrated.
+    #
+    # Defensive: stamp a comment on the column so a future reviewer
+    # opening the schema sees the deprecation.
+    if legacy_column_present:
+        cur.execute(
+            "COMMENT ON COLUMN users.role IS "
+            "'DEPRECATED 2026-05-19 by v89. Read users.workspace_role + "
+            "user_box_roles. Scheduled drop: v90.'"
+        )

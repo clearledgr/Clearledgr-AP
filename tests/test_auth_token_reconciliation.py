@@ -39,9 +39,13 @@ def test_reconcile_token_data_prefers_canonical_user_role(monkeypatch):
     assert resolved.user_id == "USR-admin"
     assert resolved.email == "mo@clearledgr.com"
     assert resolved.organization_id == "org-test"
-    # Phase 2.3: roles are normalized to canonical thesis values on
-    # every reconcile call. Legacy "admin" maps to "financial_controller".
-    assert resolved.role == "financial_controller"
+    # v89 two-axis auth: ``admin`` is itself the canonical
+    # workspace_role value. The legacy ``role`` field is preserved
+    # as-stored on the DB row; ``workspace_role`` is the normalized
+    # axis the capability matrix reads from. Both reflect the DB
+    # row, not the stale ``operator`` from the original token.
+    assert resolved.role == "admin"
+    assert resolved.workspace_role == "admin"
 
 
 def test_reconcile_token_data_falls_back_to_email_when_user_id_is_stale(monkeypatch):
@@ -68,6 +72,7 @@ def test_reconcile_token_data_falls_back_to_email_when_user_id_is_stale(monkeypa
     assert resolved.user_id == "USR-admin"
     assert resolved.email == "mo@clearledgr.com"
     assert resolved.organization_id == "org-test"
-    # Phase 2.3: roles are normalized to canonical thesis values on
-    # every reconcile call. Legacy "admin" maps to "financial_controller".
-    assert resolved.role == "financial_controller"
+    # v89 two-axis auth: same contract as the previous test — DB
+    # value wins, both fields reflect the workspace_role axis.
+    assert resolved.role == "admin"
+    assert resolved.workspace_role == "admin"

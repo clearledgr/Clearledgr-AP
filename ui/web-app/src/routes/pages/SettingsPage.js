@@ -386,7 +386,8 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     if (!canManageTeam) return;
     const emailInput = document.getElementById('cl-invite-email');
     const email = emailInput?.value?.trim();
-    const role = document.getElementById('cl-invite-role')?.value;
+    const workspaceRole = document.getElementById('cl-invite-workspace-role')?.value || 'member';
+    const apRole = document.getElementById('cl-invite-ap-role')?.value || '';
     if (!email) {
       toast?.('Enter an email before sending the invite.', 'error');
       return;
@@ -399,7 +400,26 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
     const entityRestrictions = entitySelect
       ? Array.from(entitySelect.selectedOptions).map((o) => o.value).filter(Boolean)
       : [];
-    const body = { organization_id: orgId, email, role };
+    // v89: send the two-axis payload. ``role`` is also sent for older
+    // backend builds that haven't picked up the v89 invite endpoint
+    // yet — pick the closest legacy single-axis equivalent so the
+    // intent survives a stale server.
+    const legacyRoleByPair = {
+      'owner|controller': 'owner',
+      'admin|controller': 'cfo',
+      'admin|approver': 'financial_controller',
+      'member|approver': 'ap_manager',
+      'member|clerk': 'ap_clerk',
+      'read_only|viewer': 'read_only',
+    };
+    const legacyRole = legacyRoleByPair[`${workspaceRole}|${apRole}`] || workspaceRole;
+    const body = {
+      organization_id: orgId,
+      email,
+      role: legacyRole,
+      workspace_role: workspaceRole,
+      box_roles: apRole ? { ap_item: apRole } : {},
+    };
     if (entityRestrictions.length > 0) {
       body.entity_restrictions = entityRestrictions;
     }
@@ -1211,12 +1231,17 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
           <div>
             <div class="secondary-form-grid">
               <input id="cl-invite-email" placeholder="teammate@company.com" disabled=${!canManageTeam} />
-              <select id="cl-invite-role" disabled=${!canManageTeam}>
-                <option value="ap_clerk">AP Clerk</option>
-                <option value="ap_manager">AP Manager</option>
-                <option value="financial_controller">Financial Controller</option>
-                <option value="cfo">CFO</option>
-                <option value="read_only">Read Only</option>
+              <select id="cl-invite-workspace-role" disabled=${!canManageTeam} title="Workspace role">
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                <option value="read_only">Read-only</option>
+              </select>
+              <select id="cl-invite-ap-role" disabled=${!canManageTeam} title="AP role">
+                <option value="">AP: no access</option>
+                <option value="viewer">AP: viewer</option>
+                <option value="clerk" selected>AP: clerk</option>
+                <option value="approver">AP: approver</option>
+                <option value="controller">AP: controller</option>
               </select>
             </div>
             <${InviteEntityScope}
@@ -1230,7 +1255,12 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
             </div>
           </div>
           <div class="secondary-note">
-            AP Clerks process invoices within auto-approve threshold. AP Managers approve and manage vendor onboarding. Financial Controllers modify AP policy. CFOs connect/disconnect ERP and set autonomy tiers. Read Only is for external auditors.
+            <strong>Workspace role</strong> controls who can manage users, connections,
+            plan, and settings. <strong>AP role</strong> controls what they can do on
+            invoices: viewers read only, clerks edit + classify, approvers approve and
+            route, controllers override-post and reverse postings within the window.
+            The two axes are independent — a workspace Admin without an AP role can
+            run the org but can't approve invoices.
           </div>
         </div>
         <div style="margin-top:18px">
@@ -1316,7 +1346,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
               ].map((tier) => html`
                 <div key=${tier.id} style="border:1px solid ${(sub.plan || '').toLowerCase() === tier.id ? '#00D67E' : '#E2E8F0'};border-radius:8px;padding:12px;${(sub.plan || '').toLowerCase() === tier.id ? 'background:#ECFDF5;' : ''}">
                   <strong style="font-size:14px;">${tier.name}</strong>
-                  <div style="font:600 16px/1.2 'Geist Mono',monospace;color:#0A1628;margin:4px 0;">${tier.price}</div>
+                  <div style="font:600 16px/1.2 'Geist Mono',monospace;color:var(--cl-navy);margin:4px 0;">${tier.price}</div>
                   <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
                   ${(sub.plan || '').toLowerCase() === tier.id

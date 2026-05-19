@@ -638,6 +638,13 @@ class TestVendorTrustedDomainsAPI:
             main.app.dependency_overrides.clear()
 
     def test_post_add_requires_cfo_role(self, app_client):
+        """v89 collapsed CFO + financial_controller + admin onto the
+        ``workspace_admin`` gate. Pre-v89 ``admin`` was a legacy alias
+        for financial_controller (below CFO); this test asserted the
+        rejection. Under v89 ``admin`` IS workspace_admin = CFO. Test
+        rewritten to use ``ap_clerk`` (member-tier) as the rejection
+        case — member-tier still doesn't have CFO authority.
+        """
         client, main, db = app_client
         _seed_vendor(db)
         from clearledgr.core.auth import TokenData, get_current_user
@@ -648,7 +655,7 @@ class TestVendorTrustedDomainsAPI:
                 user_id="u1",
                 email="u1@test",
                 organization_id="org_t",
-                role="admin",  # not cfo
+                role="ap_clerk",  # member-tier, no CFO authority
                 exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
             )
 

@@ -45,10 +45,16 @@ router = APIRouter(prefix="/api/workspace/team", tags=["team-offboarding"])
 
 
 def _require_admin(user: TokenData) -> None:
-    """Match the existing admin gate in workspace_shell._require_admin
-    semantically — owner / cfo / financial_controller can manage users."""
-    role = normalize_user_role(getattr(user, "role", "")) or ""
-    if role not in ("owner", "cfo", "financial_controller"):
+    """Workspace-admin gate (post-v89). Owners + admins (which now
+    includes pre-v89 cfo / financial_controller via the legacy
+    mapping) can manage users.
+    """
+    from clearledgr.core.auth import has_workspace_admin
+    workspace_role = (
+        getattr(user, "workspace_role", None)
+        or getattr(user, "role", None)
+    )
+    if not has_workspace_admin(workspace_role):
         raise HTTPException(status_code=403, detail="admin_required")
 
 

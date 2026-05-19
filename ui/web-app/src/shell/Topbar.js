@@ -23,14 +23,25 @@ import { displayOrgName } from '../utils/formatters.js';
  *   - "Onboarding" link when bootstrap.onboarding.completed === false
  *   - Sign out
  */
+// v89: workspace_role values + a few legacy aliases so cached bootstraps
+// from before the migration still render a sane pill while the user is
+// logged in. The legacy AP-flavoured roles (ap_clerk, ap_manager) now
+// surface as "Member" — their AP-axis rank moved to user_box_roles and
+// is shown elsewhere (Settings → Team).
 const ROLE_LABELS = {
   owner: 'Owner',
   admin: 'Admin',
-  ap_manager: 'AP manager',
-  ap_clerk: 'AP clerk',
-  approver: 'Approver',
-  viewer: 'Viewer',
+  member: 'Member',
+  read_only: 'Read-only',
+  api: 'Service account',
+  // Legacy single-axis values from pre-v89 JWTs / cached bootstraps.
+  ap_clerk: 'Member',
+  ap_manager: 'Member',
+  financial_controller: 'Admin',
+  cfo: 'Admin',
+  viewer: 'Read-only',
   user: 'Member',
+  operator: 'Member',
 };
 
 export function Topbar() {
@@ -49,8 +60,14 @@ export function Topbar() {
       || session?.organization_id
       || ''
   ) || 'Workspace';
+  // v89: prefer the new workspace_role; fall back to legacy role for
+  // bootstraps minted before the cutover.
   const rawRole = String(
-    bootstrap?.current_user?.role || session?.role || ''
+    bootstrap?.current_user?.workspace_role
+      || bootstrap?.current_user?.role
+      || session?.workspace_role
+      || session?.role
+      || ''
   ).trim().toLowerCase();
   const roleLabel = ROLE_LABELS[rawRole] || (rawRole ? rawRole.replace(/_/g, ' ') : '');
   const onboardingPending =
