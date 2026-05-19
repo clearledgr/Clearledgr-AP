@@ -22,6 +22,7 @@ import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
@@ -1757,6 +1758,17 @@ async def slack_install_callback(
         raise HTTPException(status_code=400, detail="invalid_slack_install_payload")
 
     db = get_db()
+    # The Slack OAuth callback runs unauthenticated (no Bearer cookie
+    # in the redirect from slack.com) — but the install/start handler
+    # signed the initiating user's id into the state payload. Recover
+    # the User row from there so _default_org_name can derive a
+    # friendlier label than the bare org_id. ensure_organization is
+    # idempotent, so when the org already exists the org-name signal
+    # is ignored and the look-up cost is just defensive.
+    state_user_id = str(state_payload.get("user_id") or "").strip()
+    user = db.get_user(state_user_id) if state_user_id else None
+    if user is None:
+        user = SimpleNamespace(email="", organization_id=org_id, user_id=state_user_id)
     db.ensure_organization(org_id, organization_name=_default_org_name(user, org_id))
     db.upsert_slack_installation(
         organization_id=org_id,
