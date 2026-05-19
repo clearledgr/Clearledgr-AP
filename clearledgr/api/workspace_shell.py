@@ -3648,7 +3648,7 @@ def list_team_invites(
     invites = get_db().list_team_invites(org_id)
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
     for invite in invites:
-        invite["invite_link"] = f"{base}/auth/google/start?invite_token={invite.get('token')}"
+        invite["invite_link"] = f"{base}/signup/accept?token={invite.get('token')}"
     return {"organization_id": org_id, "invites": invites}
 
 
@@ -3789,13 +3789,12 @@ def create_team_invite(
         entity_restrictions=request.entity_restrictions,
     )
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
-    # The auth router mounts at /auth (no /api prefix — see
-    # clearledgr/api/auth.py:34). Building /api/auth/... here was a
-    # subtle prefix mismatch that 404'd through the strict-profile
-    # filter as "endpoint_disabled_in_ap_v1_profile" instead of
-    # reaching the real handler. Match the list-endpoint shape at
-    # line 3651 above.
-    invite_link = f"{base}/auth/google/start?invite_token={invite.get('token')}"
+    # Invite link lands the teammate on /signup/accept (the SPA route
+    # backed by InviteAcceptPage). From there they pick their auth
+    # provider — Google, Microsoft, or set-a-password. The previous
+    # shape (/auth/google/start?invite_token=...) was Google-only and
+    # locked out anyone without a Gmail account.
+    invite_link = f"{base}/signup/accept?token={invite.get('token')}"
 
     # Send the invite email via the SMTP relay. The transactional
     # service short-circuits to skipped=True when SMTP isn't

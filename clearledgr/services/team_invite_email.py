@@ -62,6 +62,8 @@ def build_invite_email(
         f"{inviter_label} invited you to join {workspace_label} on "
         f"Solden as {role_label}.\n\n"
         f"Accept the invite here:\n{invite_link}\n\n"
+        "You can sign in with Google, Microsoft, or set a password "
+        "for your email — whichever you prefer.\n\n"
         "This link expires in 7 days. If you weren't expecting this "
         "invite you can ignore this email.\n\n"
         "— The Solden team"
@@ -77,6 +79,10 @@ def build_invite_email(
         'style="display:inline-block;padding:10px 18px;'
         'background:#0A1F44;color:#fff;text-decoration:none;'
         'border-radius:6px;font-weight:600">Accept invite</a>'
+        "</p>"
+        "<p style=\"color:#5a6b80;font-size:13px\">"
+        "Sign in with Google, Microsoft, or set a password for your "
+        "email — whichever you prefer."
         "</p>"
         "<p style=\"color:#5a6b80;font-size:13px\">"
         "This link expires in 7 days. If you weren't expecting this "

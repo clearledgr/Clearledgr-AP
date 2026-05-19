@@ -623,7 +623,10 @@ async def invite_user(
         expires_at=expires_at,
     )
     base = os.getenv("APP_BASE_URL", os.getenv("API_BASE_URL", "http://127.0.0.1:8010")).rstrip("/")
-    invite_link = f"{base}/auth/google/start?invite_token={invite.get('token')}"
+    # Invite link points at /signup/accept (the SPA landing) so the
+    # invitee can pick Google / Microsoft / set-a-password rather
+    # than being locked into the Google OAuth flow.
+    invite_link = f"{base}/signup/accept?token={invite.get('token')}"
 
     return {
         "message": "Invitation created",
