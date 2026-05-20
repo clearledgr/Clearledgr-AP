@@ -52,14 +52,6 @@ SLACK_REQUIRED_BOT_SCOPES = (
 SLACK_REQUIRED_USER_SCOPES: tuple[str, ...] = ()
 
 
-# Hosts the same backend serves during the Clearledgr → Solden rename
-# window. When a request lands on one of these, OAuth redirect URIs +
-# Slack install URLs are generated against the request's own hostname
-# (so a user who arrives at workspace.soldenai.com is redirected back
-# through api.soldenai.com, not the env-configured clearledgr host).
-_PUBLIC_BASE_URL_KNOWN_SUFFIXES = (".soldenai.com", ".clearledgr.com")
-
-
 def _request_origin_base_url(request: Optional["Request"]) -> Optional[str]:  # noqa: ARG001
     # Canonical workspace base URL — APP_BASE_URL on Railway is set to
     # https://workspace.soldenai.com, which is what OAuth redirect URIs
@@ -88,12 +80,11 @@ def _public_app_base_url(request: Optional["Request"] = None) -> str:
 
 
 def _slack_redirect_uri(request: Optional["Request"] = None) -> str:
-    # When the request matches a known Solden-family host, the redirect
-    # URI is generated against THAT host so Slack returns the user to
-    # the same brand they started on. Only fall back to the static env
-    # override when the request host is unknown (local dev, custom
-    # deployments) — otherwise a stale SLACK_REDIRECT_URI=api.clearledgr.com
-    # would break installs initiated from workspace.soldenai.com.
+    # The redirect URI is generated against APP_BASE_URL
+    # (workspace.soldenai.com) so the Slack install round-trip happens
+    # on the product domain. Falls back to the SLACK_REDIRECT_URI env
+    # override only when APP_BASE_URL is unset (local dev, custom
+    # deployments).
     derived = _request_origin_base_url(request)
     if derived:
         return f"{derived}/api/workspace/integrations/slack/install/callback"

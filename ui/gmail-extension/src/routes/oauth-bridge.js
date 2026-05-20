@@ -4,9 +4,9 @@
  * to popup-close polling if postMessage is blocked (e.g., strict COOP).
  *
  * Messages the bridge listens for:
- *   - { type: 'clearledgr_oauth_complete', success, organizationId }
+ *   - { type: 'solden_oauth_complete', success, organizationId }
  *     — /auth/popup-complete (Google sign-in, Gmail scope upgrades)
- *   - { type: 'clearledgr_erp_oauth_complete', erp, success,
+ *   - { type: 'solden_erp_oauth_complete', erp, success,
  *       organizationId, detail }
  *     — /erp/{quickbooks,xero}/callback
  *
@@ -16,13 +16,13 @@
  */
 
 const OAUTH_MESSAGE_TYPES = new Set([
-  'clearledgr_oauth_complete',
-  'clearledgr_erp_oauth_complete',
+  'solden_oauth_complete',
+  'solden_erp_oauth_complete',
 ]);
 
 function integrationFromMessage(data, fallback) {
   if (!data) return fallback;
-  if (data.type === 'clearledgr_erp_oauth_complete' && data.erp) {
+  if (data.type === 'solden_erp_oauth_complete' && data.erp) {
     return String(data.erp);
   }
   return fallback;
@@ -71,7 +71,7 @@ export function createOAuthBridge(onComplete) {
 
     activePopup = window.open(
       authUrl,
-      'clearledgr_oauth',
+      'solden_oauth',
       'width=600,height=700,left=200,top=100,toolbar=no,menubar=no'
     );
 

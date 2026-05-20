@@ -471,9 +471,8 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     "/health",
     "/metrics",
     "/workspace",
-    # Root banner — soldenai.com and clearledgr.com both terminate
-    # at the API on different Railway envs. Without a handler at /,
-    # the strict-profile middleware returned a confusing
+    # Root banner — soldenai.com terminates at the API. Without a
+    # handler at /, the strict-profile middleware returned a confusing
     # endpoint_disabled_in_ap_v1_profile JSON to anyone probing the
     # root. The handler at main.py returns a small JSON banner with
     # entry points (/health, /docs when public, /api/*).
@@ -483,7 +482,7 @@ STRICT_PROFILE_ALLOWED_EXACT_PATHS = {
     # — noisy logs and a real user-visible error. Served as 204 No
     # Content (smallest valid response).
     "/favicon.ico",
-    # Inbound demo-request leads from the marketing site (clearledgr.com).
+    # Inbound demo-request leads from the marketing site (soldenai.com).
     "/leads",
     # OAuth callbacks required for ERP admin connect flows.
     "/erp/quickbooks/callback",
@@ -1574,26 +1573,11 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
     )
 
     if normalized_origins:
-        # Rebrand rename window (Clearledgr → Solden): every origin
-        # that references one brand is auto-mirrored to the other so
-        # the same Railway deployment can serve workspace.clearledgr.com
-        # and workspace.soldenai.com from a single CORS_ALLOW_ORIGINS
-        # env value. Drop this block after Pass D retires the legacy
-        # clearledgr.com hostnames.
-        for origin in list(normalized_origins):
-            mirror = None
-            if "clearledgr.com" in origin:
-                mirror = origin.replace("clearledgr.com", "soldenai.com")
-            elif "soldenai.com" in origin:
-                mirror = origin.replace("soldenai.com", "clearledgr.com")
-            if mirror and mirror not in seen:
-                seen.add(mirror)
-                normalized_origins.append(mirror)
         # Explicit origin list ADDS to the dynamic regex coverage rather
         # than replacing it. Two consumers depend on this: the Gmail
         # extension's per-install chrome-extension://<32-char-id> origin
         # and the per-tenant ERP host patterns. Setting CORS_ALLOW_ORIGINS
-        # to add workspace.clearledgr.com or any other static origin must NOT
+        # to add workspace.soldenai.com or any other static origin must NOT
         # break those dynamic origins. Starlette's CORSMiddleware accepts
         # the request when EITHER the origin matches the explicit list
         # OR the regex — they coexist cleanly.
@@ -1607,17 +1591,11 @@ def _resolve_cors_policy(configured_origins_raw: str, configured_regex_raw: str)
     return _default_cors_origins, default_regex
 
 
-# Both clearledgr.com and soldenai.com are first-class origins during
-# the rename window — Railway serves the same backend on api.clearledgr.com
-# AND api.soldenai.com, and the workspace SPA is reachable via either
-# workspace.* hostname. CORS must accept either, otherwise users
-# visiting workspace.soldenai.com would be blocked from calling the API.
+# Canonical origin allowlist used when CORS_ALLOW_ORIGINS is unset.
+# Production sets the env var explicitly; this is the dev/fallback set.
 _default_cors_origins = [
     "https://mail.google.com",
     "https://gmail.google.com",
-    "https://clearledgr.com",
-    "https://www.clearledgr.com",
-    "https://workspace.clearledgr.com",
     "https://soldenai.com",
     "https://www.soldenai.com",
     "https://workspace.soldenai.com",
@@ -1966,14 +1944,13 @@ async def workspace_page():
 async def root_banner():
     """Service identification banner.
 
-    Both ``soldenai.com`` and ``clearledgr.com`` terminate at this
-    API on different Railway environments. Anyone hitting the root
+    ``soldenai.com`` terminates at this API. Anyone hitting the root
     used to receive ``endpoint_disabled_in_ap_v1_profile`` from the
     strict-profile middleware — a confusing 404-shaped JSON that
     leaked internal vocabulary at the front door. This handler
     returns a small banner identifying the service and pointing at
     the real entry points instead. It deliberately does NOT redirect
-    to a marketing site — neither host is wired for that today, and
+    to a marketing site — the host isn't wired for that today, and
     a redirect that points somewhere stale would be worse than a
     plain banner.
     """

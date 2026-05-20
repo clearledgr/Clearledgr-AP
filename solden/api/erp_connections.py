@@ -274,11 +274,11 @@ def _popup_close_response(
     """Return a tiny HTML page that closes the OAuth popup and notifies
     the opener window (the Gmail tab running the extension). Used by
     ERP OAuth callbacks instead of RedirectResponse, because:
-      1. The callback runs on api.clearledgr.com, which is the backend
+      1. The callback runs on api.soldenai.com, which is the backend
          API — redirecting here loops back into the strict route filter
          ("/" isn't allowlisted).
       2. The opener already listens for a postMessage of shape
-         {type:'clearledgr_erp_oauth_complete', erp, success, ...} and
+         {type:'solden_erp_oauth_complete', erp, success, ...} and
          refreshes the connections page / onboarding state.
     """
     status_line = "Connected to " + erp.title() if success else "Connection failed"
@@ -309,7 +309,7 @@ def _popup_close_response(
     <script>
       (function () {{
         var payload = {{
-          type: 'clearledgr_erp_oauth_complete',
+          type: 'solden_erp_oauth_complete',
           erp: {json.dumps(erp)},
           success: {('true' if success else 'false')},
           organizationId: {json.dumps(organization_id or '')},

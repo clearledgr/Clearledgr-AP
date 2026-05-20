@@ -1026,7 +1026,7 @@ class _SoldenDBBase:
                 )
             """)
 
-            # Inbound demo-request leads from clearledgr.com (post-Netlify
+            # Inbound demo-request leads from soldenai.com (post-Netlify
             # migration). Org-less by design — these are anonymous prospects
             # who don't yet have a tenant.
             cur.execute("""

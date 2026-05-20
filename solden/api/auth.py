@@ -43,21 +43,19 @@ def _session_cookie_secure() -> bool:
     return env_name in {"prod", "production", "staging", "stage"}
 
 
-# Registrable-domain suffixes we serve from the same backend. When the
-# incoming request matches one of these, the session cookie is scoped
-# to that suffix so workspace.* + api.* on the same registrable domain
-# share the cookie. This list expands during the Clearledgr → Solden
-# rename window; drop ``.clearledgr.com`` after Pass D retires it.
-_SESSION_COOKIE_KNOWN_SUFFIXES = (".soldenai.com", ".clearledgr.com")
+# Registrable-domain suffix we serve from the same backend. When the
+# incoming request matches it, the session cookie is scoped to that
+# suffix so workspace.* + api.* on the same registrable domain share
+# the cookie.
+_SESSION_COOKIE_KNOWN_SUFFIXES = (".soldenai.com",)
 
 
 def _session_cookie_domain(request: Optional[Request] = None) -> Optional[str]:
     """Pick the cookie domain attribute for session cookies.
 
     Prefers a registrable-domain suffix matching the incoming request
-    host (".soldenai.com" / ".clearledgr.com") so the same backend can
-    serve api.clearledgr.com AND api.soldenai.com without one host's
-    stale env override blocking the other. Falls back to the explicit
+    host (".soldenai.com") so api.* and workspace.* on the same
+    registrable domain share the cookie. Falls back to the explicit
     WORKSPACE_SESSION_COOKIE_DOMAIN override only when the request
     host is unknown (local dev, custom deployments).
     """
@@ -136,9 +134,6 @@ class GoogleAuthCodeExchangeRequest(BaseModel):
 def _oauth_secret() -> str:
     from solden.core.secrets import require_secret
     return require_secret("SOLDEN_SECRET_KEY")
-
-
-_GOOGLE_OAUTH_KNOWN_HOST_SUFFIXES = (".soldenai.com", ".clearledgr.com")
 
 
 def _google_oauth_redirect_uri(request: Optional[Request] = None) -> str:  # noqa: ARG001
@@ -883,13 +878,12 @@ async def google_web_auth_callback(
         organization_id=user.organization_id,
     )
     redirect_path = _sanitize_redirect_path(state_payload.get("redirect_path"))
-    # The SPA lives on a different origin than the api (api.clearledgr.com
-    # vs workspace.clearledgr.com / web-app-production-*.up.railway.app).
-    # A relative `redirect_path` like `/?post_oauth=1` would resolve
-    # against the api's own origin and land the user at api.clearledgr.com/
-    # which has no handler — strict-profile returns
-    # `endpoint_disabled_in_ap_v1_profile`. Prepend APP_BASE_URL so the
-    # browser jumps back to the SPA origin.
+    # The SPA lives on a different origin than the api (api.soldenai.com
+    # vs workspace.soldenai.com). A relative `redirect_path` like
+    # `/?post_oauth=1` would resolve against the api's own origin and
+    # land the user at api.soldenai.com/ which has no handler —
+    # strict-profile returns `endpoint_disabled_in_ap_v1_profile`.
+    # Prepend APP_BASE_URL so the browser jumps back to the SPA origin.
     spa_base = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
     target = (spa_base + redirect_path) if spa_base else redirect_path
     redirect_url = _append_query_params(
@@ -911,7 +905,7 @@ async def google_web_auth_callback(
 #      Directory → App registrations → New registration.
 #      Supported account types: "Accounts in any organizational
 #      directory" (multi-tenant).
-#      Redirect URI (Web): https://api.clearledgr.com/auth/microsoft/callback
+#      Redirect URI (Web): https://api.soldenai.com/auth/microsoft/callback
 #   2. Certificates & secrets → New client secret. Copy the secret VALUE.
 #   3. API permissions → Add permission → Microsoft Graph → Delegated:
 #      openid, email, profile, User.Read. Grant admin consent for the
@@ -1161,7 +1155,7 @@ async def google_oauth_popup_complete():
     This page:
       1. Reads auth_code from window.location.search
       2. POSTs it to /auth/google/exchange (which sets HttpOnly
-         session cookies on api.clearledgr.com)
+         session cookies on api.soldenai.com)
       3. Notifies window.opener via postMessage so the parent (the
          Gmail tab running the extension) can re-bootstrap with the
          new cookies
@@ -1203,7 +1197,7 @@ async def google_oauth_popup_complete():
           try {
             if (window.opener && !window.opener.closed) {
               window.opener.postMessage({
-                type: 'clearledgr_oauth_complete',
+                type: 'solden_oauth_complete',
                 success: !!success,
                 organizationId: orgId,
                 detail: detail || null

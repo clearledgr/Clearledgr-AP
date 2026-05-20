@@ -5,7 +5,7 @@ Two routes:
 1. **`POST /extension/sap/exchange`** — exchanges a BTP XSUAA-issued
    user JWT for a short-lived Solden access JWT. The Fiori app
    (deployed via SAP BTP HTML5 Repo + Approuter) hits this once on
-   page load to bootstrap a session against api.clearledgr.com.
+   page load to bootstrap a session against api.soldenai.com.
 
 2. **`GET /extension/ap-items/by-sap-invoice`** — given the supplier-
    invoice composite key (``CompanyCode`` + ``SupplierInvoice`` +

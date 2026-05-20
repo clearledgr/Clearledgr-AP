@@ -1,4 +1,4 @@
-/* clearledgr-source-fingerprint:5129e1f5bfd5eca4c6a49b59f83d9f08b46f75591731adfc9493fde955fc99d5 */
+/* clearledgr-source-fingerprint:c7269dcb54ba41606ee29c90385c1be35949fcbf6eed139c5c6ef5f87c9343e8 */
 (() => {
   var __create = Object.create;
   var __getProtoOf = Object.getPrototypeOf;
@@ -60964,8 +60964,8 @@ Reason (required — logged to the audit trail):`);
 
   // src/routes/oauth-bridge.js
   var OAUTH_MESSAGE_TYPES = new Set([
-    "clearledgr_oauth_complete",
-    "clearledgr_erp_oauth_complete"
+    "solden_oauth_complete",
+    "solden_erp_oauth_complete"
   ]);
 
   // src/routes/route-helpers.js
@@ -62500,4 +62500,4 @@ So do we.
 `, "font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;", "font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;", "font-size:14px;color:#6B7280;line-height:1.5;", "font-size:13px;color:#00D67E;font-weight:600;");
 })();
 
-//# debugId=194CD6F91FC7877164756E2164756E21
+//# debugId=2786B88A6B85661164756E2164756E21
