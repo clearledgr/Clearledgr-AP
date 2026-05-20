@@ -157,6 +157,13 @@ app.use((req, res, next) => {
 // Reports DB reachability so a misconfigured deploy is visible in
 // Railway's healthcheck panel, not just at form-submit time.
 app.get('/healthz', async (_req, res) => {
+  // Liveness is about the web server, not the leads DB. The static
+  // marketing site stays up even when Postgres is unreachable; only
+  // contact-form submissions degrade (they 503 at submit time). So
+  // /healthz always returns 200 when the server is running and just
+  // REPORTS db reachability for visibility. Gating the healthcheck on
+  // the DB previously took the whole site down whenever the leads
+  // Postgres was down.
   const out = { ok: true, service: 'soldenai-landing', db: 'unconfigured' };
   if (pool) {
     try {
@@ -164,11 +171,10 @@ app.get('/healthz', async (_req, res) => {
       out.db = 'ok';
     } catch (err) {
       out.db = 'down';
-      out.ok = false;
       out.dbError = err.message;
     }
   }
-  res.status(out.ok ? 200 : 503).json(out);
+  res.status(200).json(out);
 });
 
 // ── Contact form ─────────────────────────────────────────────
