@@ -213,7 +213,9 @@ def resolve_agent_key(request: Request, *, db: Any = None) -> AgentIdentity:
 
         db = get_db()
 
-    row = db.validate_api_key(raw_key)
+    # include_revoked so a revoked key surfaces as a row (-> 403 below)
+    # instead of None (-> 401), keeping "revoked" distinct from "invalid".
+    row = db.validate_api_key(raw_key, include_revoked=True)
     if row is None:
         forbid(
             "invalid_api_key",

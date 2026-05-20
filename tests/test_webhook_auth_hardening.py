@@ -169,7 +169,7 @@ def test_no_default_org_coercion_anywhere_in_clearledgr():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    pkg_root = repo_root / "clearledgr"
+    pkg_root = repo_root / "solden"
 
     bad_unallowed: list[str] = []
     bad_allowed: list[str] = []
@@ -636,15 +636,15 @@ def test_create_paths_fail_closed_on_missing_organization_id():
     repo_root = Path(__file__).resolve().parent.parent
     cases = [
         (
-            repo_root / "clearledgr" / "core" / "stores" / "payment_store.py",
+            repo_root / "solden" / "core" / "stores" / "payment_store.py",
             "create_payment",
         ),
         (
-            repo_root / "clearledgr" / "core" / "stores" / "auth_store.py",
+            repo_root / "solden" / "core" / "stores" / "auth_store.py",
             "save_google_auth_code",
         ),
         (
-            repo_root / "clearledgr" / "core" / "stores" / "ap_store.py",
+            repo_root / "solden" / "core" / "stores" / "ap_store.py",
             "create_agent_retry_job",
         ),
     ]
@@ -673,7 +673,7 @@ def test_create_paths_fail_closed_on_missing_organization_id():
         )
 
     # The HTTP-layer wrapper must also fail closed.
-    auth_path = repo_root / "clearledgr" / "api" / "auth.py"
+    auth_path = repo_root / "solden" / "api" / "auth.py"
     auth_src = auth_path.read_text()
     issue_body = auth_src.split("def _issue_google_auth_code", 1)[1].split("\ndef ", 1)[0]
     assert not _OR_DEFAULT_RE.search(issue_body), (
@@ -708,7 +708,7 @@ def test_slack_runtime_per_org_fallback_off_by_default():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "services" / "slack_api.py").read_text()
+    src = (repo_root / "solden" / "services" / "slack_api.py").read_text()
     body = src.split("def resolve_slack_runtime", 1)[1].split("\ndef ", 1)[0]
 
     assert 'SLACK_ALLOW_SHARED_FALLBACK", "true"' not in body, (
@@ -742,7 +742,7 @@ def test_ap_items_read_routes_no_query_org_no_default_fallback():
     import re
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "ap_items_read_routes.py").read_text()
+    src = (repo_root / "solden" / "api" / "ap_items_read_routes.py").read_text()
     # Strip docstrings before scanning so the helper's docstring (which
     # legitimately mentions both patterns as the bugs it prevents)
     # doesn't false-positive.
@@ -778,7 +778,7 @@ def test_resolve_ap_context_does_not_swap_org_from_invoice_row():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "core" / "ap_item_resolution.py").read_text()
+    src = (repo_root / "solden" / "core" / "ap_item_resolution.py").read_text()
     body = src.split("def resolve_ap_context", 1)[1].split("\ndef ", 1)[0]
 
     assert "db.get_invoice_status(ref, organization_id=" in body, (
@@ -813,7 +813,7 @@ def test_ops_autopilot_status_does_not_silently_escalate_to_default_org():
     import re
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "ops.py").read_text()
+    src = (repo_root / "solden" / "api" / "ops.py").read_text()
     # Strip docstrings + comments before scanning.
     body = re.sub(r'""".*?"""', "", src, flags=re.DOTALL)
     body = re.sub(r"#.*$", "", body, flags=re.MULTILINE)
@@ -843,7 +843,7 @@ def test_ap_item_task_routes_check_user_org_against_task_org():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "ap_items_action_routes.py").read_text()
+    src = (repo_root / "solden" / "api" / "ap_items_action_routes.py").read_text()
 
     assert "def _require_task_in_session_org" in src, (
         "ap_items_action_routes.py must define "
@@ -890,7 +890,7 @@ def test_field_review_resolution_passes_org_to_require_item():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "services" / "ap_item_service.py").read_text()
+    src = (repo_root / "solden" / "services" / "ap_item_service.py").read_text()
     body = src.split("def _execute_field_review_resolution", 1)[1].split("\ndef ", 1)[0]
     assert "expected_organization_id=organization_id" in body, (
         "_execute_field_review_resolution must pass "
@@ -910,7 +910,7 @@ def test_gmail_extension_workflow_status_checks_row_org():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "gmail_extension.py").read_text()
+    src = (repo_root / "solden" / "api" / "gmail_extension.py").read_text()
     # Find the route handler body.
     marker = '/workflow/{workflow_id}'
     if marker in src:
@@ -1064,7 +1064,7 @@ def test_celery_load_box_state_blocks_cross_tenant_box_id():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "services" / "celery_tasks.py").read_text()
+    src = (repo_root / "solden" / "services" / "celery_tasks.py").read_text()
     body = src.split("def _load_box_state", 1)[1].split("\ndef ", 1)[0]
 
     # Must compare row's org against event's org before returning.
@@ -1110,7 +1110,7 @@ def test_ap_items_action_routes_no_query_org_no_default_fallback():
     import re
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "ap_items_action_routes.py").read_text()
+    src = (repo_root / "solden" / "api" / "ap_items_action_routes.py").read_text()
 
     assert 'Query(default="default")' not in src, (
         "ap_items_action_routes.py still has Query(default=\"default\") "
@@ -1157,7 +1157,7 @@ def test_ops_assert_org_access_has_no_role_bypass_and_no_default_fallback():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "ops.py").read_text()
+    src = (repo_root / "solden" / "api" / "ops.py").read_text()
 
     body = src.split("def _assert_org_access", 1)[1].split("\ndef ", 1)[0]
 
@@ -1197,7 +1197,7 @@ def test_gmail_extension_common_assert_user_org_access_fails_closed():
     import re
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "gmail_extension_common.py").read_text()
+    src = (repo_root / "solden" / "api" / "gmail_extension_common.py").read_text()
 
     # The two functions are the audit-flagged pair.
     for fn_name in ("assert_user_org_access", "resolve_org_id_for_user"):
@@ -1251,7 +1251,7 @@ def test_get_invoice_status_endpoint_scopes_lookup_to_session_org():
     )
 
     repo_root = Path(__file__).resolve().parent.parent
-    ext_path = repo_root / "clearledgr" / "api" / "gmail_extension.py"
+    ext_path = repo_root / "solden" / "api" / "gmail_extension.py"
     src = ext_path.read_text()
 
     # Locate the /invoice-status endpoint body.
@@ -1385,14 +1385,14 @@ def test_vendor_profile_callers_use_canonical_arg_order():
 
     repo_root = Path(__file__).resolve().parent.parent
     targets = [
-        repo_root / "clearledgr" / "core" / "stores" / "vendor_store.py",
-        repo_root / "clearledgr" / "api" / "vendor_onboarding.py",
-        repo_root / "clearledgr" / "api" / "payment_confirmations.py",
-        repo_root / "clearledgr" / "api" / "vendor_portal.py",
-        repo_root / "clearledgr" / "api" / "threshold_policy.py",
-        repo_root / "clearledgr" / "api" / "gmail_extension.py",
-        repo_root / "clearledgr" / "integrations" / "erp_router.py",
-        repo_root / "clearledgr" / "workflows" / "gmail_activities.py",
+        repo_root / "solden" / "core" / "stores" / "vendor_store.py",
+        repo_root / "solden" / "api" / "vendor_onboarding.py",
+        repo_root / "solden" / "api" / "payment_confirmations.py",
+        repo_root / "solden" / "api" / "vendor_portal.py",
+        repo_root / "solden" / "api" / "threshold_policy.py",
+        repo_root / "solden" / "api" / "gmail_extension.py",
+        repo_root / "solden" / "integrations" / "erp_router.py",
+        repo_root / "solden" / "workflows" / "gmail_activities.py",
     ]
     # Match a positional call with two simple args: ``func(arg1, arg2)``
     # where neither arg is a kwarg. We then require arg1 to look like

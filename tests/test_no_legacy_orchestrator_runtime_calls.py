@@ -6,9 +6,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 RUNTIME_FILES = (
-    ROOT / "clearledgr" / "api" / "gmail_extension.py",
-    ROOT / "clearledgr" / "api" / "ops.py",
-    ROOT / "clearledgr" / "services" / "agent_background.py",
+    ROOT / "solden" / "api" / "gmail_extension.py",
+    ROOT / "solden" / "api" / "ops.py",
+    ROOT / "solden" / "services" / "agent_background.py",
     ROOT / "ui" / "slack" / "app.py",
 )
 
@@ -26,5 +26,5 @@ def test_runtime_callsites_no_longer_depend_on_legacy_orchestrator():
 
 
 def test_legacy_orchestrator_module_removed_from_repo():
-    legacy_module = ROOT / "clearledgr" / "services" / "agent_orchestrator.py"
+    legacy_module = ROOT / "solden" / "services" / "agent_orchestrator.py"
     assert not legacy_module.exists(), "legacy agent_orchestrator module must be removed"

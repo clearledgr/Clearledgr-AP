@@ -216,7 +216,8 @@ class TestVerifyBillPosted:
     def test_no_erp_connection(self):
         with patch("solden.integrations.erp_router.get_erp_connection", return_value=None):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
-        assert result["verified"] is True
+        # No connection means nothing to verify against — definitively unverified.
+        assert result["verified"] is False
         assert result["reason"] == "no_erp_connection"
 
     def test_bill_found_verified(self):
@@ -264,7 +265,7 @@ class TestVerifyBillPosted:
         assert result["verified"] is True
         assert result["reason"] == "confirmed"
 
-    def test_finder_error_defaults_verified(self):
+    def test_finder_error_is_indeterminate(self):
         conn = _qb_connection()
         mock_finder = AsyncMock(side_effect=Exception("network error"))
 
@@ -272,8 +273,10 @@ class TestVerifyBillPosted:
              patch.dict("solden.integrations.erp_router._BILL_FINDERS", {"quickbooks": mock_finder}):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
 
-        # On error, default to verified=True (don't block pipeline)
-        assert result["verified"] is True
+        # On lookup error we can't confirm — fail closed as indeterminate
+        # so the caller queues a re-check instead of claiming confirmation.
+        assert result["verified"] is False
+        assert result["indeterminate"] is True
         assert "lookup_error" in result["reason"]
 
     def test_unknown_erp_type(self):
@@ -281,7 +284,9 @@ class TestVerifyBillPosted:
         with patch("solden.integrations.erp_router.get_erp_connection", return_value=conn):
             result = asyncio.run(verify_bill_posted("org1", "INV-001"))
 
-        assert result["verified"] is True
+        # No finder for this ERP = no way to verify = indeterminate, not confirmed.
+        assert result["verified"] is False
+        assert result["indeterminate"] is True
         assert result["reason"] == "no_finder_for_erp"
 
 

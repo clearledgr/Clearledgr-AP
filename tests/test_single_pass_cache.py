@@ -217,6 +217,7 @@ class TestEndToEndCaching:
             return_value=fake_gateway,
         ):
             r1 = await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="Invoice INV-001",
                 sender="billing@acme.com",
                 body="See attached.",
@@ -228,6 +229,7 @@ class TestEndToEndCaching:
             # Second call with identical inputs — cache hit, gateway
             # NOT invoked again.
             r2 = await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="Invoice INV-001",
                 sender="billing@acme.com",
                 body="See attached.",
@@ -252,12 +254,14 @@ class TestEndToEndCaching:
             return_value=fake_gateway,
         ):
             await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="Invoice INV-001",
                 sender="billing@acme.com",
                 body="See attached.",
             )
             # Different sender → different cache key → fresh call.
             await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="Invoice INV-001",
                 sender="other@vendor.com",
                 body="See attached.",
@@ -274,9 +278,11 @@ class TestEndToEndCaching:
             return_value=fake_gateway,
         ):
             await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="X", sender="a@x.com", body="b", use_cache=False,
             )
             await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="X", sender="a@x.com", body="b", use_cache=False,
             )
             # Both calls hit the LLM.
@@ -297,10 +303,12 @@ class TestEndToEndCaching:
             return_value=fake_gateway,
         ):
             r1 = await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="X", sender="a@x.com", body="b",
             )
             assert r1 is None
             r2 = await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="X", sender="a@x.com", body="b",
             )
             assert r2 is None

@@ -991,17 +991,20 @@ class MetricsStore:
         organization_id: str,
         event_types: Optional[List[str]] = None,
         limit: int = 10000,
+        box_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         self.initialize()
         params: List[Any] = [organization_id]
         sql = "SELECT * FROM audit_events WHERE organization_id = %s"
+        if box_id:
+            sql += " AND box_id = %s"
+            params.append(box_id)
         if event_types:
             placeholders = ",".join("%s" for _ in event_types)
             sql += f" AND event_type IN ({placeholders})"
             params.extend(event_types)
         sql += " ORDER BY ts DESC LIMIT %s"
         params.append(limit)
-        sql = sql
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, tuple(params))

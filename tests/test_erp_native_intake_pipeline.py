@@ -249,10 +249,10 @@ def test_approval_link_falls_back_to_clearledgr_when_metadata_missing(monkeypatc
         erp_metadata={"ns_internal_id": "5135"},  # account_id missing
     )
     link = _build_source_link(inv)
-    # The fallback uses APP_BASE_URL + /items/<id>; verify both halves
-    # so a future re-route (e.g. /ap/items/<id>) still trips the test.
+    # The fallback uses APP_BASE_URL + /records/<id>; verify both halves
+    # so a future re-route still trips the test.
     assert "workspace.clearledgr.com" in link
-    assert "/items/5135" in link
+    assert "/records/5135" in link
     assert _source_link_label(inv) == "Open in Solden"
 
 

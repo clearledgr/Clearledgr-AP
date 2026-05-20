@@ -99,7 +99,7 @@ def test_teams_callback_refuses_aad_tenant_without_installation(monkeypatch):
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    src = (repo_root / "clearledgr" / "api" / "teams_invoices.py").read_text()
+    src = (repo_root / "solden" / "api" / "teams_invoices.py").read_text()
 
     assert "get_teams_installation_by_aad_tenant" in src, (
         "teams_invoices.py must look up the AAD tid claim against the "

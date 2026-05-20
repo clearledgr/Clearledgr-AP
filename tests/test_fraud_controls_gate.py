@@ -721,7 +721,9 @@ class TestFraudControlsAPI:
     def test_non_cfo_cannot_modify(self, app_client):
         client, main, db = app_client
         from solden.core.auth import get_current_user
-        main.app.dependency_overrides[get_current_user] = lambda: self._make_user("admin")
+        # v89 collapsed CFO into workspace-admin, so "admin" now passes the
+        # gate. Use a plain member to keep this a real negative assertion.
+        main.app.dependency_overrides[get_current_user] = lambda: self._make_user("member")
         try:
             _seed_org(db, "org_fc_test")
             resp = client.put(

@@ -654,7 +654,10 @@ class TestIbanVerificationAPI:
                 user_id="u1",
                 email="u1@test",
                 organization_id="org_t",
-                role="admin",  # not cfo
+                # v89 collapsed CFO into workspace-admin, so "admin" now
+                # passes require_cfo. Use a non-privileged member to keep
+                # this a genuine negative (forbidden) assertion.
+                role="member",
                 exp=datetime(2099, 1, 1, tzinfo=timezone.utc),
             )
 

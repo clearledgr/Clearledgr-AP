@@ -649,17 +649,25 @@ class AuthStore:
         data["preferences_json"] = preferences
         return data
 
-    def validate_api_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
+    def validate_api_key(
+        self, raw_key: str, *, include_revoked: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Look up an API key by its SHA-256 hash.
 
         Returns the api_keys row dict (with organization_id, user_id, etc.)
-        or None if no active key matches.
+        or None if no key matches. By default only active keys match; pass
+        ``include_revoked=True`` to also return revoked/inactive rows so the
+        caller can distinguish "revoked" (403) from "never existed" (401)
+        rather than collapsing both to None/401.
         """
         self.initialize()
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
-        sql = (
-            "SELECT * FROM api_keys WHERE key_hash = %s AND is_active = 1 LIMIT 1"
-        )
+        if include_revoked:
+            sql = "SELECT * FROM api_keys WHERE key_hash = %s LIMIT 1"
+        else:
+            sql = (
+                "SELECT * FROM api_keys WHERE key_hash = %s AND is_active = 1 LIMIT 1"
+            )
         with self.connect() as conn:
             cur = conn.cursor()
             cur.execute(sql, (key_hash,))

@@ -994,7 +994,7 @@ class SubscriptionService:
         """Write usage stats back to the subscription record."""
         try:
             import json
-            db = self._get_db()
+            db = self.db
             sql = "UPDATE subscriptions SET usage_json = %s WHERE organization_id = %s"
             with db.connect() as conn:
                 conn.execute(sql, (json.dumps(usage.to_dict()), organization_id))

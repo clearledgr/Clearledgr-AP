@@ -115,6 +115,7 @@ class TestExtractionFromFixtures:
                 subject=email["subject"],
                 body=email["body"],
                 sender=email["sender"],
+                organization_id="test_org",
             )
 
             # Vendor name extraction depends on LLM availability.
@@ -149,6 +150,7 @@ class TestExtractionFromFixtures:
                 subject=email["subject"],
                 body=email["body"],
                 sender=email["sender"],
+                organization_id="test_org",
             )
 
             # These should extract SOMETHING, even if partial

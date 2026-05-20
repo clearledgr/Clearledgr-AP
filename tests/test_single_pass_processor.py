@@ -343,6 +343,7 @@ async def test_process_invoice_single_pass_happy_path(monkeypatch):
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Invoice INV-001",
             sender="billing@acme.com",
             body="See attached.",
@@ -370,6 +371,7 @@ async def test_process_invoice_single_pass_returns_none_on_missing_required_fiel
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Test", sender="test@test.com", body="body",
         )
     assert result is None
@@ -386,6 +388,7 @@ async def test_process_invoice_single_pass_returns_none_on_malformed_json(monkey
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Test", sender="test@test.com", body="body",
         )
     assert result is None
@@ -402,6 +405,7 @@ async def test_process_invoice_single_pass_returns_none_on_gateway_error(monkeyp
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Test", sender="test@test.com", body="body",
         )
     assert result is None
@@ -416,6 +420,7 @@ async def test_process_invoice_single_pass_returns_none_on_empty_response(monkey
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Test", sender="test@test.com", body="body",
         )
     assert result is None
@@ -433,6 +438,7 @@ async def test_process_invoice_single_pass_handles_markdown_fenced_response(monk
         return_value=fake_gateway,
     ):
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Test", sender="test@test.com", body="body",
         )
     assert result is not None
@@ -706,6 +712,7 @@ class TestSchemaDriftEvent:
             return_value=_FakeTrail(),
         ):
             result = await process_invoice_single_pass(
+                organization_id="test_org",
                 subject="Test", sender="test@test.com", body="body",
             )
         assert result is not None
@@ -734,6 +741,7 @@ async def test_process_invoice_single_pass_truncates_visual_attachments(monkeypa
             {"data": "AAAA", "mimeType": "application/pdf"} for _ in range(5)
         ]
         result = await process_invoice_single_pass(
+            organization_id="test_org",
             subject="Multi-PDF email",
             sender="test@test.com",
             body="body",

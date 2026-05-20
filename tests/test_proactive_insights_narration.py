@@ -46,7 +46,7 @@ class TestNarrationFallbacks:
         monkeypatch.setattr(
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert len(out) == 1
         assert out[0].insight_id == "spike_acme"
         assert out[0].title == "Spending spike: Acme"
@@ -59,7 +59,7 @@ class TestNarrationFallbacks:
         monkeypatch.setattr(
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert out[0].title == original.title
         assert out[0].description == original.description
 
@@ -70,7 +70,7 @@ class TestNarrationFallbacks:
         monkeypatch.setattr(
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert out[0].title == original.title
 
 
@@ -95,7 +95,7 @@ class TestNarrationHappyPath:
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert len(out) == 1
         assert out[0].insight_id == "spike_acme"  # id preserved
         assert out[0].title == "Acme — 11x typical: likely annual renewal"
@@ -117,7 +117,7 @@ class TestNarrationHappyPath:
         monkeypatch.setattr(
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert out[0].title == "T"
         assert out[0].description == "D"
 
@@ -137,7 +137,7 @@ class TestNarrationHappyPath:
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
-        out = asyncio.run(narrate_insights([i1, i2, i3]))
+        out = asyncio.run(narrate_insights([i1, i2, i3], organization_id="test_org"))
         assert len(out) == 3
         assert [o.insight_id for o in out] == ["i_one", "i_two", "i_three"]
         assert out[0].title == "T1"  # untouched
@@ -156,7 +156,7 @@ class TestNarrationHappyPath:
             "solden.core.llm_gateway.get_llm_gateway", lambda: fake_gateway,
         )
 
-        out = asyncio.run(narrate_insights([original]))
+        out = asyncio.run(narrate_insights([original], organization_id="test_org"))
         assert out[0].insight_id == "real_id"
         assert out[0].title == original.title  # rule copy preserved
 

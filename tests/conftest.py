@@ -189,6 +189,39 @@ def _resolve_postgres_test_database_url():
     return url, container
 
 
+def _ensure_worker_database(base_url: str, worker: str) -> str:
+    """Return a DSN pointing at a per-xdist-worker database, creating it.
+
+    When the suite runs under ``pytest -n`` (xdist), every worker shares
+    the one ``TEST_DATABASE_URL`` database by default — and the per-test
+    TRUNCATE fixture would have 8 workers clobbering each other's rows.
+    Give each worker its own database (``<base>_<worker>``, e.g.
+    ``clearledgr_test_gw0``) so the existing session-init + per-test
+    truncate machinery isolates cleanly. The DB is created if missing
+    (idempotent migrations + per-test truncate handle reuse across runs).
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(base_url)
+    base_db = parts.path.lstrip("/") or "clearledgr_test"
+    worker_db = f"{base_db}_{worker}"
+
+    import psycopg
+
+    admin_url = urlunsplit(parts._replace(path="/postgres"))
+    conn = psycopg.connect(admin_url, connect_timeout=5)
+    try:
+        conn.autocommit = True  # CREATE DATABASE can't run in a transaction
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (worker_db,))
+        if cur.fetchone() is None:
+            cur.execute(f'CREATE DATABASE "{worker_db}"')
+    finally:
+        conn.close()
+
+    return urlunsplit(parts._replace(path=f"/{worker_db}"))
+
+
 @pytest.fixture(scope="session")
 def postgres_test_db():
     """Session-scoped Postgres backend for the test suite.
@@ -207,6 +240,14 @@ def postgres_test_db():
         return
 
     url, container = _resolve_postgres_test_database_url()
+
+    # Under xdist, isolate each worker onto its own database so the
+    # per-test TRUNCATE doesn't have workers clobbering each other.
+    # Only for an external URL (testcontainers already give each worker
+    # its own container) and only on real workers (not the controller).
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker and worker != "master" and container is None:
+        url = _ensure_worker_database(url, worker)
 
     # Seed the env var the app reads (database.py:384) so every
     # fresh `get_db()` call picks Postgres. Clear CLEARLEDGR_DB_PATH

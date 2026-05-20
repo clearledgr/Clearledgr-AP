@@ -188,6 +188,7 @@ def test_authoritative_attachment_result_skips_llm(monkeypatch):
     monkeypatch.setattr(llm_email_parser_module, "_call_claude_vision", _unexpected_claude_call)
 
     result = parser.parse_email(
+        organization_id="test_org",
         subject="Invoice attached",
         body="Please see attached invoice.",
         sender="billing@google.test",

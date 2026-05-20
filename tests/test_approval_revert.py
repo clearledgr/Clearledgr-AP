@@ -153,7 +153,10 @@ def test_revert_clears_stale_payment_scheduled_metadata(db):
 
     fresh = db.get_ap_item(item["id"])
     assert fresh["state"] == "needs_approval"
-    meta = fresh.get("metadata") or {}
+    # get_ap_item returns the raw row; metadata may be a JSON string.
+    import json as _json
+    raw_meta = fresh.get("metadata")
+    meta = _json.loads(raw_meta) if isinstance(raw_meta, str) else (raw_meta or {})
     assert "payment_scheduled" not in meta
     assert "payment_scheduled_at" not in meta
     # Other metadata keys must survive.

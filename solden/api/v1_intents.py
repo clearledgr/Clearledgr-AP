@@ -115,10 +115,17 @@ def _runtime_for_agent(agent: AgentIdentity) -> Any:
     authority).
     """
     actor_label = agent.actor_label
+    # agent_id already carries the ``agent:`` prefix by convention
+    # (see v1_auth AgentIdentity), so only add it when it's missing —
+    # otherwise audit rows get a doubled ``agent:agent:`` actor_id.
+    actor_pseudo_email = (
+        actor_label if str(actor_label).startswith("agent:")
+        else f"agent:{actor_label}"
+    )
     return build_channel_runtime(
         organization_id=agent.organization_id,
         actor_id=actor_label,
-        actor_email=f"agent:{actor_label}",
+        actor_email=actor_pseudo_email,
         fallback_actor="agent",
         actor_type="agent",
         agent_version=agent.agent_version,
