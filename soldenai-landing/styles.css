@@ -710,14 +710,14 @@ body:not(.theme-dark) .footer-cta {
   gap: 8px;
 }
 .footer__col a {
-  color: #1F1B16;
+  color: rgba(31, 27, 22, 0.78);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.005em;
   text-decoration: none;
   transition: color 0.15s ease;
 }
-.footer__col a:hover { color: rgba(31, 27, 22, 0.65); }
+.footer__col a:hover { color: rgba(31, 27, 22, 1); }
 
 /* Huge wordmark splash — the brand monument. Light cream-tan so
    it reads as decorative texture, not as content. Sized via vw so
