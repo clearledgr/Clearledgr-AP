@@ -86,9 +86,7 @@ class IntentNotSupportedError(ValueError):
 class ActionContext:
     """Generic per-action context for any box type.
 
-    ``box_payload`` is the underlying box row (an AP item today). The
-    ``ap_item`` / ``ap_item_id`` properties keep AP-era call sites working
-    while the engine migrates to the generic names.
+    ``box_payload`` is the underlying box row (an AP item today).
     """
     reference: str
     box_id: str
@@ -97,19 +95,6 @@ class ActionContext:
     metadata: Dict[str, Any]
     correlation_id: Optional[str]
     box_type: str = "ap_item"
-
-    @property
-    def ap_item(self) -> Dict[str, Any]:
-        return self.box_payload
-
-    @property
-    def ap_item_id(self) -> str:
-        return self.box_id
-
-
-# Back-compat alias for callers still importing the AP-specific name.
-# Removed in the cleanup sweep once call sites move to ActionContext.
-APActionContext = ActionContext
 
 
 class FinanceAgentRuntime:
@@ -663,6 +648,29 @@ class FinanceAgentRuntime:
         if suggested in ("closed", "received"):
             return suggested
         return "received"
+
+    def seed_box(
+        self,
+        box_type: str,
+        payload: Dict[str, Any],
+        *,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Seed a Box of *box_type* from an intake payload.
+
+        Dispatches to the registered :class:`BoxSeedStrategy`. The
+        ap_item strategy wraps ``_seed_ap_item_for_invoice_processing``;
+        a new box type registers its own strategy instead of the runtime
+        hardcoding the AP path.
+        """
+        from solden.services.box_seed import get_seed_strategy
+
+        strategy = get_seed_strategy(box_type)
+        if strategy is None:
+            raise ValueError(
+                f"no seed strategy registered for box_type={box_type!r}"
+            )
+        return strategy.seed(self, payload, correlation_id=correlation_id)
 
     def _seed_ap_item_for_invoice_processing(
         self,

@@ -129,11 +129,6 @@ def get_box(box_type: str, box_id: str, db: Any) -> Optional[Dict[str, Any]]:
     )
 
 
-def load_box(box_type: str, box_id: str, db: Any) -> Optional[Dict[str, Any]]:
-    """Deprecated alias for :func:`get_box`. Retained for existing callers."""
-    return get_box(box_type, box_id, db)
-
-
 def create_box(box_type: str, payload: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """Create a Box of *box_type*. Dispatches to the per-type store insert.
 
@@ -250,7 +245,6 @@ __all__ = [
     "register",
     "get",
     "get_box",
-    "load_box",
     "create_box",
     "update_box",
 ]

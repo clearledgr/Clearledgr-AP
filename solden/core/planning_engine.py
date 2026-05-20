@@ -200,6 +200,10 @@ class DeterministicPlanningEngine:
 
         plan = handler(event, box_state)
         plan.organization_id = event.organization_id
+        # Stamp the box type the coordination engine switches on. The AP
+        # planner produces ap_item plans; an event may name a different
+        # box type explicitly (the generic path). Defaults to ap_item.
+        plan.box_type = event.payload.get("box_type") or "ap_item"
         # Carry the event id forward so the coordinator can derive
         # deterministic idempotency keys for the audit timeline.
         # Celery retries / Redis Stream redeliveries that produce a

@@ -82,28 +82,38 @@ class BoxSummary:
 
 
 def build_box_summary(
-    ap_item_id: str,
+    box_id: str,
     db: Any = None,
+    box_type: str = "ap_item",
 ) -> BoxSummary:
-    """Build a BoxSummary from the current AP item state.
+    """Build a BoxSummary for a Box of any registered type.
 
-    Reads the item, its timeline, and its fraud/waiting state
-    to produce a compact summary suitable for Claude context.
+    The Box is loaded through the generic registry dispatch. Field/issue
+    extraction is per-type: today only ``ap_item`` has a rich extractor,
+    so other types get the generic stage and nothing speculative. A new
+    box type adds its own extraction branch when it needs a summary.
     """
     if db is None:
         from solden.core.database import get_db
         db = get_db()
 
+    from solden.core import box_registry
+
     summary = BoxSummary()
 
     try:
-        item = db.get_ap_item(ap_item_id)
+        item = box_registry.get_box(box_type, box_id, db)
         if not item:
             return summary
 
-        # Current stage
+        # Current stage (generic across all box types)
         summary.current_stage = item.get("state") or "unknown"
 
+        if box_type != "ap_item":
+            # No per-type extractor yet; the stage is the summary.
+            return summary
+
+        ap_item_id = box_id
         # Key fields. Currency is left empty when the row didn't carry
         # one — fabricating "USD" hides extraction gaps and silently
         # mislabels non-USD invoices in any downstream surface that

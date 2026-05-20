@@ -40,7 +40,7 @@ from solden.core.bank_match_states import (  # noqa: E402
     BankMatchState,
     validate_bank_match_transition,
 )
-from solden.core.box_registry import BOX_TYPES, load_box  # noqa: E402
+from solden.core.box_registry import BOX_TYPES, get_box  # noqa: E402
 from solden.core.stores.bank_match_store import (  # noqa: E402
     IllegalBankMatchTransitionError,
 )
@@ -115,10 +115,10 @@ def test_box_registry_includes_bank_match():
     assert {"accepted", "rejected"} <= bt.terminal_states
 
 
-def test_load_box_dispatches_to_bank_match_loader(db):
+def test_get_box_dispatches_to_bank_match_loader(db):
     parent = _make_parent_ap(db, item_id="AP-bm-loader")
     match = _make_match(db, box_id="BM-loader", parent_id=parent["id"])
-    loaded = load_box("bank_match", match["id"], db)
+    loaded = get_box("bank_match", match["id"], db)
     assert loaded is not None
     assert loaded["id"] == match["id"]
     assert loaded["parent_ap_item_id"] == parent["id"]

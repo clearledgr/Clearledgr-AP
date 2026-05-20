@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def _base_context(intent: str, runtime, payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     normalized_payload = payload if isinstance(payload, dict) else {}
     action_context = runtime.create_ap_action_context(normalized_payload)
-    reference, ap_item = action_context.reference, action_context.ap_item
+    reference, ap_item = action_context.reference, action_context.box_payload
     ap_item_id = str(ap_item.get("id") or reference)
     email_id = str(
         ap_item.get("thread_id")
