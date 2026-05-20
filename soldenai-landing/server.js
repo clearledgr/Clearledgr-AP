@@ -38,6 +38,14 @@ const PORT = Number(process.env.PORT || 8080);
 const STATIC_DIR = path.resolve(__dirname);
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
+// Resend HTTP API for emailing new leads. The API key is the same
+// Resend key used as the SMTP password for transactional email. From
+// must be a Resend-verified sender on soldenai.com; To is where leads
+// land. All optional: if RESEND_API_KEY is unset, email notify is a
+// no-op and the lead is still stored + Slack-notified.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const LEAD_NOTIFY_FROM = process.env.LEAD_NOTIFY_FROM || 'leads@soldenai.com';
+const LEAD_NOTIFY_TO = process.env.LEAD_NOTIFY_TO || '';
 
 if (!fs.existsSync(path.join(STATIC_DIR, 'index.html'))) {
   console.error(`[startup] index.html not found at ${STATIC_DIR}`);
@@ -243,7 +251,7 @@ app.post('/api/contact', async (req, res) => {
 
     // Non-blocking Slack notify. DB insert above is the source of
     // truth; if Slack fails the lead is still safe.
-    notifySlack({
+    const lead = {
       id: row.id,
       name,
       email,
@@ -252,8 +260,12 @@ app.post('/api/contact', async (req, res) => {
       erp: body.erp,
       topic: body.topic,
       message: body.message,
-    }).catch((err) =>
+    };
+    notifySlack(lead).catch((err) =>
       console.warn('[contact] slack notify failed:', err.message)
+    );
+    notifyEmail(lead).catch((err) =>
+      console.warn('[contact] email notify failed:', err.message)
     );
 
     return res.json({ ok: true });
@@ -279,6 +291,49 @@ async function notifySlack(lead) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text: lines.join('\n') }),
   });
+}
+
+async function notifyEmail(lead) {
+  if (!RESEND_API_KEY || !LEAD_NOTIFY_TO) return;
+  const esc = (v) =>
+    String(v || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const rows = [
+    ['Name', lead.name],
+    ['Email', lead.email],
+    ['Company', lead.company],
+    ['Role', lead.role],
+    ['ERP', lead.erp],
+    ['Topic', lead.topic],
+  ]
+    .filter(([, v]) => v)
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:2px 12px 2px 0;color:#6b7280">${k}</td><td style="padding:2px 0;color:#0a1628">${esc(v)}</td></tr>`
+    )
+    .join('');
+  const html = `<div style="font-family:-apple-system,system-ui,sans-serif;color:#0a1628">
+  <p style="font-size:15px;font-weight:600;margin:0 0 12px">New Solden lead #${lead.id}</p>
+  <table style="border-collapse:collapse;font-size:14px">${rows}</table>
+  ${lead.message ? `<p style="margin:14px 0 0;font-size:14px;color:#374151;white-space:pre-wrap">${esc(lead.message).slice(0, 5000)}</p>` : ''}
+  <p style="margin:18px 0 0;font-size:12px;color:#9ca3af">Reply directly to this email to reach ${esc(lead.email)}.</p>
+</div>`;
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: `Solden Leads <${LEAD_NOTIFY_FROM}>`,
+      to: [LEAD_NOTIFY_TO],
+      reply_to: lead.email,
+      subject: `New lead: ${lead.name}${lead.company ? ` (${lead.company})` : ''}`,
+      html,
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`resend ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  }
 }
 
 // ── Live activity stream (SSE) ───────────────────────────────
