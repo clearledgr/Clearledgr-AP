@@ -6,12 +6,13 @@
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Solden</title>
     <!-- Favicons in multiple sizes. All variants use Solden's
-         architectural S-mark with ~10% inset padding so the glyph
-         breathes inside the canvas rather than filling edge-to-edge.
-         v=7 cache-busts the post-padding assets. -->
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=7" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=7" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/favicon.png?v=7" />
+         architectural S-mark scaled to ~72% of the canvas so the glyph
+         breathes inside the tab rather than filling edge-to-edge (the
+         pre-v8 assets sat at ~91% fill and read oversized next to other
+         tabs). v=8 cache-busts the re-padded assets. -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=8" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/favicon.png?v=8" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7" />
     <link rel="preconnect" href="https://rsms.me" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
