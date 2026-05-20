@@ -712,22 +712,35 @@ body:not(.theme-dark) .footer-cta {
 .footer__col a:hover { color: rgba(31, 27, 22, 0.65); }
 
 /* Huge wordmark splash — the brand monument. Light cream-tan so
-   it reads as decorative texture, not as content. Sized via vw
-   so it scales with the viewport. */
+   it reads as decorative texture, not as content. Sized via vw so
+   it scales with the viewport. The negative margin-bottom pulls the
+   legal strip up over the lower portion of the glyphs and lets the
+   footer's bottom edge (overflow:hidden on .footer--mr) clip the
+   bottoms of the letters, so the wordmark reads as a monument
+   bleeding off the bottom of the page. */
 .footer__wordmark {
   font-family: "Iowan Old Style", "Georgia", serif;
-  font-size: clamp(128px, 28vw, 440px);
+  font-size: clamp(180px, 35vw, 580px);
   line-height: 0.82;
-  letter-spacing: -0.034em;
+  letter-spacing: -0.04em;
   font-weight: 500;
   color: rgba(31, 27, 22, 0.1);
-  margin: 0;
+  /* Break out of the .shell max-width so the wordmark spans the full
+     viewport and centres on it — inside the shell it overflowed right
+     once it grew wider than the 1200px content box. Negative bottom
+     margin keeps the legal strip pulled up over the clipped glyphs. */
+  width: 100vw;
+  margin: 0 calc(50% - 50vw) -0.2em;
   user-select: none;
   pointer-events: none;
   text-align: center;
+  position: relative;
+  z-index: 0;
 }
 
-/* Legal strip: socials on the left, copyright on the right */
+/* Legal strip: socials on the left, copyright on the right.
+   Sits above the wordmark (z-index) so the copy stays crisp over
+   the faint monument the negative margin pulls up behind it. */
 .footer__legal {
   display: flex;
   justify-content: space-between;
@@ -738,6 +751,8 @@ body:not(.theme-dark) .footer-cta {
   font-size: 11.5px;
   letter-spacing: 0.04em;
   color: rgba(31, 27, 22, 0.55);
+  position: relative;
+  z-index: 1;
 }
 .footer__copyright a {
   color: rgba(31, 27, 22, 0.55);
