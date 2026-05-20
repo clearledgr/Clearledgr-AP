@@ -765,7 +765,6 @@ body:not(.theme-dark) .footer-cta {
   justify-content: space-between;
   align-items: center;
   padding-top: 20px;
-  border-top: 1px solid rgba(31, 27, 22, 0.1);
   font-family: var(--font-mono);
   font-size: 11.5px;
   letter-spacing: 0.04em;
