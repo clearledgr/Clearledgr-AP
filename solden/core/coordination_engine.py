@@ -66,6 +66,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from solden.core import box_registry
 from solden.core.plan import Action, CoordinationResult, Plan
 
 logger = logging.getLogger(__name__)
@@ -431,6 +432,7 @@ class CoordinationEngine:
                     self._move_to_exception(
                         box_id, action.name,
                         "rule1_pre_write_failed — timeline unavailable, action aborted",
+                        box_type=plan.box_type,
                     )
                 return CoordinationResult(
                     status="failed", steps_completed=steps_completed,
@@ -462,7 +464,7 @@ class CoordinationEngine:
                 )
                 self._record_governance_block_audit(box_id, action, governance_verdict)
                 if box_id:
-                    self._move_to_exception(box_id, action.name, stop_reason)
+                    self._move_to_exception(box_id, action.name, stop_reason, box_type=plan.box_type)
                 return CoordinationResult(
                     status="failed", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
@@ -503,7 +505,7 @@ class CoordinationEngine:
                     result.get("error", ""), plan=plan,
                 )
                 if box_id:
-                    self._move_to_exception(box_id, action.name, result.get("error", ""))
+                    self._move_to_exception(box_id, action.name, result.get("error", ""), box_type=plan.box_type)
                 return CoordinationResult(
                     status="failed", steps_completed=steps_completed,
                     steps_total=plan.step_count, box_id=box_id,
@@ -671,7 +673,8 @@ class CoordinationEngine:
         idempotency_key = self._plan_idempotency_key(plan, action, step, "pre")
         payload = {
             "id": timeline_id,
-            "ap_item_id": box_id,
+            "box_id": box_id,
+            "box_type": (plan.box_type if plan else "ap_item"),
             "event_type": f"agent_action:{action.name}:executing",
             "actor_type": "agent",
             "actor_id": "coordination_engine",
@@ -743,7 +746,8 @@ class CoordinationEngine:
         )
         payload = {
             "id": f"{timeline_id}-result",
-            "ap_item_id": box_id,
+            "box_id": box_id,
+            "box_type": (plan.box_type if plan else "ap_item"),
             "event_type": f"agent_action:{action.name}:{status}",
             "actor_type": "agent",
             "actor_id": "coordination_engine",
@@ -887,6 +891,12 @@ class CoordinationEngine:
             # only actions that fire without a box are intake
             # actions (create_box etc.), none of which are in the
             # gated set.
+            return None
+
+        if plan.box_type != "ap_item":
+            # The deliberation gate is AP-domain (skill_id ap_v1, AP belief
+            # state + autonomy policy). Other box types aren't gated here;
+            # their governance, when they have it, declares its own skill.
             return None
 
         from solden.services.finance_agent_runtime import (
@@ -1064,41 +1074,82 @@ class CoordinationEngine:
             if result.get("_abort"):
                 break
 
-    def _move_to_exception(self, box_id: str, action_name: str, error: str) -> None:
-        """Move Box to exception stage on persistent failure.
+    def _move_to_exception(
+        self, box_id: str, action_name: str, error: str,
+        box_type: str = "ap_item",
+    ) -> None:
+        """Move a Box to its exception stage on persistent failure.
+
+        The exception state is per-box-type (``BoxType.exception_state``).
+        Box types with no stall state (e.g. bank_match, where a failed
+        match is just rejected, not parked) instead get a ``box_exception``
+        raised against them without a state move.
 
         Failure modes recorded explicitly so nothing slips through:
 
-        * Legal transition to ``needs_info`` → state moves; ``update_ap_item``
-          writes the ``state_transition`` audit row atomically. Done.
-        * Illegal transition (e.g. box is already terminal) → ``IllegalTransitionError``
-          is caught here, audited as ``illegal_transition_blocked``, and
-          raised as a ``box_exception`` so the operator queue surfaces a
-          stuck-terminal box. The caller still gets normal control flow
-          back so its outer failure path runs.
+        * Legal transition to the exception state → state moves;
+          ``update_box`` writes the ``state_transition`` audit row atomically.
+        * Illegal transition (e.g. box is already terminal) →
+          ``IllegalTransitionError`` is caught, audited as
+          ``illegal_transition_blocked``, and raised as a ``box_exception``
+          so the operator queue surfaces a stuck-terminal box.
         * Any other DB error → logged with stack so the orchestrator
           surfaces a real diagnostic instead of a swallowed ``pass``.
         """
         from solden.core.ap_states import IllegalTransitionError
 
         try:
-            self.db.update_ap_item(box_id, state="needs_info", exception_reason=f"{action_name}: {error[:200]}")
+            exc_state = box_registry.get(box_type).exception_state
+        except Exception:
+            exc_state = None
+
+        if exc_state is None:
+            # No human-stall state for this type — record an exception
+            # against the box instead of moving state.
+            org_id = ""
+            try:
+                item = box_registry.get_box(box_type, box_id, self.db) or {}
+                org_id = str(item.get("organization_id") or "")
+            except Exception:
+                pass
+            try:
+                if hasattr(self.db, "raise_box_exception"):
+                    self.db.raise_box_exception(
+                        box_id=box_id,
+                        box_type=box_type,
+                        organization_id=org_id,
+                        exception_type="action_failed",
+                        severity="high",
+                        reason=f"{action_name} failed: {error[:200]}",
+                        raised_by="coordination_engine",
+                        raised_actor_type="agent",
+                    )
+            except Exception as raise_exc:
+                logger.exception("[CoordinationEngine] failed to raise box_exception: %s", raise_exc)
+            return
+
+        try:
+            box_registry.update_box(
+                box_type, box_id, self.db,
+                state=exc_state,
+                exception_reason=f"{action_name}: {error[:200]}",
+            )
             return
         except IllegalTransitionError as exc:
             logger.error(
-                "[CoordinationEngine] cannot move %s to needs_info from %s after %s failure: %s",
-                box_id, exc.current, action_name, error,
+                "[CoordinationEngine] cannot move %s to %s from %s after %s failure: %s",
+                box_id, exc_state, exc.current, action_name, error,
             )
             org_id = ""
             try:
-                item = self.db.get_ap_item(box_id) or {}
+                item = box_registry.get_box(box_type, box_id, self.db) or {}
                 org_id = str(item.get("organization_id") or "")
             except Exception:
                 pass
             try:
                 self.db.append_audit_event({
                     "box_id": box_id,
-                    "box_type": "ap_item",
+                    "box_type": box_type,
                     "event_type": "illegal_transition_blocked",
                     "actor_type": "agent",
                     "actor_id": "coordination_engine",
@@ -1116,7 +1167,7 @@ class CoordinationEngine:
                 if hasattr(self.db, "raise_box_exception"):
                     self.db.raise_box_exception(
                         box_id=box_id,
-                        box_type="ap_item",
+                        box_type=box_type,
                         organization_id=org_id,
                         exception_type="illegal_state_transition",
                         severity="high",
@@ -1699,15 +1750,24 @@ class CoordinationEngine:
         if plan.box_id and target:
             # Capture prev_state before the update so the auto-assign
             # hook can apply the sticky-manual-within-state-class rule.
-            prev_item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
+            prev_item = await asyncio.to_thread(
+                box_registry.get_box, plan.box_type, plan.box_id, self.db
+            )
             prev_state = str(prev_item.get("state") or "") if prev_item else ""
             try:
                 await asyncio.to_thread(
-                    self.db.update_ap_item, plan.box_id, state=target,
+                    box_registry.update_box,
+                    plan.box_type, plan.box_id, self.db,
+                    state=target,
+                    actor_id=action.params.get("actor_id") or "agent",
+                    reason=action.params.get("reason", ""),
                 )
             except Exception as exc:
                 return {"_abort": True, "error": f"Stage transition to {target} failed: {exc}"}
-            await self._maybe_assign_owner(plan.box_id, prev_state=prev_state)
+            # Owner auto-assignment is an AP-domain concept; skip for other
+            # box types (they have no owner_* columns / role routing).
+            if plan.box_type == "ap_item":
+                await self._maybe_assign_owner(plan.box_id, prev_state=prev_state)
         return {"ok": True}
 
     async def _maybe_assign_owner(self, box_id: str, prev_state: str = "") -> None:

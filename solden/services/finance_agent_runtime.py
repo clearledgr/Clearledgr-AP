@@ -83,13 +83,33 @@ class IntentNotSupportedError(ValueError):
 
 
 @dataclass
-class APActionContext:
+class ActionContext:
+    """Generic per-action context for any box type.
+
+    ``box_payload`` is the underlying box row (an AP item today). The
+    ``ap_item`` / ``ap_item_id`` properties keep AP-era call sites working
+    while the engine migrates to the generic names.
+    """
     reference: str
-    ap_item: Dict[str, Any]
-    ap_item_id: str
+    box_id: str
+    box_payload: Dict[str, Any]
     email_id: str
     metadata: Dict[str, Any]
     correlation_id: Optional[str]
+    box_type: str = "ap_item"
+
+    @property
+    def ap_item(self) -> Dict[str, Any]:
+        return self.box_payload
+
+    @property
+    def ap_item_id(self) -> str:
+        return self.box_id
+
+
+# Back-compat alias for callers still importing the AP-specific name.
+# Removed in the cleanup sweep once call sites move to ActionContext.
+APActionContext = ActionContext
 
 
 class FinanceAgentRuntime:
@@ -1422,7 +1442,7 @@ class FinanceAgentRuntime:
     def create_ap_action_context(
         self,
         payload: Optional[Dict[str, Any]] = None,
-    ) -> APActionContext:
+    ) -> ActionContext:
         reference, ap_item = self.resolve_ap_item_from_payload(payload)
         email_id = str(
             ap_item.get("thread_id")
@@ -1432,10 +1452,11 @@ class FinanceAgentRuntime:
         )
         ap_item_id = str(ap_item.get("id") or reference)
         metadata = self.parse_json_dict(ap_item.get("metadata"))
-        return APActionContext(
+        return ActionContext(
             reference=reference,
-            ap_item=ap_item,
-            ap_item_id=ap_item_id,
+            box_type="ap_item",
+            box_id=ap_item_id,
+            box_payload=ap_item,
             email_id=email_id,
             metadata=metadata,
             correlation_id=self.correlation_id_for_item(ap_item),

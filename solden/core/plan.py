@@ -73,6 +73,12 @@ class Plan:
     event_type: str
     actions: List[Action]
     box_id: Optional[str] = None
+    # Which box type this plan operates on. The coordination engine
+    # switches on this to route generic actions (create/update/move)
+    # to the right store + state machine instead of hardcoding AP.
+    # Defaults to "ap_item" so legacy plans + persisted pending_plan
+    # rows minted before this field deserialize correctly.
+    box_type: str = "ap_item"
     # organization_id has no default — every Plan is tenant-bound and a
     # missing org silently routed work to the legacy "default" tenant
     # pre-M19. Callers MUST supply a real org id; the canonical resolver
@@ -90,6 +96,7 @@ class Plan:
             event_type=self.event_type,
             actions=self.actions[step:],
             box_id=self.box_id,
+            box_type=self.box_type,
             organization_id=self.organization_id,
             created_at=self.created_at,
             correlation_id=self.correlation_id,
@@ -109,6 +116,7 @@ class Plan:
             "event_type": self.event_type,
             "actions": [a.to_dict() for a in self.actions],
             "box_id": self.box_id,
+            "box_type": self.box_type,
             "organization_id": self.organization_id,
             "created_at": self.created_at,
             "correlation_id": self.correlation_id,
@@ -129,6 +137,7 @@ class Plan:
             event_type=d.get("event_type", "resumed"),
             actions=[Action.from_dict(a) for a in d.get("actions", [])],
             box_id=d.get("box_id"),
+            box_type=d.get("box_type", "ap_item"),
             organization_id=assert_org_id(
                 d.get("organization_id"), context="Plan.from_json"
             ),

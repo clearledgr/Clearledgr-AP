@@ -150,37 +150,48 @@ def create_box(box_type: str, payload: Dict[str, Any], db: Any) -> Dict[str, Any
     )
 
 
-def update_box(box_type: str, box_id: str, db: Any, **fields: Any) -> Any:
+def update_box(
+    box_type: str,
+    box_id: str,
+    db: Any,
+    *,
+    state: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    **fields: Any,
+) -> Any:
     """Update a Box of *box_type*. Dispatches to the per-type store writer.
 
-    The two registered types have deliberately different write shapes and
-    this seam encodes that rather than papering over it:
+    ``state`` / ``actor_id`` / ``reason`` are explicit so a caller can
+    drive a transition uniformly across types. The two registered types
+    have deliberately different write shapes and this seam encodes that
+    rather than papering over it:
 
     - ``ap_items`` takes a whitelisted column patch (``update_ap_item``).
+      ``state`` folds into the patch; ``actor_id`` / ``reason`` are
+      bank_match transition metadata and are ignored for AP (its audit
+      row attributes the actor through its own path).
     - ``bank_match_boxes`` has no arbitrary column patch — only a
       validated state advance (``update_bank_match_state``), which
-      requires a ``state`` and a non-empty actor. We accept only
-      ``state`` / ``actor_id`` (or ``decided_by``) / ``reason`` and
-      reject any other field instead of silently dropping it.
+      requires ``state`` and a non-empty actor. Arbitrary ``**fields``
+      are rejected rather than silently dropped.
     """
     bt = get(box_type)
     if bt.source_table == "ap_items":
-        return db.update_ap_item(box_id, **fields)
+        patch = dict(fields)
+        if state is not None:
+            patch["state"] = state
+        return db.update_ap_item(box_id, **patch)
     if bt.source_table == "bank_match_boxes":
-        target_state = fields.pop("state", None)
-        if target_state is None:
-            raise ValueError(
-                "update_box for bank_match requires a 'state' field"
-            )
-        actor_id = fields.pop("actor_id", None) or fields.pop("decided_by", None) or ""
-        reason = fields.pop("reason", "")
+        if state is None:
+            raise ValueError("update_box for bank_match requires a 'state'")
         if fields:
             raise ValueError(
                 "update_box for bank_match accepts only state/actor_id/reason; "
                 f"got extra fields {sorted(fields)}"
             )
         return db.update_bank_match_state(
-            box_id, target_state, actor_id=actor_id, reason=reason
+            box_id, state, actor_id=actor_id or "", reason=reason or ""
         )
     raise NotImplementedError(
         f"update_box has no writer for source_table={bt.source_table!r}"
