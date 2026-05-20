@@ -494,18 +494,21 @@ app.use((req, res) => {
 });
 
 // ── Boot ─────────────────────────────────────────────────────
+// Listen first so the static marketing site is always available.
+// Schema bootstrap is best-effort: if the leads DB is unreachable
+// (down, still booting, bad URL) the site still serves and contact
+// submissions degrade to a 503 in /api/contact, rather than the
+// whole site crash-looping. Gating boot on the leads DB previously
+// took soldenai.com down whenever Postgres had any issue.
+app.listen(PORT, () => {
+  console.log(
+    `[startup] soldenai-landing listening on :${PORT}, static=${STATIC_DIR}`
+  );
+});
 ensureSchema()
   .then(() => {
     if (pool) console.log('[startup] schema ensured (leads table)');
-    app.listen(PORT, () => {
-      console.log(
-        `[startup] soldenai-landing listening on :${PORT}, static=${STATIC_DIR}`
-      );
-    });
   })
   .catch((err) => {
-    // Schema bootstrap failure is fatal, better to crash loudly than
-    // serve a form that silently drops every submission.
-    console.error('[startup] failed to ensure schema:', err.message);
-    process.exit(1);
+    console.error('[startup] schema ensure failed (continuing):', err.message);
   });
