@@ -46,19 +46,24 @@ describe('WorkflowsPage', () => {
     expect(screen.getByText('Activate')).toBeTruthy();
   });
 
-  it('validate button posts the built spec to /validate', async () => {
+  it('add states as chips, then validate posts the built spec', async () => {
     const { api, calls } = makeApi([]);
     mount(api);
     await waitFor(() => screen.getByText('No workflow types yet'));
+    // Comma-paste adds multiple state chips in one go.
     fireEvent.input(document.querySelector('.wf-states'), {
       target: { value: 'draft, approved' },
     });
+    fireEvent.click(screen.getByText('Add'));
+    // Chips rendered.
+    await waitFor(() => expect(document.querySelector('.wf-state-chips')).toBeTruthy());
     fireEvent.click(screen.getByText('Validate'));
     await waitFor(() => {
       expect(calls.some(
         (c) => c.path === '/api/workspace/workflow-specs/validate'
           && (c.opts.method || '').toUpperCase() === 'POST'
-          && Array.isArray(c.opts.body?.states),
+          && Array.isArray(c.opts.body?.states)
+          && c.opts.body.states.length === 2,
       )).toBe(true);
     });
   });
@@ -72,13 +77,27 @@ describe('WorkflowsPage', () => {
     fireEvent.input(document.querySelector('.wf-states'), {
       target: { value: 'draft, approved' },
     });
+    fireEvent.click(screen.getByText('Add'));
     fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => {
       expect(calls.some(
         (c) => c.path === '/api/workspace/workflow-specs'
           && (c.opts.method || '').toUpperCase() === 'POST'
-          && c.opts.body?.box_type === 'contract_review',
+          && c.opts.body?.box_type === 'contract_review'
+          && c.opts.body?.states?.length === 2,
       )).toBe(true);
+    });
+  });
+
+  it('applies a template and fills states', async () => {
+    const { api } = makeApi([]);
+    mount(api);
+    await waitFor(() => screen.getByText('No workflow types yet'));
+    fireEvent.click(screen.getByText('Approval'));
+    await waitFor(() => {
+      const chips = document.querySelector('.wf-state-chips');
+      expect(chips).toBeTruthy();
+      expect(chips.textContent).toContain('pending_approval');
     });
   });
 
