@@ -116,3 +116,91 @@ def test_seed_strategy_creates_po(runtime):
     box = runtime.seed_box("purchase_order", {"vendor_name": "Acme", "total_amount": 750.0})
     assert box["state"] == "draft"
     assert box["id"].startswith("PO-")
+
+
+def test_receive_purchase_order_fully(runtime):
+    skill = ProcurementFinanceSkill()
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order", {"vendor_name": "Acme", "total_amount": 200.0},
+    ))
+    po_id = created["po_id"]
+    asyncio.run(skill.execute(runtime, "submit_purchase_order", {"po_id": po_id}))
+    asyncio.run(skill.execute(runtime, "approve_purchase_order", {"po_id": po_id}))
+    out = asyncio.run(skill.execute(runtime, "receive_purchase_order", {"po_id": po_id}))
+    assert out["status"] == "ok" and out["state"] == "fully_received"
+
+
+def test_receive_purchase_order_partial_then_full(runtime):
+    skill = ProcurementFinanceSkill()
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order", {"vendor_name": "Acme", "total_amount": 200.0},
+    ))
+    po_id = created["po_id"]
+    asyncio.run(skill.execute(runtime, "submit_purchase_order", {"po_id": po_id}))
+    asyncio.run(skill.execute(runtime, "approve_purchase_order", {"po_id": po_id}))
+    p = asyncio.run(skill.execute(runtime, "receive_purchase_order", {"po_id": po_id, "partial": True}))
+    assert p["state"] == "partially_received"
+    f = asyncio.run(skill.execute(runtime, "receive_purchase_order", {"po_id": po_id}))
+    assert f["state"] == "fully_received"
+
+
+def test_box_summary_po_extractor(runtime):
+    from solden.core.box_summary import build_box_summary
+    skill = ProcurementFinanceSkill()
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order",
+        {"vendor_name": "Globex", "total_amount": 4200.0, "currency": "USD", "po_number": "PO-SUM-1"},
+    ))
+    summary = build_box_summary(created["po_id"], db=runtime.db, box_type="purchase_order")
+    assert summary.current_stage == "draft"
+    assert summary.key_fields["vendor_name"] == "Globex"
+    assert summary.key_fields["amount"] == 4200.0
+    assert summary.key_fields["po_number"] == "PO-SUM-1"
+
+
+def test_issue_purchase_order_requires_approved(runtime):
+    skill = ProcurementFinanceSkill()
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order", {"vendor_name": "Acme", "total_amount": 500.0},
+    ))
+    po_id = created["po_id"]
+    # draft PO cannot be issued
+    out = asyncio.run(skill.execute(runtime, "issue_purchase_order", {"po_id": po_id}))
+    assert out["status"] == "blocked"
+    assert "po_not_approved" in out["policy_precheck"]["reason_codes"]
+
+
+def test_issue_purchase_order_writes_to_erp(runtime, monkeypatch):
+    from types import SimpleNamespace
+    from solden.integrations import erp_po_write
+
+    skill = ProcurementFinanceSkill()
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order", {"vendor_name": "Acme", "vendor_id": "V1", "total_amount": 200.0},
+    ))
+    po_id = created["po_id"]
+    asyncio.run(skill.execute(runtime, "submit_purchase_order", {"po_id": po_id}))
+    asyncio.run(skill.execute(runtime, "approve_purchase_order", {"po_id": po_id}))
+
+    # mock the ERP write
+    monkeypatch.setattr(erp_po_write, "is_procurement_erp_write_enabled", lambda: True)
+    monkeypatch.setattr(
+        "solden.integrations.erp_router.get_erp_connection",
+        lambda org: SimpleNamespace(type="quickbooks", access_token="tok", realm_id="R", tenant_id=None, base_url=None),
+    )
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"PurchaseOrder": {"Id": "QB-PO-issue"}}
+
+    class _Client:
+        async def post(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(erp_po_write, "get_http_client", lambda: _Client())
+
+    out = asyncio.run(skill.execute(runtime, "issue_purchase_order", {"po_id": po_id}))
+    assert out["status"] == "issued" and out["erp_po_id"] == "QB-PO-issue"
+    assert runtime.db.get_purchase_order(po_id)["erp_po_id"] == "QB-PO-issue"

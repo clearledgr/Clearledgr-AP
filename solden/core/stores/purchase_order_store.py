@@ -378,6 +378,35 @@ class PurchaseOrderStore:
             })
         return self.get_purchase_order(po_id)  # type: ignore[return-value]
 
+    def set_po_erp_id(
+        self, po_id: str, erp_po_id: str, *, actor_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Stamp the ERP-side PO id after issuance + emit an audit row.
+
+        Issuing an approved PO to the ERP is a side effect, not a state
+        transition (the box stays APPROVED until goods are received), so
+        this patches ``erp_po_id`` directly rather than going through the
+        state machine.
+        """
+        existing = self.get_purchase_order(po_id)
+        if not existing:
+            raise ValueError(f"purchase_order {po_id!r} not found")
+        now = _now_iso()
+        self._patch_purchase_order(po_id, {"erp_po_id": erp_po_id, "updated_at": now})
+        if hasattr(self, "append_audit_event"):
+            self.append_audit_event({
+                "box_id": po_id,
+                "box_type": "purchase_order",
+                "event_type": "purchase_order_issued_to_erp",
+                "actor_type": "agent",
+                "actor_id": actor_id or "procurement",
+                "organization_id": existing.get("organization_id"),
+                "policy_version": CURRENT_PO_POLICY_VERSION,
+                "payload_json": {"erp_po_id": erp_po_id},
+                "idempotency_key": f"po-issued:{po_id}:{erp_po_id}",
+            })
+        return self.get_purchase_order(po_id)
+
     def _patch_purchase_order(self, po_id: str, kwargs: Dict[str, Any]) -> None:
         bad = set(kwargs.keys()) - _PURCHASE_ORDER_ALLOWED_COLUMNS
         if bad:

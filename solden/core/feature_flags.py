@@ -65,6 +65,28 @@ def is_teams_enabled() -> bool:
     return _env_flag("FEATURE_TEAMS_ENABLED", default=False)
 
 
+def is_procurement_chat_enabled() -> bool:
+    """Procurement (purchase_order) chat approval cards.
+
+    Off by default: the outbound PO approval card + decision routing is
+    built and tested with mocked Slack, but wiring it into the live
+    Slack/Teams interactive handler + a real workspace needs live
+    validation. Flip ``FEATURE_PROCUREMENT_CHAT=true`` once that lands.
+    """
+    return _env_flag("FEATURE_PROCUREMENT_CHAT", default=False)
+
+
+def is_procurement_erp_write_enabled() -> bool:
+    """Procurement PO write-back to the ERP (create a PO in QB/Xero/etc).
+
+    Off by default: the dispatch + adapters are built and tested with
+    mocked HTTP, but no PO-create path has been validated against a live
+    ERP sandbox. Flip ``FEATURE_PROCUREMENT_ERP_WRITE=true`` only after
+    per-ERP live validation.
+    """
+    return _env_flag("FEATURE_PROCUREMENT_ERP_WRITE", default=False)
+
+
 # Canonical V1 rejection responses. Shared so every gated surface
 # returns the same shape — makes observability and client-side error
 # handling straightforward.

@@ -109,6 +109,19 @@ def build_box_summary(
         # Current stage (generic across all box types)
         summary.current_stage = item.get("state") or "unknown"
 
+        if box_type == "purchase_order":
+            line_items = item.get("line_items") or []
+            summary.key_fields = {
+                "vendor_name": item.get("vendor_name") or "Unknown",
+                "amount": item.get("total_amount"),
+                "currency": item.get("currency") or "",
+                "po_number": item.get("po_number") or "",
+                "line_count": len(line_items) if isinstance(line_items, list) else 0,
+            }
+            if item.get("erp_po_id"):
+                summary.match_result_summary = f"Issued to ERP ({item['erp_po_id']})"
+            return summary
+
         if box_type != "ap_item":
             # No per-type extractor yet; the stage is the summary.
             return summary

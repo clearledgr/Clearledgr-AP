@@ -50,7 +50,14 @@ _INTENT_TARGET: Dict[str, str] = {
 class ProcurementFinanceSkill(FinanceSkill):
     """Operational skill for purchase_order intents."""
 
-    _INTENTS = frozenset({"create_purchase_order", *_INTENT_TARGET.keys()})
+    _INTENTS = frozenset(
+        {
+            "create_purchase_order",
+            "issue_purchase_order",
+            "receive_purchase_order",
+            *_INTENT_TARGET.keys(),
+        }
+    )
 
     _MANIFEST = SkillCapabilityManifest(
         skill_id="procurement_v1",
@@ -146,6 +153,18 @@ class ProcurementFinanceSkill(FinanceSkill):
         from solden.core.purchase_order_states import validate_po_transition
         if target and not validate_po_transition(current, target):
             reason_codes.append("illegal_transition")
+
+        if normalized == "issue_purchase_order":
+            if current != POStatus.APPROVED.value:
+                reason_codes.append("po_not_approved")
+            if po.get("erp_po_id"):
+                reason_codes.append("already_issued")
+
+        if normalized == "receive_purchase_order":
+            if current not in {
+                POStatus.APPROVED.value, POStatus.PARTIALLY_RECEIVED.value,
+            }:
+                reason_codes.append("po_not_receivable")
 
         routing = None
         if normalized == "approve_purchase_order":
@@ -246,6 +265,66 @@ class ProcurementFinanceSkill(FinanceSkill):
                 "status": "created",
                 "po_id": box.get("id"),
                 "state": box.get("state"),
+            }
+
+        if normalized == "issue_purchase_order":
+            from solden.integrations.erp_po_write import create_purchase_order
+            po = runtime.db.get_purchase_order(context["po_id"])
+            result = await create_purchase_order(
+                runtime.organization_id, po, idempotency_key=idempotency_key,
+            )
+            erp_po_id = result.get("erp_po_id")
+            if result.get("status") == "success" and erp_po_id:
+                runtime.db.set_po_erp_id(context["po_id"], erp_po_id, actor_id=actor_id)
+                return {
+                    "skill_id": self.skill_id,
+                    "intent": normalized,
+                    "status": "issued",
+                    "po_id": context["po_id"],
+                    "erp_po_id": erp_po_id,
+                }
+            return {
+                "skill_id": self.skill_id,
+                "intent": normalized,
+                "status": result.get("status", "error"),
+                "po_id": context["po_id"],
+                "erp_result": result,
+            }
+
+        if normalized == "receive_purchase_order":
+            import uuid as _uuid
+            po = runtime.db.get_purchase_order(context["po_id"])
+            partial = bool(payload.get("partial"))
+            target_state = (
+                POStatus.PARTIALLY_RECEIVED.value if partial
+                else POStatus.FULLY_RECEIVED.value
+            )
+            # record a goods receipt (best-effort; the box state is the
+            # source of truth for the lifecycle)
+            try:
+                runtime.db.save_goods_receipt({
+                    "gr_id": f"GR-{_uuid.uuid4().hex[:16]}",
+                    "organization_id": runtime.organization_id,
+                    "po_id": context["po_id"],
+                    "po_number": po.get("po_number", ""),
+                    "vendor_name": po.get("vendor_name", ""),
+                    "received_by": actor_id,
+                    "line_items": payload.get("line_items", []),
+                    "status": "partial" if partial else "received",
+                })
+            except Exception:  # noqa: BLE001
+                logger.warning("[procurement] goods receipt save failed for %s", context["po_id"])
+            box = box_registry.update_box(
+                _BOX_TYPE, context["po_id"], runtime.db,
+                state=target_state, actor_id=actor_id,
+                reason=str(payload.get("reason") or "goods received"),
+            )
+            return {
+                "skill_id": self.skill_id,
+                "intent": normalized,
+                "status": "ok",
+                "po_id": context["po_id"],
+                "state": box.get("state") if isinstance(box, dict) else target_state,
             }
 
         target = context["target_state"]
