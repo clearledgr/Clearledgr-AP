@@ -51,12 +51,12 @@ export function PrivacyPage() {
         </p>
 
         <h2>Sub-processors</h2>
-        <ul>
-          <li>Railway (managed hosting, US/EU regions)</li>
-          <li>Google Cloud (Gmail API access where customer connects Gmail)</li>
-          <li>Anthropic (Claude API for narrative summaries; deterministic AP routing does not call any LLM)</li>
-          <li>Sentry (error tracking; PII-scrubbed)</li>
-        </ul>
+        <p>
+          We use vetted sub-processors for hosting, error tracking, and the
+          optional integrations a customer connects. A current list, with each
+          provider and what it processes, is available on request and in our
+          Data Processing Agreement.
+        </p>
 
         <h2>Your rights</h2>
         <p>
