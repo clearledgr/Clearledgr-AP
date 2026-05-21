@@ -148,33 +148,19 @@ export function TermsPage() {
 export function RequestDemoPage() {
   return html`
     <main class="cl-legal-shell cl-legal-shell-demo">
-      ${COMMON_HEADER("Let's set up your workspace.", 'Get started')}
+      ${COMMON_HEADER("Get started with Solden.", 'Welcome')}
       <section class="cl-legal-body">
         <p class="cl-legal-lead">
-          Solden is sold through a sales-led onboarding so we can
-          properly connect your ERP, configure your AP policy, and
-          integrate with Slack or Teams before your team's first
-          invoice arrives. Reach out and we'll have you up and running
-          inside a week.
-        </p>
-
-        <h2>Pilot motion</h2>
-        <ul>
-          <li>30-minute scoping call (your AP volume, ERP, approval routing today)</li>
-          <li>Connect your ERP read-only first to map vendors + GL</li>
-          <li>Slack/Teams approval card preview against your real invoices</li>
-          <li>Production cut-over with parallel-run for the first close cycle</li>
-        </ul>
-
-        <h2>Contact</h2>
-        <p>
-          Email <a href="mailto:hello@soldenai.com">hello@soldenai.com</a>
-          with your company name and current AP stack — we'll respond
-          within one business day.
+          Solden is set up with you. We connect your systems and configure
+          your workflows before you go live.
         </p>
         <p>
-          Already have an invite link from your admin? Open it directly
-          to set your password.
+          New here? <a href="https://soldenai.com/contact.html">Request a demo</a>
+          and we'll take it from there.
+        </p>
+        <p>
+          Already have an invite link from your admin? Open it directly to set
+          your password.
         </p>
       </section>
       <a class="cl-legal-back" href="/login">← Back to sign in</a>

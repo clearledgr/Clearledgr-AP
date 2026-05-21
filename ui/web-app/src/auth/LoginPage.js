@@ -146,7 +146,7 @@ export function LoginPage() {
         </form>
 
         <p class="cl-auth-fineprint">
-          Don't have an account yet? <a href="/request-demo">Request a demo</a>.
+          Don't have an account yet? <a href="https://soldenai.com/contact.html">Request a demo</a>.
           If your team admin sent you an invite link, open it directly.
         </p>
         <p class="cl-auth-fineprint">
