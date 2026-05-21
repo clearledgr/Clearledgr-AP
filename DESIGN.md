@@ -1,34 +1,35 @@
 # Design System — Solden
 
 ## Product Context
-- **What this is:** Solden is an embedded finance-ops execution layer. It coordinates work across the systems finance teams already use instead of forcing them into a new standalone back office.
-- **Product analogy:** The current Gmail/AP wedge should feel like Streak for finance ops, but that is the MVP interaction model, not the full product boundary.
-- **Who it's for:** Finance teams at growing companies who need execution, follow-up, approvals, and system-of-record updates to happen across inbox, chat, ERP, and other finance surfaces.
-- **Primary product truth:** Solden is broader than Gmail and broader than AP. Gmail-first AP is the first production wedge.
-- **Core promise:** Work gets identified, routed, executed, and audited where finance already operates.
+- **What this is:** Solden is the workflow runtime for the back office. It runs back-office workflows end to end (states, approvals, audit, exceptions) across the systems a team already uses, instead of forcing them into a new standalone tool.
+- **Box types, not one product:** a workflow is a "box type." Accounts payable (`ap_item`) is the first production box type; procurement / purchase orders and bank reconciliation are peers; tenants declare their own box types from a `WorkflowSpec` with no bespoke code. The product is the runtime, not any single workflow.
+- **Who it's for:** back-office teams (finance first) at growing companies who need work identified, routed, executed, and audited across inbox, chat, ERP, and other surfaces, for whatever workflow they run.
+- **Core promise:** declare a workflow and the runtime runs it. Every step on the record, every exception surfaced, the trail portable, wherever the team already operates.
+- **Positioning truth:** Solden transcends finance. AP is the live wedge; the same runtime runs procurement, contract review, vendor onboarding, access requests, and any back-office workflow with steps + approvals + an audit trail (see the public Use cases page). Lead with the runtime, not AP.
 - **Primary surfaces today:**
   - **Render targets** (where decisions happen): Gmail thread panel, Slack and Teams approval cards, NetSuite SuiteApp, SAP Fiori extension, ERP-native follow-ons.
-  - **Coordination layer** (`workspace.clearledgr.com`): Home (live agent activity ribbon), Activity, Exceptions, Records (read-only directory), Vendors, Reports, Audit log, Approval rules, Connections, API keys, Settings.
-- **Broader surface model:** Every render target inherits the same embedded-work doctrine. The workspace is not a render target — it's the control center that watches the render targets and intervenes when the agent escalates.
+  - **Coordination layer** (`workspace.soldenai.com`): the control center, see the Workspace Surface Pattern.
+- **Broader surface model:** Every render target inherits the same embedded-work doctrine. The workspace is not a render target, it's the control center that watches the render targets and intervenes when the agent escalates.
 
 ## Core UX Doctrine
-1. **Embedded work, not dashboard migration.** Solden lives inside the systems where finance work already happens — Gmail, Slack, Teams, the ERP.
-2. **Streak is the Gmail interaction model.** The Gmail/AP wedge should feel like the finance-operations version of Streak inside Gmail.
+1. **One runtime, many workflows.** The same primitives (states, transitions, audit hash-chain, exceptions) run every box type. A new workflow type rides the generic surfaces by default; it earns bespoke screens only when it has to.
+2. **Embedded work, not dashboard migration.** Decisions happen in the systems where work already lives, Gmail, Slack, Teams, the ERP. Solden renders into those surfaces (render targets) instead of dragging people into a new console.
 3. **The thread panel is for execution.** It handles the current record only: state, blockers, evidence, one primary action, a few secondary actions.
-4. **The workspace SPA is the coordination-layer control center.** The hero is the live agent activity ribbon. The workspace is not a workflow desktop and not a second pipeline UI; routine approve/reject/post/snooze decisions belong in the render targets (Slack/Teams/Gmail/ERP). The workspace exists for (1) live situational awareness, (2) policy + identity configuration, (3) intervention when the agent escalates, (4) audit + governance, (5) connections to render targets.
-5. **Home is a hub, not a dashboard.** It is for quick access, recent work, upcoming follow-ups, and secondary tools. It should not lead with KPI cards or setup sprawl.
-6. **Admin tools stay secondary.** Connections, rules, team, plan, status, and similar pages should be discoverable but never dominate the main work path.
-7. **Copy should be operational and plain.** Use short labels and direct task language. Avoid internal platform wording or technical explanations.
-8. **Each surface should feel native to its host.** Gmail pages should feel Gmail-native; Slack/Teams approvals should feel chat-native; ERP follow-ons should feel system-native.
+4. **The workspace is the control center, not a workflow desktop.** Routine approve / reject / post / snooze decisions belong in the render targets. The workspace exists for (1) live situational awareness, (2) policy + identity configuration, (3) intervention when the agent escalates, (4) audit + governance, (5) connections + the no-code workflow builder.
+5. **Admin + config stay secondary.** Connections, rules, keys, settings should be discoverable but never dominate the main work path.
+6. **Copy should be operational and plain.** Short labels, direct task language. No internal platform jargon in UI copy.
+7. **Each surface should feel native to its host.** Gmail pages feel Gmail-native; Slack / Teams approvals feel chat-native; ERP follow-ons feel system-native. The Gmail extension follows Streak's in-inbox grammar; that is the Gmail-surface model, not the whole product.
 
 ## Aesthetic Direction
-- **Direction:** Embedded operational software for finance teams.
+- **Direction:** A calm, content-forward control center for back-office work, plus embedded panels native to each render target.
 - **Mood:** Fast, calm, precise, trustworthy.
-- **Decoration level:** Minimal. Flat surfaces, strong typography, quiet borders, extremely light shadow.
+- **Decoration level:** Minimal. Flat surfaces, strong typography, quiet borders, extremely light shadow. Minimalist by default: light chrome, the work carries the color.
 - **Reference hierarchy:**
-  - Primary for Gmail surfaces: Streak Home, Streak AppMenu, Streak queue/list patterns
-  - Secondary: Stripe Dashboard typography discipline, Ramp finance semantics, Mercury restraint
-- **Visual goal:** A user should feel like they are still inside the host tool, just with a much better operating system for finance work.
+  - Primary (workspace control center): Linear, Vercel, Datadog, Modal. Restrained, real-time, dense but calm.
+  - Gmail surface only: Streak's in-inbox queue / panel patterns.
+  - Supporting: Stripe Dashboard typography discipline, Mercury restraint.
+  - Anti-references: BILL.com, Ramp admin, Mixmax, generic SaaS dashboards.
+- **Visual goal:** the workspace feels like a calm operating console; embedded panels feel native to their host.
 
 ## Brand Identity
 - **Logomark:** Three stacked slabs forming a stylized "S" — two navy horizontal bars top + bottom with a teal middle stripe running upper-right to lower-left. The slants on the navy bars feed visually into the diagonal so the silhouette reads as a continuous S. Implemented as inline SVG in [`ui/web-app/src/shell/BrandMark.js`](ui/web-app/src/shell/BrandMark.js).
@@ -113,49 +114,24 @@
 - **Border radius:** 6px / 8px / 12px only
 - **Shadows:** extremely subtle; borders should do most of the structural work
 
-## Gmail/AP MVP Information Architecture
+## Workspace Navigation (current)
+The workspace sidebar is a light rail, grouped by what the operator does:
+- **Primary:** Home, Activity, Exceptions
+- **WORKFLOWS** (the box types you operate): Records (AP), Procurement, Builder (the no-code workflow-type builder)
+- **DATA** (reference surfaces): Vendors, Reports, Audit log
+- **ADMIN:** Approval rules, Connections, API keys, Settings
 
-### Primary Work Path
-- `Pipeline`
-- `Home`
-- `Review`
-- `Upcoming`
+Rules:
+- Keep top-level items few; the chrome recedes so the work shows.
+- Work surfaces (the box types) live under WORKFLOWS; reference/read surfaces live under DATA.
+- Dynamic detail pages never appear as peers in the nav.
+- Quick navigation lives in the header + the `⌘K` palette, not a quick-access card row.
 
-### Secondary Tools
-- `Connections`
-- `Activity`
-- `Vendors`
-- `Templates`
-- `Approval Rules`
-- `Team`
-- `Company`
-- `Plan`
-- `Reconciliation`
-- `System Status`
-- `Reports`
-
-### Navigation Rules
-- Default pinned Gmail nav stays intentionally sparse: `Pipeline` and `Home`
-- `Review` and `Upcoming` are part of the core work path, but should not crowd the default left nav for every role
-- Secondary tools should live under Home, in secondary navigation, or behind role gates
-- Dynamic detail pages never appear as peers in the primary nav
-
-## Home Pattern
-- Home is a **lightweight foyer**, not the default control center.
-- It should use this order:
-  1. centered welcome / identity
-  2. thin setup or status banner if needed
-  3. horizontal quick-access strip
-  4. broad 2-column panels for recent work, upcoming work, saved views, and tools
-- Home should feel open and light.
-- Home should not lead with:
-  - KPI dashboards
-  - big setup cards
-  - long explanatory copy
-  - admin/settings sprawl
+## Gmail Extension IA (host-scoped, legacy wedge)
+The Gmail extension keeps its own in-inbox navigation following Streak's grammar (`Pipeline`, `Home`, `Review`, `Upcoming`, with secondary tools behind Home / role gates). This is the Gmail-surface model only and does not govern the workspace IA above. The Gmail Home is a **lightweight foyer** (centered welcome → thin status banner → horizontal quick-access strip → 2-column panels); that foyer doctrine applies to the Gmail surface only, never the workspace.
 
 ## Workspace Surface Pattern
-- The Workspace Home (`workspace.clearledgr.com/`) is the **coordination-layer control center** — the leader's daily landing page where they see what the agent is doing across every surface (Gmail, Slack, Teams, NetSuite SuiteApp, SAP Fiori extension) right now, what needs human judgment, what just shipped to ERP. It is **not** a foyer (Gmail-era doctrine, retained for the Gmail surface), and it is **not** a BILL.com / Ramp / Mixmax admin overview.
+- The Workspace Home (`workspace.soldenai.com/`) is the **coordination-layer control center** — the leader's daily landing page where they see what the agent is doing across every surface (Gmail, Slack, Teams, NetSuite SuiteApp, SAP Fiori extension) right now, what needs human judgment, what just shipped to ERP. It is **not** a foyer (Gmail-era doctrine, retained for the Gmail surface), and it is **not** a BILL.com / Ramp / Mixmax admin overview.
 - Reference hierarchy:
   - **Linear** — sticky command-center feel, real-time activity, dense lists with status indicators
   - **Vercel deployments** — live activity stream is the page; metrics are sidecar
@@ -180,9 +156,6 @@
   - **BILL.com KPI tile row** — big static numbers leading the page with no live pulse, no activity context. The numbers belong as compact tiles, not as the hero element.
   - **Sticky `Loading…` placeholders** — every panel falls through to an empty or error state. Each panel fetches independently; one slow endpoint never gates the rest of the page.
   - **Static-only data** — if the page doesn't change while the leader watches, the live SSE stream is broken or under-used. The activity ribbon is the canary for "is the control center actually live?"
-
-## Home Pattern (Gmail surface only)
-- The §Home Pattern above (welcome → quick-access strip → 2-col panels) applies to the **Gmail extension's Home route**, where Streak's foyer model is the right reference. The Workspace Surface Pattern (this section) supersedes it for `workspace.clearledgr.com/`.
 
 ## Records Pattern (workspace)
 - The workspace `/records` page is a **read-only directory** of AP records. It is for search, filter, and inspection, not for batch decisions. The workspace doesn't run the workflow — it surfaces state and intervenes when the agent escalates.
@@ -218,7 +191,7 @@
 ## Component Patterns
 
 ### Buttons
-- **Primary:** mint background, navy text
+- **Primary:** teal background, navy text
 - **Secondary:** white background, border, dark text
 - **Ghost:** transparent background, muted ink or brand-muted text
 - **Destructive:** red background, white text
@@ -274,3 +247,4 @@
 | 2026-05-02 | Workspace Home recalibrated: coordination-layer control center, not foyer | Mo: DESIGN.md was Gmail-era (Streak foyer). Once Solden broadened to a coordination layer with Gmail / Slack / Teams / NetSuite / SAP as render targets and the workspace as the control center, the foyer doctrine no longer fits the workspace surface. Reference hierarchy moves to Linear / Vercel / Datadog / Modal (still anti-Bill / anti-Ramp). Hero becomes the live agent activity ribbon (SSE-driven); stat tiles return as a compact control-center row with a live-pulse dot; quick-access cards drop (header + ⌘K cover navigation). Foyer pattern preserved for the Gmail Home only. |
 | 2026-05-02 | Solden rebrand applied | Mo lifted the rebrand hold and shipped the brand kit: navy `#0A1F44`, teal palette `#1FC7B6 / #18BFB0 / #12B3A6`, white. Wordmark "solden" in Inter 700 lowercase, tracking -1% to -2%. Logomark is a three-slab stylized S (navy bars + teal middle stripe). DESIGN.md, the SidebarNav, login + invite-accept cards, footer, page title, legal copy, and operational status strings all swept from "Solden" → "Solden". Domain stays at clearledgr.com for now (cookie domain + SAML SP URLs unchanged); `@clearledgr.com` mailto addresses moved to `@soldenai.com`. Old `--cl-mint*` tokens aliased to the new teal palette so unfinished call sites keep compiling. |
 | 2026-05-21 | Workspace sidebar goes light | Mo: "we don't need it. I'm a minimalist." The navy slab sidebar was the more enterprise-dashboard look and at odds with the Linear / Vercel references the control center aims for. Sidebar is now a light rail: `--cl-surface` background, `--cl-ink-primary` text, `--cl-border` hairline divider, muted group labels, subtle `--cl-bg` hover, and a faint `--cl-teal-soft` active fill with `--cl-teal-600` text. Brand lockup flips to the navy `primary` variant. Navy is reserved for ink, the logomark, dark controls, and accents, not chrome fills. |
+| 2026-05-21 | Doctrine updated from Clearledgr to Solden | Mo: "that design file was written for Clearledgr; update it to match Solden." The brand kit was already Solden, but the positioning was still the Clearledgr/Gmail-wedge era ("embedded finance-ops execution layer", "Streak for finance ops", "Gmail-first AP is the first production wedge", a dead Gmail IA, `workspace.clearledgr.com`). Rewrote Product Context, Core UX Doctrine, and Aesthetic Direction to Solden's shipped reality: **the workflow runtime for the back office**, box types (AP is one, not the product), the broad "transcends finance" position from the live landing page, and the control-center references (Linear / Vercel / Datadog / Modal). Replaced the legacy Gmail IA with the current workspace nav (Primary / WORKFLOWS / DATA / ADMIN) and scoped the Streak/foyer model to the Gmail extension only. Fixed the domain to `soldenai.com` and "mint" copy to "teal". Brand system (color / type / tokens / components) and the Workspace Surface + Records patterns were already current and kept. |
