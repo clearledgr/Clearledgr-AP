@@ -2288,6 +2288,18 @@ body.theme-light-landing .section-eyebrow::before {
   margin: 0 0 10px;
 }
 .privacy p:last-child { margin-bottom: 0; }
+.privacy ul {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.privacy li {
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-size: 16px;
+  line-height: 1.65;
+  color: rgba(31, 27, 22, 0.85);
+  margin-bottom: 6px;
+}
+.privacy li:last-child { margin-bottom: 0; }
 .privacy a {
   color: #1F1B16;
   text-decoration: underline;
