@@ -55,7 +55,15 @@ def test_sensitive_route_inventory_requires_auth_by_default():
             for dep in route.dependant.dependencies
         }
         has_auth_dependency = bool(
-            {"get_current_user", "get_optional_user", "require_ops_user", "require_admin_user"}
+            {
+                "get_current_user", "get_optional_user",
+                "require_ops_user", "require_admin_user",
+                # Workspace-role guards authenticate (they Depend on
+                # get_current_user) AND then enforce a role — stronger than
+                # bare get_current_user. Used by the workflow-spec authoring API.
+                "require_workspace_admin", "require_workspace_owner",
+                "require_workspace_member",
+            }
             & dependency_names
         )
         if has_auth_dependency:

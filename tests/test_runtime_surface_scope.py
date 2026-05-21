@@ -250,7 +250,15 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         #     audit chain-status + exports + retention (5), delegation
         #     rules + escalation policies (5)
         #   * Records read API + intervention surface
-        assert len(paths) <= 380
+        # 2026-05-21: declarative workflow platform (Level 1 + 2). Cap raised
+        # 380 → 395 to cover the 8 generic surface templates that serve EVERY
+        # tenant-declared Box type (box_type/box_id/action are path params, so
+        # the surface does NOT grow per declared type):
+        #   * spec authoring: /api/workspace/workflow-specs (+/validate,
+        #     /{box_type}, /{box_type}/versions/{version}/{activate,archive})
+        #   * generic boxes: /api/workspace/workflows/{box_type}
+        #     (+/{box_id}, +/{box_id}/{action})
+        assert len(paths) <= 395
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths

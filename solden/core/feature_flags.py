@@ -87,6 +87,22 @@ def is_procurement_erp_write_enabled() -> bool:
     return _env_flag("FEATURE_PROCUREMENT_ERP_WRITE", default=False)
 
 
+def is_workflow_hooks_enabled() -> bool:
+    """Customer code hooks + conditions + effects on declarative Box types.
+
+    Off by default. When off, the hook dispatcher is a complete no-op, so the
+    generic Box transition path behaves exactly as if no hooks existed — this
+    is what keeps the feature dark in prod and inert in the test suite.
+
+    The condition (expression) tier is safe on its own, but the full surface
+    includes customer code executed in the WASM sandbox; both stay behind this
+    single flag, which must not be flipped for any tenant until the sandbox has
+    passed an adversarial security review. Flip ``FEATURE_WORKFLOW_HOOKS=true``
+    only then.
+    """
+    return _env_flag("FEATURE_WORKFLOW_HOOKS", default=False)
+
+
 # Canonical V1 rejection responses. Shared so every gated surface
 # returns the same shape — makes observability and client-side error
 # handling straightforward.

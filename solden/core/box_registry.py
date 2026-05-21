@@ -107,10 +107,54 @@ def register(box_type: BoxType) -> None:
 
 
 def get(name: str) -> BoxType:
-    """Return the BoxType for *name*. Raises KeyError if unknown."""
+    """Return the statically-registered BoxType for *name*. KeyError if unknown.
+
+    Only built-in types and code-declared specs live in ``BOX_TYPES``.
+    Tenant-authored DB specs are resolved per-org via :func:`resolve`.
+    """
     if name not in BOX_TYPES:
         raise KeyError(f"Unknown box_type: {name!r}")
     return BOX_TYPES[name]
+
+
+# A tenant DB spec can't be a global registry entry (two orgs may define the
+# same box_type name differently), so the workflow layer installs an org-aware
+# resolver here that builds a transient BoxType from the resolved spec.
+_DYNAMIC_RESOLVER: Optional[Any] = None
+
+
+def set_dynamic_resolver(fn: Optional[Any]) -> None:
+    """Install an org-aware ``(box_type, organization_id) -> BoxType|None`` hook."""
+    global _DYNAMIC_RESOLVER
+    _DYNAMIC_RESOLVER = fn
+
+
+def resolve(name: str, organization_id: Optional[str] = None) -> BoxType:
+    """Resolve a BoxType, statically or via the org-aware dynamic resolver.
+
+    Used where per-type policy (e.g. ``exception_state``) is needed for a type
+    that may be a tenant DB spec. Raises KeyError if unresolvable.
+    """
+    bt = BOX_TYPES.get(name)
+    if bt is not None:
+        return bt
+    if _DYNAMIC_RESOLVER is not None:
+        bt = _DYNAMIC_RESOLVER(name, organization_id)
+        if bt is not None:
+            return bt
+    raise KeyError(f"Unknown box_type: {name!r}")
+
+
+def _dispatch_source_table(box_type: str) -> str:
+    """Source table for CRUD dispatch.
+
+    Statically-registered types report their own table; any other type is a
+    declarative spec riding the shared ``boxes`` table. The generic store
+    resolves the governing spec itself (from the box row / payload org), so
+    dispatch needs no org context.
+    """
+    bt = BOX_TYPES.get(box_type)
+    return bt.source_table if bt is not None else "boxes"
 
 
 def get_box(box_type: str, box_id: str, db: Any) -> Optional[Dict[str, Any]]:
@@ -121,17 +165,17 @@ def get_box(box_type: str, box_id: str, db: Any) -> Optional[Dict[str, Any]]:
     joins, health drill-down, the coordination engine) can use without
     knowing which table a Box lives in.
     """
-    bt = get(box_type)
-    if bt.source_table == "ap_items":
+    source_table = _dispatch_source_table(box_type)
+    if source_table == "ap_items":
         return db.get_ap_item(box_id)
-    if bt.source_table == "bank_match_boxes":
+    if source_table == "bank_match_boxes":
         return db.get_bank_match(box_id)
-    if bt.source_table == "purchase_orders":
+    if source_table == "purchase_orders":
         return db.get_purchase_order(box_id)
-    if bt.source_table == "boxes":
+    if source_table == "boxes":
         return db.get_generic_box(box_type, box_id)
     raise NotImplementedError(
-        f"get_box has no loader for source_table={bt.source_table!r}"
+        f"get_box has no loader for source_table={source_table!r}"
     )
 
 
@@ -141,17 +185,17 @@ def create_box(box_type: str, payload: Dict[str, Any], db: Any) -> Dict[str, Any
     Generic counterpart to :func:`get_box` so the engine can open a Box
     without naming a table.
     """
-    bt = get(box_type)
-    if bt.source_table == "ap_items":
+    source_table = _dispatch_source_table(box_type)
+    if source_table == "ap_items":
         return db.create_ap_item(payload)
-    if bt.source_table == "bank_match_boxes":
+    if source_table == "bank_match_boxes":
         return db.create_bank_match(payload)
-    if bt.source_table == "purchase_orders":
+    if source_table == "purchase_orders":
         return db.create_purchase_order_box(payload)
-    if bt.source_table == "boxes":
+    if source_table == "boxes":
         return db.create_generic_box(box_type, payload)
     raise NotImplementedError(
-        f"create_box has no creator for source_table={bt.source_table!r}"
+        f"create_box has no creator for source_table={source_table!r}"
     )
 
 
@@ -181,13 +225,13 @@ def update_box(
       requires ``state`` and a non-empty actor. Arbitrary ``**fields``
       are rejected rather than silently dropped.
     """
-    bt = get(box_type)
-    if bt.source_table == "ap_items":
+    source_table = _dispatch_source_table(box_type)
+    if source_table == "ap_items":
         patch = dict(fields)
         if state is not None:
             patch["state"] = state
         return db.update_ap_item(box_id, **patch)
-    if bt.source_table == "bank_match_boxes":
+    if source_table == "bank_match_boxes":
         if state is None:
             raise ValueError("update_box for bank_match requires a 'state'")
         if fields:
@@ -198,7 +242,7 @@ def update_box(
         return db.update_bank_match_state(
             box_id, state, actor_id=actor_id or "", reason=reason or ""
         )
-    if bt.source_table == "purchase_orders":
+    if source_table == "purchase_orders":
         if state is None:
             raise ValueError("update_box for purchase_order requires a 'state'")
         if fields:
@@ -209,7 +253,7 @@ def update_box(
         return db.update_purchase_order_state(
             box_id, state, actor_id=actor_id or "", reason=reason or ""
         )
-    if bt.source_table == "boxes":
+    if source_table == "boxes":
         if state is None:
             raise ValueError("update_box for boxes requires a 'state'")
         if fields:
@@ -221,7 +265,7 @@ def update_box(
             box_type, box_id, state, actor_id=actor_id or "", reason=reason or ""
         )
     raise NotImplementedError(
-        f"update_box has no writer for source_table={bt.source_table!r}"
+        f"update_box has no writer for source_table={source_table!r}"
     )
 
 
@@ -297,6 +341,8 @@ __all__ = [
     "BOX_TYPES",
     "register",
     "get",
+    "resolve",
+    "set_dynamic_resolver",
     "get_box",
     "create_box",
     "update_box",

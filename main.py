@@ -121,6 +121,13 @@ from solden.api.outbox_ops import router as outbox_ops_router
 from solden.api.outlook_routes import router as outlook_router
 from solden.api.bank_match_routes import router as bank_match_router
 from solden.api.purchase_order_routes import router as purchase_order_router
+from solden.api.workflow_routes import (
+    mount_workflow_routers,
+    workflow_allowlist_patterns,
+)
+# Eager-import so built-in declarative specs register before the allowlist
+# tuple and the route surface are built below.
+import solden.box_specs  # noqa: F401
 from solden.api.box_export import router as box_export_router
 from solden.api.box_owner_routes import router as box_owner_router
 from solden.api.box_revert_routes import router as box_revert_router
@@ -911,6 +918,12 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/workspace/period-close/lock/[^/]+$",
         r"^/api/workspace/period-close/unlock/[^/]+$",
     )
+) + tuple(
+    # Declarative workflow platform — control plane + data plane. Fixed
+    # templates (box_type / box_id / action are path params) so these cover
+    # every tenant-declared type. Folded in at construction so BOTH the
+    # startup route prune and the per-request LegacySurfaceGuard honor them.
+    re.compile(pattern) for pattern in workflow_allowlist_patterns()
 )
 
 
@@ -1759,6 +1772,11 @@ app.include_router(box_revert_router)
 # pattern generalizes" claim.
 app.include_router(bank_match_router)
 app.include_router(purchase_order_router)
+
+# Declarative workflow platform — built-in declarative types + tenant-authored
+# specs. One generic data-plane router + the spec authoring control plane,
+# both mounted here so they precede the import-time strict-profile prune.
+mount_workflow_routers(app)
 
 # Wave 2 / C4: manual payment confirmation surface
 app.include_router(payment_confirmations_router)

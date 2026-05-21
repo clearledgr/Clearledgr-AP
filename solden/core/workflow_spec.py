@@ -76,6 +76,10 @@ class WorkflowSpec:
     fields: Tuple[str, ...] = ()
     exception_state: Optional[str] = None
     policy_version: str = CURRENT_WORKFLOW_POLICY_VERSION
+    # Storage version this spec was resolved at (1 for code-declared built-ins;
+    # the DB row version for tenant specs). Boxes pin this so activating a new
+    # version never changes the legal transitions of in-flight Boxes.
+    version: int = 1
     # Phase 3 surface — declared now, interpreted by the sandbox later.
     hooks: Dict[str, Any] = field(default_factory=dict)
     conditions: Dict[str, Any] = field(default_factory=dict)
@@ -221,13 +225,20 @@ def register_spec(spec: WorkflowSpec) -> WorkflowSpec:
     return spec
 
 
-def _register_box_type(spec: WorkflowSpec) -> None:
+def boxtype_from_spec(spec: WorkflowSpec) -> "Any":
+    """Derive a (non-registered) ``box_registry.BoxType`` from a spec.
+
+    Used both by :func:`register_spec` (built-ins, registered statically) and
+    by the box_registry dynamic resolver (tenant DB specs, resolved per-org
+    and never stored in the global registry, since two orgs may define the
+    same ``box_type`` name differently).
+    """
     from solden.core import box_registry
 
     terminal = frozenset(spec.terminal_states)
     open_states = frozenset(s for s in spec.states if s not in terminal)
     exc = spec.exception_state
-    box_registry.register(box_registry.BoxType(
+    return box_registry.BoxType(
         name=spec.box_type,
         source_table="boxes",
         state_field="state",
@@ -236,7 +247,12 @@ def _register_box_type(spec: WorkflowSpec) -> None:
         exception_states=frozenset({exc}) if exc else frozenset(),
         initial_state=spec.initial_state,
         exception_state=exc,
-    ))
+    )
+
+
+def _register_box_type(spec: WorkflowSpec) -> None:
+    from solden.core import box_registry
+    box_registry.register(boxtype_from_spec(spec))
 
 
 def get_spec(box_type: str) -> Optional[WorkflowSpec]:

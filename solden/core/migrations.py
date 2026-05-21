@@ -5649,3 +5649,93 @@ def _v92_generic_boxes(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_boxes_org_type_created "
         "ON boxes (organization_id, box_type, created_at)"
     )
+
+
+@migration(
+    93,
+    "workflow_specs: tenant-authored, versioned declarative Box types "
+    "(Level 2 — customers define workflows at runtime, no deploy)",
+)
+def _v93_workflow_specs(cur, db):
+    """Per-tenant, versioned WorkflowSpec storage.
+
+    A row is one version of one tenant's declared Box type. Versions are
+    immutable once activated; editing creates a new version. Exactly one
+    version per ``(organization_id, box_type)`` may be ``active`` at a time
+    (enforced by the partial unique index) — Boxes pin the version they were
+    created under (``boxes.spec_version``) so activating a new version never
+    retroactively changes the legal transitions of in-flight Boxes.
+
+    ``spec_json`` is the serialized :class:`WorkflowSpec` (see
+    ``workflow_spec.to_json``). The resolver consults this table first, then
+    falls back to code-registered built-in specs.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_specs (
+            organization_id TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            spec_json JSONB NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            archived_at TEXT,
+            PRIMARY KEY (organization_id, box_type, version)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_specs_one_active "
+        "ON workflow_specs (organization_id, box_type) WHERE status = 'active'"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_specs_org "
+        "ON workflow_specs (organization_id, status)"
+    )
+    try:
+        cur.execute(
+            "ALTER TABLE workflow_specs "
+            "ADD CONSTRAINT workflow_specs_status_check "
+            "CHECK (status IN ('draft', 'active', 'archived'))"
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
+
+
+@migration(
+    94,
+    "workflow_hook_runs: audit of customer code hook executions "
+    "(observability for the WASM sandbox tier)",
+)
+def _v94_workflow_hook_runs(cur, db):
+    """Per-execution record of a workflow hook run.
+
+    Customer code is sandboxed and fail-closed, but you still need to see what
+    it did: which hook ran on which Box, whether it allowed/denied, how long it
+    took, and any error. One row per hook invocation (only written when
+    ``FEATURE_WORKFLOW_HOOKS`` is on).
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_hook_runs (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            box_type TEXT NOT NULL,
+            box_id TEXT NOT NULL,
+            hook_key TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            deny_reason TEXT,
+            duration_ms INTEGER,
+            error TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_hook_runs_org_box "
+        "ON workflow_hook_runs (organization_id, box_type, box_id)"
+    )

@@ -57,7 +57,8 @@ class GenericBoxStore:
         box_id = payload.get("id") or f"BX-{uuid.uuid4().hex[:16]}"
         now = datetime.now(timezone.utc).isoformat()
         state = spec.initial_state
-        spec_version = int(payload.get("spec_version") or 1)
+        # Pin to the version the active spec resolved at (1 for code built-ins).
+        spec_version = int(payload.get("spec_version") or getattr(spec, "version", 1) or 1)
 
         data: Dict[str, Any] = {}
         if isinstance(payload.get("data"), dict):
@@ -178,13 +179,35 @@ class GenericBoxStore:
                 f"{target_state!r} (box_id={box_id})"
             )
 
+        # Hooks/conditions/effects — a complete no-op unless FEATURE_WORKFLOW_HOOKS
+        # is on. A deny here vetoes the transition; an allow may carry a
+        # whitelisted data patch (reserved columns can never be patched).
+        from solden.core.hooks.dispatcher import HookDenied, run_transition_hooks
+        decision = run_transition_hooks(
+            spec, existing, current_state, target_state, actor=actor_id,
+        )
+        if not decision.allow:
+            raise HookDenied(decision.deny_reason or "hook_denied")
+        patch = {
+            k: v for k, v in (decision.data_patch or {}).items()
+            if k not in RESERVED_DATA_KEYS
+        }
+
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "UPDATE boxes SET state = %s, updated_at = %s WHERE id = %s",
-                (target_state, now, box_id),
-            )
+            if patch:
+                merged = {**(existing.get("data") or {}), **patch}
+                cur.execute(
+                    "UPDATE boxes SET state = %s, data = %s::jsonb, updated_at = %s "
+                    "WHERE id = %s",
+                    (target_state, json.dumps(merged), now, box_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE boxes SET state = %s, updated_at = %s WHERE id = %s",
+                    (target_state, now, box_id),
+                )
             conn.commit()
 
         if hasattr(self, "append_audit_event"):
@@ -203,6 +226,36 @@ class GenericBoxStore:
             })
 
         return self.get_generic_box(box_type, box_id)  # type: ignore[return-value]
+
+    def record_hook_run(
+        self,
+        *,
+        organization_id: str,
+        box_type: str,
+        box_id: str,
+        hook_key: str,
+        outcome: str,
+        deny_reason: str = "",
+        duration_ms: Optional[int] = None,
+        error: str = "",
+    ) -> None:
+        """Append an audit row for one hook execution (best-effort)."""
+        self.initialize()
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO workflow_hook_runs "
+                "(id, organization_id, box_type, box_id, hook_key, outcome, "
+                " deny_reason, duration_ms, error, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    f"HR-{uuid.uuid4().hex[:16]}", organization_id, box_type,
+                    box_id, hook_key, outcome, deny_reason or None,
+                    duration_ms, error or None, now,
+                ),
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------
     # Internals

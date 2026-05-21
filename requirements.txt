@@ -16,6 +16,11 @@ jinja2>=3.1.0
 httpx>=0.26.0
 aiohttp>=3.9.0
 
+# WASM sandbox — runs customer workflow-hook code with hard CPU/memory/wall-clock
+# limits and no ambient capabilities (no syscalls/network/fs). Prebuilt wheels
+# for Linux/macOS. Only invoked when FEATURE_WORKFLOW_HOOKS is on.
+wasmtime>=44.0.0
+
 # Google APIs
 google-api-python-client>=2.116.0
 google-auth>=2.27.0

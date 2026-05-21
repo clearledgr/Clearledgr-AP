@@ -1099,7 +1099,9 @@ class CoordinationEngine:
         from solden.core.ap_states import IllegalTransitionError
 
         try:
-            exc_state = box_registry.get(box_type).exception_state
+            exc_state = box_registry.resolve(
+                box_type, self.organization_id
+            ).exception_state
         except Exception:
             exc_state = None
 
