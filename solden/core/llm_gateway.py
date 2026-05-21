@@ -566,7 +566,7 @@ class LLMGateway:
                 title="LLM budget exceeded — workspace paused",
                 detail=(
                     f"org={organization_id} cost=${cost_usd:.2f} "
-                    f"cap=${cap_usd:.2f}. Further Claude calls will fast-fail "
+                    f"cap=${cap_usd:.2f}. Further model calls will fast-fail "
                     f"until an override or the new billing month begins."
                 ),
                 organization_id=organization_id,

@@ -1180,11 +1180,11 @@ async def get_ap_decision_health(
     # Alerts
     alerts: List[Dict[str, str]] = []
     if fallback_rate_pct == 100.0 and decision_count > 0:
-        alerts.append({"code": "claude_fully_offline", "message": "All AP decisions used rule-based fallback — check ANTHROPIC_API_KEY"})
+        alerts.append({"code": "model_fully_offline", "message": "All AP decisions used rule-based fallback — check the model provider API key"})
     elif fallback_rate_pct > 20.0:
-        alerts.append({"code": "high_fallback_rate", "message": f"Claude fallback rate is {fallback_rate_pct:.0f}% — check API key and connectivity"})
+        alerts.append({"code": "high_fallback_rate", "message": f"Model fallback rate is {fallback_rate_pct:.0f}% — check API key and connectivity"})
     if override_rate_pct > 15.0:
-        alerts.append({"code": "high_override_rate", "message": f"Human override rate is {override_rate_pct:.0f}% — Claude decisions may need prompt tuning"})
+        alerts.append({"code": "high_override_rate", "message": f"Human override rate is {override_rate_pct:.0f}% — model decisions may need prompt tuning"})
 
     return {
         "organization_id": organization_id,

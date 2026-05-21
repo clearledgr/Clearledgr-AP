@@ -1936,7 +1936,7 @@ class MetricsStore:
             )
         if human_override_decision_population:
             proof_highlights.append(
-                f"{round(human_override_rate * 100.0, 1):.1f}% of Claude recommendation windows ended in a human override."
+                f"{round(human_override_rate * 100.0, 1):.1f}% of model recommendation windows ended in a human override."
             )
         if approval_population:
             proof_highlights.append(

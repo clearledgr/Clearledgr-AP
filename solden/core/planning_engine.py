@@ -287,7 +287,7 @@ class DeterministicPlanningEngine:
             # Step 8: Extraction
             Action("extract_invoice_fields", "LLM",
                    {"message_id": message_id},
-                   "Extract structured invoice fields via Claude"),
+                   "Extract structured invoice fields via the model"),
             # Step 9: Guardrails
             Action("run_extraction_guardrails", "DET",
                    {},

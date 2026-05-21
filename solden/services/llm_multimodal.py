@@ -105,7 +105,7 @@ class MultiModalLLMService:
         prompt = self._build_pdf_extraction_prompt(filename)
         
         if not self.anthropic_key:
-            raise RuntimeError("PDF extraction requires Anthropic API key for Claude Vision")
+            raise RuntimeError("PDF extraction requires the model provider API key for vision extraction")
         
         return self._call_anthropic_vision(prompt, [{
             "content_base64": pdf_base64,
@@ -127,7 +127,7 @@ class MultiModalLLMService:
         prompt = self._build_image_extraction_prompt()
         
         if not self.anthropic_key:
-            raise RuntimeError("Image extraction requires Anthropic API key for Claude Vision")
+            raise RuntimeError("Image extraction requires the model provider API key for vision extraction")
         
         return self._call_anthropic_vision(prompt, [{
             "content_base64": image_base64,

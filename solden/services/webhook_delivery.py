@@ -18,9 +18,9 @@ Payments:
   payment.completed, payment.failed, payment.reversed
 
 Billing:
-  billing.llm_budget_exceeded — workspace crossed its monthly Claude
+  billing.llm_budget_exceeded — workspace crossed its monthly model
       cost hard cap (runaway-spend guard). Payload includes
-      cost_usd, cap_usd, paused_at. Further Claude calls fast-fail
+      cost_usd, cap_usd, paused_at. Further model calls fast-fail
       until the CFO override endpoint or CS ops reset clears it,
       or the new billing month rolls over.
 
