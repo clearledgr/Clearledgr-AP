@@ -729,8 +729,8 @@ async def start_google_web_auth(
         "scope": "openid email profile",
         "state": state,
         # No include_granted_scopes here on purpose. The Gmail extension
-        # has a separate OAuth flow with its own scopes
-        # (gmail.readonly, gmail.modify, gmail.labels). If we set
+        # has a separate OAuth flow with its own scopes (gmail.modify for
+        # read + label, plus calendar.readonly). If we set
         # include_granted_scopes=true, Google bundles those previously-
         # granted scopes into THIS sign-in code; if the client_secret
         # was rotated since that prior Gmail grant was issued, Google

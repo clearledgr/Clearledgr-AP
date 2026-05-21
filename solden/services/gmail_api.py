@@ -118,12 +118,14 @@ GMAIL_PROFILE_URL = f"{GMAIL_API_BASE}/users/me/profile"
 # Sheets scope enables reconciliation workflows (read bank statements, write results).
 # ``gmail.send`` is intentionally NOT in this list: Solden sends zero
 # email to vendors and authors zero vendor-facing body text (memory:
-# 2026-05-02 second-pass dormant-vendor-emails decision). Operators
-# compose vendor communications in their own Gmail. The ``gmail.modify``
-# scope is sufficient for our drafts + label workflows.
+# 2026-05-02 second-pass dormant-vendor-emails decision). The draft
+# surface was removed too (2026-05-21), so the only write we do is
+# applying finance labels. That still requires ``gmail.modify`` because
+# changing a message's labels hits the messages.modify endpoint. Since
+# ``gmail.modify`` is a superset of ``gmail.readonly`` for reads, the
+# redundant readonly scope is not listed.
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",   # Read emails
-    "https://www.googleapis.com/auth/gmail.modify",     # Manage labels, create drafts
+    "https://www.googleapis.com/auth/gmail.modify",     # Read messages + apply finance labels
     "https://www.googleapis.com/auth/spreadsheets",     # Read/write Google Sheets (reconciliation)
 ]
 
@@ -583,77 +585,15 @@ class GmailAPIClient:
         )
         response.raise_for_status()
 
-    async def create_draft(
-        self,
-        thread_id: str,
-        to: str,
-        subject: str,
-        body: str,
-    ) -> str:
-        """Create a Gmail draft as a reply to an existing thread.
-
-        Uses the ``users.drafts.create`` endpoint which is covered by the
-        existing ``gmail.modify`` OAuth scope — no scope changes required.
-
-        Returns the draft ID (e.g. ``r123456789``) so the sidebar can link
-        directly to ``https://mail.google.com/#drafts/<draft_id>``.
-        """
-        import base64
-        import email.mime.text
-
-        mime = email.mime.text.MIMEText(body, "plain")
-        mime["To"] = to
-        mime["Subject"] = subject
-        raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
-
-        payload: Dict[str, Any] = {
-            "message": {
-                "raw": raw,
-                "threadId": thread_id,
-            }
-        }
-        client = get_http_client()
-        response = await client.post(
-            f"{GMAIL_API_BASE}/users/me/drafts",
-            headers={**self._headers(), "Content-Type": "application/json"},
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data.get("id", "")
-
-    # ``send_draft`` + ``send_message`` removed: Solden sends zero
-    # email to vendors and authors zero vendor-facing body text
-    # (memory: 2026-05-02 second-pass dormant-vendor-emails decision).
-    # The ``gmail.send`` OAuth scope is dropped from ``GMAIL_SCOPES``
-    # accordingly. Operators compose vendor communications in their
-    # own Gmail; Solden's role is read + label, never write-and-send.
-
-    async def get_draft(self, draft_id: str, format: str = "raw") -> Dict[str, Any]:
-        """Retrieve a draft by ID.
-
-        Args:
-            draft_id: The Gmail draft ID.
-            format: Response format — ``raw`` returns the full MIME in
-                ``message.raw``; ``full`` returns parsed payload.
-
-        Returns:
-            The draft resource dict from the Gmail API.
-        """
-        client = get_http_client()
-        response = await client.get(
-            f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
-            headers=self._headers(),
-            params={"format": format},
-        )
-        response.raise_for_status()
-        return response.json()
-
-    # ``schedule_draft_send`` removed: was the helper called by the
-    # deleted ``/api/gmail/schedule-send`` endpoint to delay-send
-    # operator-composed vendor emails. Solden no longer touches the
-    # vendor-email path; operators schedule their own sends via the
-    # native Gmail UI.
+    # Entire draft + send surface removed (2026-05-21). Solden reads
+    # invoice threads and applies finance labels; it never writes a
+    # draft, reply, or outbound message into a user's mailbox. The
+    # extracted invoice data surfaces in the extension sidebar, not as
+    # a draft pre-addressed to the vendor. ``create_draft`` / ``get_draft``
+    # went out with this change; ``send_draft`` / ``send_message`` /
+    # ``schedule_draft_send`` were removed earlier (2026-05-02). ``gmail.send``
+    # is out of GMAIL_SCOPES; ``gmail.modify`` stays only because applying a
+    # label to a message hits the messages.modify endpoint.
 
     async def list_labels(self) -> List[Dict[str, Any]]:
         """List all labels."""

@@ -906,20 +906,15 @@ class TestGmailWebhooks:
                     "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
-                    with patch.object(
-                        gmail_webhooks_module,
-                        "_create_invoice_draft_summary",
-                        AsyncMock(return_value=None),
-                    ):
-                        asyncio.run(
-                            gmail_webhooks_module.process_invoice_email(
-                                client=MagicMock(),
-                                message=message,
-                                user_id="gmail-user-1",
-                                organization_id="org-test",
-                                confidence=0.91,
-                            )
+                    asyncio.run(
+                        gmail_webhooks_module.process_invoice_email(
+                            client=MagicMock(),
+                            message=message,
+                            user_id="gmail-user-1",
+                            organization_id="org-test",
+                            confidence=0.91,
                         )
+                    )
 
         assert len(fake_db.saved) == 2
         assert fake_db.saved[0].id == "finance-email-1"
@@ -983,20 +978,15 @@ class TestGmailWebhooks:
                         "_sync_message_finance_labels",
                         sync_mock,
                     ):
-                        with patch.object(
-                            gmail_webhooks_module,
-                            "_create_invoice_draft_summary",
-                            AsyncMock(return_value=None),
-                        ):
-                            asyncio.run(
-                                gmail_webhooks_module.process_invoice_email(
-                                    client=MagicMock(),
-                                    message=message,
-                                    user_id="gmail-user-1",
-                                    organization_id="org-test",
-                                    confidence=0.91,
-                                )
+                        asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="org-test",
+                                confidence=0.91,
                             )
+                        )
 
         assert len(fake_db.saved) == 2
         assert fake_db.saved[-1].email_type == "refund"
@@ -1056,20 +1046,15 @@ class TestGmailWebhooks:
                         "_sync_message_finance_labels",
                         sync_mock,
                     ):
-                        with patch.object(
-                            gmail_webhooks_module,
-                            "_create_invoice_draft_summary",
-                            AsyncMock(return_value=None),
-                        ):
-                            asyncio.run(
-                                gmail_webhooks_module.process_invoice_email(
-                                    client=MagicMock(),
-                                    message=message,
-                                    user_id="gmail-user-1",
-                                    organization_id="org-test",
-                                    confidence=0.91,
-                                )
+                        asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="org-test",
+                                confidence=0.91,
                             )
+                        )
 
         assert len(fake_db.saved) == 2
         assert fake_db.saved[-1].email_type == "refund"
@@ -1126,20 +1111,15 @@ class TestGmailWebhooks:
                         "_sync_message_finance_labels",
                         sync_mock,
                     ):
-                        with patch.object(
-                            gmail_webhooks_module,
-                            "_create_invoice_draft_summary",
-                            AsyncMock(return_value=None),
-                        ):
-                            result = asyncio.run(
-                                gmail_webhooks_module.process_invoice_email(
-                                    client=MagicMock(),
-                                    message=message,
-                                    user_id="gmail-user-1",
-                                    organization_id="org-test",
-                                    confidence=0.91,
-                                )
+                        result = asyncio.run(
+                            gmail_webhooks_module.process_invoice_email(
+                                client=MagicMock(),
+                                message=message,
+                                user_id="gmail-user-1",
+                                organization_id="org-test",
+                                confidence=0.91,
                             )
+                        )
 
         assert result["status"] == "processed_non_invoice"
         assert result["document_type"] == "refund"
@@ -1148,7 +1128,7 @@ class TestGmailWebhooks:
         assert fake_runtime.execute_ap_invoice_processing.assert_not_awaited() is None
         assert sync_mock.await_args.kwargs["document_type"] == "refund"
 
-    def test_process_invoice_email_refresh_only_skips_runtime_execution_and_draft(self):
+    def test_process_invoice_email_refresh_only_skips_runtime_execution(self):
         class _FakeDB:
             def __init__(self):
                 self.saved = []
@@ -1176,7 +1156,6 @@ class TestGmailWebhooks:
             attachments=[],
             date=datetime.now(timezone.utc),
         )
-        draft_mock = AsyncMock(return_value=None)
 
         with patch.object(gmail_webhooks_module, "get_db", return_value=fake_db):
             with patch(
@@ -1196,29 +1175,22 @@ class TestGmailWebhooks:
                     "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
-                    with patch.object(
-                        gmail_webhooks_module,
-                        "_create_invoice_draft_summary",
-                        draft_mock,
-                    ):
-                        result = asyncio.run(
-                            gmail_webhooks_module.process_invoice_email(
-                                client=MagicMock(),
-                                message=message,
-                                user_id="gmail-user-1",
-                                organization_id="org-test",
-                                confidence=0.91,
-                                run_runtime=False,
-                                create_draft=False,
-                                refresh_reason="repair_pass",
-                            )
+                    result = asyncio.run(
+                        gmail_webhooks_module.process_invoice_email(
+                            client=MagicMock(),
+                            message=message,
+                            user_id="gmail-user-1",
+                            organization_id="org-test",
+                            confidence=0.91,
+                            run_runtime=False,
+                            refresh_reason="repair_pass",
                         )
+                    )
 
         assert result["status"] == "refreshed"
         assert len(fake_db.saved) == 2
         assert fake_runtime.refresh_invoice_record_from_extraction.called
         assert fake_runtime.refresh_invoice_record_from_extraction.call_args.kwargs["refresh_reason"] == "repair_pass"
-        draft_mock.assert_not_awaited()
 
     def test_process_invoice_email_persists_field_review_gate_and_review_required_status(self):
         class _FakeDB:
@@ -1280,20 +1252,15 @@ class TestGmailWebhooks:
                     "solden.services.finance_agent_runtime.get_platform_finance_runtime",
                     return_value=fake_runtime,
                 ):
-                    with patch.object(
-                        gmail_webhooks_module,
-                        "_create_invoice_draft_summary",
-                        AsyncMock(return_value=None),
-                    ):
-                        asyncio.run(
-                            gmail_webhooks_module.process_invoice_email(
-                                client=MagicMock(),
-                                message=message,
-                                user_id="gmail-user-1",
-                                organization_id="org-test",
-                                confidence=0.91,
-                            )
+                    asyncio.run(
+                        gmail_webhooks_module.process_invoice_email(
+                            client=MagicMock(),
+                            message=message,
+                            user_id="gmail-user-1",
+                            organization_id="org-test",
+                            confidence=0.91,
                         )
+                    )
 
         assert len(fake_db.saved) == 2
         assert fake_db.saved[-1].status == "review_required"
@@ -2741,7 +2708,6 @@ class TestExtensionEndpoints:
         replay_mock.assert_awaited_once()
         replay_kwargs = replay_mock.await_args.kwargs
         assert replay_kwargs["run_runtime"] is False
-        assert replay_kwargs["create_draft"] is False
         assert replay_kwargs["refresh_reason"] == "historical_repair_pass"
 
     def test_cleanup_gmail_labels_migrates_and_deletes_legacy_mailbox_labels(self):

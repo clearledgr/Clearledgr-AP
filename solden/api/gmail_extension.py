@@ -254,7 +254,6 @@ async def _recover_ap_item_for_thread(
                     user_id=user_id,
                     organization_id=organization_id,
                     confidence=0.0,
-                    create_draft=False,
                 )
             except Exception:
                 continue
@@ -752,7 +751,6 @@ async def repair_historical_invoices(
                 organization_id=org_id,
                 confidence=float(getattr(record, "confidence", 0.0) or 0.0),
                 run_runtime=False,
-                create_draft=False,
                 refresh_reason="historical_repair_pass",
             )
         except Exception as exc:

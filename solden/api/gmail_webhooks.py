@@ -1369,7 +1369,6 @@ async def process_invoice_email(
     *,
     document_type: str = "invoice",
     run_runtime: bool = True,
-    create_draft: bool = True,
     refresh_reason: Optional[str] = None,
 ):
     """
@@ -1378,7 +1377,7 @@ async def process_invoice_email(
     This is the main entry point for invoice processing from Gmail Pub/Sub.
 
     Flow:
-    1. Extract invoice data using Claude Vision (for PDFs) or LLM (for text)
+    1. Extract invoice data using the vision model (for PDFs) or LLM (for text)
     2. Submit to invoice workflow
     3. Workflow handles: auto-approve (high confidence) or route to Slack (low confidence)
     """
@@ -1768,53 +1767,12 @@ async def process_invoice_email(
     except Exception as exc:
         logger.warning("Could not sync Gmail labels for invoice %s: %s", message.id, exc)
 
-    # Create draft summary on the thread (Fyxer pattern)
-    # User opens the thread → sees a draft with the extracted invoice data
-    if create_draft:
-        try:
-            await _create_invoice_draft_summary(client, message, invoice)
-        except Exception as exc:
-            logger.warning("Could not create draft summary: %s", exc)
+    # The extracted invoice data surfaces in the extension sidebar.
+    # Solden no longer drafts a summary reply into the thread: that put
+    # Solden-authored text in a draft pre-addressed to the vendor, one
+    # click from being sent. Removed 2026-05-21.
 
     return result
-
-
-async def _create_invoice_draft_summary(client: GmailAPIClient, message, invoice):
-    """Create a Gmail draft reply summarizing the extracted invoice data.
-
-    Fyxer pattern: the user opens a thread and finds a draft with structured
-    invoice data ready to forward, approve, or reference.
-    """
-    vendor = invoice.vendor_name or "Unknown"
-    amount = invoice.amount or 0
-    currency = invoice.currency or "USD"
-    inv_num = invoice.invoice_number or "N/A"
-    due = invoice.due_date or "Not specified"
-
-    amount_str = f"${amount:,.2f}" if isinstance(amount, (int, float)) and amount else str(amount)
-
-    body = (
-        f"Solden detected an invoice in this thread.\n\n"
-        f"  Vendor:     {vendor}\n"
-        f"  Amount:     {amount_str} {currency}\n"
-        f"  Invoice #:  {inv_num}\n"
-        f"  Due date:   {due}\n"
-        f"  Confidence: {invoice.confidence:.0%}\n\n"
-        f"Status: Needs approval\n"
-        f"---\n"
-        f"This draft was created by Solden. "
-        f"Delete it if not needed, or forward it to your approver."
-    )
-
-    thread_id = getattr(message, 'thread_id', None) or message.id
-    to_addr = getattr(message, 'sender', '') or ''
-
-    await client.create_draft(
-        thread_id=thread_id,
-        to=to_addr,
-        subject=f"Re: {message.subject or 'Invoice'}",
-        body=body,
-    )
 
 
 def _extract_vendor_from_sender(sender: str) -> str:
