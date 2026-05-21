@@ -25,6 +25,7 @@ const NAV_ENTRIES = [
   { kind: 'nav', label: 'Exceptions', sub: 'Records the agent escalated for human judgment', path: '/exceptions', tokens: ['exceptions', 'errors', 'blockers', 'review', 'queue', 'attention'] },
   { kind: 'nav', label: 'Records', sub: 'Search and inspect AP records', path: '/records', tokens: ['records', 'pipeline', 'invoices', 'ap'] },
   { kind: 'nav', label: 'Procurement', sub: 'Purchase orders + approval workflow', path: '/procurement', tokens: ['procurement', 'purchase', 'po', 'orders'] },
+  { kind: 'nav', label: 'Workflows', sub: 'Build custom workflow types (no-code)', path: '/workflows', tokens: ['workflows', 'builder', 'custom', 'box', 'types', 'spec', 'no-code'] },
   { kind: 'nav', label: 'Vendors', sub: 'Vendor directory', path: '/vendors', tokens: ['vendors', 'suppliers'] },
   { kind: 'nav', label: 'Reports', sub: 'Volume, agent performance, cycle, exceptions, vendor quality', path: '/reports', tokens: ['reports', 'analytics', 'metrics'] },
   { kind: 'nav', label: 'Audit log', sub: 'Append-only governance trail', path: '/audit', tokens: ['audit', 'history', 'governance'] },

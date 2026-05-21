@@ -22,6 +22,7 @@ import { VendorDetailRoute } from './routes/pages/VendorDetailRoute.js';
 import { ExceptionsRoute } from './routes/pages/ExceptionsRoute.js';
 import { VendorsRoute } from './routes/pages/VendorsRoute.js';
 import { ProcurementRoute } from './routes/pages/ProcurementRoute.js';
+import { WorkflowsRoute } from './routes/pages/WorkflowsRoute.js';
 import { ActivityRoute } from './routes/pages/ActivityRoute.js';
 import { AuditLogRoute } from './routes/pages/AuditLogRoute.js';
 import { ConnectionsRoute } from './routes/pages/ConnectionsRoute.js';
@@ -54,6 +55,7 @@ export function App() {
                     <${Route} path="/exceptions"><${ExceptionsRoute} /><//>
                     <${Route} path="/vendors"><${VendorsRoute} /><//>
                     <${Route} path="/procurement"><${ProcurementRoute} /><//>
+                    <${Route} path="/workflows"><${WorkflowsRoute} /><//>
                     <${Route} path="/vendors/:name">
                       ${(params) => html`<${VendorDetailRoute} vendorName=${decodeURIComponent(params.name || '')} />`}
                     <//>

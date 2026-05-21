@@ -22,6 +22,7 @@ export const NAV_ITEMS = [
   { path: '/exceptions', label: 'Exceptions', group: 'primary' },
   { path: '/records', label: 'Records', group: 'data' },
   { path: '/procurement', label: 'Procurement', group: 'data' },
+  { path: '/workflows', label: 'Workflows', group: 'data' },
   { path: '/vendors', label: 'Vendors', group: 'data' },
   { path: '/reports', label: 'Reports', group: 'data' },
   { path: '/audit', label: 'Audit log', group: 'data' },
