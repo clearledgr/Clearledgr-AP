@@ -106,6 +106,7 @@ Read in this order for first week:
 | [`operations.md`](./operations.md) | Runbooks. Deploy. Rollback. Investigate stuck Box. Investigate failed ERP post. Rotate secrets. |
 | [`security.md`](./security.md) | Threat model. Tenant isolation. Secrets. SOC 2 posture. |
 | [`product.md`](./product.md) | What ships, what's deferred, why. For engineers AND non-engineers. |
+| [`workflow-sdk-todo.md`](./workflow-sdk-todo.md) | Engineering TODO: turning the shipped workflow platform into a public, externally-distributable SDK (scopes, client lib, API ref, quotas, JS hooks) + the pentest/beta gates. |
 
 ADRs exist one per decision, short, numbered (`001-box-abstraction.md`, `002-coordination-engine.md`, ...). List in [`adrs/README.md`](./adrs/README.md).
 
