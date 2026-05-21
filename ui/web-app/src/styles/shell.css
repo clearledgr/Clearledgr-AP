@@ -7,9 +7,9 @@
 }
 
 .cl-app-sidebar {
-  background: var(--cl-navy);
-  color: #fff;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--cl-surface);
+  color: var(--cl-ink-primary);
+  border-right: 1px solid var(--cl-border);
   overflow-y: auto;
 }
 
@@ -45,7 +45,7 @@
   align-items: center;
   padding: 18px 8px 18px;
   margin: 0 -4px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--cl-border);
 }
 
 .cl-sidebar-group {
@@ -57,7 +57,7 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--cl-ink-muted);
 }
 
 .cl-sidebar-list {
@@ -70,21 +70,21 @@
   display: block;
   padding: 8px 12px;
   border-radius: var(--cl-radius-sm);
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--cl-ink-secondary);
   text-decoration: none;
   font-size: 14px;
   transition: background 0.12s, color 0.12s;
 }
 
 .cl-sidebar-link:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  background: var(--cl-bg);
+  color: var(--cl-ink-primary);
 }
 
 .cl-sidebar-link.is-active {
-  background: rgba(0, 214, 126, 0.12);
-  color: var(--cl-mint);
-  font-weight: 500;
+  background: var(--cl-teal-soft);
+  color: var(--cl-teal-600);
+  font-weight: 600;
 }
 
 /* Topbar */

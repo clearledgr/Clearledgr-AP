@@ -48,7 +48,7 @@ export function SidebarNav() {
   return html`
     <nav class="cl-sidebar-nav" aria-label="Primary">
       <div class="cl-sidebar-brand">
-        <${BrandMark} height=${32} tone="on-dark" />
+        <${BrandMark} height=${32} tone="primary" />
       </div>
       ${groups.map(
         (group) => html`

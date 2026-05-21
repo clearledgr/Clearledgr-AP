@@ -35,7 +35,7 @@
 - **Wordmark:** "solden" — Inter, weight 700, lowercase, letter-spacing -1% to -2%.
 - **Brand color (primary accent):** Teal `#18BFB0` (`--cl-teal-500`).
 - **Brand dark (primary ink):** Navy `#0A1F44` (`--cl-navy`).
-- **Variants:** Primary lockup (navy + teal-stripe on white) for light surfaces; one-color white lockup for the dark sidebar rail and any teal-fill hero treatment.
+- **Variants:** Primary lockup (navy + teal-stripe on white) for light surfaces, including the workspace sidebar; one-color white lockup for dark / teal-fill surfaces only (e.g. the login + invite-accept hero cards). The workspace sidebar is a **light rail** (see decision 2026-05-21), not a navy slab.
 - **Personality:** Practical, reliable, efficient. The product should feel more like an operator's workspace than a marketing surface.
 
 ## Typography
@@ -64,7 +64,7 @@
 | `--cl-teal-400` | `#1FC7B6` | Gradient start, hover-light variant |
 | `--cl-teal-600` | `#12B3A6` | Gradient end, hover-deep variant |
 | `--cl-teal-soft` | `#DDF7F3` | Light status fills, supportive emphasis |
-| `--cl-navy` | `#0A1F44` | Primary ink, dark controls, sidebar rail, logo navy bars |
+| `--cl-navy` | `#0A1F44` | Primary ink, dark controls, logo navy bars (NOT the sidebar — the rail is light, see 2026-05-21) |
 | `--cl-navy-light` | `#1E293B` | Dark hover states |
 | `--cl-mint*` (legacy) | aliased | Old `--cl-mint` / `--cl-mint-strong` / `--cl-mint-soft` tokens are aliased to the teal palette so existing call sites keep working until renamed. |
 
@@ -273,3 +273,4 @@
 | 2026-05-02 | Workspace Home defined as a foyer, not a BILL.com / Ramp dashboard | Page was leading with a big KPI tile row, modeled on Bill / Ramp / Mixmax. Mo flagged it. Numbers belong as a thin glance line under the welcome; quick access lifts to position #3; two-column panels carry the work. Streak / Stripe / Mercury references stand. |
 | 2026-05-02 | Workspace Home recalibrated: coordination-layer control center, not foyer | Mo: DESIGN.md was Gmail-era (Streak foyer). Once Solden broadened to a coordination layer with Gmail / Slack / Teams / NetSuite / SAP as render targets and the workspace as the control center, the foyer doctrine no longer fits the workspace surface. Reference hierarchy moves to Linear / Vercel / Datadog / Modal (still anti-Bill / anti-Ramp). Hero becomes the live agent activity ribbon (SSE-driven); stat tiles return as a compact control-center row with a live-pulse dot; quick-access cards drop (header + ⌘K cover navigation). Foyer pattern preserved for the Gmail Home only. |
 | 2026-05-02 | Solden rebrand applied | Mo lifted the rebrand hold and shipped the brand kit: navy `#0A1F44`, teal palette `#1FC7B6 / #18BFB0 / #12B3A6`, white. Wordmark "solden" in Inter 700 lowercase, tracking -1% to -2%. Logomark is a three-slab stylized S (navy bars + teal middle stripe). DESIGN.md, the SidebarNav, login + invite-accept cards, footer, page title, legal copy, and operational status strings all swept from "Solden" → "Solden". Domain stays at clearledgr.com for now (cookie domain + SAML SP URLs unchanged); `@clearledgr.com` mailto addresses moved to `@soldenai.com`. Old `--cl-mint*` tokens aliased to the new teal palette so unfinished call sites keep compiling. |
+| 2026-05-21 | Workspace sidebar goes light | Mo: "we don't need it. I'm a minimalist." The navy slab sidebar was the more enterprise-dashboard look and at odds with the Linear / Vercel references the control center aims for. Sidebar is now a light rail: `--cl-surface` background, `--cl-ink-primary` text, `--cl-border` hairline divider, muted group labels, subtle `--cl-bg` hover, and a faint `--cl-teal-soft` active fill with `--cl-teal-600` text. Brand lockup flips to the navy `primary` variant. Navy is reserved for ink, the logomark, dark controls, and accents, not chrome fills. |
