@@ -5739,3 +5739,62 @@ def _v94_workflow_hook_runs(cur, db):
         "CREATE INDEX IF NOT EXISTS idx_workflow_hook_runs_org_box "
         "ON workflow_hook_runs (organization_id, box_type, box_id)"
     )
+
+
+@migration(
+    95,
+    "learning_patterns + learning_corrections: org-scoped Postgres store for the "
+    "compounding-learning service (replaces the per-process SQLite file; fixes "
+    "cross-tenant pattern bleed and pattern_id collisions across orgs)",
+)
+def _v95_compounding_learning_store(cur, db):
+    """Move the compounding-learning store from a per-process SQLite file to Postgres.
+
+    The old service kept one global ``learning.db`` SQLite file with an org-blind
+    read path, so one org's learned categorization/match patterns leaked into
+    another org's reasoning. These tables carry ``organization_id NOT NULL`` and
+    fold it into the primary key, so a pattern_id that two orgs happen to generate
+    (e.g. ``cat_acme_6010``) no longer collides. No data is migrated: the SQLite
+    file was ephemeral (wiped on every deploy) and low-value.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_patterns (
+            organization_id TEXT NOT NULL,
+            pattern_id TEXT NOT NULL,
+            pattern_type TEXT NOT NULL,
+            pattern_data JSONB NOT NULL DEFAULT '{}',
+            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+            usage_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            last_used TEXT,
+            created_from JSONB NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (organization_id, pattern_id)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_learning_patterns_org_type "
+        "ON learning_patterns (organization_id, pattern_type, confidence)"
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_corrections (
+            organization_id TEXT NOT NULL,
+            correction_id TEXT NOT NULL,
+            correction_type TEXT NOT NULL,
+            original_value JSONB NOT NULL DEFAULT '{}',
+            corrected_value JSONB NOT NULL DEFAULT '{}',
+            user_email TEXT NOT NULL,
+            context JSONB NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (organization_id, correction_id)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_learning_corrections_org_type "
+        "ON learning_corrections (organization_id, correction_type)"
+    )

@@ -119,6 +119,14 @@ def reset_service_singletons():
         _finance_learning_services.clear()
     except Exception:
         pass
+    # CompoundingLearningService caches learned patterns per-org in memory.
+    # Reset the singleton so a pattern learned in one test's org can't bleed
+    # into another test reusing the same org id against the truncated tables.
+    try:
+        import solden.services.compounding_learning as _cl_mod
+        _cl_mod._learning_service = None
+    except Exception:
+        pass
     # SubscriptionService caches `self.db` at construction (subscription.py:432).
     # If a test swaps DATABASE_URL / CLEARLEDGR_DB_PATH but the singleton
     # stayed alive from an earlier test, it would keep writing to the old

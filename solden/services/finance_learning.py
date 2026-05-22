@@ -475,10 +475,14 @@ class FinanceLearningService:
         vendor: str,
         description: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if self.compounding_learning is None:
+        # Compounding learning is tenant-scoped; in platform mode ("default")
+        # there is no tenant to read for, so this is an intentional no-op.
+        if self.compounding_learning is None or self.organization_id == "default":
             return None
         try:
-            hint = self.compounding_learning.get_categorization_hint(vendor, description or "")
+            hint = self.compounding_learning.get_categorization_hint(
+                self.organization_id, vendor, description or ""
+            )
             return hint if isinstance(hint, dict) else None
         except Exception as exc:
             logger.warning("finance_learning.get_categorization_hint failed: %s", exc)
@@ -490,10 +494,11 @@ class FinanceLearningService:
         *,
         min_confidence: float = 0.5,
     ) -> List[Any]:
-        if self.compounding_learning is None:
+        if self.compounding_learning is None or self.organization_id == "default":
             return []
         try:
             patterns = self.compounding_learning.get_patterns_for_matching(
+                self.organization_id,
                 text,
                 min_confidence=min_confidence,
             )
@@ -504,10 +509,16 @@ class FinanceLearningService:
 
     def record_pattern_feedback(self, pattern_id: str, was_correct: bool) -> bool:
         resolved_pattern_id = str(pattern_id or "").strip()
-        if not resolved_pattern_id or self.compounding_learning is None:
+        if (
+            not resolved_pattern_id
+            or self.compounding_learning is None
+            or self.organization_id == "default"
+        ):
             return False
         try:
-            self.compounding_learning.record_pattern_usage(resolved_pattern_id, bool(was_correct))
+            self.compounding_learning.record_pattern_usage(
+                self.organization_id, resolved_pattern_id, bool(was_correct)
+            )
             return True
         except Exception as exc:
             logger.warning("finance_learning.record_pattern_feedback failed for %s: %s", resolved_pattern_id, exc)

@@ -148,6 +148,7 @@ def _load_store_symbols() -> None:
     global BankMatchStore
     global GenericBoxStore
     global WorkflowSpecStore
+    global LearningStore
 
     if "APStore" in globals():
         return
@@ -218,6 +219,9 @@ def _load_store_symbols() -> None:
     from solden.core.stores.workflow_spec_store import (
         WorkflowSpecStore as _WorkflowSpecStore,
     )
+    from solden.core.stores.learning_store import (
+        LearningStore as _LearningStore,
+    )
 
     APStore = _APStore
     APRuntimeStore = _APRuntimeStore
@@ -251,6 +255,7 @@ def _load_store_symbols() -> None:
     BankMatchStore = _BankMatchStore
     GenericBoxStore = _GenericBoxStore
     WorkflowSpecStore = _WorkflowSpecStore
+    LearningStore = _LearningStore
 
 
 class _SoldenDBBase:
@@ -1734,6 +1739,7 @@ def _get_db_impl_class():
             BankMatchStore,
             GenericBoxStore,
             WorkflowSpecStore,
+            LearningStore,
             _SoldenDBBase,
         ):
             pass

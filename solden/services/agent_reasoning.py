@@ -797,7 +797,9 @@ class AgentReasoningService:
         for pattern_id in pattern_ids:
             try:
                 if self.compounding_learning:
-                    self.compounding_learning.record_pattern_usage(pattern_id, was_correct)
+                    self.compounding_learning.record_pattern_usage(
+                        self.organization_id, pattern_id, was_correct
+                    )
                     logger.info(f"Recorded pattern usage: {pattern_id} -> {'success' if was_correct else 'failure'}")
             except Exception as e:
                 logger.warning(f"Failed to record pattern usage: {e}")
@@ -821,6 +823,7 @@ class AgentReasoningService:
                     },
                 }
                 self.compounding_learning.record_correction(
+                    organization_id=self.organization_id,
                     correction_type="categorization",
                     original_value=correction_record["original_value"],
                     corrected_value=correction_record["corrected_value"],
