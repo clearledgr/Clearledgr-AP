@@ -78,7 +78,6 @@ def bootstrap_vendor_intelligence(
             "SELECT ap_item_id FROM vendor_invoice_history WHERE organization_id = %s"
         )
         with db.connect() as conn:
-            conn.row_factory = __import__("sqlite3").Row
             cur = conn.cursor()
             cur.execute(sql, (organization_id,))
             for row in cur.fetchall():

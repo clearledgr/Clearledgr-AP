@@ -1132,7 +1132,6 @@ async def get_ap_decision_health(
             "WHERE organization_id = %s AND created_at >= %s LIMIT 10000"
         )
         with db.connect() as conn:
-            conn.row_factory = __import__("sqlite3").Row
             cur = conn.cursor()
             cur.execute(sql, (organization_id, cutoff))
             for row in cur.fetchall():

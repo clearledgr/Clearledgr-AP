@@ -3688,7 +3688,6 @@ def list_vendor_profiles(
     )
     try:
         with db.connect() as conn:
-            conn.row_factory = __import__("sqlite3").Row
             cur = conn.cursor()
             cur.execute(sql, (org_id,))
             rows = [dict(r) for r in cur.fetchall()]
