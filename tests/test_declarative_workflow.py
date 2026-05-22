@@ -229,6 +229,47 @@ def test_box_summary_surfaces_declared_fields(db):
     assert summary.key_fields.get("counterparty") == "Globex"
 
 
+def test_entering_declared_exception_state_raises_box_exception(db):
+    # A spec that DOES declare an exception_state: transitioning a Box into it
+    # auto-raises a first-class box_exception (parity with how AP raises one
+    # when an ap_item lands in needs_info), no bespoke Python.
+    spec = WorkflowSpec(
+        box_type="vendor_kyc",
+        url_slug="vendor-kyc",
+        states=("submitted", "in_checks", "approved", "blocked"),
+        initial_state="submitted",
+        terminal_states=("approved",),
+        transitions={
+            "submitted": {"in_checks"},
+            "in_checks": {"approved", "blocked"},
+            "blocked": {"in_checks"},  # recoverable, like AP's needs_info
+        },
+        action_states={
+            "start": "in_checks", "approve": "approved",
+            "block": "blocked", "recheck": "in_checks",
+        },
+        fields=("vendor_name",),
+        exception_state="blocked",
+    )
+    workflow_spec.register_spec(spec)
+    try:
+        box_registry.create_box("vendor_kyc", {
+            "id": "VK-1", "organization_id": ORG, "vendor_name": "Sketchy LLC",
+        }, db)
+        box_registry.update_box("vendor_kyc", "VK-1", db, state="in_checks", actor_id="ops")
+        box_registry.update_box(
+            "vendor_kyc", "VK-1", db, state="blocked",
+            actor_id="ops", reason="sanctions hit",
+        )
+        excs = db.list_box_exceptions(box_id="VK-1", box_type="vendor_kyc")
+        assert any(e.get("exception_type") == "vendor_kyc_exception" for e in excs)
+        # exception_state is a real state the Box moves into (not a veto).
+        loaded = box_registry.get_box("vendor_kyc", "VK-1", db)
+        assert loaded["state"] == "blocked"
+    finally:
+        workflow_spec.unregister_spec("vendor_kyc")
+
+
 def test_engine_exception_path_for_typeless_stall_state(db):
     # contract_review has exception_state=None; an illegal move must raise a
     # box_exception, NOT attempt the illegal state move.

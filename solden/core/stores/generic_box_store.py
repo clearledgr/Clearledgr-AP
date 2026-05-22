@@ -225,6 +225,35 @@ class GenericBoxStore:
                 "idempotency_key": f"box-{target_state}:{box_id}:{now}",
             })
 
+        # §8 lifecycle parity: entering the spec's declared exception_state
+        # raises a first-class box_exception, mirroring how AP raises one when
+        # an ap_item lands in needs_info/failed_post. Same audit + webhook
+        # funnel, so declarative Boxes show up in the exception queue too. The
+        # mirror is best-effort: a failure here must not unwind the committed
+        # transition.
+        if (
+            spec.exception_state
+            and target_state == spec.exception_state
+            and hasattr(self, "raise_box_exception")
+        ):
+            try:
+                self.raise_box_exception(
+                    box_id=box_id,
+                    box_type=box_type,
+                    organization_id=organization_id,
+                    exception_type=f"{box_type}_exception",
+                    reason=reason or f"Box entered exception state {target_state!r}",
+                    metadata={"source": "update_generic_box_state", "state": target_state},
+                    raised_by=str(actor_id or "system"),
+                    raised_actor_type="user",
+                    idempotency_key=f"{box_type}-excp:{box_id}:{target_state}:{now}",
+                )
+            except Exception as mirror_exc:
+                logger.warning(
+                    "[GenericBoxStore] box_exception mirror failed for %s: %s",
+                    box_id, mirror_exc,
+                )
+
         return self.get_generic_box(box_type, box_id)  # type: ignore[return-value]
 
     def record_hook_run(
