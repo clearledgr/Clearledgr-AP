@@ -83,6 +83,13 @@ class WorkflowSpec:
     # Phase 3 surface — declared now, interpreted by the sandbox later.
     hooks: Dict[str, Any] = field(default_factory=dict)
     conditions: Dict[str, Any] = field(default_factory=dict)
+    # Spec-driven LLM extraction: the fields the model should read out of
+    # unstructured input, each a ``{name, type, description}`` descriptor.
+    # Empty = this Box type gets no model extraction. ``domain_hint`` replaces
+    # the AP-specific system-prompt role for non-AP types (e.g. "You process
+    # software vendor contracts.").
+    llm_fields: Tuple[Dict[str, Any], ...] = ()
+    domain_hint: str = ""
 
     def __post_init__(self) -> None:
         # Normalize so inline sets/lists and JSON-loaded lists behave the same.
@@ -95,6 +102,8 @@ class WorkflowSpec:
         self.fields = tuple(self.fields or ())
         self.hooks = dict(self.hooks or {})
         self.conditions = dict(self.conditions or {})
+        self.llm_fields = tuple(dict(f) for f in (self.llm_fields or ()))
+        self.domain_hint = str(self.domain_hint or "")
 
     def next_states(self, current: str) -> FrozenSet[str]:
         return self.transitions.get(current, frozenset())
@@ -231,6 +240,29 @@ def validate_spec(spec: WorkflowSpec) -> List[str]:
             except ExpressionError as exc:
                 errors.append(f"condition {key!r} is not a valid expression: {exc}")
 
+    # llm_fields: the fields the model extracts from unstructured input. Each is
+    # a {name, type, description} descriptor; name must be a storable
+    # (non-reserved) snake_case key and type from a small allowlist so the
+    # extraction prompt is well-formed.
+    _LLM_FIELD_TYPES = {"string", "number", "integer", "boolean", "date", "currency"}
+    for f in spec.llm_fields:
+        if not isinstance(f, dict):
+            errors.append(
+                f"llm_field {f!r} must be a {{name, type, description}} object"
+            )
+            continue
+        nm = str(f.get("name") or "")
+        if not _NAME_RE.match(nm):
+            errors.append(f"llm_field name {nm!r} must be snake_case")
+        if nm in RESERVED_DATA_KEYS:
+            errors.append(f"llm_field {nm!r} collides with a reserved box column")
+        ty = str(f.get("type") or "string")
+        if ty not in _LLM_FIELD_TYPES:
+            errors.append(
+                f"llm_field {nm!r} type {ty!r} must be one of "
+                f"{sorted(_LLM_FIELD_TYPES)}"
+            )
+
     return errors
 
 
@@ -356,6 +388,8 @@ def to_json(spec: WorkflowSpec) -> Dict[str, Any]:
         "policy_version": spec.policy_version,
         "hooks": dict(spec.hooks),
         "conditions": dict(spec.conditions),
+        "llm_fields": [dict(f) for f in spec.llm_fields],
+        "domain_hint": spec.domain_hint,
     }
 
 
@@ -375,4 +409,6 @@ def from_json(data: Dict[str, Any]) -> WorkflowSpec:
         policy_version=data.get("policy_version") or CURRENT_WORKFLOW_POLICY_VERSION,
         hooks=dict(data.get("hooks") or {}),
         conditions=dict(data.get("conditions") or {}),
+        llm_fields=tuple(dict(f) for f in (data.get("llm_fields") or ())),
+        domain_hint=data.get("domain_hint") or "",
     )

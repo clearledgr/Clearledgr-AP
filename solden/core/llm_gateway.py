@@ -64,6 +64,11 @@ class LLMAction(str, Enum):
     EXPLAIN_STATE = "explain_state"
     SLACK_QUERY = "slack_query"
     SINGLE_PASS_EXTRACT = "single_pass_extract"
+    # Spec-driven extraction for declarative (non-AP) Box types: reads the
+    # fields a WorkflowSpec declares (llm_fields) out of unstructured input.
+    # Generic counterpart to EXTRACT_INVOICE_FIELDS — same "read unstructured
+    # input" role, no invoice-specific shape.
+    EXTRACT_BOX_FIELDS = "extract_box_fields"
     EXPLAIN_ANOMALY = "explain_anomaly"
     NARRATE_INSIGHT = "narrate_insight"
     # Module 2 spec line 100 — "Ask the agent" free-form Q&A on the
@@ -107,6 +112,10 @@ ACTION_REGISTRY: Dict[LLMAction, ActionConfig] = {
     # timeout matches AGENT_PLANNING's precedent for similarly-sized
     # composite Sonnet calls.
     LLMAction.SINGLE_PASS_EXTRACT:    ActionConfig(max_output_tokens=6000, model_tier="sonnet", timeout_seconds=120),
+    # Generic field extraction for declarative Box types. Sonnet (extraction
+    # accuracy matters) at 4000 tokens, mirroring EXTRACT_INVOICE_FIELDS — the
+    # field list is bounded by the spec, so output is bounded too.
+    LLMAction.EXTRACT_BOX_FIELDS:     ActionConfig(max_output_tokens=4000, model_tier="sonnet"),
     # Augments rule-detected anomalies with a context-aware operator
     # explanation (vendor, history, what's likely off). Cheap tier —
     # the rules already decided there's an anomaly; the LLM only writes

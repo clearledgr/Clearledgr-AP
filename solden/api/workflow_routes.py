@@ -67,6 +67,10 @@ def _require_box(db: Any, box_type: str, box_id: str, organization_id: str) -> D
 class BoxCreate(BaseModel):
     box_id: str = Field("", max_length=128)
     data: Dict[str, Any] = Field(default_factory=dict)
+    # Optional raw input. If the type declares llm_fields, the model extracts
+    # those fields from this text and they seed the Box's data (explicit data
+    # keys win over extracted ones).
+    source_text: str = Field("", max_length=100_000)
 
 
 class ActionBody(BaseModel):
@@ -85,12 +89,24 @@ def list_boxes(box_type: str, _user=Depends(get_current_user)) -> Dict[str, Any]
 @router.post("/workflows/{box_type}")
 def create_box(box_type: str, body: BoxCreate, _user=Depends(get_current_user)) -> Dict[str, Any]:
     organization_id = _session_org(_user)
-    _require_spec(box_type, organization_id)
+    spec = _require_spec(box_type, organization_id)
+
+    data: Dict[str, Any] = dict(body.data or {})
+    # Spec-driven extraction: if the type declares llm_fields and raw input was
+    # supplied, the agent reads the declared fields from it. Explicit data keys
+    # take precedence over extracted ones (caller intent wins).
+    if body.source_text and getattr(spec, "llm_fields", None):
+        from solden.services.box_extraction import extract_box_fields
+        extracted = extract_box_fields(
+            box_type, organization_id, text=body.source_text,
+        )
+        data = {**extracted, **data}
+
     db = get_db()
     payload: Dict[str, Any] = {
         "organization_id": organization_id,
         "created_by": _actor_id(_user),
-        "data": body.data,
+        "data": data,
     }
     if body.box_id:
         payload["id"] = body.box_id
