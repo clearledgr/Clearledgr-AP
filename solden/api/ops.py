@@ -272,10 +272,10 @@ def _execution_contract_status() -> Dict[str, Any]:
 
     The agent runtime is now a single path: DeterministicPlanningEngine →
     CoordinationEngine, per AGENT_DESIGN_SPECIFICATION.md §4 + §5. The
-    old Claude tool-use loop (AgentPlanningEngine) was retired and its
+    old model-driven tool-use loop (AgentPlanningEngine) was retired and its
     env flags (``AGENT_PLANNING_LOOP``, ``AGENT_LEGACY_FALLBACK_ON_ERROR``)
     are no longer consulted. The contract is always "deterministic
-    planning with Claude called only at spec \u00a77.1 bounded points."
+    planning with the model called only at spec \u00a77.1 bounded points."
     """
     production_env = _is_production_env()
     return {
@@ -1109,9 +1109,9 @@ async def get_ap_decision_health(
 ) -> Dict[str, Any]:
     """AP reasoning layer health: fallback rate, recommendation breakdown, override rate.
 
-    A fallback_rate_pct > 0 means Claude was unavailable for some invoices and
+    A fallback_rate_pct > 0 means the model was unavailable for some invoices and
     rule-based routing was used instead. An override_rate_pct > 0 means humans
-    disagreed with Claude's recommendation.
+    disagreed with the model's recommendation.
     """
     organization_id = _assert_org_access(user, organization_id)
     db = get_db()
@@ -1159,7 +1159,7 @@ async def get_ap_decision_health(
 
     fallback_rate_pct = round(fallback_count / decision_count * 100, 2) if decision_count else 0.0
 
-    # Override rate: Claude said approve but item ended up rejected (or vice versa)
+    # Override rate: the model said approve but item ended up rejected (or vice versa)
     overrides = 0
     try:
         sql2 = (
