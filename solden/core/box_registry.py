@@ -6,23 +6,27 @@ registers the shape its Boxes take so shared primitives (audit trail,
 health observability, reconstructability checks) can dispatch by
 ``box_type`` instead of hardcoding AP.
 
-As of the manifesto-truthing pass (2026-05-14) two BoxTypes are
-registered: ``ap_item`` and ``bank_match``. The second proves the
-architectural primitive generalizes — the manifesto's "the
-architecture that runs AP runs procurement / compliance / vendor
-onboarding" claim no longer rests on a single type.
+Three BoxTypes are registered today:
 
-bank_match is **AP-subordinate**: every bank_match Box carries a
-``parent_ap_item_id`` FK back to its AP item. AP stays the
-operator-facing record; bank_match is the typed sub-workflow for
-the closing leg.
+- ``ap_item`` — the production wedge; the operator-facing record.
+- ``purchase_order`` — an AP-*peer* (stands alone, no parent FK). This
+  is the real proof the manifesto's "the architecture that runs AP runs
+  procurement / compliance / vendor onboarding" generalizes beyond a
+  single domain.
+- ``bank_match`` — AP-*subordinate*: every Box carries a
+  ``parent_ap_item_id`` back to its AP item; the typed sub-workflow for
+  the closing leg, not an independent domain.
 
-The ``vendor_onboarding_session`` registration was removed when
-vendor onboarding was deprioritized per the AP-as-wedge product call
-(see ``memory/project_vendor_onboarding_subordinate.md``). The
-underlying state machine + table + service code remain in the repo
-as option-value; this registry just no longer surfaces VO Boxes to
-the runtime.
+Tenant-declared ``WorkflowSpec`` types ride this same registry via the
+dynamic resolver (see :func:`set_dynamic_resolver` / :func:`resolve`),
+so the spine is domain-general by construction, not by special-casing.
+
+The ``vendor_onboarding_session`` registration was removed when vendor
+onboarding was deprioritized per the AP-as-wedge product call (see
+``memory/project_vendor_onboarding_subordinate.md``). The manifesto
+names vendor onboarding as a generalization target, so the underlying
+state machine + table + service code stay in the repo as option-value;
+this registry simply doesn't surface VO Boxes to the runtime today.
 
 The registry is deliberately flat: a dict of :class:`BoxType`
 dataclasses keyed by name. No inheritance. Box-level invariants

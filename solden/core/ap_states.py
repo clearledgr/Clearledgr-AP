@@ -26,6 +26,27 @@ Override-window reversal path (DESIGN_THESIS.md §8):
         a state-machine action — the window is finalized and only an
         out-of-band intervention (e.g., a manual credit note) can
         undo it.
+
+Dual-approval path (Wave 6 / H1):
+    needs_approval -> needs_second_approval -> approved
+        High-value bills (above the org's dual_approval_threshold) require
+        a second, distinct approver; self-approval is blocked at the apply
+        layer (first_approver != second_approver).
+
+Snooze path (DESIGN_THESIS.md §3):
+    <pre-snooze state> -> snoozed -> <pre-snooze state>
+        Pre-snooze state is stored in metadata; the snooze reaper restores
+        it when the window expires.
+
+Payment-tracking lifecycle (Wave 2 / C1 — the default close path):
+    posted_to_erp -> awaiting_payment -> payment_in_flight
+                  -> payment_executed -> closed
+    (payment_failed -> awaiting_payment | reversed | closed)
+        Solden does NOT execute payment; the customer's ERP / bank does.
+        We track the chain only for auditor traceability through to close.
+
+``VALID_TRANSITIONS`` below is the authoritative graph; this summary is a
+reading aid and must be kept in sync with it.
 """
 
 from __future__ import annotations
