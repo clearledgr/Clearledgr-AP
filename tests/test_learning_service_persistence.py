@@ -77,6 +77,29 @@ def test_export_import_roundtrip_persists(postgres_test_db):
     assert sug is not None and sug["gl_code"] == "6010"
 
 
+def test_get_vendor_pattern_returns_best_with_typical_amount(postgres_test_db):
+    svc = LearningService(ORG_A)
+    svc.record_approval(vendor="Acme Inc", gl_code="6010", gl_description="Cloud", amount=200.0)
+
+    pat = svc.get_vendor_pattern("Acme Inc")
+    assert pat is not None
+    assert pat["gl_code"] == "6010"
+    # typical_amount maps to avg_amount; first approval halves it via the
+    # preserved create-then-update quirk (200 over occurrence_count 2).
+    assert pat["typical_amount"] == 100.0
+
+    # unknown vendor -> None (not an AttributeError, the old silent-bug shape)
+    assert svc.get_vendor_pattern("Nobody Co") is None
+
+
+def test_get_vendor_pattern_is_org_scoped(postgres_test_db):
+    a = LearningService(ORG_A)
+    a.record_approval(vendor="Acme Inc", gl_code="6010", gl_description="Cloud", amount=100.0)
+
+    b = LearningService(ORG_B)
+    assert b.get_vendor_pattern("Acme Inc") is None
+
+
 def test_missing_org_fails_loud(postgres_test_db):
     with pytest.raises(OrgIdMissing):
         LearningService("")

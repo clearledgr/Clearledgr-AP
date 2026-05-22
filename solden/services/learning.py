@@ -268,7 +268,38 @@ class LearningService:
 
         # No pattern found
         return None
-    
+
+    def get_vendor_pattern(self, vendor: str) -> Optional[Dict[str, Any]]:
+        """Best learned pattern for a vendor, shaped for the reasoning layer.
+
+        Returns the highest-confidence vendor->GL pattern as a dict, or None if
+        the vendor is unknown. ``typical_amount`` maps to the pattern's avg_amount
+        so the reasoning layer's vendor_context (amount-variance factor + risk)
+        can use it. Previously this method did not exist, so callers
+        (finance_learning, agent_reasoning) silently got None via a swallowed
+        AttributeError and that path never fired.
+        """
+        self._ensure_loaded()
+        normalized = self._normalize_vendor(vendor)
+        patterns = self.vendor_patterns.get(normalized)
+        if not patterns:
+            return None
+
+        best = max(
+            patterns.values(),
+            key=lambda p: p.confidence * min(p.occurrence_count, 10),
+        )
+        return {
+            "vendor": best.vendor_name,
+            "gl_code": best.gl_code,
+            "gl_description": best.gl_description,
+            "confidence": best.confidence,
+            "occurrence_count": best.occurrence_count,
+            "typical_amount": best.avg_amount,
+            "currency": best.currency,
+            "last_used": best.last_used.isoformat() if best.last_used else None,
+        }
+
     def get_vendor_history(self, vendor: str) -> Dict[str, Any]:
         """Get full history for a vendor."""
         self._ensure_loaded()
