@@ -1346,7 +1346,9 @@ class CoordinationEngine:
         # Remove None values
         payload = {k: v for k, v in payload.items() if v is not None}
         try:
-            item = await asyncio.to_thread(self.db.create_ap_item, payload)
+            item = await asyncio.to_thread(
+                box_registry.create_box, plan.box_type, payload, self.db
+            )
             box_id = item.get("id") if isinstance(item, dict) else str(item)
             ctx["box_id"] = box_id
             return {"ok": True, "box_id": box_id}
@@ -1882,9 +1884,11 @@ class CoordinationEngine:
         if not plan.box_id:
             return {"_abort": True, "error": "No box_id for post_bill"}
         wf = self._get_workflow()
-        item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
+        item = await asyncio.to_thread(
+            box_registry.get_box, plan.box_type, plan.box_id, self.db
+        )
         if not item:
-            return {"_abort": True, "error": "AP item not found"}
+            return {"_abort": True, "error": "box not found"}
 
         # Group 2 idempotency guard (2026-05-06): the AP item's
         # ``erp_reference`` is the source of truth for "did this bill
@@ -1942,8 +1946,9 @@ class CoordinationEngine:
                 if erp_ref and plan.box_id:
                     try:
                         await asyncio.to_thread(
-                            self.db.update_ap_item,
-                            plan.box_id, erp_reference=erp_ref,
+                            box_registry.update_box,
+                            plan.box_type, plan.box_id, self.db,
+                            erp_reference=erp_ref,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -1981,7 +1986,9 @@ class CoordinationEngine:
         """
         if not plan.box_id:
             return {"ok": True}
-        item = await asyncio.to_thread(self.db.get_ap_item, plan.box_id)
+        item = await asyncio.to_thread(
+            box_registry.get_box, plan.box_type, plan.box_id, self.db
+        )
         if not item or not item.get("erp_reference"):
             return {"ok": True, "scheduled": False, "reason": "no_erp_bill"}
         try:
@@ -1998,8 +2005,8 @@ class CoordinationEngine:
                 "payment_settled": existing_meta.get("payment_settled", False),
             })
             await asyncio.to_thread(
-                self.db.update_ap_item,
-                plan.box_id,
+                box_registry.update_box,
+                plan.box_type, plan.box_id, self.db,
                 metadata=existing_meta,
             )
             return {"ok": True, "scheduled": True, "settled": False}
