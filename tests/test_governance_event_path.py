@@ -270,6 +270,22 @@ class TestEngineGovernanceGate:
         verdict = engine._evaluate_governance_for_action(action, plan)
         assert verdict is None
 
+    def test_risky_action_on_non_ap_box_type_fails_closed(self, db):
+        """A gated action on a Box type that hasn't declared ap_v1 governance
+        must fail closed (require a human), never run ungated. bank_match is a
+        registered type with no gated_actions/governance_skill_id."""
+        engine = self._make_engine(db)
+        plan = Plan(
+            event_type="email_received", actions=[],
+            box_id="BM-x", box_type="bank_match",
+        )
+        action = Action("post_bill", "DET", {}, "test")
+
+        verdict = engine._evaluate_governance_for_action(action, plan)
+        assert verdict is not None
+        assert verdict.get("should_execute") is False
+        assert "governance_undeclared_for_box_type" in str(verdict.get("stop_reason"))
+
     def test_risky_action_invokes_build_deliberation(self, db):
         engine = self._make_engine(db)
         box = self._make_box(db, "AP-gov-2")

@@ -79,6 +79,19 @@ class BoxType:
         The state a Box moves to when work stalls and a human is needed.
         ``None`` means this type has no stuck state (e.g. bank_match): the
         engine then raises a box_exception without moving state.
+    gated_actions
+        Action names (engine planner vocabulary, e.g. ``"post_bill"``) that
+        require the autonomy/deliberation gate before they may run
+        autonomously for this Box type. Empty = no action is gated (the type
+        has no risky autonomous writes). Declaring governance per type is what
+        lets a second Box type plug into the gate instead of the engine
+        hardcoding ``box_type == "ap_item"``.
+    governance_skill_id
+        The skill whose deliberation gate governs this type's gated actions
+        (e.g. ``"ap_v1"`` for ap_item). ``None`` with a non-empty
+        ``gated_actions`` means the type declares risky actions but no way to
+        govern them yet — the engine fails closed (denies autonomous execution,
+        requires human approval) rather than running them ungated.
     """
 
     name: str
@@ -90,6 +103,8 @@ class BoxType:
     stuck_thresholds: Dict[str, int] = field(default_factory=dict)
     initial_state: str = ""
     exception_state: Optional[str] = None
+    gated_actions: FrozenSet[str] = field(default_factory=frozenset)
+    governance_skill_id: Optional[str] = None
 
 
 BOX_TYPES: Dict[str, BoxType] = {}
@@ -284,6 +299,18 @@ _AP_OPEN = _AP_ALL - _AP_TERMINAL
 _AP_EXCEPTION = {APState.NEEDS_INFO.value, APState.FAILED_POST.value}
 
 
+# Risky financial writes that must clear the ap_v1 autonomy/deliberation gate
+# before the agent runs them unsupervised. The engine maps these action names
+# to governance tokens (see coordination_engine._GOVERNANCE_GATED_ACTIONS);
+# this set is what the engine checks to decide "is this action gated for this
+# Box type". Keep the two in sync.
+_AP_GATED_ACTIONS = frozenset({
+    "post_bill",
+    "schedule_payment",
+    "reverse_erp_post",
+    "freeze_vendor_payments",
+})
+
 register(BoxType(
     name="ap_item",
     source_table="ap_items",
@@ -293,6 +320,8 @@ register(BoxType(
     exception_states=frozenset(_AP_EXCEPTION),
     initial_state=APState.RECEIVED.value,
     exception_state=APState.NEEDS_INFO.value,
+    gated_actions=_AP_GATED_ACTIONS,
+    governance_skill_id="ap_v1",
 ))
 
 

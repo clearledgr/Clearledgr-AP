@@ -893,11 +893,27 @@ class CoordinationEngine:
             # gated set.
             return None
 
-        if plan.box_type != "ap_item":
-            # The deliberation gate is AP-domain (skill_id ap_v1, AP belief
-            # state + autonomy policy). Other box types aren't gated here;
-            # their governance, when they have it, declares its own skill.
-            return None
+        # Per-box-type governance: the Box type declares which actions are
+        # gated and which skill governs them (box_registry.BoxType), instead
+        # of the engine hardcoding ``box_type == "ap_item"``. A risky action
+        # (one in _GOVERNANCE_GATED_ACTIONS) on a type that has NOT declared an
+        # AP-style deliberation gate fails closed — it requires a human rather
+        # than running ungated. Today only ap_item declares ap_v1 governance;
+        # this is what lets a second Box type plug in instead of bypassing.
+        try:
+            bt = box_registry.resolve(plan.box_type, self.organization_id)
+            gated_actions = getattr(bt, "gated_actions", frozenset())
+            governance_skill_id = getattr(bt, "governance_skill_id", None)
+        except Exception:
+            gated_actions = frozenset()
+            governance_skill_id = None
+
+        if not (action.name in gated_actions and governance_skill_id == "ap_v1"):
+            return {
+                "should_execute": False,
+                "stop_reason": f"governance_undeclared_for_box_type:{plan.box_type}",
+                "recommended_action": "require_human_approval",
+            }
 
         from solden.services.finance_agent_runtime import (
             get_platform_finance_runtime,
@@ -939,7 +955,7 @@ class CoordinationEngine:
 
         ap_item: Dict[str, Any] = {}
         try:
-            raw = self.db.get_ap_item(plan.box_id) if hasattr(self.db, "get_ap_item") else None
+            raw = box_registry.get_box(plan.box_type, plan.box_id, self.db)
             ap_item = raw if isinstance(raw, dict) else {}
         except Exception as exc:
             logger.warning(
