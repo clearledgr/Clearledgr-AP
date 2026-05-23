@@ -369,3 +369,61 @@ and the vestigial task_runs; wired the orphaned audit-export reaper. The five pr
 hold, the agent is bounded (rules decide / downgrade-only model / never moves money /
 zero vendor-facing text / audited+reversible), and the architecture is box-type-agnostic.
 Full suite: 4286 passed / 0 failed.
+
+---
+
+## Parallel deep-audit fan-out + fixes (2026-05-23)
+
+After the spine pass, ran 8 subagents over the whole tree (core, stores, services
+a-z, api a-z, integrations) auditing against the same yardstick. They surfaced
+real drift the green suite never caught; each fix below was verified + tested +
+committed one at a time. Full suite after the batch: **4306 passed / 0 failed**.
+
+### Cross-tenant / security (HIGH)
+- **recon_store** — `get/list/update_recon_*` keyed by id with no org filter; the
+  recon skill passed `session_id` from payload unchecked → cross-tenant read of
+  another org's recon session + line items. Org-scoped the store (fail-closed) +
+  threaded org through callers.
+- **org_config** — `OrganizationConfig.from_dict` did not exist; `get_org_config`
+  always returned None and `get_or_create_config` re-saved defaults → silent config
+  data loss across the whole org-config API. Implemented `from_dict`.
+- **settings.py** — `/settings/{org}/*` (approval thresholds, GL maps, auto-approve
+  rules) had auth but NO org-match → any authed user read/wrote any org's financial
+  controls. Added a router-level org-match guard.
+- **ops.py** — retry/skip job + reset-budget were cross-tenant (by id / trusted query
+  org). Added org checks (404 / 403).
+- **outbox_ops.py** — retry/skip event by id, no org check. Mirrored the read guard.
+- **dispute_service.open_dispute** — auto-filled vendor_name from an unscoped
+  `get_ap_item` → cross-tenant PII. Org-scoped the lookup.
+- **get_all_tenant_health** — returned every org's metrics behind a tenant-admin role
+  (zero consumers). Removed (belongs behind internal-ops auth).
+- **SAML 404** — `/saml/` prefix (trailing slash) never matched the matcher's
+  `startswith(f"{prefix}/")` → all SAML SSO 404'd in prod. Fixed to `/saml`.
+- **strict-profile allowlist gap** — 19 mounted+tested routers (~68 endpoints incl.
+  dual-approval control, GDPR, VAT, sanctions, three-way-match, peppol, bank-statements,
+  accrual-JE) were never allowlisted → silent 404 in prod. Allowlisted all + regression
+  fence. `threshold_policy` mutations also gained an admin gate + audit.
+
+### Bounded-agent / money / vendor (HIGH)
+- **apply_settlement** — posted real vendor payments (billpayment/VendorPayment) to 4
+  ERPs from the operator resolve path, no flag/governance. Per decision KEPT but
+  hard-gated: `FEATURE_ERP_SETTLEMENT_WRITE` (off) + `_RISKY_ACTIONS` + reframed as
+  reconciliation. "Never moves money" holds (flag off).
+- **vendor-master auto-create** — exception sweep auto-created ERP vendor masters
+  (~45 min, no operator). Removed from auto-resolve → operator-surfaced. Same for the
+  post-time `get_or_create_vendor` (now fails the post with `vendor_not_in_erp`).
+- **needs-info-draft** — authored a "Dear {vendor}" email body to the vendor (+ a
+  tenant gap). Removed (route + builder + allowlist).
+- **Mistral gateway bypass** — `llm_multimodal._call_mistral` raw HTTP, no
+  ACTION_REGISTRY/budget. Removed the ungoverned provider.
+- **duplicate-downgrade** — the model could lower a deterministic high-confidence
+  duplicate to info → toward approval. Floored: a high match stays gated; only weak
+  matches are model-relaxable.
+
+### Lying surfaces / dead code
+Removed: `workflow_states.py` (unwired Protocol) + `recon_states.py` + the ap_states
+conformance shim; dead `models.py` dataclasses (Match/Exception/DraftEntry/AuditLog +
+3 enums) + the "single source of truth" overclaim; Outlook `Mail.Send` scope +
+orphaned `send_message`. Docstring-corrected: `payment_request` (phantom
+PaymentExecutionService), `invoice_archive` (phantom retention reaper),
+`match_engine` (marked dormant — not wired in prod).
