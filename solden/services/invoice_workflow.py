@@ -1533,7 +1533,7 @@ class InvoiceWorkflowService(InvoiceValidationMixin, InvoicePostingMixin):
 
         # Canonical AP path for auto-approval:
         # validated -> needs_approval -> approved -> ready_to_post
-        approved_by = f"clearledgr-auto:{reason}"
+        approved_by = f"solden-auto:{reason}"
         approved_at = datetime.now(timezone.utc).isoformat()
         current_state = existing_state or self._canonical_invoice_state(await asyncio.to_thread(self.db.get_invoice_status, invoice.gmail_id))
 

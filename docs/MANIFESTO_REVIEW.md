@@ -185,3 +185,49 @@ Reviewed as a cluster because they carry three of the five primitives.
   clarifiers added. Grep-verified zero callers + `import main` clean. Tests: gateway /
   budget-cap / call-box-link / cost-summary / email-parser / needs-info-recovery green
   (65 passed).
+
+---
+
+## AP domain (the wedge)
+
+### `solden/services/ap_decision.py` — ALIGNED (the "rules decide" half), no fix
+- **For:** `APDecisionService.decide()` — the deterministic routing recommendation
+  (approve | needs_info | escalate | reject) from a fixed 10-step policy cascade. The
+  rules half of "rules decide, the model describes."
+- **Fit:** read closely. Confirmed the header is true ("Claude is **not** called here").
+  The standout is the LLM-hint handling: `apply_single_pass_hints` is a **downgrade-only
+  filter** — the model's advisory output can pull `approve → escalate` on a fraud /
+  duplicate signal the rules missed, but there is no path where it pushes toward
+  approval. Worst-case model influence is "route to a human." `enforce_gate_constraint`
+  is a defensive no-op so nothing can route `approve` past a failed gate. Textbook
+  bounded. No drift.
+
+### `invoice_workflow.py` / `finance_agent_runtime.py` / `ap_store.py` — ALIGNED; drift fixed
+Invariant sweep across the two large orchestration files (2459 + 2287 lines) +
+`ap_store.py`, plus the specific fixes below. **Money-movement invariant verified
+clean:** zero `execute_payment` / `send_money` / `initiate_payment` / `transfer_funds` /
+`wire_transfer` anywhere in the AP core — consistent with "Solden never moves money."
+- **invoice_workflow.py — Drift fixed:** auto-approval attribution was
+  `approved_by = "clearledgr-auto:{reason}"` — stale brand in operator-visible audit
+  data (the approver shown for auto-approved invoices). Renamed to `"solden-auto:"`.
+  Forward-only (audit-correct: historical rows keep their truthful value; we never
+  rewrite the trail). Single write site, nothing parses the prefix.
+- **ap_store.py — Drift fixed (a lying-wiring docstring + a real retention hole):**
+  `reap_expired_audit_exports` was orphaned — defined + unit-tested but **never wired
+  into any production sweep**, with a docstring falsely claiming it's "called by the
+  orphan-task-runs sweeper at startup" (that sweeper never called it; git -S confirms
+  it was never wired). Audit exports carry an `expires_at` TTL by design, so expired
+  exports were lingering forever — a data-retention gap on the sovereignty primitive's
+  own artifact. **Fixed:** wired it into the hourly background tick
+  (`agent_background._run_loop`, `tick % 4 == 0`) and corrected the docstring. Also
+  fixed 2 stale `clearledgr/` path comments in the file header + reaper.
+- **Note:** the two big orchestration files were invariant-swept (money movement,
+  stale paths, deterministic-decision + bounded-LLM call sites), not read line-by-line;
+  `ap_decision.py` was read closely. A deeper line read of `finance_agent_runtime.py`
+  (the runtime facade) is the one remaining AP-core item if fuller coverage is wanted;
+  its durability path (`resume_pending_agent_tasks` → `agent_retry_jobs` drain) was
+  already verified in the durable-runtime work.
+- **Verdict:** aligned; 1 brand-data drift fixed, 1 orphaned-reaper retention hole
+  wired + docstring fixed, 2 stale paths fixed. Tests: audit-export / ap_decision /
+  invoice-workflow-controls / runtime-state-transitions green (97 passed). `import main`
+  clean.

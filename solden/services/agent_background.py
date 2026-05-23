@@ -597,6 +597,26 @@ async def _run_loop():
             except Exception as snooze_exc:
                 logger.warning("[background] snooze reaper failed: %s", snooze_exc)
 
+            # Every hour (4 ticks): reap expired audit exports. These are
+            # full Box export documents written with a TTL (expires_at);
+            # leaving them past expiry is a data-retention gap on the
+            # sovereignty primitive's own artifact. Global reap (not
+            # per-org) — the store DELETEs every row past its expires_at.
+            if tick % 4 == 0:
+                try:
+                    from solden.core.database import get_db
+                    deleted = await asyncio.to_thread(
+                        get_db().reap_expired_audit_exports
+                    )
+                    if deleted:
+                        logger.info(
+                            "[background] reaped %d expired audit exports", deleted
+                        )
+                except Exception as export_exc:
+                    logger.warning(
+                        "[background] audit export reaper failed: %s", export_exc
+                    )
+
             # Every hour (4 ticks): check circuit breaker (§7.8)
             if tick % 4 == 0:
                 for org_id in org_ids:

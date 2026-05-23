@@ -9,8 +9,9 @@ expects the concrete class that inherits it to provide:
 * ``self._parse_iso()``   -- parses an ISO-8601 string into a datetime
 * ``self._exception_severity_rank()`` -- maps severity label to int rank
 
-All methods are copied verbatim from ``clearledgr/core/database.py`` so that
-``SoldenDB(APStore, ...)`` inherits them without any behavioural change.
+All methods were extracted verbatim from the original monolithic
+``database.py`` so that ``SoldenDB(APStore, ...)`` inherits them without any
+behavioural change.
 
 Gmail ID mapping
 ~~~~~~~~~~~~~~~~
@@ -2844,8 +2845,9 @@ class APStore:
     def reap_expired_audit_exports(self) -> int:
         """Delete export rows past their expires_at. Idempotent.
 
-        Called by the same orphan-task-runs sweeper at startup
-        (clearledgr/services/app_startup.py). Returns count deleted.
+        Called hourly by the main background loop
+        (``agent_background._run_loop``, the ``tick % 4 == 0`` branch).
+        Global reap across all orgs. Returns count deleted.
         """
         self.initialize()
         now_iso = datetime.now(timezone.utc).isoformat()
