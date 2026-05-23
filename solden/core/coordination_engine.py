@@ -91,6 +91,10 @@ _GOVERNANCE_GATED_ACTIONS: Dict[str, str] = {
     "schedule_payment": "post_to_erp",
     "reverse_erp_post": "retry_recoverable_failures",
     "freeze_vendor_payments": "post_to_erp",
+    # Cash-side ERP write (records a completed settlement). If a planner ever
+    # emits this on the event-driven path it routes through the same doctrine +
+    # autonomy gate; it is also feature-flagged + in _RISKY_ACTIONS.
+    "apply_settlement": "apply_settlement",
 }
 
 

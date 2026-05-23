@@ -41,6 +41,14 @@ def db(tmp_path, monkeypatch):
     return inst
 
 
+@pytest.fixture(autouse=True)
+def _enable_settlement_write(monkeypatch):
+    # apply_settlement (cash-side ERP write) is hard-gated OFF by default
+    # (FEATURE_ERP_SETTLEMENT_WRITE). These tests exercise the enabled write
+    # path, so turn it on for the module. Only affects apply_settlement gating.
+    monkeypatch.setenv("FEATURE_ERP_SETTLEMENT_WRITE", "true")
+
+
 def _make_bill(**overrides) -> Bill:
     defaults = dict(
         vendor_id="V001",
@@ -1450,3 +1458,22 @@ def test_post_bill_router_threads_idempotency_key_to_quickbooks(db):
     assert captured_kwargs.get("idempotency_key") == "auto:ap-router-1:erp_post", (
         f"router must thread idempotency_key to adapter; got {captured_kwargs!r}"
     )
+
+
+def test_apply_settlement_disabled_by_default_moves_no_money(monkeypatch):
+    """The money-movement invariant: with FEATURE_ERP_SETTLEMENT_WRITE off, the
+    cash-side ERP write never fires — apply_settlement short-circuits to skipped
+    and no adapter is reached. (Overrides the module's autouse enable.)"""
+    monkeypatch.setenv("FEATURE_ERP_SETTLEMENT_WRITE", "false")
+    application = SettlementApplication(
+        target_erp_reference="BILL-1", amount=100.0, currency="USD",
+        source_document_type="payment",
+    )
+    qb_spy = AsyncMock()
+    with patch("solden.integrations.erp_router.get_erp_connection",
+               return_value=_quickbooks_connection()), \
+         patch("solden.integrations.erp_router.apply_settlement_to_quickbooks", qb_spy):
+        result = asyncio.run(apply_settlement("org-test", application))
+    assert result["status"] == "skipped"
+    assert result["reason"] == "settlement_write_disabled"
+    qb_spy.assert_not_called()

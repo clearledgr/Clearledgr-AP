@@ -87,6 +87,23 @@ def is_procurement_erp_write_enabled() -> bool:
     return _env_flag("FEATURE_PROCUREMENT_ERP_WRITE", default=False)
 
 
+def is_erp_settlement_write_enabled() -> bool:
+    """ERP settlement write-back: recording a COMPLETED payment/receipt/refund
+    against a posted bill (apply_settlement → QB billpayment / Xero Payment /
+    NetSuite vendorPayment / SAP VendorPayment).
+
+    OFF by default. This is the single most sensitive ERP write Solden makes —
+    it authors the cash-side accounting entry (debit AP / credit bank), and on
+    a connection with payment rails it can move money. The intent is
+    RECONCILIATION (record a settlement that already happened externally), not
+    initiation; the gate keeps it dark until that distinction is validated
+    per-ERP against a sandbox. Flip ``FEATURE_ERP_SETTLEMENT_WRITE=true`` only
+    after that validation. Until then "Solden never moves money" holds because
+    the write never fires.
+    """
+    return _env_flag("FEATURE_ERP_SETTLEMENT_WRITE", default=False)
+
+
 def is_workflow_hooks_enabled() -> bool:
     """Customer code hooks + conditions + effects on declarative Box types.
 

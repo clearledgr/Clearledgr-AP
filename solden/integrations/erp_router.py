@@ -844,7 +844,9 @@ class CreditApplication:
 
 @dataclass
 class SettlementApplication:
-    """Represents a cash settlement application against an ERP payable."""
+    """A COMPLETED settlement (payment/receipt/refund) to record against an ERP
+    payable — reconciliation, not payment initiation. Applied only via
+    ``apply_settlement``, which is feature-flagged + governance-gated."""
 
     target_erp_reference: str
     amount: float
@@ -1693,7 +1695,32 @@ async def apply_settlement(
     ap_item_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Apply a payment, receipt, or refund settlement to an ERP payable."""
+    """Record a COMPLETED settlement (payment/receipt/refund) against an ERP
+    payable — reconciliation, NOT payment initiation.
+
+    This is the single dispatch chokepoint for the cash-side ERP write across
+    QB/Xero/NetSuite/SAP. It is the most sensitive write Solden makes, so it is
+    HARD-GATED two ways:
+
+    1. Feature flag ``FEATURE_ERP_SETTLEMENT_WRITE`` (off by default) — the write
+       never fires unless a deploy explicitly enabled it after per-ERP sandbox
+       validation. With it off, "Solden never moves money" holds at the source.
+    2. ``apply_settlement`` is in ``finance_agent_governance._RISKY_ACTIONS``, so
+       any autonomous caller must clear the doctrine + earned-autonomy gate.
+
+    Intent is to mirror a settlement that already happened externally, not to
+    instruct the bank to pay.
+    """
+    from solden.core.feature_flags import is_erp_settlement_write_enabled
+    if not is_erp_settlement_write_enabled():
+        return {
+            "status": "skipped",
+            "reason": "settlement_write_disabled",
+            "idempotency_key": idempotency_key,
+            "erp_reference": application.target_erp_reference,
+            "ap_item_id": ap_item_id,
+        }
+
     connection = get_erp_connection(organization_id)
     if not connection:
         return {

@@ -23,6 +23,11 @@ _RISKY_ACTIONS = {
     "post_to_erp",
     "retry_recoverable_failures",
     "resume_workflow",
+    # apply_settlement records the cash-side ERP entry (debit AP / credit bank)
+    # — the most sensitive write Solden makes. Higher-risk than post_to_erp, so
+    # an autonomous caller must clear the doctrine + earned-autonomy gate. (It is
+    # ALSO hard-gated by FEATURE_ERP_SETTLEMENT_WRITE at the dispatch chokepoint.)
+    "apply_settlement",
 }
 
 _BELIEF_ACTION_ALIGNMENT = {
