@@ -299,3 +299,22 @@ The "compounding" thesis (the agent improves over time), bounded correctly.
 - **task_runs remnants confirmed removed** from agent_memory (validates the earlier
   durable-runtime cleanup). No stale paths / brand.
 - **Verdict:** aligned; no drift. Tenant-isolated + persisted + advisory.
+
+### ERP adapters (`erp_router` + native intake adapters) — ALIGNED; 1 brand fix
+The most sensitive boundary — money movement + the structured-vs-unstructured LLM line.
+- **Money-movement boundary correct:** `post_bill` posts a vendor bill (an AP entry —
+  "we owe this vendor") to the ERP with an idempotency guard on `erp_reference` (no
+  duplicate bills); it pays nothing. Zero `execute_payment` / `initiate_payment` /
+  `send_payment` / `process_payment` anywhere in the ERP layer. No `schedule_payment`
+  implementation that moves money. Solden writes the AP record; the ERP/bank executes
+  payment. "Solden never moves money" holds at its most sensitive point.
+- **Structured intake skips the LLM:** the native-intake adapters
+  (NetSuite/SAP/QB/Xero) make ZERO LLM-gateway calls — they build `InvoiceData`
+  directly from the structured ERP envelope. The model only reads unstructured
+  Gmail/Outlook input, exactly as the memory invariant says.
+- **Drift fixed:** `field_mapping_catalog.py` docstring had one leftover
+  `any-clearledgr-field` in an otherwise-rebranded "Solden → ERP" file → `solden-field`.
+- **Left:** internal Redis namespace keys (`clearledgr:erp_rate:*`,
+  `clearledgr:erp_refresh_lock:*`) — same untouched-backend-identifier bucket.
+- **Verdict:** aligned; 1 brand-consistency fix. Tests: native-intake-pipeline /
+  adapter-contracts / field-mapping-posters / api-first green (55 passed).

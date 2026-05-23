@@ -4,7 +4,7 @@ The Solden workspace exposes a "Custom field mapping" UI for ERP
 admins whose chart-of-accounts or document layouts deviate from the
 defaults. The scope spec (``Solden_Workspace_Scope_GA.md`` §Module 5)
 explicitly calls for a *bounded* surface — not a free-form
-{any-clearledgr-field → any-erp-field} matrix — to avoid customer
+{any-solden-field → any-erp-field} matrix — to avoid customer
 configurations that the agent runtime cannot reason about.
 
 This module is the single source of truth for what is mappable. The
