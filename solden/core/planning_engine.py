@@ -150,7 +150,14 @@ class DeterministicPlanningEngine:
             AgentEventType.ERP_GRN_CONFIRMED: self._plan_grn_confirmed,
             AgentEventType.MANUAL_CLASSIFICATION: self._plan_manual_classification,
             AgentEventType.LABEL_CHANGED: self._plan_label_changed,
-            # Vendor onboarding v1.1 — spec §5.
+            # Vendor onboarding v1.1 — spec §5. DORMANT: every VO event
+            # below (plus KYC_DOCUMENT_RECEIVED / IBAN_CHANGE_SUBMITTED
+            # above) is in ``_DEPRECATED_VO_EVENTS`` and is refused by the
+            # gate at the top of ``plan()`` BEFORE this dispatch runs — so
+            # these planners are unreachable today. They stay registered as
+            # option-value (the manifesto names VO as a generalization
+            # target); re-enable by removing the event from that set + re-
+            # registering the Box type. Do not assume "in the table" = live.
             AgentEventType.ONBOARDING_INITIATED: self._plan_onboarding_initiated,
             AgentEventType.VENDOR_PORTAL_ACCESSED: self._plan_vendor_portal_accessed,
             AgentEventType.VENDOR_SUBMISSION_RECEIVED: self._plan_vendor_submission_received,

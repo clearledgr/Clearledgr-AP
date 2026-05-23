@@ -128,3 +128,32 @@ Reviewed as a cluster because they carry three of the five primitives.
 - **Verdict:** aligned; History/Exceptions/Ownership all hold. 2 doc drifts fixed +
   1 robustness test added. Tests: export/owner/audit-chain/atomicity/exceptions-admin/
   policy-version/entity-scope clusters green (61 passed).
+
+### `solden/core/planning_engine.py` + `solden/services/finance_agent_governance.py` — ALIGNED ("rules decide" + "agent is bounded")
+- **planning_engine — For:** the deterministic planner. `plan(event, box_state)` is a
+  pure dict dispatch (event type → `_plan_*` method) producing a typed `Plan` of
+  `Action`s. No LLM decides the plan; Actions tagged `"LLM"` (classify_email,
+  extract_invoice_fields, …) run the model WITHIN an action during execution.
+  "Rules decide, the model describes." Missing-handler path raises + records an
+  `unhandled_event_type` box_exception (Exceptions primitive — no silent drops);
+  `correlation_id` carried for idempotent redelivery (durability).
+- **planning_engine — Fit:** this is the manifesto's "rules decide" proof. The VO
+  event types are gated dormant before dispatch (`_DEPRECATED_VO_EVENTS`), matching
+  the VO-subordinate decision. Strong.
+- **planning_engine — Drift fixed:** the dispatch table still labelled the VO planners
+  "Vendor onboarding v1.1 — spec §5" as if live, while `plan()` refuses those events
+  via the gate above — a reader scanning only the dispatcher would be misled. Added a
+  cross-reference noting they're gated dormant / option-value, "do not assume in-the-
+  table = live."
+- **governance — For:** `evaluate_doctrine` runs four deterministic gates:
+  forbidden_actions + belief_alignment (unconditional STATE gates — authority can't
+  bypass), promotion_gates + autonomy_policy (earned-autonomy gates — an operator CAN
+  override). Risky actions (`_RISKY_ACTIONS`: post_to_erp, auto_approve,
+  retry_recoverable_failures, resume_workflow) require *earned* autonomy via quality-
+  proof gates; fail-closed; the 2026-05-06 fix records the real gate state in the audit
+  row instead of a fake "pass."
+- **governance — Fit:** textbook "the agent is bounded." `_RISKY_ACTIONS` tops out at
+  `post_to_erp` — no money-movement token, consistent with "Solden never moves money."
+  No drift. No stale paths / vendor-name issues.
+- **Verdict:** both aligned; 1 planning_engine doc-coherence fix. Tests: planning /
+  vo-deprecation / governance / governance-event-path green (56 passed).
