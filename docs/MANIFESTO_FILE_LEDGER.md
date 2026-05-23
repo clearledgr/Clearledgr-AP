@@ -14,7 +14,7 @@ reversible; sovereign/removable; finance is the wedge, architecture generalizes)
 Detailed prose for the deep-reviewed spine/AP files lives in `MANIFESTO_REVIEW.md`;
 this ledger is the complete coverage record.
 
-**REVIEWED: 167 / 459** (see wave sections below)
+**REVIEWED: 459 / 459** (see wave sections below)
 
 ---
 
@@ -66,3 +66,43 @@ ALIGNED except: integrations/__init__ (lying docstring), integrations/oauth.py (
 ALIGNED/MECHANICAL except DEAD: workflows/ap_workflow.py + workflows/__init__ (0 callers, lying docstring); solden/models/{invoices,transactions,exceptions,ingestion,requests,__init__} (0 importers). cli all ALIGNED (org-bound PolicyService, org-scoped audit export). di/container ALIGNED (stateless-only). box_specs ALIGNED (honest empty).
 
 **REVIEWED: 167 / 459**
+
+---
+
+## WAVE 2/3 (2026-05-23) — services top-level (206) + api (91), per-file
+
+All services/*.py and api/*.py reviewed (a–z). Verdicts captured in session log;
+the great majority ALIGNED/MECHANICAL. New findings folded into the consolidated
+backlog below. With this, every directory + every file in solden/ has a verdict.
+
+**REVIEWED: 459 / 459** (spine/AP/surface/fix files verdicted in MANIFESTO_REVIEW.md
++ this session; all other files in the wave sections.)
+
+---
+
+## CONSOLIDATED FIX BACKLOG (waves 1+2+3) — prioritized, to work through
+
+### HIGH (real cross-tenant / security / lying-surface)
+1. `core/stores/purchase_order_store.py` — false "never a cross-tenant leak" docstring + ~8 id-keyed methods; `finance_skills/procurement_skill.py` reads po_id from payload uncompensated (AP-peer Box, vendor master + amounts). Org-scope store + thread org through skill.
+2. `api/pipelines.py` + `pipeline_store.py` — `box_links` has NO organization_id column; create_box_link/get_box_links unscoped → cross-tenant link read/write. Add org column + scope + handler check.
+3. `api/org_config.py` — whole `/config` router DROPPED in strict-profile prod (not allowlisted); carries GL maps/thresholds/payment-gateway secrets. Allowlist OR delete (overlaps /settings + /api/workspace/org/settings).
+4. `services/shadow_mode.py` — non-functional: constructs APDecisionService(organization_id/db/model_override) but ctor is (api_key=None) → guaranteed TypeError swallowed; also contradicts deterministic-decision invariant. Delete or rebuild.
+5. `services/gl_correction.py` — DEAD (0 prod callers) + read methods serve empty in-memory dict (never hydrates from db.get_gl_corrections). Delete or wire.
+6. `services/auth.py` — DEAD verify_api_key/get_api_key_optional (0 importers) with a dev-mode bypass footgun. Delete.
+
+### MED (defense-in-depth tenant gaps / governance / dead / allowlist)
+- Store org-scoping (id-keyed, mostly API-compensated): `approval_chain_store`, `entity_store`, `user_entity_roles_store`, `payment_store`, `override_window_store`, `bank_match_store`, `generic_box_store`, `bank_statement_store`, `ap_runtime_store`, `pattern_store` (latter is cross-tenant-by-design + dead).
+- `services/monitoring.py:472` — `_check_gmail_watch_expiration` reads all orgs' mailbox state (cross-tenant in the per-org health payload).
+- `services/task_scheduler.py` — run_all_checks scans all tenants' tasks, posts to one global #finance channel. Per-org loop.
+- `services/email_tasks.py` — service mutators org-unscoped (API-guard-compensated; non-API callers bypass).
+- `api/workspace_shell.py` — ~5 mounted routes dropped in strict-profile prod (/payments*, /vendor-intelligence/*, /implementation/complete-step, /ap/items/originals/{hash}). Allowlist.
+- `api/workspace_rules.py` — approval-rule mutations lack admin gate + no audit_events.
+- `api/sample_data.py` — docstring claims admin gate; handlers have none (org-scoped, so MED).
+- `api/erp.py` — DEAD `/erp/sap` router (unmounted) over a non-org-scoped singleton; would be cross-tenant if mounted. Delete (+ api/__init__ erp_router shim, + integrations/oauth.py + api/erp_oauth.py).
+- DEAD: `workflows/ap_workflow.py` + `workflows/__init__`; `solden/models/{invoices,transactions,exceptions,ingestion,requests,__init__}`; `services/rowset_branch.py` (unwired Sprint-5-B scaffolding).
+- `services/webhook_delivery.py` — duplicate X-Solden-* header keys + false "legacy X-Clearledgr-*" comment (legacy receivers get no sig).
+- `integrations/__init__.py` — lying docstring (Stripe/Paystack/Flutterwave/Plaid payment-gateway capability that doesn't exist).
+- `services/subscription.py:303` — dead `vendor_outreach_draft` credit key (contradicts zero-vendor-text); review `ap_decision` key too.
+
+### LOW (docstring / brand / dead accumulators / advisory naming)
+- `services/agent_reasoning.py` (decision vocab reads authoritative but advisory), `services/vendor_inquiry.py:156` ("or auto-send" doc), `services/learning_calibration.py` (dead _calibration_history), `services/peppol_ubl_generator.py` ("emits to vendors" doc), `services/erp/sap.py` (park_* "Parked" no-write, unreachable), `core/event_queue.py` (tier names), `core/vendor_onboarding_states.py` (chase-loop doc), `core/money.py` (SQLite storage doc), `core/database.py` (db_path="clearledgr.db" default), `annotation_targets/sap_z_field.py` (field-name doc≠code), onboarding env-var brand docstrings, stale strict-profile allowlist entries for dormant VO (/portal/onboard, /api/vendors/*/onboarding) — prune.
