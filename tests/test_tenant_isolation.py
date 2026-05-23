@@ -315,3 +315,32 @@ class TestOpsCrossTenantWrites:
         )
         assert r.status_code == 403
         assert "org_mismatch" in str(r.json().get("detail", "")).lower()
+
+    def _seed_outbox_event(self, db, event_id: str, org_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with db.connect() as conn:
+            conn.execute(
+                """INSERT INTO outbox_events
+                   (id, organization_id, event_type, target, payload_json,
+                    status, attempts, max_attempts, next_attempt_at,
+                    created_at, updated_at, created_by)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (event_id, org_id, "test.event", "slack", "{}",
+                 "dead", 5, 5, now, now, now, "system"),
+            )
+            conn.commit()
+
+    def test_retry_outbox_event_cross_tenant_is_404(self, admin_client_as_org_a, db):
+        self._seed_outbox_event(db, "OE-CROSS", ORG_B)
+        r = admin_client_as_org_a.post(
+            f"/api/ops/outbox/OE-CROSS/retry?organization_id={ORG_A}"
+        )
+        assert r.status_code == 404, r.text
+
+    def test_skip_outbox_event_cross_tenant_is_404(self, admin_client_as_org_a, db):
+        self._seed_outbox_event(db, "OE-CROSS-2", ORG_B)
+        r = admin_client_as_org_a.post(
+            f"/api/ops/outbox/OE-CROSS-2/skip?organization_id={ORG_A}",
+            json={"reason": "x"},
+        )
+        assert r.status_code == 404, r.text

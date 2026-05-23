@@ -130,7 +130,14 @@ def retry_outbox_event(
     organization_id: Optional[str] = Query(default=None),
     user=Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_ops_access(user, organization_id)
+    organization_id = _require_ops_access(user, organization_id)
+    # retry_event/skip_event are keyed by event_id only — verify the event
+    # belongs to the caller's org first (mirrors get_outbox_event), else a
+    # tenant ops-admin could retry another tenant's outbox event. 404, no leak.
+    from solden.services.outbox import _fetch_event_by_id
+    existing = _fetch_event_by_id(event_id)
+    if existing is None or existing.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="event not found")
     actor = _actor_from_user(user)
     event = retry_event(event_id, actor=actor)
     if event is None:
@@ -152,7 +159,11 @@ def skip_outbox_event(
     organization_id: Optional[str] = Query(default=None),
     user=Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_ops_access(user, organization_id)
+    organization_id = _require_ops_access(user, organization_id)
+    from solden.services.outbox import _fetch_event_by_id
+    existing = _fetch_event_by_id(event_id)
+    if existing is None or existing.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="event not found")
     actor = _actor_from_user(user)
     event = skip_event(event_id, actor=actor, reason=body.reason or "")
     if event is None:
