@@ -266,3 +266,19 @@ for the manifesto invariants that matter at the surface, not read line-by-line.
 - **Verdict:** invariants hold; 4 user-visible brand drifts fixed (3 filenames + 1
   Slack emoji) + 1 test updated. Tests: workspace-reports / report-export / slack /
   vendor-activation green. `import main` clean.
+
+### `finance_agent_runtime.py` + `finance_agent_loop.py` — ALIGNED, no fix
+- **runtime (facade):** stable preview/execute intent-contract seam, decomposed into
+  `finance_runtime_*` submodules; generic `ActionContext` (box-type-agnostic); skill
+  registry (AP, vendor-compliance, workflow-health, reconciliation, procurement).
+  `execute_skill_request` does `_ensure_supported` → idempotency replay (durability,
+  no double-execute) → delegates to the loop. Durability: `resume_pending_agent_tasks`
+  → `drain_agent_retry_jobs`. No money movement, no stale paths/brand. Read closely.
+- **loop:** "observe → recall → deliberate → act → verify → learn." `observe()` builds
+  belief + recall + preview + `build_deliberation` (governance); `run_skill_request`
+  blocks on `should_execute` and writes a `loop_blocked_by_doctrine` audit row;
+  `_emit_plan_observed` gives the sync skill path Rule-1 audit parity with the async
+  event path; `attempt_self_recovery` for recoverable failures. This is the bounded
+  agent at its core — every action observed, deliberated, audited, then executed.
+- **Verdict:** both strongly aligned; no drift found. The facade delegates the bounds
+  to the loop; the loop enforces + audits them.
