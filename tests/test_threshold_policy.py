@@ -50,10 +50,11 @@ def db():
     return inst
 
 
-def _user(org: str = "orgA") -> SimpleNamespace:
+def _user(org: str = "orgA", role: str = "admin") -> SimpleNamespace:
+    # Threshold mutations (PUT/DELETE) require workspace admin; reads don't.
     return SimpleNamespace(
         user_id="user-1", email="op@orgA.com",
-        organization_id=org, role="user",
+        organization_id=org, role=role, workspace_role=role,
     )
 
 
@@ -63,6 +64,24 @@ def client_orgA(db):
     app.include_router(tp_routes.router)
     app.dependency_overrides[get_current_user] = lambda: _user("orgA")
     return TestClient(app)
+
+
+@pytest.fixture()
+def client_orgA_member(db):
+    """Non-admin member — allowed to read thresholds, not to change them."""
+    app = FastAPI()
+    app.include_router(tp_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: _user("orgA", role="member")
+    return TestClient(app)
+
+
+def test_api_put_thresholds_requires_admin(client_orgA_member):
+    """A non-admin member cannot change routing thresholds (financial control)."""
+    resp = client_orgA_member.put(
+        "/api/workspace/policy/thresholds",
+        json={"auto_approve_min": 0.9, "escalate_below": 0.6},
+    )
+    assert resp.status_code == 403
 
 
 # ─── Resolution layering ───────────────────────────────────────────

@@ -570,6 +570,24 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
     "/api/workspace/fraud-thresholds",          # Module 4 — customer fraud rules
     "/api/workspace/billing",                   # Module 11 — Paddle billing surface
     "/api/webhooks/paddle",                     # Module 11 — Paddle webhook sink
+    # Manifesto audit 2026-05-23: AP feature routers that were mounted +
+    # tested but never allowlisted (every endpoint silently 404'd in prod).
+    # Each is its own router with sub-routes, so prefix-allow like the
+    # modules above; the per-Box/{id} routes are in the dynamic patterns.
+    "/api/workspace/accrual-je",                # month-end accrual JE
+    "/api/workspace/bank-statements",           # bank-rec ingestion (closing leg)
+    "/api/workspace/gdpr",                       # GDPR DSAR + retention purge (compliance)
+    "/api/workspace/peppol",                     # PEPPOL e-invoice import/preview/credit-notes
+    "/api/workspace/payment-confirmations",      # payment confirmations
+    "/api/workspace/sanctions-checks",           # sanctions screening results
+    "/api/workspace/vat-returns",                # VAT returns
+    "/api/workspace/vat",                        # VAT preview (vat/preview)
+    "/api/workspace/vendor-inquiries",           # read-only vendor status lookup
+    "/api/workspace/policy/dual-approval",       # second-signature control policy
+    "/api/workspace/policy/thresholds",          # routing threshold policy
+    "/api/workspace/pdf",                        # multi-invoice PDF split/boundaries
+    "/api/workspace/metrics/cycle-time",         # cycle-time report
+    "/api/workspace/africa-einvoice",            # Africa e-invoicing
 )
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
@@ -814,6 +832,28 @@ STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
         r"^/api/workspace/purchase-orders$",
         r"^/api/workspace/purchase-orders/[^/]+$",
         r"^/api/workspace/purchase-orders/[^/]+/(submit|approve|reject|cancel|close|receive|issue|amend)$",
+        # Manifesto audit 2026-05-23: a cluster of AP feature routers were
+        # mounted (include_router) + tested but never added to this allowlist,
+        # so the strict-profile boot stripped all ~60 of their endpoints and
+        # every call 404'd in prod (the documented match-config failure mode,
+        # at scale). The per-Box ({id}) / per-vendor / per-ERP sub-routes:
+        r"^/api/workspace/ap-items/[^/]+/approve/(first|second|revoke)$",   # dual-approval control
+        r"^/api/workspace/ap-items/[^/]+/three-way-match$",
+        r"^/api/workspace/ap-items/[^/]+/vendor-match$",
+        r"^/api/workspace/ap-items/[^/]+/journal-entry-preview$",
+        r"^/api/workspace/ap-items/[^/]+/dispute-reopen$",
+        r"^/api/workspace/ap-items/[^/]+/vat-recalculate$",
+        r"^/api/workspace/ap-items/[^/]+/reclassify$",
+        r"^/api/workspace/ap-items/[^/]+/reclassify/preview$",
+        r"^/api/workspace/ap-items/[^/]+/reclassifications$",
+        r"^/api/workspace/ap-items/[^/]+/payment-confirmations$",
+        r"^/api/workspace/ap-items/[^/]+/africa-einvoice$",
+        r"^/api/workspace/ap-items/[^/]+/africa-einvoice/submissions$",
+        r"^/api/workspace/ap-items/[^/]+/africa-einvoice/submit$",
+        r"^/api/workspace/vendors/[^/]+/remittance-config$",
+        r"^/api/workspace/vendors/[^/]+/sanctions-screen$",
+        r"^/api/workspace/vendors/[^/]+/thresholds$",
+        r"^/api/workspace/integrations/erp/[^/]+/(test|rotate-credentials)$",
         r"^/api/agent/intents/skills/[^/]+/readiness$",
         r"^/api/agent/sessions/[^/]+$",
         r"^/api/agent/sessions/[^/]+/commands$",

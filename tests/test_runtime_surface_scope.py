@@ -258,7 +258,18 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         #     /{box_type}, /{box_type}/versions/{version}/{activate,archive})
         #   * generic boxes: /api/workspace/workflows/{box_type}
         #     (+/{box_id}, +/{box_id}/{action})
-        assert len(paths) <= 395
+        # 2026-05-23: manifesto audit found 19 AP feature routers (~68
+        # endpoints: dual-approval, gdpr, vat, sanctions, three-way-match,
+        # peppol, bank-statements, accrual-je, payment-confirmations,
+        # reclassification-je, africa-einvoice, vendor-match/inquiry,
+        # journal-entry-preview, dispute-reopen, cycle-time, pdf-split,
+        # threshold-policy, erp-connection-ops) were mounted + tested but
+        # never allowlisted, so the prune silently stripped them all and they
+        # 404'd in prod. Several cap-raise notes above ALREADY assumed these
+        # were in the surface (e.g. "accrual-journal-entry API surface"); the
+        # allowlist just never caught up. Now correctly allowlisted. Cap
+        # raised 395 → 455 to reflect the real intended surface.
+        assert len(paths) <= 455
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
@@ -320,6 +331,22 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
             "/api/workspace/fraud-thresholds",
             "/api/workspace/billing",
             "/api/webhooks/paddle",
+            # 2026-05-23 manifesto audit: AP feature routers that were
+            # mounted + tested but never allowlisted (silently 404'd in prod).
+            "/api/workspace/accrual-je",
+            "/api/workspace/bank-statements",
+            "/api/workspace/gdpr",
+            "/api/workspace/peppol",
+            "/api/workspace/payment-confirmations",
+            "/api/workspace/sanctions-checks",
+            "/api/workspace/vat-returns",
+            "/api/workspace/vat",
+            "/api/workspace/vendor-inquiries",
+            "/api/workspace/policy/dual-approval",
+            "/api/workspace/policy/thresholds",
+            "/api/workspace/pdf",
+            "/api/workspace/metrics/cycle-time",
+            "/api/workspace/africa-einvoice",
         }
         # Phase 2.1.b IBAN-verification + Phase 3.1.b vendor-onboarding
         # endpoints have been deprioritized (memory: 2026-04-30 — VO is
@@ -342,6 +369,37 @@ def test_strict_profile_allows_saml_sso_subpaths(monkeypatch):
     for sub in ("sp-metadata", "login", "acs", "logout", "slo"):
         path = f"/saml/acme/{sub}"
         assert matcher(path) is True, f"{path} should be allowlisted but is dropped"
+
+
+def test_strict_profile_allows_mounted_ap_feature_routers(monkeypatch):
+    """Every endpoint of the mounted AP feature routers must resolve ALLOWED.
+
+    Regression for the 2026-05-23 manifesto audit: 19 routers (~68 endpoints)
+    were include_router'd + tested but never added to the strict-profile
+    allowlist, so the boot stripped them all and every call 404'd in prod
+    (the documented match-config failure mode, at scale). This walks each
+    router's real routes through the live matcher so a future router that
+    forgets its allowlist entry trips here.
+    """
+    import importlib
+
+    matcher = _main_module()._is_strict_profile_allowed_path
+    routers = [
+        "accrual_journal_entry", "africa_einvoice", "bank_statements",
+        "cycle_time_metrics", "dispute_reopen", "dual_approval",
+        "erp_connection_ops", "gdpr", "journal_entry_preview",
+        "multi_invoice_split", "payment_confirmations", "peppol",
+        "reclassification_je", "three_way_match", "threshold_policy",
+        "vat", "vendor_inquiry", "vendor_match", "sanctions",
+    ]
+    dropped = []
+    for name in routers:
+        mod = importlib.import_module(f"solden.api.{name}")
+        for route in getattr(mod, "router").routes:
+            path = getattr(route, "path", "")
+            if path and not matcher(path):
+                dropped.append(path)
+    assert not dropped, f"strict-profile drops mounted AP endpoints: {dropped}"
 
 
 def test_strict_profile_blocks_unknown_prefixed_routes(monkeypatch):

@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from solden.core.auth import TokenData, get_current_user
+from solden.core.auth import TokenData, get_current_user, require_admin_user
 from solden.core.database import get_db
 from solden.services.threshold_policy import (
     get_org_thresholds,
@@ -89,7 +89,7 @@ def get_org_threshold_policy(
 @router.put("/policy/thresholds", response_model=ThresholdsOut)
 def put_org_threshold_policy(
     body: ThresholdsBody,
-    user: TokenData = Depends(get_current_user),
+    user: TokenData = Depends(require_admin_user),
 ):
     db = get_db()
     try:
@@ -133,7 +133,7 @@ def get_vendor_threshold_policy(
 def put_vendor_threshold_policy(
     vendor_name: str,
     body: ThresholdsBody,
-    user: TokenData = Depends(get_current_user),
+    user: TokenData = Depends(require_admin_user),
 ):
     db = get_db()
     profile = db.get_vendor_profile(user.organization_id, vendor_name)
@@ -159,7 +159,7 @@ def put_vendor_threshold_policy(
 )
 def clear_vendor_threshold_policy(
     vendor_name: str,
-    user: TokenData = Depends(get_current_user),
+    user: TokenData = Depends(require_admin_user),
 ):
     db = get_db()
     profile = db.get_vendor_profile(user.organization_id, vendor_name)
