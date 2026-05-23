@@ -104,8 +104,14 @@ class ReconStore:
             conn.commit()
         return item_id
 
-    def update_recon_item(self, item_id: str, **kwargs) -> bool:
-        """Update a reconciliation item (state, match, exception, etc.)."""
+    def update_recon_item(self, item_id: str, organization_id: str, **kwargs) -> bool:
+        """Update a reconciliation item (state, match, exception, etc.).
+
+        Org-scoped: the UPDATE fails closed (`AND organization_id = %s`) so a
+        caller passing another tenant's item_id mutates nothing. ``organization_id``
+        is required, not optional — a missing org should error, never silently
+        widen the blast radius across tenants.
+        """
         allowed = {"state", "matched_ap_item_id", "match_confidence",
                     "exception_reason", "resolution", "metadata"}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
@@ -116,43 +122,54 @@ class ReconStore:
         with self.connect() as conn:
             cursor = conn.execute(
                 (
-                    f"UPDATE recon_items SET {set_clause} WHERE id = %s"
+                    f"UPDATE recon_items SET {set_clause} WHERE id = %s AND organization_id = %s"
                 ),
-                (*updates.values(), item_id),
+                (*updates.values(), item_id, organization_id),
             )
             conn.commit()
         return cursor.rowcount > 0
 
-    def get_recon_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get a reconciliation session by ID."""
+    def get_recon_session(self, session_id: str, organization_id: str) -> Optional[Dict[str, Any]]:
+        """Get a reconciliation session by ID, scoped to its org.
+
+        Org-scoped read: a session_id belonging to another tenant returns None,
+        not their session. ``organization_id`` is required.
+        """
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM recon_sessions WHERE id = %s",
-                (session_id,),
+                "SELECT * FROM recon_sessions WHERE id = %s AND organization_id = %s",
+                (session_id, organization_id),
             ).fetchone()
         return dict(row) if row else None
 
-    def list_recon_items(self, session_id: str, state: Optional[str] = None) -> List[Dict[str, Any]]:
-        """List reconciliation items for a session, optionally filtered by state."""
+    def list_recon_items(
+        self, session_id: str, organization_id: str, state: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List reconciliation items for a session, optionally filtered by state.
+
+        Org-scoped: items for another tenant's session_id are never returned.
+        """
         with self.connect() as conn:
             if state:
                 rows = conn.execute(
                     (
-                        "SELECT * FROM recon_items WHERE session_id = %s AND state = %s ORDER BY row_index"
+                        "SELECT * FROM recon_items WHERE session_id = %s AND organization_id = %s "
+                        "AND state = %s ORDER BY row_index"
                     ),
-                    (session_id, state),
+                    (session_id, organization_id, state),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     (
-                        "SELECT * FROM recon_items WHERE session_id = %s ORDER BY row_index"
+                        "SELECT * FROM recon_items WHERE session_id = %s AND organization_id = %s "
+                        "ORDER BY row_index"
                     ),
-                    (session_id,),
+                    (session_id, organization_id),
                 ).fetchall()
         return [dict(r) for r in rows]
 
-    def update_recon_session_counts(self, session_id: str) -> None:
-        """Recalculate matched/exception counts for a session."""
+    def update_recon_session_counts(self, session_id: str, organization_id: str) -> None:
+        """Recalculate matched/exception counts for a session (org-scoped)."""
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as conn:
             conn.execute(
@@ -162,8 +179,8 @@ class ReconStore:
                         matched_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = %s AND state IN ('matched', 'resolved', 'posted')),
                         exception_count = (SELECT COUNT(*) FROM recon_items WHERE session_id = %s AND state IN ('exception', 'review')),
                         updated_at = %s
-                       WHERE id = %s"""
+                       WHERE id = %s AND organization_id = %s"""
                 ),
-                (session_id, session_id, session_id, now, session_id),
+                (session_id, session_id, session_id, now, session_id, organization_id),
             )
             conn.commit()

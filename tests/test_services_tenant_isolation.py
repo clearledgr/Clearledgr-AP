@@ -299,3 +299,42 @@ class TestSlackDeliveryRequiresOrg:
             )
         )
         assert result is False
+
+
+# ─── recon_store: cross-tenant read/write fence ─────────────────────
+
+
+class TestReconStoreTenantIsolation:
+    """ReconStore reads/writes must be org-scoped so an operator in org A
+    cannot read or mutate org B's reconciliation session via a spoofed
+    session_id (the recon skill takes session_id straight from payload).
+    """
+
+    def test_get_recon_session_is_org_scoped(self, db):
+        session = db.create_recon_session(organization_id="recon-org-a")
+        sid = session["id"]
+        # Owner can read.
+        assert db.get_recon_session(sid, "recon-org-a") is not None
+        # Another tenant gets nothing, not the session.
+        assert db.get_recon_session(sid, "recon-org-b") is None
+
+    def test_list_recon_items_is_org_scoped(self, db):
+        session = db.create_recon_session(organization_id="recon-org-a")
+        sid = session["id"]
+        db.create_recon_item(session_id=sid, organization_id="recon-org-a", row_index=1,
+                             description="payment", amount=100.0)
+        assert len(db.list_recon_items(sid, "recon-org-a")) == 1
+        # Cross-tenant list returns empty, never the other org's rows.
+        assert db.list_recon_items(sid, "recon-org-b") == []
+
+    def test_update_recon_item_is_org_scoped(self, db):
+        session = db.create_recon_session(organization_id="recon-org-a")
+        sid = session["id"]
+        item_id = db.create_recon_item(session_id=sid, organization_id="recon-org-a",
+                                       row_index=1, description="payment", amount=100.0)
+        # Cross-tenant update mutates nothing (fails closed).
+        assert db.update_recon_item(item_id, "recon-org-b", state="matched") is False
+        assert db.list_recon_items(sid, "recon-org-a")[0]["state"] == "imported"
+        # Owner update works.
+        assert db.update_recon_item(item_id, "recon-org-a", state="matched") is True
+        assert db.list_recon_items(sid, "recon-org-a")[0]["state"] == "matched"

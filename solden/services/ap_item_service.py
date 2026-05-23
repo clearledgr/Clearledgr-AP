@@ -702,9 +702,9 @@ def _create_statement_reconciliation_artifact(
     if related_item:
         update_kwargs["matched_ap_item_id"] = related_item.get("id")
         update_kwargs["match_confidence"] = 1.0
-    db.update_recon_item(recon_item_id, **update_kwargs)
+    db.update_recon_item(recon_item_id, organization_id, **update_kwargs)
     if hasattr(db, "update_recon_session_counts"):
-        db.update_recon_session_counts(str(session.get("id") or "").strip())
+        db.update_recon_session_counts(str(session.get("id") or "").strip(), organization_id)
     return {
         "reconciliation_session_id": str(session.get("id") or "").strip() or None,
         "reconciliation_item_id": recon_item_id,

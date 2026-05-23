@@ -100,7 +100,7 @@ class ReconciliationFinanceSkill(FinanceSkill):
 
         if intent == "read_recon_status":
             session_id = payload.get("session_id", "")
-            session = runtime.db.get_recon_session(session_id)
+            session = runtime.db.get_recon_session(session_id, runtime.organization_id)
             return SkillResponse(
                 status="preview",
                 details={"session": session or {"error": "not_found"}},
@@ -141,11 +141,11 @@ class ReconciliationFinanceSkill(FinanceSkill):
 
         if intent == "read_recon_status":
             session_id = str(payload.get("session_id") or "").strip()
-            session = runtime.db.get_recon_session(session_id)
+            session = runtime.db.get_recon_session(session_id, runtime.organization_id)
             if not session:
                 return SkillResponse(status="error", details={"error": "session_not_found"})
 
-            items = runtime.db.list_recon_items(session_id)
+            items = runtime.db.list_recon_items(session_id, runtime.organization_id)
             return SkillResponse(
                 status="ok",
                 details={

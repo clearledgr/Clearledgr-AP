@@ -1033,9 +1033,9 @@ def test_non_invoice_resolution_endpoint_sends_bank_statement_to_reconciliation(
     assert metadata["non_invoice_resolution"]["downstream_queue"] == "reconciliation"
     assert metadata["non_invoice_resolution"]["reconciliation_session_id"]
     assert metadata["non_invoice_resolution"]["reconciliation_item_id"]
-    session = db.get_recon_session(metadata["non_invoice_resolution"]["reconciliation_session_id"])
+    session = db.get_recon_session(metadata["non_invoice_resolution"]["reconciliation_session_id"], "org-test")
     assert session["source_type"] == "gmail_statement"
-    recon_items = db.list_recon_items(session["id"])
+    recon_items = db.list_recon_items(session["id"], "org-test")
     assert len(recon_items) == 1
     assert recon_items[0]["id"] == metadata["non_invoice_resolution"]["reconciliation_item_id"]
     assert recon_items[0]["state"] == "review"
