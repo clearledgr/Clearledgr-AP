@@ -258,3 +258,60 @@ class TestListEndpointOrgFiltering:
         assert other_id not in all_ids, (
             f"pipeline leaked cross-tenant item {other_id}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Contract 3: ops mutations cannot cross tenants (job_id / org-spoof)
+# ---------------------------------------------------------------------------
+
+
+def _admin_user_for(org_id: str) -> TokenData:
+    return TokenData(
+        user_id=f"admin-{org_id}",
+        email=f"admin@{org_id}.test",
+        organization_id=org_id,
+        role="admin",
+        exp=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+
+@pytest.fixture()
+def admin_client_as_org_a(db):
+    _main.app.dependency_overrides[get_current_user] = lambda: _admin_user_for(ORG_A)
+    try:
+        yield TestClient(_main.app)
+    finally:
+        _main.app.dependency_overrides.pop(get_current_user, None)
+
+
+class TestOpsCrossTenantWrites:
+    """A tenant ADMIN of org A must not mutate org B's ops resources.
+    These handlers gate on tenant admin role but operated by id / trusted
+    the org query param — the fix adds the org check."""
+
+    def test_retry_job_cross_tenant_is_404(self, admin_client_as_org_a, db):
+        db.create_agent_retry_job({
+            "id": "ARJ-CROSS", "organization_id": ORG_B,
+            "ap_item_id": "ap-b", "job_type": "erp_post_retry", "status": "dead_letter",
+        })
+        r = admin_client_as_org_a.post("/api/ops/retry-queue/ARJ-CROSS/retry")
+        assert r.status_code == 404, r.text
+        # The job must remain untouched (still dead_letter, not rescheduled).
+        job = db.get_agent_retry_job("ARJ-CROSS")
+        assert job["status"] == "dead_letter"
+
+    def test_skip_job_cross_tenant_is_404(self, admin_client_as_org_a, db):
+        db.create_agent_retry_job({
+            "id": "ARJ-CROSS-2", "organization_id": ORG_B,
+            "ap_item_id": "ap-b", "job_type": "erp_post_retry", "status": "dead_letter",
+        })
+        r = admin_client_as_org_a.post("/api/ops/retry-queue/ARJ-CROSS-2/skip")
+        assert r.status_code == 404, r.text
+        assert db.get_agent_retry_job("ARJ-CROSS-2")["status"] == "dead_letter"
+
+    def test_reset_llm_budget_pause_org_spoof_rejected(self, admin_client_as_org_a):
+        r = admin_client_as_org_a.post(
+            f"/api/ops/llm-budget/reset?organization_id={ORG_B}&reason=incident"
+        )
+        assert r.status_code == 403
+        assert "org_mismatch" in str(r.json().get("detail", "")).lower()

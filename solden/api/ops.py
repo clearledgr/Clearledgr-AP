@@ -1390,8 +1390,11 @@ async def manual_retry_job(
     if not hasattr(db, "get_agent_retry_job"):
         raise HTTPException(status_code=501, detail="retry_queue_not_supported")
 
+    session_org = _assert_org_access(user, None)
     job = db.get_agent_retry_job(job_id)
-    if not job:
+    # Cross-tenant job → 404, not 403: don't confirm another tenant's job exists.
+    # get_agent_retry_job is keyed by id only, so the org check lives here.
+    if not job or str(job.get("organization_id") or "") != session_org:
         raise HTTPException(status_code=404, detail="retry_job_not_found")
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -1430,8 +1433,10 @@ async def skip_retry_job(
     if not hasattr(db, "get_agent_retry_job"):
         raise HTTPException(status_code=501, detail="retry_queue_not_supported")
 
+    session_org = _assert_org_access(user, None)
     job = db.get_agent_retry_job(job_id)
-    if not job:
+    # Cross-tenant job → 404 (no existence leak); job is keyed by id only.
+    if not job or str(job.get("organization_id") or "") != session_org:
         raise HTTPException(status_code=404, detail="retry_job_not_found")
 
     updated = db.complete_agent_retry_job(
@@ -1473,10 +1478,14 @@ async def reset_llm_budget_pause(
     Requires admin/owner ops role (same gate as other ops mutations).
     """
     _require_admin(user)
+    # Org-spoof guard: a tenant admin must not clear ANOTHER tenant's budget
+    # pause by passing ?organization_id=other. _assert_org_access 403s on
+    # mismatch and returns the caller's verified session org.
+    org_id = _assert_org_access(user, organization_id)
 
     db = get_db()
     try:
-        db.update_organization(organization_id, llm_cost_paused_at=None)
+        db.update_organization(org_id, llm_cost_paused_at=None)
     except Exception as exc:
         raise HTTPException(
             status_code=500,
