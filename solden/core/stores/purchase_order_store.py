@@ -18,8 +18,17 @@ Schema lives in migrations v33 (see migrations.py). This mixin only
 provides the CRUD API the service needs.
 
 Design rules:
-  * All reads/writes are organization-scoped; callers that forget to
-    pass an org_id will get a ValueError, never a cross-tenant leak.
+  * Org-scoping is CALLER-ENFORCED, not store-enforced. The id-keyed
+    getters/mutators here (get_purchase_order, update_purchase_order_state,
+    set_po_erp_id, amend_purchase_order_box, record_po_receipt,
+    get_goods_receipt, get_three_way_match[_by_invoice]) take no org and do
+    NOT filter by it — this matches the box_registry generic-dispatch contract
+    (get_box(box_type, box_id, db) has no org at that layer). Every reachable
+    caller verifies org BEFORE acting: the PO API via _require_po, the
+    Slack/Teams callbacks via an org-match-or-404 check, and the agent path via
+    procurement_skill._fetch_po. (An earlier version of this docstring claimed
+    "never a cross-tenant leak" — false; the store does not enforce it. Do not
+    add a new caller that reads a PO by id without checking po.organization_id.)
   * Line items round-trip as Python lists — the mixin takes care of
     JSON encode/decode so the service never sees raw JSON strings.
   * Timestamps are ISO 8601 strings in UTC (matches the rest of the

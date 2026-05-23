@@ -115,6 +115,21 @@ class ProcurementFinanceSkill(FinanceSkill):
             or ""
         ).strip()
 
+    @staticmethod
+    def _fetch_po(runtime, po_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a PO scoped to the runtime's org. ``get_purchase_order`` is
+        id-keyed (the box_registry generic-dispatch contract), so the org check
+        lives here — otherwise a procurement intent carrying another tenant's
+        po_id would read that PO (vendor master + amounts). The Slack/Teams PO
+        callbacks already do this check; this is the agent-intent path's.
+        """
+        if not po_id:
+            return None
+        po = runtime.db.get_purchase_order(po_id)
+        if not po or str(po.get("organization_id") or "") != str(runtime.organization_id):
+            return None
+        return po
+
     def policy_precheck(
         self,
         runtime,
@@ -140,7 +155,7 @@ class ProcurementFinanceSkill(FinanceSkill):
 
         target = _INTENT_TARGET.get(normalized)
         po_id = self._resolve_po_id(payload)
-        po = runtime.db.get_purchase_order(po_id) if po_id else None
+        po = self._fetch_po(runtime, po_id)
         if not po:
             reason_codes.append("purchase_order_not_found")
             return {
@@ -274,7 +289,7 @@ class ProcurementFinanceSkill(FinanceSkill):
 
         if normalized == "issue_purchase_order":
             from solden.integrations.erp_po_write import create_purchase_order
-            po = runtime.db.get_purchase_order(context["po_id"])
+            po = self._fetch_po(runtime, context["po_id"])
             result = await create_purchase_order(
                 runtime.organization_id, po, idempotency_key=idempotency_key,
             )
@@ -310,7 +325,7 @@ class ProcurementFinanceSkill(FinanceSkill):
 
         if normalized == "receive_purchase_order":
             import uuid as _uuid
-            po = runtime.db.get_purchase_order(context["po_id"])
+            po = self._fetch_po(runtime, context["po_id"])
             # Reconcile received quantities per line. received_lines omitted
             # => receive all. ``partial=True`` forces partial regardless
             # (back-compat / explicit partial delivery).

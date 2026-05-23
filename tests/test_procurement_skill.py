@@ -259,3 +259,28 @@ def test_issue_purchase_order_writes_to_erp(runtime, monkeypatch):
     out = asyncio.run(skill.execute(runtime, "issue_purchase_order", {"po_id": po_id}))
     assert out["status"] == "issued" and out["erp_po_id"] == "QB-PO-issue"
     assert runtime.db.get_purchase_order(po_id)["erp_po_id"] == "QB-PO-issue"
+
+
+def test_skill_blocks_cross_tenant_po_access(runtime):
+    """A procurement intent carrying another tenant's po_id must not read or act
+    on it. get_purchase_order is id-keyed (box_registry contract); the skill
+    org-checks via _fetch_po, so org B sees org A's PO as not_found."""
+    skill = ProcurementFinanceSkill()
+    # Org A creates a PO.
+    created = asyncio.run(skill.execute(
+        runtime, "create_purchase_order",
+        {"vendor_name": "AcmeSecret", "total_amount": 500.0},
+    ))
+    po_id = created["po_id"]
+
+    # Org B runtime targets org A's po_id.
+    db = db_module.get_db()
+    db.ensure_organization("orgProcSkill-B", organization_name="B")
+    runtime_b = FinanceAgentRuntime(
+        organization_id="orgProcSkill-B", actor_id="b@test", actor_email="b@test", db=db,
+    )
+    out = asyncio.run(skill.execute(runtime_b, "submit_purchase_order", {"po_id": po_id}))
+    assert out["status"] == "blocked"
+    assert "purchase_order_not_found" in out["policy_precheck"]["reason_codes"]
+    # Org A's PO is untouched (still draft).
+    assert asyncio.run(skill.execute(runtime, "submit_purchase_order", {"po_id": po_id}))["state"] == "pending_approval"
