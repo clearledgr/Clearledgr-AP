@@ -1,9 +1,12 @@
 """Multi-modal LLM service with PDF/image invoice extraction.
 
 Supports:
-- Claude Vision for PDF and image invoice extraction
-- Mistral as fallback for text-only
+- Vision model for PDF and image invoice extraction
 - Automatic model selection based on content type
+
+Every model call routes through the bounded LLM gateway (ACTION_REGISTRY caps,
+budget, truncation). A previous Mistral fallback issued a raw HTTP call that
+bypassed the gateway entirely — removed so the single-chokepoint bound holds.
 """
 from __future__ import annotations
 
@@ -13,28 +16,24 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
-
 logger = logging.getLogger(__name__)
 
 
 class MultiModalLLMService:
+    """Multi-modal LLM service for invoice extraction.
+
+    Uses the vision model for PDFs/images and the text model otherwise, both
+    through the bounded LLM gateway.
     """
-    Multi-modal LLM service for invoice extraction.
-    
-    Uses Claude Vision for PDFs/images, with Mistral fallback for text-only.
-    """
-    
+
     def __init__(self) -> None:
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        self.mistral_key = os.getenv("MISTRAL_API_KEY")
-        self.primary = os.getenv("LLM_PRIMARY_PROVIDER", "anthropic").lower()
         self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))  # Longer for vision
-        
+
     @property
     def is_available(self) -> bool:
-        """Check if any LLM provider is configured."""
-        return bool(self.anthropic_key or self.mistral_key)
+        """Check if the model provider is configured."""
+        return bool(self.anthropic_key)
 
     def extract_invoice(
         self, 
@@ -135,31 +134,18 @@ class MultiModalLLMService:
         }])
 
     def generate_json(self, prompt: str, attachments: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        """Generate JSON response from LLM with provider fallback."""
+        """Generate a JSON response via the bounded LLM gateway.
+
+        Vision path for attachments, text path otherwise — both go through
+        ``llm_gateway`` (caps/budget/truncation/retry). The gateway already
+        retries transient failures internally, so there is no second raw
+        provider here; an exhausted call propagates rather than escaping the
+        gateway's bounds.
+        """
         attachments = attachments or []
-        providers = [self.primary, "anthropic", "mistral"]
-        tried = set()
-        last_error = None
-
-        for provider in providers:
-            if provider in tried:
-                continue
-            tried.add(provider)
-            try:
-                if provider == "anthropic":
-                    if attachments:
-                        return self._call_anthropic_vision(prompt, attachments)
-                    return self._call_anthropic_text(prompt)
-                if provider == "mistral":
-                    return self._call_mistral(prompt)
-            except Exception as exc:
-                logger.warning(f"LLM provider {provider} failed: {exc}")
-                last_error = exc
-                continue
-
-        if last_error:
-            raise last_error
-        raise RuntimeError("No LLM provider configured")
+        if attachments:
+            return self._call_anthropic_vision(prompt, attachments)
+        return self._call_anthropic_text(prompt)
     
     def _categorize_attachments(
         self, 
@@ -383,40 +369,6 @@ Return ONLY valid JSON."""
         result["provider"] = "anthropic"
         result["method"] = "text"
         return result
-
-    def _call_mistral(self, prompt: str) -> Dict[str, Any]:
-        """Call Mistral for text-only prompts."""
-        if not self.mistral_key:
-            raise RuntimeError("Mistral key not configured")
-
-        url = "https://api.mistral.ai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.mistral_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": os.getenv("MISTRAL_MODEL", "mistral-large-latest"),
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": 1500,
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        data = response.json()
-        text = data["choices"][0]["message"]["content"]
-        result = _parse_llm_json(text)
-        result["provider"] = "mistral"
-        result["method"] = "text"
-        return result
-
-
-def _extract_message_text(data: Dict[str, Any]) -> str:
-    content = data.get("content", [])
-    if isinstance(content, list):
-        parts = [c.get("text", "") for c in content if isinstance(c, dict)]
-        return "\n".join([p for p in parts if p])
-    return str(content or "")
-
 
 def _parse_llm_json(text: str) -> Dict[str, Any]:
     try:
