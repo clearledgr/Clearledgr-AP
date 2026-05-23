@@ -270,7 +270,7 @@ async def exchange_xsuaa_for_clearledgr_jwt(
 
     Response:
     ```
-    { "access_token": "<clearledgr-jwt>",
+    { "access_token": "<solden-jwt>",
       "token_type": "bearer",
       "expires_in": 300 }
     ```

@@ -761,7 +761,7 @@ async def handle_invoice_interactive(request: Request, background_tasks: Backgro
     _chase_session_id = str(raw_action.get("value") or "")
 
     # ERP-native bill approvals (NetSuite-arrived bills with payment
-    # holds — see clearledgr/services/erp_native_approval.py). Action
+    # holds — see solden/services/erp_native_approval.py). Action
     # IDs are prefixed cl_erp_approve_<ap_item_id> / cl_erp_reject_<ap_item_id>.
     # Dispatched to a separate module so the Gmail-bound approve_invoice
     # handler below stays unchanged.

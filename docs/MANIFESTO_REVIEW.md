@@ -318,3 +318,38 @@ The most sensitive boundary — money movement + the structured-vs-unstructured 
   `clearledgr:erp_refresh_lock:*`) — same untouched-backend-identifier bucket.
 - **Verdict:** aligned; 1 brand-consistency fix. Tests: native-intake-pipeline /
   adapter-contracts / field-mapping-posters / api-first green (55 passed).
+
+### Render targets (Gmail / Slack / Teams / NetSuite panel / SAP Fiori) — ALIGNED; 2 doc fixes
+- **Roster intact:** the surface files are exactly the canonical 5 render targets
+  (`gmail_extension`, `slack_invoices`, `teams_invoices`, `netsuite_panel`,
+  `sap_extension`) — no surface added or dropped. Matches `reference_render_targets`.
+- **Every surface audits operator actions:** proven by the dedicated audit-integration
+  tests (netsuite-panel / sap-fiori / teams) + intake-audit-coverage — operator
+  approve/reject on each surface writes an audit row (History primitive at the edge),
+  tenant-scoped.
+- **Invariants (from the surfaces sweep) hold:** operator-facing only (zero
+  vendor-facing send), no money movement, no LLM vendor name in UI strings.
+- **Drift fixed:** `sap_extension.py` API-doc token example `<clearledgr-jwt>` →
+  `<solden-jwt>`; `slack_invoices.py` comment path `clearledgr/services/...` →
+  `solden/services/...` (the file exists there).
+- **Left:** Slack interactive action-ID prefixes `cl_erp_approve_*` / `cl_erp_reject_*`
+  (matched by `startswith`, coupled to messages already posted in customers' Slack —
+  same infra-identifier risk class as Redis keys).
+- **Verdict:** aligned; 2 doc-brand fixes. Tests: netsuite/sap/teams audit-integration
+  + intake-audit-coverage green (22 passed). `import main` clean.
+
+---
+
+## Coverage summary (this review pass)
+
+Reviewed against the manifesto, top to bottom: the **spine** (box_registry, ap_states,
+coordination_engine, the audit/exception/ownership stores, planning_engine + governance,
+llm_gateway), the **AP wedge** (ap_decision close + invoice_workflow/ap_store/
+agent_background swept), the **agent runtime** (finance_agent_runtime facade +
+finance_agent_loop close), the **learning cluster** (agent_memory + 3 learning services),
+the **ERP adapters** (money boundary + native intake), and the **5 render targets**
+(audit + invariants). Structural fixes: removed the contradictory `LLMAction.AP_DECISION`
+and the vestigial task_runs; wired the orphaned audit-export reaper. The five primitives
+hold, the agent is bounded (rules decide / downgrade-only model / never moves money /
+zero vendor-facing text / audited+reversible), and the architecture is box-type-agnostic.
+Full suite: 4286 passed / 0 failed.
