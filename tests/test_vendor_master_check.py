@@ -366,3 +366,18 @@ class TestVendorMasterCheckResultDataclass:
         assert r.matched_name is None
         assert r.similarity_score is None
         assert r.extras == {}
+
+
+def test_invoice_posting_does_not_auto_create_vendor_master():
+    """Regression fence: posting must NOT author a vendor master record. The
+    post path looks the vendor up (find_vendor) and fails with vendor_not_in_erp
+    if absent — it must not call get_or_create_vendor (which auto-creates) at
+    post time. Solden runs cross-checks; it does not own the vendor master."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]
+           / "solden" / "services" / "invoice_posting.py").read_text()
+    assert "get_or_create_vendor" not in src, (
+        "invoice_posting must not auto-create the vendor master at post time"
+    )
+    assert "find_vendor(" in src, "post path should look the vendor up, not create it"
+    assert "vendor_not_in_erp" in src, "absent vendor must fail the post explicitly"

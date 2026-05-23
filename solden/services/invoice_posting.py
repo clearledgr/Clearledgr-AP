@@ -19,7 +19,7 @@ from solden.core.ap_states import (
     classify_post_failure_recoverability,
 )
 from solden.integrations.erp_router import (
-    Bill, Vendor, get_or_create_vendor,
+    Bill, find_vendor,
 )
 from solden.services.erp_api_first import post_bill_api_first
 from solden.services.finance_learning import get_finance_learning_service
@@ -1719,19 +1719,31 @@ class InvoicePostingMixin:
             idempotency_key = f"auto:{stable_seed}:erp_post"
             logger.warning("Generated stable idempotency_key=%s (caller did not provide one)", idempotency_key)
 
-        # First, get or create vendor
-        vendor = Vendor(
-            name=invoice.vendor_name,
-            currency=invoice.currency,
-        )
+        # Vendor must already exist in the ERP. Solden runs cross-checks but
+        # does NOT author vendor master records (one Box type, ap_item) — so we
+        # look the vendor up and FAIL the post if it's absent, surfacing it for
+        # an operator to add the vendor in the ERP. Previously this auto-created
+        # the vendor master at post time via the find-or-create helper — the same
+        # invariant breach as the exception-sweep auto-create that was removed.
+        existing_vendor = await find_vendor(self.organization_id, name=invoice.vendor_name)
+        if not existing_vendor:
+            logger.info(
+                "Post blocked: vendor %r not in ERP for org %s",
+                invoice.vendor_name, self.organization_id,
+            )
+            return {
+                "status": "error",
+                "reason": "vendor_not_in_erp",
+                "error_code": "vendor_not_in_erp",
+                "message": (
+                    f"{invoice.vendor_name} is not in your ERP's vendor master. "
+                    f"Add the vendor in your ERP, then retry posting. Solden does "
+                    f"not create vendor master records on your behalf."
+                ),
+                "vendor_name": invoice.vendor_name,
+            }
 
-        vendor_result = await get_or_create_vendor(self.organization_id, vendor)
-
-        if vendor_result.get("status") == "error":
-            logger.error(f"Failed to get/create vendor: {vendor_result}")
-            return vendor_result
-
-        vendor_id = vendor_result.get("vendor_id")
+        vendor_id = existing_vendor.get("vendor_id")
 
         # Create and post bill
         bill = Bill(
