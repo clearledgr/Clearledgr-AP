@@ -262,3 +262,36 @@ class TestDisputeEndpoints:
     def test_create_missing_fields_returns_400(self, client, db):
         resp = client.post("/api/workspace/disputes", json={"ap_item_id": "x"})
         assert resp.status_code == 400
+
+
+def test_open_dispute_does_not_leak_cross_tenant_vendor_name(db):
+    """open_dispute auto-fills vendor_name from the AP item, but must NOT read
+    another tenant's item: a cross-tenant ap_item_id with empty vendor_name
+    must not copy that tenant's vendor_name into the caller's dispute."""
+    db.ensure_organization("disp-org-a", organization_name="A")
+    db.ensure_organization("disp-org-b", organization_name="B")
+    db.create_ap_item({
+        "id": "DISP-XT-ITEM", "invoice_key": "k", "thread_id": "t", "message_id": "m",
+        "subject": "s", "sender": "x@b.com", "vendor_name": "SecretVendorB",
+        "amount": 10.0, "currency": "USD", "invoice_number": "INV-XT",
+        "state": "needs_info", "organization_id": "disp-org-b",
+    })
+    # Org A opens a dispute referencing org B's item, no vendor_name supplied.
+    svc = DisputeService("disp-org-a")
+    dispute = svc.open_dispute(ap_item_id="DISP-XT-ITEM", dispute_type="other")
+    assert dispute["vendor_name"] != "SecretVendorB"
+    assert (dispute.get("vendor_name") or "") == ""
+
+
+def test_open_dispute_autofills_same_org_vendor_name(db):
+    """Control: same-org item DOES auto-fill vendor_name (the feature works)."""
+    db.ensure_organization("disp-org-a", organization_name="A")
+    db.create_ap_item({
+        "id": "DISP-OWN-ITEM", "invoice_key": "k2", "thread_id": "t2", "message_id": "m2",
+        "subject": "s", "sender": "x@a.com", "vendor_name": "OwnVendorA",
+        "amount": 10.0, "currency": "USD", "invoice_number": "INV-OWN",
+        "state": "needs_info", "organization_id": "disp-org-a",
+    })
+    svc = DisputeService("disp-org-a")
+    dispute = svc.open_dispute(ap_item_id="DISP-OWN-ITEM", dispute_type="other")
+    assert dispute["vendor_name"] == "OwnVendorA"

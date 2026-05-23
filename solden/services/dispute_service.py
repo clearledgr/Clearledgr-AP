@@ -5,8 +5,11 @@ resolving, and escalating disputes linked to AP items.
 
 Integrates with:
 - AP item state machine (needs_info state)
-- Vendor communication (follow-up emails)
 - Audit trail (dispute events)
+
+Note: ``mark_vendor_contacted`` only records that an operator contacted the
+vendor (stamps ``vendor_contacted_at`` / ``followup_thread_id``). Solden sends
+no vendor email and authors no vendor-facing text (2026-05-02 decision).
 """
 from __future__ import annotations
 
@@ -38,10 +41,14 @@ class DisputeService:
         vendor_email: str = "",
     ) -> Dict[str, Any]:
         """Open a new dispute for an AP item."""
-        # Auto-fill vendor info from AP item if not provided
+        # Auto-fill vendor info from AP item if not provided. get_ap_item is
+        # org-agnostic (keyed by id), so verify the item belongs to THIS org
+        # before reading it — otherwise a caller passing another tenant's
+        # ap_item_id with an empty vendor_name would copy that tenant's
+        # vendor_name into their dispute (a cross-tenant PII read).
         if not vendor_name or not vendor_email:
             item = self.db.get_ap_item(ap_item_id)
-            if item:
+            if item and str(item.get("organization_id") or "") == self.organization_id:
                 vendor_name = vendor_name or item.get("vendor_name", "")
 
         dispute = self.db.create_dispute(
