@@ -2501,7 +2501,9 @@ class TestExtensionEndpoints:
             json={"vendor_name": "Acme", "amount": 10.5, "organization_id": "org-test"},
         ).status_code == 401
         assert client.get("/extension/suggestions/form-prefill/email-1?organization_id=org-test").status_code == 401
-        assert client.get("/extension/needs-info-draft/AP-1").status_code == 401
+        # /extension/needs-info-draft removed 2026-05-23 (vendor-facing email
+        # authoring — zero-vendor-email invariant). Endpoint is gone → 404.
+        assert client.get("/extension/needs-info-draft/AP-1").status_code == 404
         assert client.get("/extension/pipeline?organization_id=org-test").status_code == 401
         assert client.get("/extension/invoice-pipeline/default").status_code == 401
         assert client.get("/extension/invoice-status/email-1").status_code == 401

@@ -19,7 +19,6 @@ from solden.services.gmail_extension_support import (
     build_amount_validation_payload,
     build_form_prefill_payload,
     build_gl_suggestion_payload,
-    build_needs_info_draft_payload,
     build_vendor_suggestion_payload,
 )
 
@@ -584,28 +583,14 @@ async def submit_feedback(
     return {"ok": True, "slack_delivered": slack_delivered}
 
 
-@router.get("/needs-info-draft/{ap_item_id}")
-async def get_needs_info_draft(
-    ap_item_id: str,
-    reason: Optional[str] = Query(None, description="What information is needed — pre-fills the email body"),
-    _user=Depends(get_current_user),
-):
-    db = get_db()
-    ap_item = db.get_ap_item(ap_item_id)
-    try:
-        return build_needs_info_draft_payload(
-            ap_item_id=ap_item_id,
-            ap_item=ap_item,
-            reason=reason,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+# REMOVED 2026-05-23 (manifesto audit): GET /needs-info-draft/{ap_item_id}
+# returned a vendor-facing email draft ("Dear {vendor} ...") addressed to the
+# vendor — a zero-vendor-email invariant violation. It also read the AP item
+# without an org check (cross-tenant PII). Both gone with build_needs_info_draft_payload.
 
 
 # =============================================================================
-# Sidebar query — Claude prompt + rule-based fallback
+# Sidebar query — model prompt + rule-based fallback
 # =============================================================================
 
 

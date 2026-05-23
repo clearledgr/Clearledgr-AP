@@ -8,7 +8,6 @@ import pytest
 from solden.core import database as db_module
 from solden.core.ap_states import IllegalTransitionError
 from solden.services.approval_delegation import DelegationService
-from solden.services.gmail_extension_support import build_needs_info_draft_payload
 from solden.services.policy_compliance import PolicyAction, PolicyComplianceService
 
 
@@ -213,22 +212,8 @@ def test_delegated_approver_swaps_to_delegate(db):
     assert resolved == ["delegate@scenario.test", "cfo@scenario.test"]
 
 
-def test_vendor_followup_loop_builds_email_from_needs_info_state(db):
-    item = _create_item(
-        db,
-        "SCENARIO-FOLLOWUP-1",
-        state="needs_info",
-        sender="school-billing@example.org",
-        subject="Invoice for tuition",
-        invoice_number="SCH-1001",
-        exception_code="missing_po",
-    )
-
-    payload = build_needs_info_draft_payload(
-        ap_item_id=item["id"],
-        ap_item=item,
-    )
-
-    assert payload["to"] == "school-billing@example.org"
-    assert payload["subject"] == "Re: Invoice for tuition"
-    assert "Please provide a valid Purchase Order (PO) number" in payload["body"]
+# test_vendor_followup_loop_builds_email_from_needs_info_state REMOVED
+# 2026-05-23: it asserted build_needs_info_draft_payload authored a vendor-facing
+# email ("Dear {vendor} ..." to the vendor) — that builder + endpoint were removed
+# as a zero-vendor-email invariant violation. Solden surfaces the structured
+# exception reason; operators write their own reply.

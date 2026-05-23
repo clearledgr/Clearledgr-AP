@@ -760,60 +760,10 @@ def build_form_prefill_payload(
     }
 
 
-_EXCEPTION_REASON_MAP = {
-    "po_reference_required": "Please provide a valid Purchase Order (PO) number for this invoice. Our system requires a PO reference before we can process payment.",
-    "missing_po": "Please provide a valid Purchase Order (PO) number for this invoice.",
-    "missing_invoice_number": "Please provide a valid invoice number. The invoice number was missing or could not be read from your submission.",
-    "invalid_invoice_number": "The invoice number on your submission appears to be invalid. Please re-send with a clearly formatted invoice number.",
-    "amount_mismatch": "The invoice amount does not match our purchase order or approval records. Please confirm the correct total and any line-item breakdown.",
-    "duplicate_invoice": "This invoice appears to be a duplicate of a previous submission. Please confirm the invoice number and date, or advise if this is a revised invoice.",
-    "vendor_not_recognized": "We were unable to match your company to our vendor records. Please confirm your registered company name, VAT/tax ID, and remittance address.",
-    "currency_mismatch": "The invoice currency does not match the currency on our purchase order. Please re-issue in the agreed contract currency.",
-    "missing_line_items": "Please re-send the invoice with itemised line items (description, quantity, unit price) so we can match it against our purchase order.",
-    "policy_attribute_failure": "Additional details are required to process this invoice under our accounting policy. Please confirm the PO number, cost centre, and project code associated with this charge.",
-    "approval_limit_exceeded": "This invoice exceeds the approval limit for automatic processing. We are escalating internally - no action is needed from you at this time.",
-    "tax_id_required": "Please include your VAT/tax identification number on the invoice. This is required for our accounts payable records.",
-}
-
-
-def build_needs_info_draft_payload(
-    *,
-    ap_item_id: str,
-    ap_item: Optional[Dict[str, Any]],
-    reason: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Build the Gmail compose payload for needs-info vendor follow-ups."""
-    if not ap_item:
-        raise LookupError("ap_item_not_found")
-    if ap_item.get("state") != "needs_info":
-        raise ValueError("item_not_in_needs_info_state")
-
-    vendor = ap_item.get("vendor_name") or "Vendor"
-    invoice_number = ap_item.get("invoice_number") or "your recent invoice"
-    sender_email = ap_item.get("sender") or ""
-    original_subject = ap_item.get("subject") or f"Invoice {invoice_number}"
-    exception_code = str(ap_item.get("exception_code") or "").strip()
-    reason_text = (
-        str(reason).strip()
-        if reason and str(reason).strip()
-        else _EXCEPTION_REASON_MAP.get(exception_code)
-        or str(ap_item.get("last_error") or "").strip()
-        or "additional information is required before we can process this invoice"
-    )
-
-    body = (
-        f"Dear {vendor},\n\n"
-        f"Thank you for submitting invoice {invoice_number}.\n\n"
-        f"We need the following before we can complete processing:\n\n"
-        f"    {reason_text}\n\n"
-        f"Please reply to this email with the requested information and we will "
-        f"process your invoice promptly.\n\n"
-        f"Best regards"
-    )
-
-    return {
-        "ap_item_id": ap_item_id,
-        "to": sender_email,
-        "subject": f"Re: {original_subject}",
-        "body": body,
-    }
+# REMOVED 2026-05-23 (manifesto audit): build_needs_info_draft_payload +
+# _EXCEPTION_REASON_MAP authored a full "Dear {vendor} ... Best regards" email
+# body addressed `to` the vendor. That violates the zero-vendor-email invariant
+# (Solden authors zero vendor-facing body text — 2026-05-02 decision; see the
+# module note above). Operators write their own reply in Gmail; the agent's job
+# is to surface the structured exception reason, not to draft vendor prose.
+# Do not reintroduce a vendor-facing draft builder here.
