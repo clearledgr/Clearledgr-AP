@@ -1,8 +1,15 @@
 """
 Solden Core Data Models
 
-This is the SINGLE SOURCE OF TRUTH for all data in Solden.
-All surfaces (Gmail, Sheets, Slack) read and write through these models.
+Shared dataclasses for a couple of intake shapes — ``Transaction`` and
+``FinanceEmail`` — plus the identifier type aliases below. These are NOT the
+canonical store: the authoritative AP record is the ``ap_items`` table accessed
+through ``SoldenDB`` (and the generic ``boxes`` table for declarative types).
+Treat these as convenience shapes, not "the single source of truth."
+
+(Reconciliation-era ``Match`` / ``Exception`` / ``DraftEntry`` / ``AuditLog``
+dataclasses were removed 2026-05-23 — they had zero consumers; the real audit
+trail is the ``audit_events`` hash chain, not an ``AuditLog`` dataclass.)
 
 Naming conventions for key identifiers:
 
@@ -46,16 +53,9 @@ __all__ = [
     # Enums
     "TransactionSource",
     "TransactionStatus",
-    "ExceptionType",
-    "ExceptionPriority",
-    "ApprovalStatus",
     # Dataclasses
     "Transaction",
-    "Match",
-    "Exception",
-    "DraftEntry",
     "FinanceEmail",
-    "AuditLog",
 ]
 
 
@@ -76,31 +76,6 @@ class TransactionStatus(str, Enum):
     EXCEPTION = "exception"       # Requires review
     RESOLVED = "resolved"         # Exception resolved
     IGNORED = "ignored"           # User chose to ignore
-
-
-class ExceptionType(str, Enum):
-    """Type of reconciliation exception."""
-    NO_MATCH = "no_match"
-    AMOUNT_VARIANCE = "amount_variance"
-    DATE_MISMATCH = "date_mismatch"
-    DUPLICATE = "duplicate"
-    MISSING_DATA = "missing_data"
-
-
-class ExceptionPriority(str, Enum):
-    """Exception priority level."""
-    CRITICAL = "critical"    # >€10,000 or regulatory
-    HIGH = "high"            # >€5,000
-    MEDIUM = "medium"        # >€1,000
-    LOW = "low"              # <€1,000
-
-
-class ApprovalStatus(str, Enum):
-    """Approval workflow status."""
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    ESCALATED = "escalated"
 
 
 @dataclass
@@ -142,131 +117,6 @@ class Transaction:
 
 
 @dataclass
-class Match:
-    """A reconciliation match between transactions."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    
-    # Matched transactions
-    gateway_id: Optional[str] = None
-    bank_id: Optional[str] = None
-    internal_id: Optional[str] = None
-    
-    # Match quality
-    score: int = 0  # 0-100
-    confidence: float = 0.0
-    match_type: str = "auto"  # auto, manual, ai
-    
-    # Score breakdown
-    amount_score: int = 0
-    date_score: int = 0
-    description_score: int = 0
-    reference_score: int = 0
-    
-    # Status
-    is_three_way: bool = False
-    is_approved: bool = False
-    approved_by: Optional[str] = None
-    approved_at: Optional[str] = None
-    
-    # Metadata
-    organization_id: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass 
-class Exception:
-    """A reconciliation exception requiring review."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    
-    # Transaction reference
-    transaction_id: str = ""
-    transaction_source: TransactionSource = TransactionSource.MANUAL
-    
-    # Exception details
-    type: ExceptionType = ExceptionType.NO_MATCH
-    priority: ExceptionPriority = ExceptionPriority.MEDIUM
-    
-    # Financial context
-    amount: float = 0.0
-    currency: str = "EUR"
-    vendor: Optional[str] = None
-    
-    # Near matches
-    near_matches: List[str] = field(default_factory=list)
-    nearest_amount_diff: Optional[float] = None
-    nearest_date_diff: Optional[int] = None
-    
-    # AI analysis
-    ai_explanation: Optional[str] = None
-    ai_suggested_action: Optional[str] = None
-    
-    # Resolution
-    status: str = "open"  # open, resolved, ignored
-    resolved_by: Optional[str] = None
-    resolved_at: Optional[str] = None
-    resolution_notes: Optional[str] = None
-    
-    # Routing
-    assigned_to: Optional[str] = None
-    escalated_to: Optional[str] = None
-    
-    # Metadata
-    organization_id: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
-    def to_dict(self) -> Dict[str, Any]:
-        data = asdict(self)
-        data['type'] = self.type.value
-        data['priority'] = self.priority.value
-        data['transaction_source'] = self.transaction_source.value
-        return data
-
-
-@dataclass
-class DraftEntry:
-    """A draft journal entry awaiting approval."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    
-    # Match reference
-    match_id: str = ""
-    
-    # Entry details
-    debit_account: str = ""
-    credit_account: str = ""
-    amount: float = 0.0
-    currency: str = "EUR"
-    description: str = ""
-    posting_date: str = ""
-    
-    # Confidence
-    confidence: float = 0.0
-    auto_generated: bool = True
-    
-    # Approval
-    status: ApprovalStatus = ApprovalStatus.PENDING
-    approved_by: Optional[str] = None
-    approved_at: Optional[str] = None
-    rejection_reason: Optional[str] = None
-    
-    # ERP posting
-    posted_to_erp: bool = False
-    erp_document_id: Optional[str] = None
-    posted_at: Optional[str] = None
-    
-    # Metadata
-    organization_id: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
-    def to_dict(self) -> Dict[str, Any]:
-        data = asdict(self)
-        data['status'] = self.status.value
-        return data
-
-
-@dataclass
 class FinanceEmail:
     """A detected finance email from Gmail."""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -297,33 +147,6 @@ class FinanceEmail:
     user_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class AuditLog:
-    """Audit trail for compliance."""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    
-    # Action
-    action: str = ""  # created, updated, approved, reconciled, etc.
-    entity_type: str = ""  # transaction, match, exception, draft
-    entity_id: str = ""
-    
-    # Actor
-    user_id: str = ""
-    user_email: Optional[str] = None
-    surface: str = ""  # gmail, sheets, slack, api
-    
-    # Details
-    changes: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    # Timestamp
-    organization_id: Optional[str] = None
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
