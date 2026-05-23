@@ -282,3 +282,20 @@ for the manifesto invariants that matter at the surface, not read line-by-line.
   agent at its core — every action observed, deliberated, audited, then executed.
 - **Verdict:** both strongly aligned; no drift found. The facade delegates the bounds
   to the loop; the loop enforces + audits them.
+
+### `agent_memory.py` + learning services (`compounding_learning` / `learning` / `finance_learning`) — ALIGNED, no fix
+The "compounding" thesis (the agent improves over time), bounded correctly.
+- **Tenant isolation (sovereignty):** every learning table is `organization_id NOT NULL`
+  with org in the UNIQUE constraints; services are org-scoped at construction (raise on
+  empty org). compounding_learning is Postgres-backed + org-partitioned (per the
+  cross-tenant-bleed fix 47ad418a).
+- **Durability:** `learning.py` is PG-backed with a TTL write-through cache (PG is the
+  source of truth; explicit invariant that every mutator writes through before the next
+  destructive reload; graceful DB-failure retry instead of serving stale-empty) — the
+  in-memory-only persistence bug (21eba14a) is fixed.
+- **Bounded:** learning feeds ADVISORY context (vendor GL patterns, belief, recall) into
+  the loop; it does not hold routing authority — the deterministic `APDecisionService`
+  still decides. Learning improves data-quality suggestions, not the routing verdict.
+- **task_runs remnants confirmed removed** from agent_memory (validates the earlier
+  durable-runtime cleanup). No stale paths / brand.
+- **Verdict:** aligned; no drift. Tenant-isolated + persisted + advisory.
