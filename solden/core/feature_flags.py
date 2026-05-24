@@ -104,6 +104,21 @@ def is_erp_settlement_write_enabled() -> bool:
     return _env_flag("FEATURE_ERP_SETTLEMENT_WRITE", default=False)
 
 
+def is_sap_live_write_enabled() -> bool:
+    """Live SAP S/4HANA document writes (park AP invoice / journal entry).
+
+    OFF by default. The ``SAPAdapter`` (solden/services/erp/sap.py) builds and
+    validates SAP-shaped payloads but has no live HTTP write path — so a
+    non-dry-run park must fail closed (never report ``status="parked"`` for a
+    document that was never sent). Flip ``FEATURE_SAP_LIVE_WRITE=true`` only
+    once the real live write path is implemented and validated against an
+    S/4HANA sandbox. (The separate vendor-bill posting path
+    ``integrations/erp_sap.py:post_bill_to_sap`` is already wired and is NOT
+    gated by this flag.)
+    """
+    return _env_flag("FEATURE_SAP_LIVE_WRITE", default=False)
+
+
 def is_workflow_hooks_enabled() -> bool:
     """Customer code hooks + conditions + effects on declarative Box types.
 

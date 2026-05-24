@@ -1,9 +1,15 @@
 """SAP S/4HANA adapter.
 
-Builds SAP-shaped park/post payloads and dry-run results. The live SAP
-write path (real HTTP calls to S/4HANA) is not yet wired: these methods
-construct and validate the request and return a result, but do not call
-SAP. ``config.dry_run`` controls only the result-message wording.
+Builds SAP-shaped park/post payloads and dry-run previews. The live SAP
+write path (real HTTP calls to S/4HANA) is NOT implemented here. The park
+methods therefore fail closed: a non-dry-run park returns ``status="failed"``
+(gated by ``FEATURE_SAP_LIVE_WRITE``, off by default) rather than reporting
+``status="parked"`` for a document that was never sent. Dry-run requests
+return an honest "would call …" preview.
+
+(The separate, wired vendor-bill posting path is
+``integrations/erp_sap.py:post_bill_to_sap`` — it makes real HTTP calls and
+is not part of this adapter.)
 """
 from __future__ import annotations
 
@@ -12,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from solden.core.feature_flags import is_sap_live_write_enabled
 from solden.models.erp import (
     ERPDocumentResult,
     ParkedAPInvoiceRequest,
@@ -287,19 +294,33 @@ class SAPAdapter:
             warnings.append("No line items provided; SAP may require GL coding.")
 
         document_id = build_document_id(prefix="SAP-PI")
-        mode = "dry_run" if config.dry_run else "live"
         api_name = self.endpoints.supplier_invoice
-        message = (
-            f"Dry run: would call {api_name} to park AP invoice."
-            if config.dry_run
-            else f"Parked AP invoice via {api_name}."
-        )
+
+        # Fail closed: there is no live SAP write path yet, so a non-dry-run
+        # park must never report success for a document that was never sent.
+        if not config.dry_run:
+            if not is_sap_live_write_enabled():
+                return ERPDocumentResult(
+                    document_id=document_id,
+                    status="failed",
+                    mode="live",
+                    message=(
+                        f"SAP live write is disabled (FEATURE_SAP_LIVE_WRITE off); "
+                        f"nothing was sent to {api_name}."
+                    ),
+                    missing_fields=missing_fields,
+                    warnings=warnings,
+                )
+            raise NotImplementedError(
+                f"SAP live write path ({api_name}) is not implemented; "
+                "FEATURE_SAP_LIVE_WRITE must not be enabled until it is."
+            )
 
         return ERPDocumentResult(
             document_id=document_id,
             status="parked",
-            mode=mode,
-            message=message,
+            mode="dry_run",
+            message=f"Dry run: would call {api_name} to park AP invoice.",
             missing_fields=missing_fields,
             warnings=warnings,
         )
@@ -321,19 +342,33 @@ class SAPAdapter:
             warnings.append("Journal entry requires balanced debit/credit lines.")
 
         document_id = build_document_id(prefix="SAP-JE")
-        mode = "dry_run" if config.dry_run else "live"
         api_name = self.endpoints.journal_entry
-        message = (
-            f"Dry run: would call {api_name} to park journal entry."
-            if config.dry_run
-            else f"Parked journal entry via {api_name}."
-        )
+
+        # Fail closed: there is no live SAP write path yet, so a non-dry-run
+        # park must never report success for a document that was never sent.
+        if not config.dry_run:
+            if not is_sap_live_write_enabled():
+                return ERPDocumentResult(
+                    document_id=document_id,
+                    status="failed",
+                    mode="live",
+                    message=(
+                        f"SAP live write is disabled (FEATURE_SAP_LIVE_WRITE off); "
+                        f"nothing was sent to {api_name}."
+                    ),
+                    missing_fields=missing_fields,
+                    warnings=warnings,
+                )
+            raise NotImplementedError(
+                f"SAP live write path ({api_name}) is not implemented; "
+                "FEATURE_SAP_LIVE_WRITE must not be enabled until it is."
+            )
 
         return ERPDocumentResult(
             document_id=document_id,
             status="parked",
-            mode=mode,
-            message=message,
+            mode="dry_run",
+            message=f"Dry run: would call {api_name} to park journal entry.",
             missing_fields=missing_fields,
             warnings=warnings,
         )
