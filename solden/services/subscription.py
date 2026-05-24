@@ -300,7 +300,6 @@ PLAN_PRICING: Dict[PlanTier, Dict[str, int]] = {
 AI_CREDIT_COSTS: Dict[str, int] = {
     "invoice_extraction": 1,
     "ap_decision": 1,
-    "vendor_outreach_draft": 1,
     "gl_auto_coding": 1,
     "vendor_intelligence_enrichment": 2,
     "cross_invoice_analysis": 1,

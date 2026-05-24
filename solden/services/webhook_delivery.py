@@ -99,20 +99,15 @@ async def deliver_webhook(
     body = json.dumps(payload_with_meta, default=str)
     body_bytes = body.encode("utf-8")
 
-    # Send both X-Solden-* (canonical, brand-aligned for public /v1
-    # receivers) and X-Solden-* (legacy — kept during the
-    # deprecation window so existing internal handlers don't break).
-    # Both carry the same delivery_id, event name, and HMAC signature.
+    # Canonical X-Solden-* headers: event name, delivery id, and HMAC
+    # signature.
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
-        "X-Solden-Event": event_type,
-        "X-Solden-Delivery": delivery_id,
         "X-Solden-Event": event_type,
         "X-Solden-Delivery": delivery_id,
     }
     if secret:
         sig = compute_signature(body_bytes, secret)
-        headers["X-Solden-Signature"] = f"sha256={sig}"
         headers["X-Solden-Signature"] = f"sha256={sig}"
 
     try:
