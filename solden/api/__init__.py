@@ -4,7 +4,6 @@ from importlib import import_module
 
 _ROUTER_MODULES = {
     "v1_router": "solden.api.v1",
-    "erp_router": "solden.api.erp",
     "gmail_extension_router": "solden.api.gmail_extension",
     "slack_invoices_router": "solden.api.slack_invoices",
     "teams_invoices_router": "solden.api.teams_invoices",
