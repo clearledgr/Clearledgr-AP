@@ -94,18 +94,19 @@ def log_scheduler_run(run_type: str, tasks_processed: int, reminders_sent: int):
     )
 
 
-def run_overdue_check(config: Dict = None) -> Dict:
+def run_overdue_check(organization_id: str, config: Dict = None) -> Dict:
     """
-    Check for overdue tasks and send reminders.
-    
-    This should be called periodically (e.g., daily via cron or scheduler).
-    
+    Check for overdue tasks and send reminders (scoped to one org).
+
+    This should be called periodically (e.g., daily via cron or scheduler),
+    once per active org.
+
     Returns:
         Summary of actions taken
     """
     config = config or {}
-    
-    overdue_tasks = get_overdue_tasks()
+
+    overdue_tasks = get_overdue_tasks(organization_id)
     reminders_sent = 0
     escalations = 0
     
@@ -136,9 +137,11 @@ def run_overdue_check(config: Dict = None) -> Dict:
                     escalations += 1
     
     # Send summary if there are overdue tasks
-    if overdue_tasks and should_send_reminder("daily_summary", "overdue_summary", 20):
-        send_overdue_summary(overdue_tasks, config)
-        log_reminder("daily_summary", "overdue_summary")
+    if overdue_tasks and should_send_reminder(
+        f"daily_summary:{organization_id}", "overdue_summary", 20
+    ):
+        send_overdue_summary(overdue_tasks, config, organization_id=organization_id)
+        log_reminder(f"daily_summary:{organization_id}", "overdue_summary")
     
     log_scheduler_run("overdue_check", len(overdue_tasks), reminders_sent)
     
@@ -150,17 +153,17 @@ def run_overdue_check(config: Dict = None) -> Dict:
     }
 
 
-def run_approaching_deadline_check(config: Dict = None) -> Dict:
+def run_approaching_deadline_check(organization_id: str, config: Dict = None) -> Dict:
     """
-    Check for tasks approaching deadline and send proactive reminders.
-    
+    Check for tasks approaching deadline and send proactive reminders (one org).
+
     Returns:
         Summary of actions taken
     """
     config = config or {}
-    
-    # Get all open tasks
-    all_tasks = get_tasks(include_completed=False)
+
+    # Get all open tasks for this org
+    all_tasks = get_tasks(include_completed=False, organization_id=organization_id)
     
     approaching = []
     reminders_sent = 0
@@ -195,16 +198,16 @@ def run_approaching_deadline_check(config: Dict = None) -> Dict:
     }
 
 
-def run_stale_task_check(config: Dict = None, stale_days: int = 5) -> Dict:
+def run_stale_task_check(organization_id: str, config: Dict = None, stale_days: int = 5) -> Dict:
     """
-    Check for stale tasks (no activity) and send nudge.
-    
+    Check for stale tasks (no activity) and send nudge (one org).
+
     Returns:
         Summary of actions taken
     """
     config = config or {}
-    
-    all_tasks = get_tasks(include_completed=False)
+
+    all_tasks = get_tasks(include_completed=False, organization_id=organization_id)
     
     stale = []
     reminders_sent = 0
@@ -296,27 +299,29 @@ def calculate_days_overdue(due_date: str) -> int:
         return 0
 
 
-def run_all_checks(config: Dict = None) -> Dict:
+def run_all_checks(organization_id: str, config: Dict = None) -> Dict:
     """
-    Run all scheduled checks.
-    
-    This is the main entry point for scheduled execution.
+    Run all scheduled checks for one org.
+
+    This is the main entry point for scheduled execution; the caller invokes
+    it once per active org so scans and reminders stay tenant-scoped.
     """
     config = config or {}
-    
+
     results = {
         "run_at": datetime.now(timezone.utc).isoformat(),
+        "organization_id": organization_id,
         "checks": {}
     }
-    
+
     # Run overdue check
-    results["checks"]["overdue"] = run_overdue_check(config)
-    
+    results["checks"]["overdue"] = run_overdue_check(organization_id, config)
+
     # Run approaching deadline check
-    results["checks"]["approaching"] = run_approaching_deadline_check(config)
-    
+    results["checks"]["approaching"] = run_approaching_deadline_check(organization_id, config)
+
     # Run stale task check
-    results["checks"]["stale"] = run_stale_task_check(config)
+    results["checks"]["stale"] = run_stale_task_check(organization_id, config)
     
     # Calculate totals
     results["total_reminders"] = sum(

@@ -29,50 +29,98 @@ except ImportError as exc:
     TEAMS_AVAILABLE = False
 
 
-# Bot tokens from environment (set during app installation)
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-SLACK_DEFAULT_CHANNEL = os.environ.get("SLACK_DEFAULT_CHANNEL", "#finance")
 from solden.core.secrets import optional_secret as _optional_secret  # noqa: E402
 
 INVITE_URL = _optional_secret("SOLDEN_INVITE_URL") or None
+
+
+def _run_coro(coro):
+    """Run a coroutine to completion whether or not a loop is already running.
+
+    Task notifications are sent from sync code that may be called either
+    standalone or from inside the background async tick. ``asyncio.run``
+    raises if a loop is already running, so fall back to a worker thread.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(lambda: asyncio.run(coro)).result()
+    return asyncio.run(coro)
+
+
+def _resolve_org_slack(organization_id, config):
+    """Resolve this org's Slack bot token + channel.
+
+    Returns ``(token, channel)`` or ``(None, None)`` when the org has no
+    connected Slack. Routes per-org via ``resolve_slack_runtime`` — never a
+    shared global channel — so one tenant's task details never land in
+    another tenant's (or a platform-wide) channel.
+    """
+    if not organization_id:
+        return None, None
+    try:
+        from solden.services.slack_api import resolve_slack_runtime
+        runtime = resolve_slack_runtime(organization_id)
+    except Exception as exc:
+        _logger.warning("Slack runtime resolution failed for org=%s: %s", organization_id, exc)
+        return None, None
+    if not runtime.get("connected") or not runtime.get("bot_token"):
+        return None, None
+    channel = (config or {}).get("slack_channel") or runtime.get("approval_channel")
+    return runtime.get("bot_token"), channel
 
 
 def send_task_notification(
     notification_type: str,
     task: Dict,
     config: Dict = None,
-    additional_context: Dict = None
+    additional_context: Dict = None,
+    organization_id: str = None,
 ) -> bool:
     """
     Send task notification via Slack and/or Teams apps.
-    
+
+    Routes to the task's own org Slack (per-org token + channel). If the org
+    has no connected Slack, the notification is skipped (no global channel).
+
     Args:
         notification_type: Type of notification (created, assigned, completed, overdue)
         task: Task data
         config: Optional config with channel preferences
         additional_context: Additional context data
-        
+        organization_id: Org to route to; defaults to the task's organization_id
+
     Returns:
         True if any notification was sent successfully
     """
     config = config or {}
     additional_context = additional_context or {}
-    
+
     success = False
-    
-    # Send via Slack app
-    if SLACK_AVAILABLE and SLACK_BOT_TOKEN:
+    org = organization_id or task.get("organization_id")
+    token, channel = _resolve_org_slack(org, config)
+
+    # Send via Slack app (per-org token + channel)
+    if SLACK_AVAILABLE and token and channel:
         try:
-            channel = config.get("slack_channel", SLACK_DEFAULT_CHANNEL)
             blocks = build_task_notification_blocks(notification_type, task, additional_context)
 
-            result = asyncio.run(
-                send_slack_message(channel, blocks, token=SLACK_BOT_TOKEN)
+            result = _run_coro(
+                send_slack_message(channel, blocks, token=token)
             )
 
             success = result.get("ok", False) or success
         except Exception as e:
-            _logger.warning("Slack app notification error: %s", e)
+            _logger.warning("Slack app notification error (org=%s): %s", org, e)
+    elif org:
+        _logger.info(
+            "Task notification skipped: org=%s has no connected Slack (type=%s)",
+            org, notification_type,
+        )
 
     # Send via Teams app
     if TEAMS_AVAILABLE and config.get("teams_conversation_id"):
@@ -310,17 +358,20 @@ def send_task_comment_notification(
 
 def send_overdue_summary(
     tasks: List[Dict],
-    config: Dict = None
+    config: Dict = None,
+    organization_id: str = None,
 ) -> bool:
-    """Send summary of overdue tasks via app."""
+    """Send summary of overdue tasks to the org's own Slack channel."""
     config = config or {}
-    
+
     if not tasks:
         return True
-    
-    if not SLACK_AVAILABLE or not SLACK_BOT_TOKEN:
+
+    org = organization_id or (tasks[0].get("organization_id") if tasks else None)
+    token, channel = _resolve_org_slack(org, config)
+    if not SLACK_AVAILABLE or not token or not channel:
         return False
-    
+
     total = len(tasks)
     by_priority = {}
     for task in tasks:
@@ -355,9 +406,8 @@ def send_overdue_summary(
     ]
     
     try:
-        channel = config.get("slack_channel", SLACK_DEFAULT_CHANNEL)
-        result = asyncio.run(
-            send_slack_message(channel, blocks, token=SLACK_BOT_TOKEN)
+        result = _run_coro(
+            send_slack_message(channel, blocks, token=token)
         )
         return result.get("ok", False)
     except Exception as e:

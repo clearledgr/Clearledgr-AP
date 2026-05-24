@@ -531,9 +531,10 @@ async def _run_loop():
                 for org_id in org_ids:
                     await _sweep_exception_resolutions(org_id)
 
-            # Every 6th tick (~90 min): run task scheduler checks
+            # Every 6th tick (~90 min): run task scheduler checks per org
             if tick % 6 == 0:
-                await _run_task_scheduler_checks()
+                for org_id in org_ids:
+                    await _run_task_scheduler_checks(org_id)
 
             # Every 12th tick (~3 hours): verify recent ERP postings
             if tick % 12 == 0:
@@ -1180,19 +1181,20 @@ async def _check_approval_timeouts(org_id: str):
         logger.error("Approval timeout check failed: %s", exc)
 
 
-async def _run_task_scheduler_checks():
-    """Run the task scheduler's overdue/approaching/stale checks."""
+async def _run_task_scheduler_checks(org_id: str):
+    """Run the task scheduler's overdue/approaching/stale checks for one org."""
     try:
         from solden.services.task_scheduler import run_all_checks
 
-        results = run_all_checks()
+        results = run_all_checks(org_id)
         total = results.get("total_reminders", 0)
         if total:
             logger.info(
-                "Task scheduler checks completed: %d reminder(s) sent", total
+                "Task scheduler checks completed for org=%s: %d reminder(s) sent",
+                org_id, total,
             )
     except Exception as exc:
-        logger.error("Task scheduler checks failed: %s", exc)
+        logger.error("Task scheduler checks failed for org=%s: %s", org_id, exc)
 
 
 async def _run_erp_reconciliation(org_id: str):
