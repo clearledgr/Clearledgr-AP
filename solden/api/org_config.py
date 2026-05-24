@@ -735,79 +735,10 @@ async def list_data_regions():
     }
 
 
-@router.post("/organizations/{organization_id}/gdpr/data-export-request")
-async def request_data_export(
-    organization_id: str,
-    current_user: TokenData = Depends(get_current_user),
-):
-    """
-    Request a data export (GDPR Article 20 - Right to Data Portability).
-    
-    Initiates an export of all personal data for the organization.
-    Export will be available for download within 24 hours.
-    """
-    org_id = _resolve_org_id_for_user(current_user, organization_id)
-    config = get_org_config(org_id)
-    if not config:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    
-    if not config.data_residency.data_portability_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Data portability is not enabled for this organization"
-        )
-    
-    # In production, this would queue a background job
-    import uuid
-    request_id = f"EXPORT-{uuid.uuid4().hex[:8].upper()}"
-    
-    return {
-        "request_id": request_id,
-        "status": "queued",
-        "estimated_completion": "24 hours",
-        "message": "Your data export request has been queued. You will receive a notification when the export is ready.",
-    }
-
-
-@router.post("/organizations/{organization_id}/gdpr/deletion-request")
-async def request_data_deletion(
-    organization_id: str,
-    confirm: bool = Query(False, description="Confirm deletion request"),
-    current_user: TokenData = Depends(get_current_user),
-):
-    """
-    Request data deletion (GDPR Article 17 - Right to Erasure).
-    
-    **Warning:** This action is irreversible. All organization data will be
-    permanently deleted within 30 days.
-    
-    Set confirm=true to confirm the deletion request.
-    """
-    org_id = _resolve_org_id_for_user(current_user, organization_id)
-    config = get_org_config(org_id)
-    if not config:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    
-    if not config.data_residency.deletion_request_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Deletion requests are not enabled for this organization"
-        )
-    
-    if not confirm:
-        return {
-            "status": "confirmation_required",
-            "message": "Data deletion is irreversible. Set confirm=true to proceed.",
-            "warning": "All organization data will be permanently deleted within 30 days.",
-        }
-    
-    # In production, this would queue a background job with a 30-day grace period
-    import uuid
-    request_id = f"DELETE-{uuid.uuid4().hex[:8].upper()}"
-    
-    return {
-        "request_id": request_id,
-        "status": "queued",
-        "grace_period": "30 days",
-        "message": "Your deletion request has been queued. Data will be permanently deleted after a 30-day grace period. Contact support to cancel.",
-    }
+# REMOVED 2026-05-24 (manifesto audit): the /config GDPR data-export-request +
+# deletion-request endpoints were no-op stubs — they returned a random
+# EXPORT-/DELETE- id + "queued" but queued nothing ("In production this would
+# queue a background job"). Lying surfaces that imply a DSAR was filed. The real,
+# working GDPR data-subject-request lifecycle is the allowlisted
+# /api/workspace/gdpr router (services/data_subject_request.py). Do not
+# reintroduce a second, fake GDPR surface here.
