@@ -36,12 +36,27 @@ class IntegrationStore:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    def list_gmail_autopilot_states(self) -> List[Dict[str, Any]]:
+    def list_gmail_autopilot_states(
+        self, organization_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List Gmail autopilot states.
+
+        ``gmail_autopilot_state`` has no org column (keyed by user_id), so
+        pass ``organization_id`` to scope to one tenant via a users join.
+        Omit it only for a deliberate platform-wide listing.
+        """
         self.initialize()
-        sql = "SELECT * FROM gmail_autopilot_state"
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql)
+            if organization_id is not None:
+                cur.execute(
+                    "SELECT s.* FROM gmail_autopilot_state s "
+                    "JOIN users u ON s.user_id = u.id "
+                    "WHERE u.organization_id = %s",
+                    (organization_id,),
+                )
+            else:
+                cur.execute("SELECT * FROM gmail_autopilot_state")
             rows = cur.fetchall()
         return [dict(row) for row in rows]
 
@@ -91,12 +106,27 @@ class IntegrationStore:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    def list_outlook_autopilot_states(self) -> List[Dict[str, Any]]:
+    def list_outlook_autopilot_states(
+        self, organization_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List Outlook autopilot states.
+
+        ``outlook_autopilot_state`` has no org column (keyed by user_id), so
+        pass ``organization_id`` to scope to one tenant via a users join.
+        Omit it only for a deliberate platform-wide listing.
+        """
         self.initialize()
-        sql = "SELECT * FROM outlook_autopilot_state"
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql)
+            if organization_id is not None:
+                cur.execute(
+                    "SELECT s.* FROM outlook_autopilot_state s "
+                    "JOIN users u ON s.user_id = u.id "
+                    "WHERE u.organization_id = %s",
+                    (organization_id,),
+                )
+            else:
+                cur.execute("SELECT * FROM outlook_autopilot_state")
             rows = cur.fetchall()
         return [dict(row) for row in rows]
 

@@ -186,10 +186,10 @@ class MonitoringService:
         }
 
     def _check_auth_failures(self) -> Dict[str, Any]:
-        """Check for recent OAuth auth failures in autopilot state."""
+        """Check for recent OAuth auth failures in autopilot state (this org only)."""
         try:
-            gmail_states = self.db.list_gmail_autopilot_states()
-            outlook_states = self.db.list_outlook_autopilot_states()
+            gmail_states = self.db.list_gmail_autopilot_states(self.organization_id)
+            outlook_states = self.db.list_outlook_autopilot_states(self.organization_id)
             all_states = gmail_states + outlook_states
             failures = [
                 s for s in all_states
@@ -210,10 +210,10 @@ class MonitoringService:
         }
 
     def _check_stale_autopilot(self) -> Dict[str, Any]:
-        """Check if autopilot hasn't polled recently."""
+        """Check if autopilot hasn't polled recently (this org only)."""
         try:
-            gmail_states = self.db.list_gmail_autopilot_states()
-            outlook_states = self.db.list_outlook_autopilot_states()
+            gmail_states = self.db.list_gmail_autopilot_states(self.organization_id)
+            outlook_states = self.db.list_outlook_autopilot_states(self.organization_id)
             all_states = gmail_states + outlook_states
 
             if not all_states:
@@ -463,19 +463,20 @@ class MonitoringService:
 
         try:
             self.db.initialize()
-            # gmail_autopilot_state is keyed by user_id, not org_id.
-            # For V1 single-tenant deployments this is sufficient; when
-            # multi-tenant sharding is real the query here grows a JOIN
-            # to the users table. For now we surface every watch in the
-            # DB — a connected Gmail account with no watch_expiration is
-            # itself the signal (never renewed / never set up).
+            # gmail_autopilot_state is keyed by user_id (no org column), so
+            # scope to this org by joining users. Without the join the report
+            # would surface every tenant's connected mailboxes. A connected
+            # Gmail account with no watch_expiration is itself the signal
+            # (never renewed / never set up).
             sql = (
-                "SELECT email, watch_expiration, last_watch_at "
-                "FROM gmail_autopilot_state"
+                "SELECT s.email, s.watch_expiration, s.last_watch_at "
+                "FROM gmail_autopilot_state s "
+                "JOIN users u ON s.user_id = u.id "
+                "WHERE u.organization_id = %s"
             )
             with self.db.connect() as conn:
                 cur = conn.cursor()
-                cur.execute(sql)
+                cur.execute(sql, (self.organization_id,))
                 rows = cur.fetchall()
         except Exception:
             rows = []

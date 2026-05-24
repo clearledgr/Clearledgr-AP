@@ -95,8 +95,9 @@ class TestAuthFailureCheck:
 
     def test_auth_failures_trigger_alert(self, db):
         for i in range(5):
+            u = db.create_user(email=f"fail{i}@test.com", name=f"F{i}", organization_id="org-test", role="operator")
             db.save_gmail_autopilot_state(
-                user_id=f"fail-{i}",
+                user_id=u["id"],
                 email=f"fail{i}@test.com",
                 last_error="auth_failed",
             )
@@ -116,8 +117,9 @@ class TestStaleAutopilotCheck:
 
     def test_stale_user_triggers_alert(self, db):
         stale_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        u = db.create_user(email="stale@test.com", name="Stale", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="stale-1",
+            user_id=u["id"],
             email="stale@test.com",
             last_scan_at=stale_time,
         )
@@ -129,8 +131,9 @@ class TestStaleAutopilotCheck:
 
     def test_fresh_user_is_healthy(self, db):
         fresh_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        u = db.create_user(email="fresh@test.com", name="Fresh", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="fresh-1",
+            user_id=u["id"],
             email="fresh@test.com",
             last_scan_at=fresh_time,
         )
@@ -293,8 +296,9 @@ class TestApproverHealthCheck:
 class TestGmailWatchExpiration:
     def test_healthy_watch_is_no_alert(self, db):
         future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+        user = db.create_user(email="ops@co.com", name="Ops", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="u1", email="ops@co.com",
+            user_id=user["id"], email="ops@co.com",
             last_history_id="123", watch_expiration=future,
         )
         result = MonitoringService("org-test")._check_gmail_watch_expiration()
@@ -303,8 +307,9 @@ class TestGmailWatchExpiration:
 
     def test_expired_watch_triggers_critical_alert(self, db):
         past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        user = db.create_user(email="ops@co.com", name="Ops", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="u1", email="ops@co.com",
+            user_id=user["id"], email="ops@co.com",
             last_history_id="123", watch_expiration=past,
         )
         result = MonitoringService("org-test")._check_gmail_watch_expiration()
@@ -316,8 +321,9 @@ class TestGmailWatchExpiration:
 
     def test_expiring_soon_triggers_warning(self, db):
         soon = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+        user = db.create_user(email="ops@co.com", name="Ops", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="u1", email="ops@co.com",
+            user_id=user["id"], email="ops@co.com",
             last_history_id="123", watch_expiration=soon,
         )
         result = MonitoringService("org-test")._check_gmail_watch_expiration()
@@ -328,14 +334,35 @@ class TestGmailWatchExpiration:
     def test_missing_watch_expiration_is_critical(self, db):
         # Connected Gmail account but no watch set up = invoices
         # won't arrive. Critical.
+        user = db.create_user(email="ops@co.com", name="Ops", organization_id="org-test", role="operator")
         db.save_gmail_autopilot_state(
-            user_id="u1", email="ops@co.com",
+            user_id=user["id"], email="ops@co.com",
             last_history_id="123", watch_expiration=None,
         )
         result = MonitoringService("org-test")._check_gmail_watch_expiration()
         assert result["alert"] is True
         assert result["severity"] == "critical"
         assert len(result["missing_watch"]) == 1
+
+    def test_watch_check_is_org_scoped(self, db):
+        # A watch belonging to another org must not surface in this org's
+        # report — gmail_autopilot_state has no org column, so the check
+        # joins users to scope by organization_id.
+        past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        mine = db.create_user(email="me@org-test.com", name="Me", organization_id="org-test", role="operator")
+        theirs = db.create_user(email="them@org-other.com", name="Them", organization_id="org-other", role="operator")
+        db.save_gmail_autopilot_state(
+            user_id=mine["id"], email="me@org-test.com",
+            last_history_id="1", watch_expiration=past,
+        )
+        db.save_gmail_autopilot_state(
+            user_id=theirs["id"], email="them@org-other.com",
+            last_history_id="2", watch_expiration=past,
+        )
+        result = MonitoringService("org-test")._check_gmail_watch_expiration()
+        emails = {e["email"] for e in result["expired"]}
+        assert emails == {"me@org-test.com"}
+        assert "them@org-other.com" not in emails
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +380,9 @@ class TestRunAllChecks:
     def test_unhealthy_system(self, db):
         # Create auth failures
         for i in range(5):
+            u = db.create_user(email=f"bad{i}@t.com", name=f"B{i}", organization_id="org-test", role="operator")
             db.save_gmail_autopilot_state(
-                user_id=f"bad-{i}", email=f"bad{i}@t.com", last_error="auth_failed",
+                user_id=u["id"], email=f"bad{i}@t.com", last_error="auth_failed",
             )
 
         svc = MonitoringService("org-test")
@@ -366,8 +394,9 @@ class TestRunAllChecks:
 class TestRunMonitoringChecks:
     def test_emits_alerts(self, db):
         for i in range(5):
+            u = db.create_user(email=f"a{i}@t.com", name=f"A{i}", organization_id="org-test", role="operator")
             db.save_gmail_autopilot_state(
-                user_id=f"alert-{i}", email=f"a{i}@t.com", last_error="auth_failed",
+                user_id=u["id"], email=f"a{i}@t.com", last_error="auth_failed",
             )
 
         with patch("solden.services.monitoring._alert_channels", return_value=["log"]):
