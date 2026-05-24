@@ -1,4 +1,10 @@
-"""SAP S/4HANA adapter (dry-run friendly, live-capable)."""
+"""SAP S/4HANA adapter.
+
+Builds SAP-shaped park/post payloads and dry-run results. The live SAP
+write path (real HTTP calls to S/4HANA) is not yet wired: these methods
+construct and validate the request and return a result, but do not call
+SAP. ``config.dry_run`` controls only the result-message wording.
+"""
 from __future__ import annotations
 
 import logging

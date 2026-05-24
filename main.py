@@ -603,7 +603,6 @@ STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/monitoring-thresholds/check",
     "/api/ops/monitoring-health",
     "/api/ops/retry-queue",
-    "/api/ops/vendor-onboarding/sessions",
     "/api/ops/llm-cost-summary",
     "/api/ops/llm-budget/reset",
 }

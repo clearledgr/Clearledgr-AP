@@ -34,8 +34,8 @@ float for wire compatibility.
 
 Storage policy:
 
-DB columns remain ``REAL`` (SQLite has no native DECIMAL, and
-re-typing every column is a bigger migration than the bug warrants).
+DB columns remain ``REAL`` (a legacy choice; re-typing every column to
+Postgres ``NUMERIC`` is a bigger migration than the bug warrants).
 Reads go through ``row_to_decimal`` which wraps the stored float in
 ``Decimal(str(v)).quantize(Q2)`` — the ``str()`` step is important,
 because ``Decimal(float_value)`` inherits the float's binary-rep

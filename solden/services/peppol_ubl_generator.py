@@ -1,7 +1,8 @@
 """PEPPOL UBL 2.1 outbound generator (Wave 4 / F2).
 
-Produces UBL 2.1 XML for two outbound document types Solden
-emits to vendors:
+Produces UBL 2.1 XML for two document types the operator can transmit via
+their own PEPPOL access point. Solden generates the document; it does not
+send anything to vendors. The two types:
 
   * **CreditNote** (UBL CreditNote-2 schema, type code 381) — when
     the operator issues a vendor credit (e.g. partial dispute

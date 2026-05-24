@@ -153,7 +153,8 @@ def lookup_vendor_inquiry(
 ) -> VendorInquiryResult:
     """Find the AP item matching (sender_domain, invoice_number).
 
-    Returns a sanitized result the AP team can show or auto-send.
+    Returns a sanitized result the AP team can copy into their own reply.
+    Solden never sends it to the vendor.
     """
     domain = _domain_from_email(sender_email)
     needle = _norm_invoice(invoice_number)

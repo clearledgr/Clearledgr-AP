@@ -15,9 +15,6 @@ from solden.services.correction_learning import CorrectionLearningService
 
 logger = logging.getLogger(__name__)
 
-# Module-level calibration history for rollback visibility
-_calibration_history: List[Dict[str, Any]] = []
-
 # Hard bounds for auto-applied thresholds
 _THRESHOLD_FLOOR = 0.70
 _THRESHOLD_CEILING = 0.99
@@ -292,15 +289,6 @@ class LearningCalibrationService:
                         new_threshold,
                         status,
                     )
-                    # Store previous value for rollback visibility
-                    _calibration_history.append({
-                        "organization_id": self.organization_id,
-                        "field": "auto_approve_confidence_threshold",
-                        "old_value": current_threshold,
-                        "new_value": new_threshold,
-                        "reason": status,
-                        "applied_at": _now_iso(),
-                    })
                     _cfg_dict["auto_approve_confidence_threshold"] = new_threshold
                     _raw_settings["org_config"] = _cfg_dict
                     _db.update_organization(self.organization_id, settings=_raw_settings)
