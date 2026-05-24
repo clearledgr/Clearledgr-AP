@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -216,7 +216,6 @@ from solden.core.authorization import (
     emit_authorization_denied_audit,
 )
 from solden.core.errors import safe_error
-from solden.services.auth import get_api_key_optional
 from solden.services.app_startup import cancel_deferred_startup, schedule_deferred_startup
 from solden.services.errors import SoldenError
 from solden.services.logging import log_request, log_error, logger
@@ -2140,11 +2139,13 @@ async def health():
     description="Get API performance and usage metrics",
     response_description="Metrics including uptime, requests, errors, and performance stats"
 )
-async def metrics_endpoint(
-    api_key: str = Depends(get_api_key_optional),
-):
+async def metrics_endpoint():
     """
     Get API metrics.
+
+    Public, instance-wide aggregates (request/error counts, response-time
+    stats, uptime) — no tenant data. Sits in the public strict-profile
+    tier alongside /health.
     
     Returns:
     - Uptime information
