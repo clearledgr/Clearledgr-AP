@@ -7,8 +7,8 @@
  * for Gmail's settings page to load, then injects our tab.
  */
 
-const SETTINGS_TAB_ID = 'clearledgr-settings-tab';
-const SETTINGS_CONTENT_ID = 'clearledgr-settings-content';
+const SETTINGS_TAB_ID = 'solden-settings-tab';
+const SETTINGS_CONTENT_ID = 'solden-settings-content';
 
 let settingsObserver = null;
 let injected = false;

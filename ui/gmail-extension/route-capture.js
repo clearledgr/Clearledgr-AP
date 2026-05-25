@@ -1,5 +1,5 @@
 (function captureSoldenRouteIntent() {
-  var STORAGE_KEY = '__clearledgr_pending_direct_route_v1';
+  var STORAGE_KEY = '__solden_pending_direct_route_v1';
   var ATTRIBUTE_NAME = 'data-solden-pending-direct-route';
 
   function writePendingRouteToExtensionStorage(payload) {
@@ -14,7 +14,9 @@
   function writePendingRoute() {
     try {
       var hash = String(window.location.hash || '').trim();
-      if (!hash || !hash.startsWith('#clearledgr/')) return;
+      // Capture the new solden/ routes; still accept legacy #clearledgr/
+      // hashes so an in-flight deep link from before the rebrand resolves.
+      if (!hash || !(hash.startsWith('#solden/') || hash.startsWith('#clearledgr/'))) return;
       var normalizedHash = hash.slice(1);
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
         hash: normalizedHash,

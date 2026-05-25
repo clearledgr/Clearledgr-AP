@@ -48,11 +48,11 @@ import {
 
 const html = htm.bind(h);
 const APP_ID = 'sdk_Solden2026_dc12c60472';
-const INIT_KEY = '__clearledgr_ap_v1_inboxsdk_initialized';
+const INIT_KEY = '__solden_ap_v1_inboxsdk_initialized';
 const LOGO_PATH = 'icons/icon48.png';
 const STORAGE_ACTIVE_AP_ITEM_ID = 'solden_active_ap_item_id';
-const STORAGE_PENDING_DIRECT_ROUTE = '__clearledgr_pending_direct_route_v1';
-const STORAGE_RELOAD_ROUTE = '__clearledgr_reload_route_v1';
+const STORAGE_PENDING_DIRECT_ROUTE = '__solden_pending_direct_route_v1';
+const STORAGE_RELOAD_ROUTE = '__solden_reload_route_v1';
 const ATTR_PENDING_DIRECT_ROUTE = 'data-solden-pending-direct-route';
 
 let sdk = null;
@@ -71,13 +71,13 @@ let _cachedExceptionCount = 0;
 // Saved Views (nested): Exceptions, Awaiting Approval, Due This Week.
 // Settings: single entry per §16.
 const APPMENU_PRIMARY_ROUTE_IDS = new Set([
-  'clearledgr/home',
-  'clearledgr/invoices',
-  'clearledgr/vendor-onboarding',
-  'clearledgr/activity',
+  'solden/home',
+  'solden/invoices',
+  'solden/vendor-onboarding',
+  'solden/activity',
 ]);
 const APPMENU_SETTINGS_ROUTE_IDS = new Set([
-  'clearledgr/settings',
+  'solden/settings',
 ]);
 
 // ==================== FONT LOADING ====================
@@ -277,7 +277,7 @@ function renderComposeRecordStatus(recordContext) {
       'flex-shrink:0',
     ].join(';');
     button.addEventListener('click', () => {
-      navigateInboxRoute('clearledgr/invoice/:id', sdk, { id: recordContext.apItemId });
+      navigateInboxRoute('solden/invoice/:id', sdk, { id: recordContext.apItemId });
     });
     bar.appendChild(button);
   }
@@ -325,7 +325,7 @@ function renderComposeRecordChooser({ composeView, queueManager, onLinked }) {
   openButton.textContent = 'Open invoices';
   openButton.style.cssText = createButton.style.cssText;
   openButton.addEventListener('click', () => {
-    navigateInboxRoute('clearledgr/invoices', sdk);
+    navigateInboxRoute('solden/invoices', sdk);
   });
   actions.appendChild(createButton);
   actions.appendChild(openButton);
@@ -796,7 +796,7 @@ function bindRouteSidebarBehavior(customRouteView) {
   customRouteView?.on?.('destroy', () => {
     window.setTimeout(() => {
       const hash = String(window.location.hash || '');
-      if (!hash.includes('clearledgr/')) {
+      if (!hash.includes('solden/') && !hash.includes('clearledgr/')) {
         void setSidebarPanelOpen(true);
       }
     }, 0);
@@ -1240,7 +1240,7 @@ function registerInboxHeadsUp() {
   };
 
   headsUpEl.addEventListener('click', () => {
-    if (sdk?.Router) sdk.Router.goto('clearledgr/invoices');
+    if (sdk?.Router) sdk.Router.goto('solden/invoices');
   });
 
   // Insert at top of Gmail main area
@@ -1508,14 +1508,14 @@ function registerSearchSuggestions() {
         suggestions.push({
           name: `${vendor}${amountStr}`,
           description: `Invoice \u2014 ${getStateLabel(item.state || 'received')}`,
-          routeID: 'clearledgr/activity',
+          routeID: 'solden/activity',
           iconUrl: getAssetUrl(LOGO_PATH) || undefined,
         });
       }
 
       // Suggest the workspace SPA — the AP control plane lives there
       // post-B.2, not in Gmail's left rail.
-      if ('clearledgr'.includes(q) || 'invoice'.includes(q) || 'ap'.includes(q)) {
+      if ('solden'.includes(q) || 'invoice'.includes(q) || 'ap'.includes(q)) {
         suggestions.push({
           name: 'Solden workspace',
           description: 'Open the AP control plane',
@@ -1770,7 +1770,7 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
 
   const onComplete = () => {
     container.remove();
-    try { sdk.Router.goto('clearledgr/home'); } catch (_) {}
+    try { sdk.Router.goto('solden/home'); } catch (_) {}
     try { queueManager.refreshQueue(); } catch (_) {}
   };
 
@@ -1786,7 +1786,7 @@ function _showOnboardingFlow(bootstrapData, oauthBridgeRef) {
       ).trim().toLowerCase();
       if (email && typeof chrome !== 'undefined' && chrome.storage?.local) {
         chrome.storage.local.set({
-          [`clearledgr_onboarding_dismissed_${email}`]: Date.now(),
+          [`solden_onboarding_dismissed_${email}`]: Date.now(),
         });
       }
     } catch (_) { /* dismissal is best-effort */ }
@@ -1841,7 +1841,7 @@ function registerInboxSavedViewSections() {
           body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()} — ${(item.exception_reason || item.exception_code || item.state || '').replace(/_/g, ' ')}`,
           shortDetailText: item.invoice_number || '',
           isRead: false,
-          routeID: 'clearledgr/invoices',
+          routeID: 'solden/invoices',
         })),
       });
     }
@@ -1860,7 +1860,7 @@ function registerInboxSavedViewSections() {
           body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()}`,
           shortDetailText: item.invoice_number || '',
           isRead: false,
-          routeID: 'clearledgr/invoices',
+          routeID: 'solden/invoices',
         })),
       });
     }
@@ -1886,7 +1886,7 @@ function registerInboxSavedViewSections() {
           body: `${item.currency || ''} ${Number(item.amount || 0).toLocaleString()} — due ${item.due_date?.slice(0, 10) || ''}`,
           shortDetailText: item.invoice_number || '',
           isRead: true,
-          routeID: 'clearledgr/invoices',
+          routeID: 'solden/invoices',
         })),
       });
     }

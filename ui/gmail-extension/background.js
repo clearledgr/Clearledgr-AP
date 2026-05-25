@@ -14,14 +14,15 @@ const RetryConfig = {
   retryableStatusCodes: [408, 429, 500, 502, 503, 504]
 };
 
-const TAB_PENDING_DIRECT_ROUTE_PREFIX = '__clearledgr_tab_pending_direct_route_v1__';
+const TAB_PENDING_DIRECT_ROUTE_PREFIX = '__solden_tab_pending_direct_route_v1__';
 const TAB_PENDING_DIRECT_ROUTE_TTL_MS = 30000;
 
 function normalizeSoldenHashFromUrl(rawUrl = '') {
   try {
     const parsed = new URL(String(rawUrl || ''));
     const hash = String(parsed.hash || '').trim().replace(/^#/, '').split('?')[0];
-    return hash.startsWith('clearledgr/') ? hash : '';
+    // Accept the new solden/ routes and legacy clearledgr/ deep links.
+    return (hash.startsWith('solden/') || hash.startsWith('clearledgr/')) ? hash : '';
   } catch (_) {
     return '';
   }
@@ -57,7 +58,7 @@ async function readPendingDirectRouteForTab(tabId) {
     const pending = payload?.[key];
     const hash = String(pending?.hash || '').trim();
     const ts = Number(pending?.ts || 0);
-    if (!hash.startsWith('clearledgr/')) return null;
+    if (!hash.startsWith('solden/') && !hash.startsWith('clearledgr/')) return null;
     if (!Number.isFinite(ts) || (Date.now() - ts) > TAB_PENDING_DIRECT_ROUTE_TTL_MS) return null;
     return {
       hash,

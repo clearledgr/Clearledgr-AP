@@ -537,7 +537,7 @@ function AuthPrompt({ queueManager }) {
   const gmail = s.gmailIntegration || {};
   const canOpenConnections = hasAdminAccessRole(s.currentUserRole);
   const goConnections = useCallback(() => {
-    if (!navigateInboxRoute('clearledgr/connections', store.sdk)) {
+    if (!navigateInboxRoute('solden/connections', store.sdk)) {
       showToast('Unable to open Connections', 'error');
     }
   }, []);
@@ -1690,12 +1690,12 @@ function EmptyState({ queueCount, queueManager }) {
   const [recovering, setRecovering] = useState(false);
   const [linkingId, setLinkingId] = useState('');
   const openPipeline = useCallback(() => {
-    if (!navigateInboxRoute('clearledgr/invoices', store.sdk)) {
+    if (!navigateInboxRoute('solden/invoices', store.sdk)) {
       showToast('Unable to open invoices', 'error');
     }
   }, []);
   const openHome = useCallback(() => {
-    if (!navigateInboxRoute('clearledgr/home', store.sdk)) {
+    if (!navigateInboxRoute('solden/home', store.sdk)) {
       showToast('Unable to open Home', 'error');
     }
   }, []);
@@ -1908,7 +1908,7 @@ export default function SidebarApp({ queueManager }) {
     orgId: queueManager?.runtimeConfig?.organizationId || 'default',
     userEmail: queueManager?.runtimeConfig?.userEmail || '',
   };
-  const openPipeline = useCallback(() => navigateInboxRoute('clearledgr/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
+  const openPipeline = useCallback(() => navigateInboxRoute('solden/invoices', store.sdk, pipelineScope), [pipelineScope.orgId, pipelineScope.userEmail]);
 
   // Fetch LLM runaway-spend-guard status once per mount and whenever
   // an override completes. `llmBudgetStatus` lives in the store so

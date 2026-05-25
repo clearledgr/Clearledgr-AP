@@ -477,14 +477,39 @@ class SoldenQueueManager {
   }
 
   async loadBackendAuthFromStorage() {
+    // Read the current solden_* keys, falling back to the legacy
+    // clearledgr_* keys (pre-rebrand) so an existing signed-in user is not
+    // logged out on the update that introduces the new names. When a legacy
+    // value is found we migrate it forward and drop the old key, so the
+    // fallback fires at most once per user.
     const stored = await chrome.storage.local.get([
+      'solden_backend_access_token',
+      'solden_backend_token_expiry',
+      'solden_backend_org_id',
       'clearledgr_backend_access_token',
       'clearledgr_backend_token_expiry',
       'clearledgr_backend_org_id'
     ]);
-    this.backendAuthToken = String(stored.clearledgr_backend_access_token || '').trim() || null;
-    this.backendAuthTokenExpiry = Number(stored.clearledgr_backend_token_expiry || 0) || 0;
-    this.backendAuthOrgId = String(stored.clearledgr_backend_org_id || '').trim() || null;
+    const hadLegacy = stored.clearledgr_backend_access_token !== undefined
+      || stored.clearledgr_backend_token_expiry !== undefined
+      || stored.clearledgr_backend_org_id !== undefined;
+    this.backendAuthToken = String(
+      stored.solden_backend_access_token ?? stored.clearledgr_backend_access_token ?? ''
+    ).trim() || null;
+    this.backendAuthTokenExpiry = Number(
+      stored.solden_backend_token_expiry ?? stored.clearledgr_backend_token_expiry ?? 0
+    ) || 0;
+    this.backendAuthOrgId = String(
+      stored.solden_backend_org_id ?? stored.clearledgr_backend_org_id ?? ''
+    ).trim() || null;
+    if (hadLegacy) {
+      await chrome.storage.local.remove([
+        'clearledgr_backend_access_token',
+        'clearledgr_backend_token_expiry',
+        'clearledgr_backend_org_id'
+      ]);
+      if (this.backendAuthToken) await this.persistBackendAuthToken();
+    }
     if (!this.isBackendAuthTokenValid()) {
       this.clearBackendAuthToken();
     }
@@ -493,16 +518,16 @@ class SoldenQueueManager {
   async persistBackendAuthToken() {
     if (!this.backendAuthToken) {
       await chrome.storage.local.remove([
-        'clearledgr_backend_access_token',
-        'clearledgr_backend_token_expiry',
-        'clearledgr_backend_org_id'
+        'solden_backend_access_token',
+        'solden_backend_token_expiry',
+        'solden_backend_org_id'
       ]);
       return;
     }
     await chrome.storage.local.set({
-      clearledgr_backend_access_token: this.backendAuthToken,
-      clearledgr_backend_token_expiry: this.backendAuthTokenExpiry || 0,
-      clearledgr_backend_org_id: this.backendAuthOrgId || (this.runtimeConfig?.organizationId || 'default'),
+      solden_backend_access_token: this.backendAuthToken,
+      solden_backend_token_expiry: this.backendAuthTokenExpiry || 0,
+      solden_backend_org_id: this.backendAuthOrgId || (this.runtimeConfig?.organizationId || 'default'),
     });
   }
 
@@ -510,7 +535,12 @@ class SoldenQueueManager {
     this.backendAuthToken = null;
     this.backendAuthTokenExpiry = 0;
     this.backendAuthOrgId = null;
+    // Remove both the current and legacy keys so a cleared session can't be
+    // resurrected from a stale legacy value.
     void chrome.storage.local.remove([
+      'solden_backend_access_token',
+      'solden_backend_token_expiry',
+      'solden_backend_org_id',
       'clearledgr_backend_access_token',
       'clearledgr_backend_token_expiry',
       'clearledgr_backend_org_id'
@@ -619,13 +649,22 @@ class SoldenQueueManager {
   }
 
   async loadProcessedIds() {
-    const stored = await chrome.storage.local.get(['clearledgr_processed_ids']);
-    const ids = stored.clearledgr_processed_ids || [];
+    // Prefer the solden_* key; fall back to the legacy clearledgr_* key once
+    // (and migrate it) so processed-id dedup survives the rebrand update.
+    const stored = await chrome.storage.local.get([
+      'solden_processed_ids',
+      'clearledgr_processed_ids',
+    ]);
+    const ids = stored.solden_processed_ids || stored.clearledgr_processed_ids || [];
     ids.forEach((id) => this.processedIds.add(id));
+    if (stored.clearledgr_processed_ids !== undefined) {
+      await chrome.storage.local.remove(['clearledgr_processed_ids']);
+      await this.saveProcessedIds();
+    }
   }
 
   async saveProcessedIds() {
-    await chrome.storage.local.set({ clearledgr_processed_ids: Array.from(this.processedIds).slice(-2000) });
+    await chrome.storage.local.set({ solden_processed_ids: Array.from(this.processedIds).slice(-2000) });
   }
 
   startPeriodicScan() {

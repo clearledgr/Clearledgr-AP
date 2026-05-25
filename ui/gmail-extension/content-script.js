@@ -14,7 +14,7 @@ import { SoldenQueueManager } from './queue-manager.js';
 (function () {
   'use strict';
 
-  const GUARD_KEY = '__clearledgr_content_bridge_initialized';
+  const GUARD_KEY = '__solden_content_bridge_initialized';
   if (window[GUARD_KEY]) {
     console.log('[Solden] Content bridge already initialized (guard active)');
     return;
@@ -776,7 +776,7 @@ import { SoldenQueueManager } from './queue-manager.js';
     });
 
     const csv = [headers.join(','), ...rows].join('\n');
-    const filename = `clearledgr-invoices-${new Date().toISOString().split('T')[0]}.csv`;
+    const filename = `solden-invoices-${new Date().toISOString().split('T')[0]}.csv`;
 
     // UI layer will trigger the download (this file is data-only).
     emit('clearledgr:export-csv-ready', { filename, csv });
