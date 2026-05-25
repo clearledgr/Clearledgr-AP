@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BoxSummary:
-    """Structured summary of a Box for context-efficient Claude calls."""
+    """Structured summary of a Box for context-efficient model calls."""
 
     current_stage: str = ""
     key_fields: Dict[str, Any] = field(default_factory=dict)
@@ -39,7 +39,7 @@ class BoxSummary:
     waiting_since: Optional[str] = None
 
     def to_prompt_text(self) -> str:
-        """Render as compact text for Claude context (not JSON — tokens matter)."""
+        """Render as compact text for the model's context (not JSON; tokens matter)."""
         lines = [f"Stage: {self.current_stage}"]
 
         if self.key_fields:

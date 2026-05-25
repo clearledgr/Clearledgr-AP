@@ -2338,8 +2338,8 @@ def parse_email(
 ) -> Dict[str, Any]:
     """Parse an email and extract financial data.
 
-    Primary path: LLMEmailParser (Claude Haiku for text, Sonnet for vision).
-    Automatic fallback: regex EmailParser when Claude is unavailable or fails.
+    Primary path: LLMEmailParser (the Haiku tier for text, Sonnet for vision).
+    Automatic fallback: regex EmailParser when the model is unavailable or fails.
 
     organization_id is required — vendor history / past corrections /
     thread context all key off it, and a missing org would silently

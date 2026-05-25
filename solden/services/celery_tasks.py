@@ -119,7 +119,7 @@ def _dispatch_event(event) -> dict:
     db = get_db()
     box_state = _load_box_state(event, db)
 
-    # §4: Planning engine produces the Plan (deterministic, no Claude)
+    # §4: Planning engine produces the Plan (deterministic, no the model)
     planner = get_planning_engine(db)
     plan = planner.plan(event, box_state)
 

@@ -1945,7 +1945,7 @@ def explain_ap_item(
 ):
     """Natural-language explanation of why an AP item is in its current state.
 
-    Claude reads the audit trail, vendor history, and current item state and
+    The model reads the audit trail, vendor history, and current item state and
     answers as the AP agent: "Here's what happened and why."
 
     Works without ANTHROPIC_API_KEY — falls back to a structured plain-text
@@ -2036,7 +2036,7 @@ def _explain_with_claude(
     prior_reasoning: str,
     needs_info_question: str,
 ) -> dict:
-    """Ask Claude to explain an AP item's current state in plain English."""
+    """Ask the model to explain an AP item's current state in plain English."""
     return _support_explain_with_claude(
         api_key=api_key,
         vendor=vendor,

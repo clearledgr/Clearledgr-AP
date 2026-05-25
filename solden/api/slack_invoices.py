@@ -1415,7 +1415,7 @@ async def _answer_query_with_context(
     onboarding_sessions: list = None,
     audit_events: list = None,
 ) -> str:
-    """Use Claude to answer a natural language AP query with full context."""
+    """Use the model to answer a natural language AP query with full context."""
     import os
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1510,12 +1510,12 @@ async def _answer_query_with_context(
         )
         return str(llm_resp.content) if llm_resp.content else ""
     except Exception as exc:
-        logger.warning("[conversational] Claude call failed: %s", exc)
+        logger.warning("[conversational] the model call failed: %s", exc)
         return _answer_query_rule_based(query, items)
 
 
 def _answer_query_rule_based(query: str, items: list) -> str:
-    """Fallback rule-based answer when Claude is unavailable.
+    """Fallback rule-based answer when the model is unavailable.
 
     Produces thesis-quality responses with individual invoice detail.
     """

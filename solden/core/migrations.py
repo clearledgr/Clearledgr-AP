@@ -1143,7 +1143,7 @@ def _v27_seat_type(cur, db):
 
 @migration(28, "LLM Gateway call log (AGENT_DESIGN_SPECIFICATION.md §7)")
 def _v28_llm_call_log(cur, db):
-    """§7: Centralized LLM Gateway tracks every Claude call with cost and latency."""
+    """§7: Centralized LLM Gateway tracks every the model call with cost and latency."""
     cur.execute("""
         CREATE TABLE IF NOT EXISTS llm_call_log (
             id TEXT PRIMARY KEY,
@@ -1643,7 +1643,7 @@ def _v41_llm_call_log_ap_item_link(cur, db):
     Reconstructability invariant: an auditor with access to a Box's
     audit_events rows must be able to rebuild the full history,
     including what the LLM saw and said for each agent action.
-    Previously llm_call_log recorded every Claude call (tokens,
+    Previously llm_call_log recorded every the model call (tokens,
     cost, latency, model) but carried no foreign key to the Box —
     so the audit trail could name the extraction outcome but not
     the specific call that produced it. Adding the link makes the
@@ -2076,7 +2076,7 @@ def _v43_box_lifecycle_records(cur, db):
 def _v44_llm_cost_paused_at(cur, db):
     """Pause marker for the monthly LLM cost hard-cap.
 
-    Runaway spend on Claude (bug, retry loop, prompt injection) is
+    Runaway spend on the model (bug, retry loop, prompt injection) is
     the real cost risk at pilot scale — not a customer going over
     their billed plan tier. This column is set by the LLM gateway's
     pre-flight check when a workspace crosses its tier cap, and

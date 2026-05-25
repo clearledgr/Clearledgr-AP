@@ -151,7 +151,7 @@ class FieldProvenance(TypedDict, total=False):
     """Per-field provenance: where each extracted value came from.
 
     Stored in ``ap_items.metadata.field_provenance`` keyed by field name.
-    Every extraction producer (email/LLM, Claude Vision, PEPPOL UBL,
+    Every extraction producer (email/LLM, the vision model, PEPPOL UBL,
     each ERP-native intake adapter) emits one of these per field so the
     audit trail can answer "which source produced this value, by what
     method, when".

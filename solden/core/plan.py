@@ -4,9 +4,9 @@ A Plan is an ordered sequence of Actions produced by the Planning Engine
 and consumed by the Coordination Engine. Plans are serializable to JSON
 for persistence in the ``pending_plan`` column (crash recovery / async wait).
 
-Every Action is either DET (deterministic) or LLM (Claude-assisted).
+Every Action is either DET (deterministic) or LLM (model-assisted).
 The Coordination Engine enforces this boundary — a DET action that
-attempts to call Claude is logged as a bug.
+attempts to call the model is logged as a bug.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class Action:
     Attributes:
         name: The action identifier (e.g. "classify_email", "post_bill").
               Must match a key in the CoordinationEngine's handler registry.
-        layer: "DET" (deterministic) or "LLM" (Claude-assisted).
+        layer: "DET" (deterministic) or "LLM" (model-assisted).
         params: Action-specific parameters passed to the handler.
         description: Human-readable text for the pre-execution timeline entry.
     """

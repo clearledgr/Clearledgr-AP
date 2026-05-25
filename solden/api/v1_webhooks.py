@@ -13,7 +13,7 @@ Endpoints:
 * ``POST /v1/webhooks`` — register a new subscription. The server
   generates a 32-byte URL-safe ``secret`` and returns it **once** in
   the response body. Subsequent reads only show a 4-char preview.
-  This mirrors the Stripe / GitHub / Anthropic webhook pattern —
+  This mirrors the Stripe / GitHub / the model provider webhook pattern —
   the secret never leaves the database in plaintext after creation,
   so even a compromised list endpoint can't leak signing keys.
 * ``GET /v1/webhooks/{id}`` — read one subscription.

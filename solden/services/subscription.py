@@ -50,12 +50,12 @@ class PlanLimits:
     # Enforced at audit-event reaper time so old rows drop off on
     # Starter but are preserved on Pro+.
     agent_activity_retention_days: int = 30
-    # Runaway-spend guard: hard cap on Claude API cost (USD) per
+    # Runaway-spend guard: hard cap on the model API cost (USD) per
     # calendar month per workspace. The LLM gateway pauses further
     # calls once this is exceeded; an override by the customer CFO
     # or CS ops clears the pause. Unlike the other limits here,
     # this is NEVER "-1 unlimited" — even Enterprise has a ceiling
-    # so a bug or retry loop can't take the Anthropic bill to the
+    # so a bug or retry loop can't take the the model provider bill to the
     # moon. Per-org overrides land in
     # ``organizations.settings_json["llm_cost_hard_cap_usd_override"]``.
     monthly_llm_cost_usd_hard_cap: float = 10.0

@@ -357,7 +357,7 @@ async def get_llm_cost_summary(
     Aggregates ``llm_call_log`` rows within ``window_days``. Returns
     the total dollar spend, the action-by-action breakdown, and a
     day-by-day trend so CS can spot cost spikes and capacity plan
-    against the Anthropic bill. Without this endpoint a runaway
+    against the the model provider bill. Without this endpoint a runaway
     tenant is invisible until the monthly bill arrives.
     """
     organization_id = _assert_org_access(user, organization_id)

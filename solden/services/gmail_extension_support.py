@@ -330,7 +330,7 @@ def render_ap_item_explanation(
     prior_reasoning: str,
     needs_info_question: str,
 ) -> Dict[str, Any]:
-    """Render a natural-language AP item explanation via Claude or fallback."""
+    """Render a natural-language AP item explanation via the model or fallback."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if api_key:
         return _explain_with_claude(
@@ -372,7 +372,7 @@ def _explain_with_claude(
     prior_reasoning: str,
     needs_info_question: str,
 ) -> Dict[str, Any]:
-    """Ask Claude to explain an AP item's current state in plain English."""
+    """Ask the model to explain an AP item's current state in plain English."""
     import json as _json
     import re as _re
 
@@ -471,7 +471,7 @@ Return ONLY valid JSON:
             "method": "llm",
         }
     except Exception as exc:
-        logger.warning("[Explain] Claude call failed: %s - using fallback", exc)
+        logger.warning("[Explain] the model call failed: %s - using fallback", exc)
         return _explain_fallback(
             vendor=vendor,
             amount=amount,

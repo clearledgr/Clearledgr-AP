@@ -4549,7 +4549,7 @@ def get_llm_budget_status(
     Returns:
         paused: whether calls are currently being refused
         paused_at: ISO timestamp of the pause event (null if not paused)
-        cost_usd: month-to-date Claude spend for this workspace
+        cost_usd: month-to-date the model spend for this workspace
         cap_usd: the effective monthly hard cap (tier default or org override)
         period_start / period_end: UTC month boundaries
         can_override: whether the calling user has rank ≥ CFO and can lift
@@ -4596,7 +4596,7 @@ def get_llm_budget_status(
 class LLMBudgetOverrideRequest(BaseModel):
     """CFO-authorized override of the LLM runaway-spend guard.
 
-    Clears ``organizations.llm_cost_paused_at`` so Claude calls resume.
+    Clears ``organizations.llm_cost_paused_at`` so the model calls resume.
     Requires CFO rank or higher (thesis §8: the CFO role is the
     financial authority — same role that can modify fraud controls).
     ``reason`` is required and written to the audit trail — this is
@@ -4613,7 +4613,7 @@ def override_llm_budget_pause(
 ):
     """Clear the LLM cost tombstone for this workspace.
 
-    The runaway-spend guard in `llm_gateway.py` pauses Claude calls
+    The runaway-spend guard in `llm_gateway.py` pauses the model calls
     when a workspace crosses its monthly hard cap. This endpoint lets
     the customer's CFO (or higher) lift the pause without waiting for
     CS. Every override is audit-logged with the supplied reason —

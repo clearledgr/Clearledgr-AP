@@ -1332,7 +1332,7 @@ async def classify_email_with_llm(
     Returns:
         Dict with 'type' (INVOICE | PAYMENT_REQUEST | NOISE) and 'confidence'
 
-    The underlying classify_ap_email() is synchronous and makes a Claude
+    The underlying classify_ap_email() is synchronous and makes a the model
     API call that can take 5-30 seconds. Called inline from an async
     context (the Gmail-push BackgroundTasks pipeline), it would block
     the uvicorn event loop for the full LLM round-trip — which means
@@ -1402,7 +1402,7 @@ async def process_invoice_email(
     # Extract data from email + attachments
     attachments_with_content = []
     
-    # Fetch attachment content for PDFs/images (for Claude Vision)
+    # Fetch attachment content for PDFs/images (for the vision model)
     for attachment in message.attachments or []:
         try:
             content_type = (
@@ -1467,7 +1467,7 @@ async def process_invoice_email(
                             attachment.get("filename"), organization_id, archive_exc,
                         )
 
-                    # Convert bytes to base64 for Claude Vision
+                    # Convert bytes to base64 for the vision model
                     import base64
                     content_base64 = base64.b64encode(attachment_bytes).decode("utf-8")
 

@@ -1270,7 +1270,7 @@ class CoordinationEngine:
             return {"_abort": True, "error": f"Gmail fetch failed: {exc}"}
 
     async def _handle_classify_email(self, action: Action, plan: Plan) -> dict:
-        """§3: Call Claude to classify the email."""
+        """§3: Call the model to classify the email."""
         ctx = self._ensure_ctx(plan)
         try:
             from solden.services.ap_classifier import classify_ap_email
@@ -1296,7 +1296,7 @@ class CoordinationEngine:
             return {"ok": True}  # Treat as unclassifiable per §5.2
 
     async def _handle_extract(self, action: Action, plan: Plan) -> dict:
-        """§3: Call Claude to extract structured invoice fields."""
+        """§3: Call the model to extract structured invoice fields."""
         ctx = self._ensure_ctx(plan)
         try:
             from solden.services.llm_email_parser import get_llm_email_parser
@@ -1617,7 +1617,7 @@ class CoordinationEngine:
           * ``policy_only`` — skip matching entirely; the AP item
             routes via approval thresholds.
 
-        Never calls Claude — this is pure determinism per §3.
+        Never calls the model — this is pure determinism per §3.
         """
         ctx = self._ensure_ctx(plan)
         extracted = ctx.get("extracted_fields", {})
@@ -2282,7 +2282,7 @@ class CoordinationEngine:
     async def _handle_classify_vendor(self, action: Action, plan: Plan) -> dict:
         """§3 LLM: Classify a vendor's reply to an onboarding or chase email.
 
-        Gives Claude:
+        Gives the model:
           - the vendor's reply body
           - the onboarding session's current state (what we're waiting on)
           - which documents are outstanding
@@ -2298,7 +2298,7 @@ class CoordinationEngine:
         if not body:
             return {"ok": True, "type": "unclassifiable"}
 
-        # Pull onboarding session context so Claude can resolve references
+        # Pull onboarding session context so the model can resolve references
         # like "it" / "the document you asked for" against actual state.
         session_state = "unknown"
         outstanding: list = []
@@ -2398,7 +2398,7 @@ class CoordinationEngine:
             )
             import json
             raw = str(resp.content or "").strip() if resp else ""
-            # Defensive JSON parse — Claude sometimes wraps JSON in fences
+            # Defensive JSON parse — the model sometimes wraps JSON in fences
             # even after being told not to.
             if raw.startswith("```"):
                 raw = raw.strip("`")
@@ -2412,7 +2412,7 @@ class CoordinationEngine:
                     raw[:200],
                 )
                 result = {}
-            # Validate type enum — if Claude hallucinates a new type,
+            # Validate type enum — if the model hallucinates a new type,
             # fall back to unclassifiable so the router doesn't break.
             valid_types = {
                 "document_submitted",
@@ -3241,7 +3241,7 @@ def _classify_failure(exc: Exception) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # Anthropic SDK exceptions are LLM-classified.
+    # The model provider SDK exceptions are LLM-classified.
     exc_module = getattr(type(exc), "__module__", "") or ""
     if exc_module.startswith("anthropic"):
         return "llm"

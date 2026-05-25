@@ -19,7 +19,7 @@ class EmailTriageRequest(BaseModel):
     sender: Optional[str] = None
     snippet: Optional[str] = None
     body: Optional[str] = None  # Full email body for better extraction
-    attachments: Optional[List[Dict[str, Any]]] = None  # With content_base64 for Claude Vision
+    attachments: Optional[List[Dict[str, Any]]] = None  # With content_base64 for the vision model
     organization_id: Optional[str] = None
     user_email: Optional[str] = None
 

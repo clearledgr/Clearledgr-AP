@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # Per-user daily budgets. The global 300 req/min middleware stops burst DoS;
-# these caps stop a single authenticated user from torching Claude credits
+# these caps stop a single authenticated user from torching the model credits
 # or spamming the feedback channel over a full day.
 _LLM_SIDEBAR_DAILY_LIMIT = int(os.getenv("LLM_SIDEBAR_DAILY_LIMIT", "150"))
 _FEEDBACK_DAILY_LIMIT = int(os.getenv("FEEDBACK_DAILY_LIMIT", "30"))
@@ -128,7 +128,7 @@ async def get_form_prefill(
 
 class SidebarQueryTurn(BaseModel):
     """One prior Q&A exchange. The client sends up to the last few so
-    Claude has continuity ("can I override it?" needs the prior "why is
+    the model has continuity ("can I override it?" needs the prior "why is
     it blocked?" turn to resolve "it")."""
     q: str
     a: str
@@ -259,7 +259,7 @@ async def stream_sidebar_query(
     _user=Depends(get_current_user),
 ):
     """Server-Sent Events streaming answer. Falls back to emitting the
-    full rule-based answer as one event if Claude / credits aren't
+    full rule-based answer as one event if the model / credits aren't
     available. Frontend consumes via EventSource or fetch+reader."""
     from fastapi.responses import StreamingResponse
 
@@ -283,10 +283,10 @@ async def stream_sidebar_query(
         import asyncio as _asyncio
         import json as _json
 
-        # Race the Claude generator against a heartbeat task via a queue.
+        # Race the the model generator against a heartbeat task via a queue.
         # Either produces items; the consumer (this generator) drains and
         # yields SSE. Sentinels: `('ping', None)` for heartbeat,
-        # `('chunk', text)` for deltas, `('end', None)` when Claude finishes.
+        # `('chunk', text)` for deltas, `('end', None)` when the model finishes.
         queue: _asyncio.Queue = _asyncio.Queue(maxsize=64)
 
         async def producer():
@@ -345,7 +345,7 @@ async def stream_sidebar_query(
         except _asyncio.CancelledError:
             # FastAPI raises CancelledError into the generator when the
             # client closes the connection. Record it so we can verify
-            # backpressure is actually propagating through to Claude.
+            # backpressure is actually propagating through to the model.
             client_disconnected = True
             logger.info(
                 "[sidebar/query/stream] client disconnected mid-stream "
@@ -358,9 +358,9 @@ async def stream_sidebar_query(
             heartbeat_task.cancel()
             if client_disconnected:
                 producer_task.cancel()
-            # Await producer so Claude's httpx.AsyncClient is torn down
+            # Await producer so the model's httpx.AsyncClient is torn down
             # cleanly (the stream context manager exits, closing the
-            # connection and stopping Anthropic from billing us for
+            # connection and stopping the model provider from billing us for
             # tokens the user will never see).
             try:
                 await producer_task
@@ -694,7 +694,7 @@ def _answer_sidebar_query_rule_based(
 ) -> str:
     """Rule-based fallback that actually uses the invoice context.
 
-    This fires when Claude is unavailable (no API key, credits exhausted,
+    This fires when the model is unavailable (no API key, credits exhausted,
     timeout). The old path handed off to the Slack rule engine, which is
     designed for broad "what's outstanding?" queries and responds with
     "try asking about a specific vendor" — useless when we have a
@@ -794,9 +794,9 @@ def _answer_sidebar_query_rule_based(
 
 
 # Shared audit-event humanizer. Raw event types look like
-# "ap_invoice_processing_field_review_required" — humans and Claude both
+# "ap_invoice_processing_field_review_required" — humans and the model both
 # prefer "Field review required". Mirrors the frontend humanizer in
-# ThreadSidebar.js so sidebar and Claude context read the same.
+# ThreadSidebar.js so sidebar and the model context read the same.
 _HUMANIZE_STRIP_PREFIXES = (
     "ap_invoice_processing_",
     "agent_action:",
@@ -825,7 +825,7 @@ def _humanize_event_type(raw: Any) -> str:
 
 
 def _humanize_audit_line(event: Dict[str, Any]) -> str:
-    """Turn a raw audit row into one line Claude can quote back verbatim.
+    """Turn a raw audit row into one line the model can quote back verbatim.
 
     Format: "{HH:MM timestamp} — {human title}[ · {short message}]"
     """
@@ -851,11 +851,11 @@ def _build_sidebar_context(
     vendor_items: List[Dict[str, Any]],
     audit_events: List[Dict[str, Any]],
 ) -> str:
-    """Human-curated fact sheet handed to Claude.
+    """Human-curated fact sheet handed to the model.
 
     Previous version dumped raw DB fields ("match_status: NOT LINKED").
     This version narrates the invoice the way a teammate would describe
-    it — Claude mirrors the phrasing back, so answers feel natural
+    it — the model mirrors the phrasing back, so answers feel natural
     instead of robotic.
     """
     lines: List[str] = []
@@ -1019,7 +1019,7 @@ async def _answer_sidebar_query(
     org_id: str,
     history: Optional[List[tuple]] = None,
 ) -> str:
-    """Non-streaming answer. Claude first, rule-based fallback."""
+    """Non-streaming answer. The model first, rule-based fallback."""
     if not focus_item:
         return (
             "Open an invoice in Gmail first — I need a specific record to answer "
@@ -1047,7 +1047,7 @@ async def _answer_sidebar_query(
             return _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
         return answer
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[sidebar/query] Claude call failed: %s", exc)
+        logger.warning("[sidebar/query] the model call failed: %s", exc)
         return _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
 
 
@@ -1060,7 +1060,7 @@ async def _stream_sidebar_query(
     history: Optional[List[tuple]] = None,
 ):
     """Async generator yielding text chunks. Falls back to emitting the
-    full rule-based answer as one chunk if Claude is unavailable."""
+    full rule-based answer as one chunk if the model is unavailable."""
     if not focus_item:
         yield (
             "Open an invoice in Gmail first — I need a specific record to answer "
@@ -1092,7 +1092,7 @@ async def _stream_sidebar_query(
         if not any_chunk:
             yield _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[sidebar/query/stream] Claude stream failed: %s", exc)
+        logger.warning("[sidebar/query/stream] the model stream failed: %s", exc)
         yield _answer_sidebar_query_rule_based(query, focus_item, vendor_items, audit_events)
 
 

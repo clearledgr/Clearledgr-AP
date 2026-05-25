@@ -992,7 +992,7 @@ class PurchaseOrderService:
         invoice_line: Dict[str, Any],
         po_lines: List[POLineItem],
     ) -> Optional[POLineItem]:
-        """Use Claude to semantically match when deterministic fails."""
+        """Use the model to semantically match when deterministic fails."""
         try:
             import os
             import json as _json

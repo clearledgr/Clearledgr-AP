@@ -97,7 +97,7 @@ class TestExtractionFromFixtures:
     @pytest.mark.skipif(
         os.environ.get("CLEARLEDGR_RUN_LLM_TESTS") != "1",
         reason=(
-            "Full extraction tests hit the real Claude API — opt in "
+            "Full extraction tests hit the real model API, opt in "
             "with CLEARLEDGR_RUN_LLM_TESTS=1 and a valid "
             "ANTHROPIC_API_KEY. Skipped by default so CI runs are "
             "deterministic and don't burn quota."

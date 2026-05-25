@@ -74,7 +74,7 @@ async def run_inline_gmail_triage(
     # compare the two paths' real-world latency.
     triage_started_at = time.monotonic()
 
-    # --- Single-pass: try processing everything in one Claude call ---
+    # --- Single-pass: try processing everything in one the model call ---
     single_pass_result = await _try_single_pass(payload, org_id, request_attachments)
     if single_pass_result:
         trail.log(
@@ -434,7 +434,7 @@ async def _fan_out_multi_invoice(
     everything past the first) so downstream Box creation stays
     unique. The splitter's pre-detected invoice number, when
     present, is grafted onto the per-unit extraction as a fallback
-    for cases where Claude misses it on the sub-PDF.
+    for cases where the model misses it on the sub-PDF.
 
     Returns a dict shaped like the primary triage result with two
     extra keys consumers can rely on:
@@ -527,10 +527,10 @@ def _collect_attachment_text(attachments: List[Dict[str, Any]]) -> str:
 
     Each attachment dict may carry a ``content_text`` field set by
     upstream OCR / parsing. We forward those to the single-pass call
-    as ``attachment_text`` so Claude has both the visual stream
+    as ``attachment_text`` so the model has both the visual stream
     (through vision) AND the plain-text stream (through the prompt).
     Each excerpt is capped at 4000 chars and tagged with the
-    filename so Claude can correlate snippets back to their source
+    filename so the model can correlate snippets back to their source
     attachments. Returns "" when nothing usable is available.
     """
     if not isinstance(attachments, list):
@@ -600,7 +600,7 @@ async def _try_single_pass(
 
         # Forward any pre-extracted attachment text (OCR'd PDFs, plain
         # .txt attachments, etc.) into the single-pass call. The visual
-        # attachments above also get sent through Claude vision, which
+        # attachments above also get sent through the model vision, which
         # is intentional duplication — text-heavy invoices benefit from
         # both signals.
         attachment_text = _collect_attachment_text(attachments)

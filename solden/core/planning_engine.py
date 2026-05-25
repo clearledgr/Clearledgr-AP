@@ -2,11 +2,11 @@
 
 Given an event and the current Box state, produces a Plan — an ordered
 sequence of Actions. The planning engine is pure deterministic code.
-No Claude calls. Claude is only called WITHIN specific Actions during
+No model calls. The model is only called WITHIN specific Actions during
 execution (classify_email, extract_invoice_fields, etc.), never during
 planning itself.
 
-"Rules decide. Claude describes."
+"Rules decide. The model describes."
 
 Usage:
     from solden.core.planning_engine import get_planning_engine

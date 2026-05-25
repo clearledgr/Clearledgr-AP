@@ -3,8 +3,8 @@
 Replaces the regex-based EmailParser as the primary extraction path.
 
 Architecture:
-  - Claude Haiku for text-only emails (fast, < 1s, cheap)
-  - Claude Sonnet for emails with PDF/image attachments (vision)
+  - the Haiku tier for text-only emails (fast, < 1s, cheap)
+  - the Sonnet tier for emails with PDF/image attachments (vision)
   - Regex EmailParser kept as offline fallback (no API key, timeout, parse error)
 
 Output dict is API-compatible with EmailParser.parse_email() so no call sites change.
@@ -107,7 +107,7 @@ def _is_payment_processor(sender: str) -> bool:
 
 
 def _build_vendor_context(sender: str, subject: str, organization_id: str) -> str:
-    """Build vendor context string from profile + corrections for Claude."""
+    """Build vendor context string from profile + corrections for the model."""
     try:
         from solden.core.database import get_db
         db = get_db()
@@ -219,11 +219,11 @@ def _build_extraction_prompt(
     vendor_context: str = "",
     thread_context: str = "",
 ) -> str:
-    """Build the Claude extraction prompt for a given email.
+    """Build the the model extraction prompt for a given email.
 
     When vendor_context is provided (from vendor profile + past corrections),
-    Claude uses it to improve extraction accuracy. When thread_context is
-    provided (from prior emails in the same thread), Claude understands
+    the model uses it to improve extraction accuracy. When thread_context is
+    provided (from prior emails in the same thread), the model understands
     amendments, replacements, and conversation history.
     """
     # Length-discipline untrusted content before interpolation. Prompt-
@@ -362,7 +362,7 @@ Return ONLY valid JSON."""
 
 
 def _call_claude_text(prompt: str) -> str:
-    """Call Claude via LLM Gateway for text-only extraction."""
+    """Call the model via LLM Gateway for text-only extraction."""
     from solden.core.llm_gateway import get_llm_gateway, LLMAction
 
     gateway = get_llm_gateway()
@@ -374,7 +374,7 @@ def _call_claude_text(prompt: str) -> str:
 def _call_claude_vision(
     prompt: str, attachments: List[Dict[str, Any]]
 ) -> str:
-    """Call Claude via LLM Gateway with PDF/image attachments."""
+    """Call the model via LLM Gateway with PDF/image attachments."""
     from solden.core.llm_gateway import get_llm_gateway, LLMAction
 
     content_blocks: List[Dict[str, Any]] = []
@@ -409,7 +409,7 @@ def _extract_text_from_response(data: Dict[str, Any]) -> str:
 
 
 def _parse_json_response(text: str) -> Dict[str, Any]:
-    """Parse JSON from Claude response, tolerating markdown fences."""
+    """Parse JSON from the model response, tolerating markdown fences."""
     text = text.strip()
     # Strip ```json ... ``` fences if present
     fence_match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
@@ -434,7 +434,7 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
 
 
 def _parse_bank_details(raw: Any) -> Optional[Dict[str, Any]]:
-    """Validate and clean bank_details dict from Claude's response."""
+    """Validate and clean bank_details dict from the model's response."""
     if not isinstance(raw, dict):
         return None
     _BANK_FIELDS = {"bank_name", "account_number", "routing_number", "iban", "swift", "sort_code"}
@@ -941,10 +941,10 @@ def _decorate_deterministic_result(
 
 
 class LLMEmailParser:
-    """LLM-first email parser using Claude for extraction and classification.
+    """LLM-first email parser using the model for extraction and classification.
 
     Call .parse_email() — identical signature to EmailParser.parse_email().
-    Falls back to the regex EmailParser automatically when Claude is unavailable
+    Falls back to the regex EmailParser automatically when the model is unavailable
     or raises an error, so this is a drop-in replacement.
     """
 
@@ -965,16 +965,16 @@ class LLMEmailParser:
         organization_id: Optional[str] = None,
         thread_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Extract structured AP data from an email using Claude.
+        """Extract structured AP data from an email using the model.
 
         Returns the same dict shape as EmailParser.parse_email() plus
         enriched fields: field_confidences, reasoning_summary, payment_processor.
 
         When organization_id and thread_id are provided, the extraction prompt
         includes vendor history, past corrections, and thread context — making
-        Claude smarter with every invoice.
+        the model smarter with every invoice.
 
-        Falls back to regex EmailParser if Claude is unavailable or fails.
+        Falls back to regex EmailParser if the model is unavailable or fails.
         """
         from solden.core.org_utils import assert_org_id
 
@@ -989,7 +989,7 @@ class LLMEmailParser:
             local_result = EmailParser().parse_email(subject, body, sender, attachments)
             if _attachment_result_is_authoritative(local_result):
                 logger.info(
-                    "[LLMEmailParser] Skipping Claude for authoritative attachment-backed extraction: subject=%r",
+                    "[LLMEmailParser] Skipping the model for authoritative attachment-backed extraction: subject=%r",
                     subject[:60],
                 )
                 return _decorate_deterministic_result(
@@ -1011,7 +1011,7 @@ class LLMEmailParser:
         except Exception:
             _replay_record = None
 
-        # §13: Consume agent credit before Claude extraction call
+        # §13: Consume agent credit before the model extraction call
         try:
             from solden.services.subscription import get_subscription_service
             credit_result = get_subscription_service().consume_agent_credit(
@@ -1108,11 +1108,11 @@ class LLMEmailParser:
         )
 
         if visual_atts:
-            logger.info("[LLMEmailParser] Calling Claude Sonnet (vision) for %d attachment(s)", len(visual_atts))
+            logger.info("[LLMEmailParser] Calling the Sonnet tier (vision) for %d attachment(s)", len(visual_atts))
             text = _call_claude_vision(prompt, visual_atts)
             model = _SONNET_MODEL
         else:
-            logger.info("[LLMEmailParser] Calling Claude Haiku (text) for subject=%r", subject[:60])
+            logger.info("[LLMEmailParser] Calling the Haiku tier (text) for subject=%r", subject[:60])
             text = _call_claude_text(prompt)
             model = _HAIKU_MODEL
         llm_json = _parse_json_response(text)

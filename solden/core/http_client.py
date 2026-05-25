@@ -14,7 +14,7 @@ pays:
   * one TLS handshake (TLS 1.3 is ~1 RTT, TLS 1.2 is 2 RTT)
   * pool setup/teardown overhead
 
-Against Anthropic (LLM gateway, hit once per invoice + once per
+Against the model API (LLM gateway, hit once per invoice + once per
 sidebar question) that's 50-200ms of handshake latency *per call*.
 At moderate load it's noticeable; at peak it adds up to a measurable
 chunk of our user-facing response time budget.
@@ -75,7 +75,7 @@ def get_http_client() -> httpx.AsyncClient:
             # HTTP/1.1 keep-alive is the real win here — TLS-session
             # reuse + TCP connection reuse on subsequent calls to the
             # same host. HTTP/2 would be better for fanning out many
-            # concurrent calls to Anthropic but requires the `h2`
+            # concurrent calls to the model API but requires the `h2`
             # extra which isn't in requirements.txt; skip until we
             # have a concrete reason to add the dep.
         )

@@ -1798,7 +1798,7 @@ def build_worklist_item(
         payload["match_amount_delta"] = None
         payload["match_tolerance_pct"] = None
 
-    # Claude AP reasoning — surface proactively so the sidebar card can display it.
+    # The model AP reasoning, surfaced proactively so the sidebar card can display it.
     payload["ap_decision_reasoning"] = (
         metadata.get("ap_decision_reasoning") or payload.get("ap_decision_reasoning")
     )

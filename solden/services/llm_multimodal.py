@@ -45,8 +45,8 @@ class MultiModalLLMService:
         Extract invoice data from email text and/or attachments.
         
         Supports:
-        - PDF attachments (sent to Claude Vision)
-        - Image attachments (PNG, JPEG - sent to Claude Vision)
+        - PDF attachments (sent to the vision model)
+        - Image attachments (PNG, JPEG - sent to the vision model)
         - Text-only extraction (uses any available LLM)
         
         Args:
@@ -70,10 +70,10 @@ class MultiModalLLMService:
             include_line_items=include_line_items,
         )
         
-        # If we have visual attachments, must use Claude Vision
+        # If we have visual attachments, must use the vision model
         if visual_attachments:
             if not self.anthropic_key:
-                logger.warning("Visual attachments present but no Anthropic key - falling back to text extraction")
+                logger.warning("Visual attachments present but no the model provider key - falling back to text extraction")
                 return self.generate_json(prompt, [])
             return self._call_anthropic_vision(prompt, visual_attachments)
         
@@ -294,7 +294,7 @@ Return a JSON object with:
 Return ONLY valid JSON."""
 
     def _call_anthropic_vision(self, prompt: str, attachments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Call Claude with vision capability for PDFs and images."""
+        """Call the model with vision capability for PDFs and images."""
         from solden.core.llm_gateway import get_llm_gateway, LLMAction
 
         # Build content blocks with text prompt first
@@ -308,7 +308,7 @@ Return ONLY valid JSON."""
 
             content_type = attachment.get("content_type") or "application/octet-stream"
 
-            # Claude supports both images and PDFs directly
+            # The model supports both images and PDFs directly
             if "pdf" in content_type.lower():
                 content_blocks.append({
                     "type": "document",
@@ -333,7 +333,7 @@ Return ONLY valid JSON."""
 
         messages = [{"role": "user", "content": content_blocks}]
 
-        logger.info(f"Calling Claude Vision with {len(attachments)} attachments")
+        logger.info(f"Calling the vision model with {len(attachments)} attachments")
         gateway = get_llm_gateway()
         llm_resp = gateway.call_sync(
             LLMAction.EXTRACT_INVOICE_FIELDS,
@@ -347,7 +347,7 @@ Return ONLY valid JSON."""
         # extraction-shape signals useful for debugging (did we get a
         # vendor? did we get an amount? how confident?).
         logger.info(
-            "Claude Vision extraction complete: has_vendor=%s has_amount=%s confidence=%s",
+            "the vision model extraction complete: has_vendor=%s has_amount=%s confidence=%s",
             bool(result.get("vendor")),
             bool(result.get("total_amount")),
             result.get("confidence"),
@@ -355,7 +355,7 @@ Return ONLY valid JSON."""
         return result
     
     def _call_anthropic_text(self, prompt: str) -> Dict[str, Any]:
-        """Call Claude for text-only prompts."""
+        """Call the model for text-only prompts."""
         from solden.core.llm_gateway import get_llm_gateway, LLMAction
 
         messages = [{"role": "user", "content": prompt}]

@@ -178,7 +178,7 @@ def clip_untrusted(text: str, *, max_length: int) -> str:
     Pure length discipline — no pattern scanning, no filtering. Use this
     when you have already confirmed via the validation gate that the
     text is not an injection attempt, but you still want to bound the
-    number of tokens you pay Claude to read.
+    number of tokens you pay the model to read.
     """
     if not text:
         return ""

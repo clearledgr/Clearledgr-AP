@@ -83,7 +83,7 @@ class ExceptionResolver:
                 "exception_code": exception_code,
             }
 
-        # When the individual strategy can't resolve, ask Claude to reason
+        # When the individual strategy can't resolve, ask the model to reason
         # across the full item context and suggest a resolution path.
         if not result.get("resolved"):
             ai_suggestion = await self._ai_reason_exception(ap_item, exception_code, result)
@@ -99,7 +99,7 @@ class ExceptionResolver:
         exception_code: str,
         strategy_result: Dict[str, Any],
     ) -> str:
-        """Ask Claude to reason about an unresolved exception with full context."""
+        """Ask the model to reason about an unresolved exception with full context."""
         try:
             import os
             import json
@@ -285,7 +285,7 @@ Respond in 2-3 sentences: the likely root cause, what to do, and who should hand
         direction: str,
         ap_item: Dict[str, Any],
     ) -> str:
-        """Ask Claude to reason about why the invoice amount differs from history."""
+        """Ask the model to reason about why the invoice amount differs from history."""
         try:
             import os
             import json

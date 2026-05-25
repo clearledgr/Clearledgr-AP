@@ -5,7 +5,7 @@ the mercy of model judgment. This service is the rules half of that
 promise — `APDecisionService.decide()` computes the routing recommendation
 (approve | needs_info | escalate | reject) from a fixed 10-step policy
 cascade over validation gate, vendor history, anomaly signals, and org
-config. Claude is **not** called here; narrative description belongs to
+config. The model is **not** called here; narrative description belongs to
 spec §7.1's `generate_exception_reason` action — fired from the
 exception surface, not from inside the routing decision.
 
@@ -633,7 +633,7 @@ def _rule_match_to_decision(
 class APDecisionService:
     """Deterministic AP invoice routing.
 
-    Post-Phase 4, this service does not call Claude. The 10-step policy
+    Post-Phase 4, this service does not call the model. The 10-step policy
     cascade in `_compute_routing_decision` is the single source of
     routing truth.
     """

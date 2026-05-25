@@ -566,7 +566,7 @@ def conflict_blockers(raw_conflicts: Any) -> List[Dict[str, Any]]:
     """Promote ``source_conflicts[]`` entries flagged ``blocking`` to the
     field-review blocker shape. Multi-call extraction emits source
     conflicts when the email-side and attachment-side values disagree;
-    single-pass doesn't produce these (one source — Claude — sees both
+    single-pass doesn't produce these (one source, the model, sees both
     streams together) so this returns ``[]`` for single-pass output.
     """
     blockers: List[Dict[str, Any]] = []

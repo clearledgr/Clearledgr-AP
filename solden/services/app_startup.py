@@ -89,7 +89,7 @@ async def run_deferred_startup(app: Any) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Finance agent runtime not started: %s", exc)
 
-    # AgentPlanningEngine (Claude tool-use loop) retired. The deterministic
+    # AgentPlanningEngine (the model tool-use loop) retired. The deterministic
     # DeterministicPlanningEngine in solden.core.planning_engine is the
     # only planning engine; it does not need skill registration at startup
     # because all actions are dispatched by CoordinationEngine._handlers

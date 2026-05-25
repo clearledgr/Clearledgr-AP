@@ -1,7 +1,7 @@
 """Centralized LLM Gateway — Agent Design Specification §7.
 
-All Claude API calls in the system go through this gateway. It enforces:
-1. Action registry with DET/LLM boundary (only registered LLM actions may call Claude)
+All model API calls in the system go through this gateway. It enforces:
+1. Action registry with DET/LLM boundary (only registered LLM actions may call the model)
 2. Token budget per action (input truncation with logging)
 3. 4-section system prompt template (Role, Output format, Constraints, Guardrail)
 4. Cost tracking (input/output tokens, latency, cost estimate per call)
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _COST_PER_1M_INPUT = {"haiku": 0.25, "sonnet": 3.00}
 _COST_PER_1M_OUTPUT = {"haiku": 1.25, "sonnet": 15.00}
 
-# Defaults point at the latest Claude 4 family. Environments that
+# Defaults point at the latest model family. Environments that
 # need to pin a specific version override via ANTHROPIC_MODEL (sonnet
 # tier) and ANTHROPIC_EXTRACTION_MODEL (haiku tier) on Railway/local.
 _MODEL_HAIKU = os.environ.get("ANTHROPIC_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
@@ -46,7 +46,7 @@ _MODEL_SONNET = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 class LLMAction(str, Enum):
     """Every permitted LLM action. Deterministic actions are NOT listed here
-    and CANNOT call Claude through the gateway."""
+    and CANNOT call the model through the gateway."""
 
     # §7.1 — spec-defined LLM actions. ``DRAFT_VENDOR_RESPONSE`` was
     # dropped per the 2026-05-02 zero-vendor-email rule (Solden authors
@@ -90,7 +90,7 @@ class ActionConfig:
     model_tier: str  # "haiku" or "sonnet"
     temperature: float = 0.1
     timeout_seconds: int = 30
-    # Hard ceiling on input tokens. Claude 4.x context windows are 200k,
+    # Hard ceiling on input tokens. Current model context windows are 200k,
     # but leaving margin for system prompts, tool defs, and the output
     # reservation makes 150k the practical cap. Override per-action for
     # anything known to be shorter (classification, decisioning) so a
@@ -224,7 +224,7 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 _API_URL = "https://api.anthropic.com/v1/messages"
 
 
-# Char-to-token ratio. Anthropic's tokenizer is not distributed as a
+# Char-to-token ratio. The provider's tokenizer is not distributed as a
 # standalone lib (as of 2026-04), so we estimate from character count.
 # English averages ~4 chars/token; JSON and structured text come in a
 # bit denser. 3.5 is a conservative multiplier that errs on "assume
@@ -349,7 +349,7 @@ def _truncate_messages_to_budget(
 
 
 # ---------------------------------------------------------------------------
-# Process-local circuit breaker for Anthropic rate limits.
+# Process-local circuit breaker for model-provider rate limits.
 #
 # The existing retry loop bounds a single caller's behaviour: at most 3
 # retries over ~2.5 minutes, then raise. That's fine in isolation but
@@ -363,11 +363,11 @@ def _truncate_messages_to_budget(
 # call sees a 429, we stash a "cooldown until" timestamp. While the
 # cooldown is live, other callers fail fast with the same error shape
 # as an exhausted retry — no API call, no spend, no added load. The
-# cooldown honours Anthropic's Retry-After header when present, falling
+# cooldown honours the provider's Retry-After header when present, falling
 # back to a conservative default.
 #
 # Process-local is intentional: we don't need cross-worker coordination
-# here. Each worker has its own view of "is Anthropic throttling us
+# here. Each worker has its own view of "is the provider throttling us
 # right now?", and once one caller trips the breaker the next few
 # callers in the same process get the fast-fail. If the throttle ends,
 # the cooldown expires and traffic resumes organically.
@@ -389,7 +389,7 @@ def _circuit_remaining() -> int:
 def _trip_circuit(retry_after_header: Optional[str]) -> None:
     """Open the circuit for ``retry_after_header`` seconds (clamped).
 
-    Anthropic returns Retry-After as seconds when they want us to back
+    The provider returns Retry-After as seconds when they want us to back
     off. We honour it up to _MAX_COOLDOWN_SECONDS so a malformed or
     hostile header can't keep us offline for hours.
     """
@@ -405,7 +405,7 @@ def _trip_circuit(retry_after_header: Optional[str]) -> None:
     if new_until > _rate_limit_cooldown_until:
         _rate_limit_cooldown_until = new_until
         logger.warning(
-            "[LLMGateway] circuit breaker OPEN for %ds (Anthropic 429)", cooldown
+            "[LLMGateway] circuit breaker OPEN for %ds (provider 429)", cooldown
         )
 
 
@@ -430,7 +430,7 @@ class LLMBudgetExceededError(RuntimeError):
 
 
 class LLMGateway:
-    """Centralized Claude API gateway.
+    """Centralized model API gateway.
 
     All LLM calls go through ``call()`` or ``call_sync()``.
     Deterministic actions that attempt to use the gateway are rejected.
@@ -735,11 +735,11 @@ class LLMGateway:
         box_id: Optional[str] = None,
         box_type: Optional[str] = None,
     ) -> LLMResponse:
-        """Make a Claude API call through the gateway.
+        """Make a model API call through the gateway.
 
         Args:
             action: The registered LLM action (must be in ACTION_REGISTRY).
-            messages: Claude messages array.
+            messages: the model messages array.
             system_prompt: Optional override. If None, uses the default 4-section template.
             tools: Optional tool definitions for tool_use.
             tool_choice: Optional tool_choice constraint.
@@ -760,7 +760,7 @@ class LLMGateway:
         if action not in ACTION_REGISTRY:
             raise ValueError(
                 f"Action {action!r} is not registered in the LLM Gateway. "
-                f"Only registered LLM actions may call Claude. "
+                f"Only registered LLM actions may call the model. "
                 f"Valid actions: {sorted(a.value for a in ACTION_REGISTRY)}"
             )
 
@@ -792,7 +792,7 @@ class LLMGateway:
             effective_system = ""
 
         # Enforce input token budget BEFORE hitting the wire.
-        # A 100-page OCR dump would otherwise either blow past Claude's
+        # A 100-page OCR dump would otherwise either blow past the model's
         # 200k window (hard error) or cost ~$0.60 per call silently.
         # Truncation is logged via the `truncated` flag on the call
         # record so we can spot callers that need to shrink their
@@ -853,7 +853,7 @@ class LLMGateway:
                 box_type=box_type,
             )
             raise RuntimeError(
-                f"[LLMGateway] {action.value} skipped: Anthropic rate limit "
+                f"[LLMGateway] {action.value} skipped: the model provider rate limit "
                 f"cooldown active ({remaining}s remaining)"
             )
 
@@ -904,7 +904,7 @@ class LLMGateway:
                         f"[LLMGateway] {action.value} failed: {last_error}"
                     )
 
-                # Size gate before JSON parse. Anthropic normal responses
+                # Size gate before JSON parse. The model provider normal responses
                 # are well under 1MB, but a malformed / MITM'd / replay
                 # injected response could balloon resp.content beyond
                 # reasonable bounds and OOM the parser. Cap at 10MB —
@@ -930,7 +930,7 @@ class LLMGateway:
                     )
                 data = resp.json()
                 # Successful call — close the circuit if it was open
-                # from a previous caller. Anthropic is answering us
+                # from a previous caller. The model provider is answering us
                 # again, so subsequent calls in this process don't need
                 # to fast-fail.
                 _reset_circuit()
@@ -1024,9 +1024,9 @@ class LLMGateway:
         box_id: Optional[str] = None,
         box_type: Optional[str] = None,
     ):
-        """Async generator that yields text chunks as Claude emits them.
+        """Async generator that yields text chunks as the model emits them.
 
-        Uses Anthropic's SSE streaming endpoint
+        Uses the provider's SSE streaming endpoint
         (https://docs.anthropic.com/claude/reference/messages-streaming).
         Each yielded value is a string fragment of the assistant's
         response. Usage/cost is logged once at the end via the same

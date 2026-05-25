@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # §7.3 Tone and Language — shared preamble for all agent prompts.
-# Import and prepend to any Claude system prompt.
+# Import and prepend to any the model system prompt.
 AGENT_TONE_PREAMBLE = (
     "TONE RULES (DESIGN_THESIS.md §7.3 — enforced, not optional):\n"
     "- Specific, never vague. 'Invoice €8,922 vs GRN receipt €8,500 — delta €422 exceeds "
@@ -118,10 +118,10 @@ class AuditEventType(Enum):
     # ``gmail_triage_service.run_inline_gmail_triage`` for emission.
     PROCESSING_MODE_METRIC = "processing_mode_metric"
 
-    # Single-pass schema-drift signal — emitted when Claude's response
+    # Single-pass schema-drift signal — emitted when the model's response
     # fails the required-field validation in
     # ``single_pass_processor._validate_response``. Operators query
-    # for this to spot when Claude's output shape changes before the
+    # for this to spot when the model's output shape changes before the
     # multi-call fallback rate spikes.
     SINGLE_PASS_VALIDATION_FAILED = "single_pass_validation_failed"
     RETRY = "retry"

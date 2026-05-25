@@ -33,9 +33,9 @@ def _ai_evaluate_duplicates(
     current_date: Optional[str],
     flagged: List["DuplicateAlert"],
 ) -> List["DuplicateAlert"]:
-    """Ask Claude to reason about whether flagged items are true duplicates.
+    """Ask the model to reason about whether flagged items are true duplicates.
 
-    Claude considers: amendments, credit notes, recurring invoices,
+    The model considers: amendments, credit notes, recurring invoices,
     partial payments, and replacement invoices — things deterministic
     scoring can't distinguish.
     """
@@ -214,7 +214,7 @@ class CrossInvoiceAnalyzer:
     separate hard-coded setting. The gate blocks at the configured max;
     this analyzer's "frequency" anomaly fires at 70% of the max (floor 3)
     as an early-warning signal that does NOT block but is surfaced to
-    Claude's reasoning.
+    the model's reasoning.
 
     Usage:
         analyzer = CrossInvoiceAnalyzer("org_123")
@@ -436,7 +436,7 @@ class CrossInvoiceAnalyzer:
         duplicates.sort(key=lambda d: d.match_score, reverse=True)
         top_duplicates = duplicates[:3]
 
-        # AI reasoning: ask Claude to evaluate flagged duplicates
+        # AI reasoning: ask the model to evaluate flagged duplicates
         if top_duplicates:
             top_duplicates = _ai_evaluate_duplicates(
                 current_vendor=vendor,

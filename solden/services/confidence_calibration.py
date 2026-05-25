@@ -1,13 +1,13 @@
-"""Confidence calibration — verify Claude's self-reported scores.
+"""Confidence calibration — verify the model's self-reported scores.
 
-When Claude says "I'm 89% confident about this due date," we need to know
-if that actually means 89%. If Claude consistently over-reports confidence,
+When the model says "I'm 89% confident about this due date," we need to know
+if that actually means 89%. If the model consistently over-reports confidence,
 we adjust downward. If it under-reports, we adjust upward.
 
-Calibration works by comparing Claude's reported confidence to operator
+Calibration works by comparing the model's reported confidence to operator
 correction rates per field per vendor.
 
-Example: If Claude reports 90% confidence on vendor name for Google invoices,
+Example: If the model reports 90% confidence on vendor name for Google invoices,
 but operators correct the vendor name 30% of the time, the calibrated
 confidence is ~70%, not 90%.
 """
@@ -61,7 +61,7 @@ class ConfidenceCalibrator:
             rate = correction_rates.get(field)
             if rate is not None and isinstance(rate, (int, float)):
                 # If 20% of extractions for this field get corrected,
-                # the real accuracy is at most 80%, regardless of what Claude reports
+                # the real accuracy is at most 80%, regardless of what the model reports
                 max_calibrated = 1.0 - float(rate)
                 calibrated[field] = min(float(reported_conf), max_calibrated)
             else:

@@ -1,9 +1,9 @@
-"""Single-pass invoice processor — one Claude call does everything.
+"""Single-pass invoice processor — one the model call does everything.
 
 Replaces the multi-call pattern (classify → extract → GL code → match →
 duplicate check → amount reasoning → decide) with one comprehensive
 prompt that returns a single coherent JSON document. When it works,
-this is one Claude round-trip instead of seven.
+this is one the model round-trip instead of seven.
 
 Scope of the single-pass output:
 
@@ -16,8 +16,8 @@ Scope of the single-pass output:
     APDecisionService) refine or override them on the way through.
     Downstream must NOT treat these as final.
   - **Out of scope**:  the routing decision. ``APDecisionService``
-    (Claude Sonnet with full vendor context) is the canonical
-    decision-maker; having Claude produce a ``routing_decision`` in
+    (the Sonnet tier with full vendor context) is the canonical
+    decision-maker; having the model produce a ``routing_decision`` in
     the single-pass response was dead output that conflicted with
     the canonical path.
 
@@ -40,8 +40,8 @@ from solden.core.org_utils import assert_org_id
 logger = logging.getLogger(__name__)
 
 
-# Hard cap on attachments forwarded to Claude vision in a single call.
-# Claude's per-call message-size budget plus the per-action output-token
+# Hard cap on attachments forwarded to the model vision in a single call.
+# the model's per-call message-size budget plus the per-action output-token
 # cap (see SINGLE_PASS_EXTRACT in llm_gateway.ACTION_REGISTRY) means
 # more than a small handful is wasted context. If a vendor genuinely
 # sends >3 invoices in one email, the multi-invoice splitter is the
@@ -51,7 +51,7 @@ MAX_VISUAL_ATTACHMENTS = 3
 
 # Required keys in the parsed response. Each entry is
 # ``(dotted.path, expected_type)``. Used by ``_validate_response`` to
-# reject malformed Claude output before it reaches downstream
+# reject malformed the model output before it reaches downstream
 # consumers — drift surfaces as a fallback rather than as a stale
 # field showing up in the operator's queue.
 _REQUIRED_FIELDS: Tuple[Tuple[str, type], ...] = (
@@ -82,7 +82,7 @@ async def process_invoice_single_pass(
     recent_invoices_context: str = "",
     use_cache: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """Process an invoice in a single Claude call.
+    """Process an invoice in a single the model call.
 
     Returns the parsed result dict (classification + extraction +
     advisory gl/duplicate/risk fields) on success. Returns None on
@@ -93,7 +93,7 @@ async def process_invoice_single_pass(
     inputs (subject + sender + body + attachment digests +
     attachment_text + has_visual_attachments) are hashed and the
     parsed result is cached for 1 hour. Gmail Pub/Sub re-fires
-    don't pay the Claude cost twice for the same email. Set
+    don't pay the the model cost twice for the same email. Set
     ``use_cache=False`` to bypass — useful in tests that want to
     exercise the LLM call path on every invocation.
     """
@@ -125,13 +125,13 @@ async def process_invoice_single_pass(
                 cached["api_calls"] = 0
                 logger.info(
                     "[SinglePass] cache hit for content_hash=%s — "
-                    "skipping Claude call",
+                    "skipping the model call",
                     content_hash[:12],
                 )
                 return cached
         except Exception as exc:
             logger.debug(
-                "[SinglePass] cache lookup failed (%s) — proceeding with Claude call",
+                "[SinglePass] cache lookup failed (%s) — proceeding with the model call",
                 exc,
             )
             content_hash = None
@@ -181,7 +181,7 @@ async def process_invoice_single_pass(
         parsed["api_calls"] = 1
 
         # Cache the validated result so Pub/Sub re-deliveries don't
-        # repay the Claude cost. We cache the parsed dict, not the
+        # repay the the model cost. We cache the parsed dict, not the
         # markers — the markers are set by the lookup path on a hit.
         if use_cache and content_hash:
             try:
@@ -304,7 +304,7 @@ Return ONLY valid JSON. No prose, no markdown."""
 
 
 async def _call_claude_text_single_pass(prompt: str) -> Optional[str]:
-    """Call Claude for text-only single-pass processing via LLM Gateway."""
+    """Call the model for text-only single-pass processing via LLM Gateway."""
     try:
         gateway = get_llm_gateway()
         llm_resp = await gateway.call(
@@ -313,14 +313,14 @@ async def _call_claude_text_single_pass(prompt: str) -> Optional[str]:
         )
         return llm_resp.content
     except Exception as exc:
-        logger.warning("[SinglePass] Claude text call failed: %s", exc)
+        logger.warning("[SinglePass] the model text call failed: %s", exc)
         return None
 
 
 async def _call_claude_vision_single_pass(
     prompt: str, visual_attachments: List[Dict[str, Any]],
 ) -> Optional[str]:
-    """Call Claude for vision-based single-pass processing via LLM Gateway."""
+    """Call the model for vision-based single-pass processing via LLM Gateway."""
     if len(visual_attachments) > MAX_VISUAL_ATTACHMENTS:
         logger.info(
             "[SinglePass] %d visual attachments — truncating to %d (extras "
@@ -355,15 +355,15 @@ async def _call_claude_vision_single_pass(
         )
         return llm_resp.content
     except Exception as exc:
-        logger.warning("[SinglePass] Claude vision call failed: %s", exc)
+        logger.warning("[SinglePass] the model vision call failed: %s", exc)
         return None
 
 
 def _parse_single_pass_response(text: str) -> Optional[Dict[str, Any]]:
-    """Parse Claude's single-pass JSON response.
+    """Parse the model's single-pass JSON response.
 
     Tries direct parse first, then a markdown-fence-stripped fallback
-    (Claude occasionally wraps JSON in ```json ... ``` even when the
+    (the model occasionally wraps JSON in ```json ... ``` even when the
     prompt asks for raw JSON). Returns None on any parse failure.
     """
     if not text:
@@ -395,7 +395,7 @@ def _emit_schema_drift_event(
     The validation_error string carries the dotted path that drifted
     (e.g. ``"classification.document_type: missing"``), making it
     queryable: a count by ``details.validation_path`` over the last
-    24h tells us which Claude-side regression to investigate.
+    24h tells us which the model-side regression to investigate.
     """
     try:
         from solden.services.audit_trail import (

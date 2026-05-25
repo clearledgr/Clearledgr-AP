@@ -4,12 +4,12 @@ Gmail Pub/Sub is at-least-once delivery. When a webhook re-fires
 for an email we've already processed, the canonical-shape inputs
 (subject + sender + body + attachment manifest) are byte-identical
 on the second hit. Without a cache, we re-run the single-pass
-Claude call and pay the 1500-3000-token cost on every retry.
+the model call and pay the 1500-3000-token cost on every retry.
 
 This module hashes the canonical inputs (SHA-256, normalised) and
 caches the *parsed + validated* single-pass result for one hour
 under that key. The next call with the same inputs returns the
-cached dict directly — no Claude round-trip, no LLM gateway call,
+cached dict directly — no the model round-trip, no LLM gateway call,
 no llm_call_log entry.
 
 Design constraints honoured:
