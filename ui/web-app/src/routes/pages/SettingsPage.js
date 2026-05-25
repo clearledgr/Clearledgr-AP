@@ -2092,7 +2092,7 @@ function EntityRolesEditor({ api, orgId, toast, user, entities, customRoles, can
 // ─── Module 6 — SAML SSO config panel ───────────────────────────
 //
 // Spec line 220: Azure AD + Okta + Google Workspace SAML + OneLogin +
-// generic SAML 2.0. Backend at clearledgr/api/saml.py is complete
+// generic SAML 2.0. Backend at solden/api/saml.py is complete
 // (CRUD + SP metadata + ACS POST + JIT provisioning + audit). This
 // panel wires the admin UI: load current config, show SP metadata
 // URL for IdP-side setup, edit IdP fields (entity ID, SSO URL,
@@ -2136,8 +2136,8 @@ function SAMLPanel({ api, orgId, toast, canManage }) {
         enabled: c.enabled ?? true,
         idp_entity_id: c.idp_entity_id || '',
         idp_sso_url: c.idp_sso_url || '',
-        sp_entity_id: c.sp_entity_id || `https://workspace.clearledgr.com/saml/${orgId}/sp`,
-        sp_acs_url: c.sp_acs_url || `https://api.clearledgr.com/saml/${orgId}/acs`,
+        sp_entity_id: c.sp_entity_id || `https://workspace.soldenai.com/saml/${orgId}/sp`,
+        sp_acs_url: c.sp_acs_url || `https://api.soldenai.com/saml/${orgId}/acs`,
         attribute_email: c.attribute_email || 'email',
         attribute_role: c.attribute_role || '',
         attribute_entity: c.attribute_entity || '',
@@ -2207,7 +2207,7 @@ function SAMLPanel({ api, orgId, toast, canManage }) {
     }
   }, [api, orgId, canManage, toast]);
 
-  const spMetadataUrl = `https://api.clearledgr.com/saml/${encodeURIComponent(orgId)}/sp-metadata`;
+  const spMetadataUrl = `https://api.soldenai.com/saml/${encodeURIComponent(orgId)}/sp-metadata`;
   const fingerprint = config?.idp_certificate?.fingerprint_sha256;
   const statusTone = !configured ? 'idle' : (form.enabled ? 'on' : 'off');
   const statusLabel = !configured

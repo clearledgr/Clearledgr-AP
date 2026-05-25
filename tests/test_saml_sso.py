@@ -189,8 +189,8 @@ def saml_config(db, keypair):
         idp_entity_id="https://idp.example.test",
         idp_sso_url="https://idp.example.test/sso",
         idp_certificate_pem=cert_pem,
-        sp_entity_id="https://workspace.clearledgr.test/saml/org-test",
-        sp_acs_url="https://workspace.clearledgr.test/saml/org-test/acs",
+        sp_entity_id="https://workspace.soldenai.test/saml/org-test",
+        sp_acs_url="https://workspace.soldenai.test/saml/org-test/acs",
         attribute_email="email",
         attribute_role="role",
         attribute_entity=None,
@@ -577,3 +577,19 @@ def test_acs_invalid_signature_emits_failure_audit(
         event_types=["saml_login_failed"],
     )
     assert events.get("events"), "expected saml_login_failed audit event"
+
+
+def test_normalize_role_accepts_solden_and_legacy_clearledgr_prefix():
+    """IdP role tokens may carry a vendor prefix. Both the current 'solden_'
+    and the legacy 'clearledgr_' prefix must resolve to the same canonical
+    role, so existing IdP role mappings survive the rebrand."""
+    from solden.services.saml_sso import _normalize_role
+
+    assert _normalize_role("solden_ap_manager") == "ap_manager"
+    assert _normalize_role("clearledgr_ap_manager") == "ap_manager"
+    # Case/separator normalization still applies alongside prefix stripping.
+    assert _normalize_role("Clearledgr-AP-Manager") == "ap_manager"
+    assert _normalize_role("Solden CFO") == "cfo"
+    # Unprefixed canonical roles pass through; unknown tokens return None.
+    assert _normalize_role("read_only") == "read_only"
+    assert _normalize_role("solden_not_a_role") is None

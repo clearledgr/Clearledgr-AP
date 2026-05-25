@@ -478,8 +478,13 @@ def _normalize_role(token: str) -> Optional[str]:
     if not token:
         return None
     t = token.strip().lower().replace("-", "_").replace(" ", "_")
-    if t.startswith("clearledgr_"):
-        t = t[len("clearledgr_"):]
+    # Strip a vendor role prefix if the IdP is configured with one. Accept the
+    # current "solden_" and the legacy "clearledgr_" prefix so existing IdP
+    # role mappings keep resolving after the rebrand.
+    for _prefix in ("solden_", "clearledgr_"):
+        if t.startswith(_prefix):
+            t = t[len(_prefix):]
+            break
     canonical = {
         "owner",
         "cfo",
