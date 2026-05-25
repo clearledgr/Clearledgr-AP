@@ -1,6 +1,6 @@
 /** BudgetPausedBanner — in-product surfacing of the LLM runaway-spend guard.
  *
- * When an organization crosses its monthly Claude cost hard cap, the
+ * When an organization crosses its monthly LLM cost hard cap, the
  * backend's LLM gateway refuses further calls (see
  * `clearledgr/core/llm_gateway.py::_enforce_budget_cap`). Without an
  * in-product banner the AP clerk / controller would just see the
@@ -28,11 +28,13 @@ const html = htm.bind(h);
 
 function formatUsd(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return '$0';
-  // Currency is always USD per the /llm-budget/status payload shape.
+  // The model-provider cost is always USD per the /llm-budget/status payload.
+  // Render the ISO code prefix ("USD 50") rather than a bare "$" symbol, in
+  // line with the product's currency-display convention (no fabricated symbols).
+  if (!Number.isFinite(n)) return 'USD 0';
   return n >= 100
-    ? `$${n.toFixed(0)}`
-    : `$${n.toFixed(2)}`;
+    ? `USD ${n.toFixed(0)}`
+    : `USD ${n.toFixed(2)}`;
 }
 
 function formatPeriodEnd(iso) {
