@@ -21,7 +21,7 @@ ui/ = matches the API contract + DESIGN.md; dead components; brand drift.
 ---
 
 ## (root)  (1)
-- `main.py` — PENDING
+- `main.py` — ALIGNED: FastAPI entrypoint; strict-profile surface enforcement (_apply_runtime_surface_profile + per-request guard) verified + allowlists corrected this session
 
 ## solden  (2)
 - `solden/__init__.py` — MECHANICAL: package docstring
@@ -514,521 +514,521 @@ ui/ = matches the API contract + DESIGN.md; dead components; brand drift.
 - `solden/workflows/gmail_activities.py` — ALIGNED: fail-loud org scoping, rules-first classify, no vendor-facing text
 
 ## tests  (303)
-- `tests/conftest.py` — PENDING
-- `tests/factories.py` — PENDING
-- `tests/test_accrual_journal_entry.py` — PENDING
-- `tests/test_accrual_journal_entry_post.py` — PENDING
-- `tests/test_action_idempotency.py` — PENDING
-- `tests/test_adaptive_thresholds.py` — PENDING
-- `tests/test_admin_launch_controls.py` — PENDING
-- `tests/test_africa_einvoice.py` — PENDING
-- `tests/test_africa_einvoice_submission.py` — PENDING
-- `tests/test_agent_anomaly_detection.py` — PENDING
-- `tests/test_agent_background.py` — PENDING
-- `tests/test_agent_credit_pool.py` — PENDING
-- `tests/test_agent_end_to_end.py` — PENDING
-- `tests/test_agent_intents_router.py` — PENDING
-- `tests/test_agent_memory_service.py` — PENDING
-- `tests/test_agent_reasoning.py` — PENDING
-- `tests/test_agent_retry_jobs.py` — PENDING
-- `tests/test_annotation_targets.py` — PENDING
-- `tests/test_ap_aggregation_api.py` — PENDING
-- `tests/test_ap_aging_report.py` — PENDING
-- `tests/test_ap_audit_recent_api.py` — PENDING
-- `tests/test_ap_confidence.py` — PENDING
-- `tests/test_ap_decision.py` — PENDING
-- `tests/test_ap_decision_override_reasoning.py` — PENDING
-- `tests/test_ap_extraction_drift_metrics.py` — PENDING
-- `tests/test_ap_intent_contracts.py` — PENDING
-- `tests/test_ap_intent_handlers.py` — PENDING
-- `tests/test_ap_item_detail.py` — PENDING
-- `tests/test_ap_item_resolution.py` — PENDING
-- `tests/test_ap_items_merge_and_audit_guardrails.py` — PENDING
-- `tests/test_ap_multi_system_context.py` — PENDING
-- `tests/test_ap_operator_audit.py` — PENDING
-- `tests/test_ap_policy_framework.py` — PENDING
-- `tests/test_ap_projection_contract.py` — PENDING
-- `tests/test_ap_record_surfaces.py` — PENDING
-- `tests/test_ap_role_guards.py` — PENDING
-- `tests/test_ap_scenario_matrix.py` — PENDING
-- `tests/test_ap_store_approval_followup.py` — PENDING
-- `tests/test_ap_wedge_black_box.py` — PENDING
-- `tests/test_api_endpoints.py` — PENDING
-- `tests/test_api_keys_admin.py` — PENDING
-- `tests/test_app_startup.py` — PENDING
-- `tests/test_approval_delegation.py` — PENDING
-- `tests/test_approval_dispatch_outbox.py` — PENDING
-- `tests/test_approval_revert.py` — PENDING
-- `tests/test_approver_workload.py` — PENDING
-- `tests/test_audit_chain_integrity.py` — PENDING
-- `tests/test_audit_chain_status_endpoint.py` — PENDING
-- `tests/test_audit_entity_scope.py` — PENDING
-- `tests/test_audit_governance_columns.py` — PENDING
-- `tests/test_audit_policy_version.py` — PENDING
-- `tests/test_audit_trail_service.py` — PENDING
-- `tests/test_auth_token_reconciliation.py` — PENDING
-- `tests/test_authorization_denied.py` — PENDING
-- `tests/test_autonomy_config.py` — PENDING
-- `tests/test_bank_details_tokenisation.py` — PENDING
-- `tests/test_bank_match_box.py` — PENDING
-- `tests/test_bank_reconciliation.py` — PENDING
-- `tests/test_box_audit_reader.py` — PENDING
-- `tests/test_box_cas.py` — PENDING
-- `tests/test_box_exceptions_admin_api.py` — PENDING
-- `tests/test_box_export_api.py` — PENDING
-- `tests/test_box_extraction.py` — PENDING
-- `tests/test_box_health.py` — PENDING
-- `tests/test_box_invariants.py` — PENDING
-- `tests/test_box_lifecycle_store.py` — PENDING
-- `tests/test_box_owner.py` — PENDING
-- `tests/test_box_projection.py` — PENDING
-- `tests/test_bulk_batch_ops.py` — PENDING
-- `tests/test_calendar_ooo.py` — PENDING
-- `tests/test_channel_approval_contract.py` — PENDING
-- `tests/test_chart_of_accounts.py` — PENDING
-- `tests/test_compounding_learning_tenant_isolation.py` — PENDING
-- `tests/test_confidence_calibration.py` — PENDING
-- `tests/test_correction_learning.py` — PENDING
-- `tests/test_cross_invoice_analysis.py` — PENDING
-- `tests/test_cycle_time_metrics.py` — PENDING
-- `tests/test_decision_context_capture.py` — PENDING
-- `tests/test_declarative_workflow.py` — PENDING
-- `tests/test_discount_optimizer.py` — PENDING
-- `tests/test_dispute_reopen.py` — PENDING
-- `tests/test_dispute_workflow.py` — PENDING
-- `tests/test_dual_approval.py` — PENDING
-- `tests/test_e2e_ap_flow.py` — PENDING
-- `tests/test_e2e_rollback_controls.py` — PENDING
-- `tests/test_email_parser_amount_selection.py` — PENDING
-- `tests/test_email_parser_document_types.py` — PENDING
-- `tests/test_endpoint_idempotency.py` — PENDING
-- `tests/test_engine_async_hygiene.py` — PENDING
-- `tests/test_engine_box_lock.py` — PENDING
-- `tests/test_engine_idempotency.py` — PENDING
-- `tests/test_engine_resume_plan.py` — PENDING
-- `tests/test_erp_adapter_contracts.py` — PENDING
-- `tests/test_erp_api_first.py` — PENDING
-- `tests/test_erp_beta_fixes.py` — PENDING
-- `tests/test_erp_field_mapping_posters.py` — PENDING
-- `tests/test_erp_follow_on.py` — PENDING
-- `tests/test_erp_journal_entry_capture.py` — PENDING
-- `tests/test_erp_native_intake_pipeline.py` — PENDING
-- `tests/test_erp_netsuite_e2e.py` — PENDING
-- `tests/test_erp_oauth.py` — PENDING
-- `tests/test_erp_payment_dispatcher.py` — PENDING
-- `tests/test_erp_po_write.py` — PENDING
-- `tests/test_erp_preflight.py` — PENDING
-- `tests/test_erp_readiness.py` — PENDING
-- `tests/test_erp_reversal.py` — PENDING
-- `tests/test_erp_router_query_safety.py` — PENDING
-- `tests/test_erp_sap_s4hana_write_surface.py` — PENDING
-- `tests/test_erp_vendor_list.py` — PENDING
-- `tests/test_erp_webhook_security.py` — PENDING
-- `tests/test_escalation_policies.py` — PENDING
-- `tests/test_exception_graph.py` — PENDING
-- `tests/test_exception_resolver.py` — PENDING
-- `tests/test_execution_engine.py` — PENDING
-- `tests/test_extraction_guardrails.py` — PENDING
-- `tests/test_extraction_provenance_coverage.py` — PENDING
-- `tests/test_finance_agent_governance.py` — PENDING
-- `tests/test_finance_agent_runtime.py` — PENDING
-- `tests/test_finance_contracts.py` — PENDING
-- `tests/test_finance_email_store.py` — PENDING
-- `tests/test_finance_learning_service.py` — PENDING
-- `tests/test_fraud_controls_gate.py` — PENDING
-- `tests/test_fx_conversion.py` — PENDING
-- `tests/test_gate_constraint_enforcement.py` — PENDING
-- `tests/test_gdpr_retention.py` — PENDING
-- `tests/test_generic_engine_bank_match.py` — PENDING
-- `tests/test_generic_engine_purchase_order.py` — PENDING
-- `tests/test_gl_correction_wiring.py` — PENDING
-- `tests/test_gmail_activities.py` — PENDING
-- `tests/test_gmail_autopilot.py` — PENDING
-- `tests/test_gmail_classification.py` — PENDING
-- `tests/test_gmail_label_sync.py` — PENDING
-- `tests/test_gmail_labels.py` — PENDING
-- `tests/test_gmail_labels_bidirectional.py` — PENDING
-- `tests/test_gmail_oauth_error_surfacing.py` — PENDING
-- `tests/test_gmail_webhooks.py` — PENDING
-- `tests/test_governance_event_path.py` — PENDING
-- `tests/test_historical_replay.py` — PENDING
-- `tests/test_iban_change_freeze.py` — PENDING
-- `tests/test_iban_validation.py` — PENDING
-- `tests/test_intake_audit_coverage.py` — PENDING
-- `tests/test_invoice_archive.py` — PENDING
-- `tests/test_invoice_extraction_eval_harness.py` — PENDING
-- `tests/test_invoice_extraction_golden.py` — PENDING
-- `tests/test_invoice_workflow_controls.py` — PENDING
-- `tests/test_invoice_workflow_runtime_state_transitions.py` — PENDING
-- `tests/test_journal_entry_preview.py` — PENDING
-- `tests/test_learning_calibration.py` — PENDING
-- `tests/test_learning_service_persistence.py` — PENDING
-- `tests/test_llm_budget_cap.py` — PENDING
-- `tests/test_llm_call_box_link.py` — PENDING
-- `tests/test_llm_cost_summary.py` — PENDING
-- `tests/test_llm_email_parser.py` — PENDING
-- `tests/test_llm_gateway.py` — PENDING
-- `tests/test_llm_no_gateway_bypass.py` — PENDING
-- `tests/test_mandatory_gl_gate.py` — PENDING
-- `tests/test_match_config_api.py` — PENDING
-- `tests/test_match_engine.py` — PENDING
-- `tests/test_match_mode_dispatch.py` — PENDING
-- `tests/test_metrics_persistence.py` — PENDING
-- `tests/test_migration_v42.py` — PENDING
-- `tests/test_modules_5_6_carry_overs.py` — PENDING
-- `tests/test_money_decimal.py` — PENDING
-- `tests/test_monitoring.py` — PENDING
-- `tests/test_multi_entity.py` — PENDING
-- `tests/test_multi_invoice_intake.py` — PENDING
-- `tests/test_multi_invoice_splitter.py` — PENDING
-- `tests/test_multi_tenant_isolation.py` — PENDING
-- `tests/test_needs_info_recovery.py` — PENDING
-- `tests/test_netsuite_panel_audit_integration.py` — PENDING
-- `tests/test_no_currency_leaks.py` — PENDING
-- `tests/test_no_legacy_orchestrator_runtime_calls.py` — PENDING
-- `tests/test_notification_preferences.py` — PENDING
-- `tests/test_onboarding_gates.py` — PENDING
-- `tests/test_onboarding_token_single_use.py` — PENDING
-- `tests/test_org_config_roundtrip.py` — PENDING
-- `tests/test_org_purge.py` — PENDING
-- `tests/test_org_utils.py` — PENDING
-- `tests/test_outbox.py` — PENDING
-- `tests/test_outgoing_webhooks.py` — PENDING
-- `tests/test_outlook_integration.py` — PENDING
-- `tests/test_override_window.py` — PENDING
-- `tests/test_override_window_durability.py` — PENDING
-- `tests/test_payment_confirmations.py` — PENDING
-- `tests/test_payment_confirmations_api.py` — PENDING
-- `tests/test_payment_request_persistence.py` — PENDING
-- `tests/test_payment_state_machine.py` — PENDING
-- `tests/test_payment_status_polling.py` — PENDING
-- `tests/test_payment_tracking.py` — PENDING
-- `tests/test_peppol_inbound.py` — PENDING
-- `tests/test_peppol_outbound.py` — PENDING
-- `tests/test_period_close.py` — PENDING
-- `tests/test_pipeline_hardening.py` — PENDING
-- `tests/test_plan_acceptance.py` — PENDING
-- `tests/test_planning_engine.py` — PENDING
-- `tests/test_planning_engine_vo_deprecation.py` — PENDING
-- `tests/test_policy_branches.py` — PENDING
-- `tests/test_policy_linter.py` — PENDING
-- `tests/test_policy_service.py` — PENDING
-- `tests/test_portal_input_validation.py` — PENDING
-- `tests/test_proactive_insights_narration.py` — PENDING
-- `tests/test_procurement_chat.py` — PENDING
-- `tests/test_procurement_skill.py` — PENDING
-- `tests/test_prompt_guard.py` — PENDING
-- `tests/test_purchase_order_routes.py` — PENDING
-- `tests/test_quickbooks_xero_intake.py` — PENDING
-- `tests/test_rate_limit.py` — PENDING
-- `tests/test_recalibrate_confidence_gate.py` — PENDING
-- `tests/test_reclassification_je.py` — PENDING
-- `tests/test_report_export.py` — PENDING
-- `tests/test_report_subscriptions.py` — PENDING
-- `tests/test_request_latency_fixes.py` — PENDING
-- `tests/test_role_taxonomy.py` — PENDING
-- `tests/test_route_auth_policy_inventory.py` — PENDING
-- `tests/test_runtime_surface_scope.py` — PENDING
-- `tests/test_runtime_tenant_isolation.py` — PENDING
-- `tests/test_runtime_triage_group8.py` — PENDING
-- `tests/test_saml_sso.py` — PENDING
-- `tests/test_sample_data.py` — PENDING
-- `tests/test_sanctions_screening.py` — PENDING
-- `tests/test_sap_adapter_fail_closed.py` — PENDING
-- `tests/test_sap_b1_poll_celery_task.py` — PENDING
-- `tests/test_sap_fiori_audit_integration.py` — PENDING
-- `tests/test_sap_s4hana_payment_path.py` — PENDING
-- `tests/test_scheduled_reports.py` — PENDING
-- `tests/test_secrets.py` — PENDING
-- `tests/test_services_tenant_isolation.py` — PENDING
-- `tests/test_single_pass_cache.py` — PENDING
-- `tests/test_single_pass_processor.py` — PENDING
-- `tests/test_slack_notifications.py` — PENDING
-- `tests/test_sod_enforcement.py` — PENDING
-- `tests/test_specialist_agent.py` — PENDING
-- `tests/test_specialist_circuit_breaker.py` — PENDING
-- `tests/test_spend_analysis.py` — PENDING
-- `tests/test_state_audit_atomicity.py` — PENDING
-- `tests/test_state_mutation_discipline.py` — PENDING
-- `tests/test_state_observers.py` — PENDING
-- `tests/test_subscription_quota_enforcement.py` — PENDING
-- `tests/test_subscription_service.py` — PENDING
-- `tests/test_subscription_tier_features.py` — PENDING
-- `tests/test_synthetic_invoice_suite.py` — PENDING
-- `tests/test_task_scheduler_tenant.py` — PENDING
-- `tests/test_tax_compliance.py` — PENDING
-- `tests/test_team_invite_email.py` — PENDING
-- `tests/test_team_invite_role_normalisation.py` — PENDING
-- `tests/test_team_offboarding.py` — PENDING
-- `tests/test_teams_audit_integration.py` — PENDING
-- `tests/test_teams_installations.py` — PENDING
-- `tests/test_teams_verify.py` — PENDING
-- `tests/test_tenant_isolation.py` — PENDING
-- `tests/test_three_way_match.py` — PENDING
-- `tests/test_threshold_policy.py` — PENDING
-- `tests/test_trust_arc.py` — PENDING
-- `tests/test_user_offboarding.py` — PENDING
-- `tests/test_v1_auth.py` — PENDING
-- `tests/test_v1_boundary_flags.py` — PENDING
-- `tests/test_v1_core_completion.py` — PENDING
-- `tests/test_v1_idempotency.py` — PENDING
-- `tests/test_v1_integration.py` — PENDING
-- `tests/test_v1_rate_limit.py` — PENDING
-- `tests/test_v1_records.py` — PENDING
-- `tests/test_v1_webhooks.py` — PENDING
-- `tests/test_validate_launch_evidence.py` — PENDING
-- `tests/test_validation_per_rule_audit.py` — PENDING
-- `tests/test_vat_modeling.py` — PENDING
-- `tests/test_vat_return_forms.py` — PENDING
-- `tests/test_vendor_activation_sla.py` — PENDING
-- `tests/test_vendor_activation_slack.py` — PENDING
-- `tests/test_vendor_attribute_matcher.py` — PENDING
-- `tests/test_vendor_csv_import.py` — PENDING
-- `tests/test_vendor_dedup.py` — PENDING
-- `tests/test_vendor_domain_lock.py` — PENDING
-- `tests/test_vendor_domain_lookalike.py` — PENDING
-- `tests/test_vendor_erp_push.py` — PENDING
-- `tests/test_vendor_erp_sync.py` — PENDING
-- `tests/test_vendor_inquiry.py` — PENDING
-- `tests/test_vendor_issue_payloads.py` — PENDING
-- `tests/test_vendor_kyc.py` — PENDING
-- `tests/test_vendor_master_check.py` — PENDING
-- `tests/test_vendor_onboarding_exceptions.py` — PENDING
-- `tests/test_vendor_onboarding_lifecycle.py` — PENDING
-- `tests/test_vendor_onboarding_state_machine.py` — PENDING
-- `tests/test_vendor_portal.py` — PENDING
-- `tests/test_vendor_revalidation.py` — PENDING
-- `tests/test_vendor_risk_payload.py` — PENDING
-- `tests/test_vendor_search.py` — PENDING
-- `tests/test_vendor_statement_recon.py` — PENDING
-- `tests/test_vendor_status.py` — PENDING
-- `tests/test_webhook_auth_hardening.py` — PENDING
-- `tests/test_workflow_hooks.py` — PENDING
-- `tests/test_workflow_isolation.py` — PENDING
-- `tests/test_workflow_specs.py` — PENDING
-- `tests/test_workspace_audit_export.py` — PENDING
-- `tests/test_workspace_audit_search.py` — PENDING
-- `tests/test_workspace_audit_webhook_fanout.py` — PENDING
-- `tests/test_workspace_connection_health.py` — PENDING
-- `tests/test_workspace_custom_roles.py` — PENDING
-- `tests/test_workspace_entity_roles.py` — PENDING
-- `tests/test_workspace_erp_field_mappings.py` — PENDING
-- `tests/test_workspace_fx.py` — PENDING
-- `tests/test_workspace_org_settings.py` — PENDING
-- `tests/test_workspace_reports.py` — PENDING
-- `tests/test_workspace_rules.py` — PENDING
+- `tests/conftest.py` — MECHANICAL: pytest fixtures, DB setup, HTTP mocking, service cleanup
+- `tests/factories.py` — MECHANICAL: test data builders (orgs, AP items, vendor profiles, users)
+- `tests/test_accrual_journal_entry.py` — ALIGNED: accrual JE builder respects period dates, GL fallback, tenant isolation
+- `tests/test_accrual_journal_entry_post.py` — ALIGNED: ERP post + reversal sweep + audit + duplicate-period block + tenant isolation
+- `tests/test_action_idempotency.py` — ALIGNED: read-only actions + pre_post_validate safely repeatable
+- `tests/test_adaptive_thresholds.py` — ALIGNED: per-vendor learned thresholds adapt + clamped to bounds
+- `tests/test_admin_launch_controls.py` — ALIGNED: rollback controls, GA readiness evidence, connector config, learning calibration
+- `tests/test_africa_einvoice.py` — ALIGNED: FIRS/eTIMS/SARS payload shapes + dispatcher routing
+- `tests/test_africa_einvoice_submission.py` — ALIGNED: submitter resolution, pending ledger, provider_reference, audit, supersede
+- `tests/test_agent_anomaly_detection.py` — ALIGNED: rule-based z-score gates; LLM augmentation fails safe
+- `tests/test_agent_background.py` — DRIFT: claims per-org isolation in _check_overdue_tasks but outer try/except may bail on first org failure (VERIFY)
+- `tests/test_agent_credit_pool.py` — ALIGNED: monthly grant idempotence, ledger arithmetic, enterprise unlimited bypass
+- `tests/test_agent_end_to_end.py` — ALIGNED: planning engine action sequences + plan serialization round-trip
+- `tests/test_agent_intents_router.py` — ALIGNED: intent preview structured error shape + handler registry delegation
+- `tests/test_agent_memory_service.py` — ALIGNED: memory persists profile, events, beliefs, patterns + recall
+- `tests/test_agent_reasoning.py` — ALIGNED: agent decision logic with persisted profile thresholds
+- `tests/test_agent_retry_jobs.py` — ALIGNED: retry drain claims + completes jobs; runtime delegates to drain
+- `tests/test_annotation_targets.py` — ALIGNED: registry, policy-kind integration, disabled targets, slice/merge round-trip
+- `tests/test_ap_aggregation_api.py` — ALIGNED: ops endpoint multi-system metrics + auth enforced
+- `tests/test_ap_aging_report.py` — ALIGNED: aging buckets, currency awareness, closed/no-due exclusion, API shape
+- `tests/test_ap_audit_recent_api.py` — ALIGNED: auth, surface profile override, tenant isolation (read-only)
+- `tests/test_ap_confidence.py` — ALIGNED: per-field severity tiers; blocks only critical failures
+- `tests/test_ap_decision.py` — ALIGNED: deterministic cascade routes trusted->approve, fraud->escalate, model="rules"
+- `tests/test_ap_decision_override_reasoning.py` — ALIGNED: human override reason captured in audit metadata
+- `tests/test_ap_extraction_drift_metrics.py` — ALIGNED: ops drift metrics with time-series bucketing
+- `tests/test_ap_intent_contracts.py` — ALIGNED: audit contract registry canonical names + eligibility copy
+- `tests/test_ap_intent_handlers.py` — ALIGNED: handler registry covers all intents; skill delegates precheck/execute
+- `tests/test_ap_item_detail.py` — ALIGNED: detail response shape, cross-tenant 404, action state-machine filtering
+- `tests/test_ap_item_resolution.py` — ALIGNED: cross-tenant org-swap fix; foreign org rows rejected
+- `tests/test_ap_items_merge_and_audit_guardrails.py` — ALIGNED: merge via metadata linkage, resubmit honors audit guardrails
+- `tests/test_ap_multi_system_context.py` — ALIGNED: context builder links bank + spreadsheet sources
+- `tests/test_ap_operator_audit.py` — ALIGNED: audit normalization maps codes to operator messages w/ severity/hint
+- `tests/test_ap_policy_framework.py` — ALIGNED: policy versioning, auditability, thresholds, reminder/escalation
+- `tests/test_ap_projection_contract.py` — ALIGNED: worklist projection contract, next_action, SLA breach detection
+- `tests/test_ap_record_surfaces.py` — ALIGNED: strict profile enforcement + entity resolution for record surfaces
+- `tests/test_ap_role_guards.py` — ALIGNED: ops mutation routes carry require_ops_user; read-only rejected
+- `tests/test_ap_scenario_matrix.py` — ALIGNED: received->closed transitions + policy compliance (missing-PO escalation)
+- `tests/test_ap_store_approval_followup.py` — ALIGNED: resolves pending approvers from metadata + approval chain
+- `tests/test_ap_wedge_black_box.py` — ALIGNED: e2e request_approval intent drives workflow + audit trail
+- `tests/test_api_endpoints.py` — ALIGNED: large endpoint surface; endpoint-exists/removed are legit regression guards, auth+HTTP mocking is necessary
+- `tests/test_api_keys_admin.py` — ALIGNED: show-once contract, soft-delete, tenant isolation, rotation idempotency
+- `tests/test_app_startup.py` — ALIGNED: deferred startup task scheduling + cancellation contract
+- `tests/test_approval_delegation.py` — ALIGNED: delegation rule CRUD, date filtering, approver resolution
+- `tests/test_approval_dispatch_outbox.py` — ALIGNED: dispatch state machine, idempotent re-entry, recovery paths
+- `tests/test_approval_revert.py` — ALIGNED: approval window bounds, state-machine edges, tenant isolation
+- `tests/test_approver_workload.py` — ALIGNED: pending-chain aggregation, oldest-pending age, cross-tenant isolation
+- `tests/test_audit_chain_integrity.py` — ALIGNED: hash chain bootstrap, linkage, per-org isolation, recompute verify
+- `tests/test_audit_chain_status_endpoint.py` — ALIGNED: chain health endpoint, tamper detection, per-tenant scope
+- `tests/test_audit_entity_scope.py` — ALIGNED: entity-scoped audit filtering, role resolution, scope clause
+- `tests/test_audit_governance_columns.py` — ALIGNED: tool_scope + policy_version threading on audit rows
+- `tests/test_audit_policy_version.py` — ALIGNED: policy_version stamped on every audit event
+- `tests/test_audit_trail_service.py` — ALIGNED: audit trail persistence + typed event stream retrieval
+- `tests/test_auth_token_reconciliation.py` — ALIGNED: token reconciliation falls back to DB-canonical role (two-axis)
+- `tests/test_authorization_denied.py` — ALIGNED: structured denial funnel, audit emission, never-raises-on-db-failure
+- `tests/test_autonomy_config.py` — ALIGNED: org-level autonomy threshold merge, malformed-settings fallback
+- `tests/test_bank_details_tokenisation.py` — ALIGNED: encryption round-trip, masking, backfill, no-plaintext-in-logs
+- `tests/test_bank_match_box.py` — ALIGNED: bank_match Box type state machine, audit threading, export shape
+- `tests/test_bank_reconciliation.py` — ALIGNED: CAMT.053/OFX parsing, auto-match, end-to-end reconciliation
+- `tests/test_box_audit_reader.py` — ALIGNED: generic list_box_audit_events reader (3 VO tests skipped, dormant by design)
+- `tests/test_box_cas.py` — ALIGNED: compare-and-swap happy/retry/exhausted + column whitelisting
+- `tests/test_box_exceptions_admin_api.py` — ALIGNED: exceptions queue severity ordering, filtering, org scoping, resolve
+- `tests/test_box_export_api.py` — ALIGNED: portable Box export sovereignty, completeness, tenant isolation (404 not 403)
+- `tests/test_box_extraction.py` — ALIGNED: spec-driven LLM extraction for declarative Box types
+- `tests/test_box_health.py` — ALIGNED: Box health drill-down, stuck threshold, terminal-state exclusion
+- `tests/test_box_invariants.py` — DEAD: module-level skip (vendor_onboarding_deferred), never runs (dormant VO by design)
+- `tests/test_box_lifecycle_store.py` — ALIGNED: exception round-trip, outcomes uniqueness, audit narration
+- `tests/test_box_owner.py` — ALIGNED: ownership resolution, delegation override, reassign endpoint
+- `tests/test_box_projection.py` — ALIGNED: read-side projector registry + rebuild contract
+- `tests/test_bulk_batch_ops.py` — ALIGNED: bulk action batch cap, per-item result capture, pre-write Rule 1
+- `tests/test_calendar_ooo.py` — ALIGNED: OOO checks fail-open, cache TTL, routing to backup
+- `tests/test_channel_approval_contract.py` — ALIGNED: Slack/Teams callbacks verify install before AP lookup, stale/dup handling
+- `tests/test_chart_of_accounts.py` — ALIGNED: ERP router caching, dispatcher, GL validation, per-connection retrieval
+- `tests/test_compounding_learning_tenant_isolation.py` — ALIGNED: org A hints don't bleed to org B, Postgres persistence
+- `tests/test_confidence_calibration.py` — ALIGNED: confidence reduction from historical corrections, per-vendor
+- `tests/test_correction_learning.py` — ALIGNED: correction event persistence, vendor layout stats, reviewed export
+- `tests/test_cross_invoice_analysis.py` — ALIGNED: dup/anomaly detection; high-conf dups block model relabeling
+- `tests/test_cycle_time_metrics.py` — ALIGNED: touchless rate per stage, per-org isolation, transitions recorded
+- `tests/test_decision_context_capture.py` — ALIGNED: decision context snapshot on every transition (auto + override)
+- `tests/test_declarative_workflow.py` — ALIGNED: declarative box (contract_review) gets full runtime: CRUD, audit, engine, exception
+- `tests/test_discount_optimizer.py` — ALIGNED: parse_discount_terms + annualized return with expired/active
+- `tests/test_dispute_reopen.py` — ALIGNED: terminal-state gate, idempotent correction spawn, back-links, audit both boxes
+- `tests/test_dispute_workflow.py` — ALIGNED: full lifecycle CRUD + open/escalate/resolve; cross-tenant isolation
+- `tests/test_dual_approval.py` — ALIGNED: two-person gate, SOX self-approval block, distinct approvers, threshold CRUD
+- `tests/test_e2e_ap_flow.py` — ALIGNED: received->closed with audit; exception/retry/rejection; cross-tenant isolation
+- `tests/test_e2e_rollback_controls.py` — ALIGNED: erp_posting_disabled + per-connector + channel flags block side-effects
+- `tests/test_email_parser_amount_selection.py` — ALIGNED: total-due precedence, PDF source-of-truth, OCR fallback, provenance
+- `tests/test_email_parser_document_types.py` — ALIGNED: refund/credit_note/payment/statement classification
+- `tests/test_endpoint_idempotency.py` — ALIGNED: Idempotency-Key dedup on bulk approve; replay returns cached
+- `tests/test_engine_async_hygiene.py` — ALIGNED: pre/post-write async, asyncio.sleep, cancellation emits cancelled
+- `tests/test_engine_box_lock.py` — ALIGNED: per-box advisory lock serializes engine; lock_held; no audit while held
+- `tests/test_engine_idempotency.py` — ALIGNED: audit dedupe on correlation_id, erp_reference prevents re-post
+- `tests/test_engine_resume_plan.py` — ALIGNED: CAS read+clear atomic, resumed plan inherits correlation_id
+- `tests/test_erp_adapter_contracts.py` — ALIGNED: adapter validate/post/reconcile round-trips + posted lookup
+- `tests/test_erp_api_first.py` — ALIGNED: API-first post records attempt + success/failed; rollback blocks
+- `tests/test_erp_beta_fixes.py` — ALIGNED: GL map defaults/overrides, SAP preflight, token refresh retry, QB/Xero dedup
+- `tests/test_erp_field_mapping_posters.py` — ALIGNED: workflow field resolution + dimension name mapping
+- `tests/test_erp_follow_on.py` — ALIGNED: finance_effect_review blockers, non-invoice dispatch, connector routing, macros
+- `tests/test_erp_journal_entry_capture.py` — ALIGNED: per-ERP journal entry id capture
+- `tests/test_erp_native_intake_pipeline.py` — ALIGNED: synthetic gmail_id, observer short-circuit, posting skip for ERP-native
+- `tests/test_erp_netsuite_e2e.py` — ALIGNED: mocked e2e preflight + bill post + 202 polling + multi-subsidiary
+- `tests/test_erp_oauth.py` — ALIGNED: OAuth callback validation (error/code/state/realm raises 400/403)
+- `tests/test_erp_payment_dispatcher.py` — ALIGNED: QB envelope, Xero filter, NS sync parser, orphan audit
+- `tests/test_erp_po_write.py` — ALIGNED: flag-disabled skipped, already-issued idempotent, QB/Xero reference adapters
+- `tests/test_erp_preflight.py` — ALIGNED: bill lookup + vendor existence + GL validation per ERP
+- `tests/test_erp_readiness.py` — ALIGNED: connector readiness eval; rollback-disabled blocks readiness
+- `tests/test_erp_reversal.py` — ALIGNED: reverse_bill per-connector, already-reversed/payment-applied idempotency
+- `tests/test_erp_router_query_safety.py` — ALIGNED: vendor name queries sanitized; SQL injection prevented
+- `tests/test_erp_sap_s4hana_write_surface.py` — ALIGNED: B1 vs S/4HANA dispatch, per-line tax code, composite-key return
+- `tests/test_erp_vendor_list.py` — ALIGNED: paginated vendor list per ERP, cache TTL + force_refresh
+- `tests/test_erp_webhook_security.py` — ALIGNED: per-ERP signature verify, replay-window reject, fail-closed unconfigured
+- `tests/test_escalation_policies.py` — ALIGNED: threshold_hours gate, idempotency UNIQUE, cross-org, SMTP skip non-fatal
+- `tests/test_exception_graph.py` — ALIGNED: graph nodes/edges, cause clustering, weight decay
+- `tests/test_exception_resolver.py` — ALIGNED: dispatch to per-exception strategies; resolve returns reason + code
+- `tests/test_execution_engine.py` — ALIGNED: handler registry, LLM boundary fence, concurrency, failure classification, SLA
+- `tests/test_extraction_guardrails.py` — ALIGNED: three deterministic guardrails + fail-open behavior
+- `tests/test_extraction_provenance_coverage.py` — ALIGNED: every extraction producer emits field_provenance to audit chain
+- `tests/test_finance_agent_governance.py` — ALIGNED: blocks forbidden actions, doctrine checks, gate enforcement at waist
+- `tests/test_finance_agent_runtime.py` — ALIGNED: skill-contract mechanics; bounded-agent invariant covered in test_ap_decision/test_execution_engine/test_gate_constraint_enforcement
+- `tests/test_finance_contracts.py` — MECHANICAL: contract dataclass serialization, no behavioral invariant
+- `tests/test_finance_email_store.py` — ALIGNED: email upsert refreshes extracted fields + metadata
+- `tests/test_finance_learning_service.py` — ALIGNED: runtime outcome calibration + shadow decision match rate
+- `tests/test_fraud_controls_gate.py` — ALIGNED: FX fail-closed, gate contributions, severity filter, e2e forces escalate
+- `tests/test_fx_conversion.py` — ALIGNED: FX conversion (same/ECB/unknown/fallback) + supported list
+- `tests/test_gate_constraint_enforcement.py` — ALIGNED: enforce_gate_constraint matrix, defensive backstop, waist re-enforcement
+- `tests/test_gdpr_retention.py` — ALIGNED: anonymize PII, expired identify, purge, DSR CRUD, tenant isolation, idempotency
+- `tests/test_generic_engine_bank_match.py` — ALIGNED: bank_match runs through same CoordinationEngine primitives
+- `tests/test_generic_engine_purchase_order.py` — ALIGNED: PO peer Box runs through generic engine, zero AP-specific code
+- `tests/test_gl_correction_wiring.py` — ALIGNED: DB-backed persistence, history in suggestion payload, org-scoped analytics
+- `tests/test_gmail_activities.py` — ALIGNED: Slack escalation threads, normalizes confidence, fallback
+- `tests/test_gmail_autopilot.py` — ALIGNED: _tick isolates user failures, max concurrency, catchup + background loop
+- `tests/test_gmail_classification.py` — ALIGNED: invoice classification + parser false-positive avoidance
+- `tests/test_gmail_label_sync.py` — ALIGNED: intent_for_label maps action verbs only, guarded set, dispatch
+- `tests/test_gmail_labels.py` — ALIGNED: three-level label hierarchy, backward-compat, AP_STATE_TO_LABEL, cleanup migration
+- `tests/test_gmail_labels_bidirectional.py` — ALIGNED: label event enqueue idempotency, resolved id->intent, box lookup
+- `tests/test_gmail_oauth_error_surfacing.py` — ALIGNED: exchange surfaces Google's actual error w/ description
+- `tests/test_gmail_webhooks.py` — ALIGNED: Pub/Sub validation, OAuth state signing, user/org resolution, push verifier
+- `tests/test_governance_event_path.py` — ALIGNED: engine runs doctrine + autonomy gate before financial writes; truthful gate status
+- `tests/test_historical_replay.py` — ALIGNED: _values_match type/case normalization + no-corrections clean path (9 asserts)
+- `tests/test_iban_change_freeze.py` — ALIGNED: three-factor IBAN verify, freeze accessors, blocks frozen vendor, audit
+- `tests/test_iban_validation.py` — ALIGNED: mod-97 checksum, country/length, typo rejection, normalization
+- `tests/test_intake_audit_coverage.py` — ALIGNED: seed/merge/exception_cleared emit audit rows before write
+- `tests/test_invoice_archive.py` — ALIGNED: PDF round-trip, content-addressing dedup, append-only, retention, audit
+- `tests/test_invoice_extraction_eval_harness.py` — ALIGNED: eval harness returns metrics (weighted_score, field_accuracy)
+- `tests/test_invoice_extraction_golden.py` — ALIGNED: golden thresholds (94% overall, 99% critical) + vendor pack gates
+- `tests/test_invoice_workflow_controls.py` — ALIGNED: PO-required forces manual, match exception blocks auto-approve
+- `tests/test_invoice_workflow_runtime_state_transitions.py` — ALIGNED: service methods drive real AP transitions + audit
+- `tests/test_journal_entry_preview.py` — ALIGNED: JE preview by treatment, balance invariant, GL override, cross-org
+- `tests/test_learning_calibration.py` — ALIGNED: recompute snapshot from feedback, latest roundtrip, no-feedback case
+- `tests/test_learning_service_persistence.py` — ALIGNED: suggest persists across instances (Postgres), org-scoped
+- `tests/test_llm_budget_cap.py` — ALIGNED: hard-cap guard pauses org, paused fast-fails, new month clears, role-gated
+- `tests/test_llm_call_box_link.py` — ALIGNED: llm_call_log persists box_id/correlation_id; audit join reconstructs trail
+- `tests/test_llm_cost_summary.py` — ALIGNED: per-tenant LLM cost aggregation + windowing
+- `tests/test_llm_email_parser.py` — ALIGNED: LLM result mapping, attachment evidence merge, authoritative path
+- `tests/test_llm_gateway.py` — ALIGNED: action registry, token budgets, system prompt, boundary on unregistered
+- `tests/test_llm_no_gateway_bypass.py` — ALIGNED: source scan for raw provider HTTP calls bypassing gateway
+- `tests/test_mandatory_gl_gate.py` — ALIGNED: GL requirement at posting, per-tenant disable, alias field
+- `tests/test_match_config_api.py` — ALIGNED: match-mode/tolerance persistence, version advance, role gate, org isolation
+- `tests/test_match_engine.py` — ALIGNED: engine registry, scoring, decide() outcomes, tolerance, persistence, override
+- `tests/test_match_mode_dispatch.py` — ALIGNED: three_way/two_way/policy_only dispatcher + state persistence
+- `tests/test_metrics_persistence.py` — ALIGNED: metrics durability, retention pruning, fire-and-forget drain
+- `tests/test_migration_v42.py` — DEAD: module-level skip (vendor_onboarding_deferred) + SQLite-only backfill (dormant VO)
+- `tests/test_modules_5_6_carry_overs.py` — ALIGNED: ERP test-connection, credential rotation, SAML SLO, entity invite
+- `tests/test_money_decimal.py` — ALIGNED: penny-exactness, money_sum exact, Pydantic JSON roundtrip, quantization
+- `tests/test_monitoring.py` — ALIGNED: health checks (dead letters, auth, stale autopilot, overdue, posting), thresholds
+- `tests/test_multi_entity.py` — ALIGNED: entity CRUD, AP/ERP scoping, routing, zero-entity backward compat
+- `tests/test_multi_invoice_intake.py` — ALIGNED: split_email_attachments + e2e multi-invoice fanout w/ disambiguated IDs
+- `tests/test_multi_invoice_splitter.py` — ALIGNED: attachment boundary detection + invoice splitting
+- `tests/test_multi_tenant_isolation.py` — ALIGNED: read/write isolation, concurrent org creation zero bleed, soft_org_guard
+- `tests/test_needs_info_recovery.py` — ALIGNED: recovery plan gen, action whitelist, 3-step cap, graceful gateway failure
+- `tests/test_netsuite_panel_audit_integration.py` — ALIGNED: NS panel dispatch routes erp_native_netsuite through audit
+- `tests/test_no_currency_leaks.py` — ALIGNED: frontend scan for forbidden USD/dollar patterns
+- `tests/test_no_legacy_orchestrator_runtime_calls.py` — ALIGNED: legacy agent_orchestrator removed, callsites scrubbed
+- `tests/test_notification_preferences.py` — ALIGNED: schema, GET defaults, PATCH merge, unknown scrub, should_notify gate
+- `tests/test_onboarding_gates.py` — ALIGNED: AP policy completeness + ERP error classification structured payloads
+- `tests/test_onboarding_token_single_use.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_org_config_roundtrip.py` — ALIGNED: save/get round-trip no value loss, from_dict inverts to_dict, drift-tolerant
+- `tests/test_org_purge.py` — ALIGNED: purge scopes to target org, never touches audit_events, safe on empty
+- `tests/test_org_utils.py` — ALIGNED: assert_org_id, require_org, coerce_org_id edge cases
+- `tests/test_outbox.py` — ALIGNED: outbox serialization, handler registry, enqueue/claim/succeed/retry/dead-letter
+- `tests/test_outgoing_webhooks.py` — ALIGNED: subscription CRUD, HMAC, delivery, event emission, state-change hook
+- `tests/test_outlook_integration.py` — MECHANICAL: token expiry + token store CRUD plumbing, no invariant
+- `tests/test_override_window.py` — ALIGNED: state machine, window CRUD, open/expiry/reversal, Slack builder, REST
+- `tests/test_override_window_durability.py` — ALIGNED: expired window reaped without plan action, idempotent, concurrent-safe
+- `tests/test_payment_confirmations.py` — ALIGNED: store CRUD, list scoping, idempotent redelivery, state walk, audit
+- `tests/test_payment_confirmations_api.py` — ALIGNED: POST drives state walk, idempotency, invalid status reject, isolation
+- `tests/test_payment_request_persistence.py` — ALIGNED: requests survive restart, approve/reject/mark_paid persist + audit
+- `tests/test_payment_state_machine.py` — ALIGNED: four payment states, valid transitions, normalize, legacy map intact
+- `tests/test_payment_status_polling.py` — ALIGNED: ERP payment status polling + state derivation
+- `tests/test_payment_tracking.py` — MECHANICAL: PaymentRecord serialization + PaymentStore CRUD plumbing
+- `tests/test_peppol_inbound.py` — ALIGNED: VAT treatment derivation + cross-field consistency
+- `tests/test_peppol_outbound.py` — ALIGNED: round-trip UBL generation + parser idempotency
+- `tests/test_period_close.py` — ALIGNED: period lock/unlock state, accrual detection, posting gates
+- `tests/test_pipeline_hardening.py` — ALIGNED: callback retry, post-posting verification, attachment forwarding
+- `tests/test_plan_acceptance.py` — ALIGNED: state-machine transitions, rejection metadata, cross-tenant isolation
+- `tests/test_planning_engine.py` — ALIGNED: deterministic plan generation + LLM boundary enforcement
+- `tests/test_planning_engine_vo_deprecation.py` — ALIGNED: gates deprecated VO event types, records operator queue exceptions
+- `tests/test_policy_branches.py` — ALIGNED: branch create/commit/diff/merge lifecycle + version isolation
+- `tests/test_policy_linter.py` — ALIGNED: approval threshold structure + config hazard detection
+- `tests/test_policy_service.py` — ALIGNED: hash stability, slice/merge per kind, replay strategies
+- `tests/test_portal_input_validation.py` — ALIGNED: guards injection on unauthenticated vendor portal fields
+- `tests/test_proactive_insights_narration.py` — ALIGNED: narration fallbacks preserve rule output + insight IDs
+- `tests/test_procurement_chat.py` — ALIGNED: card building + decision dispatch through AP workflow
+- `tests/test_procurement_skill.py` — ALIGNED: tiered approval autonomy gates + PO lifecycle transitions
+- `tests/test_prompt_guard.py` — ALIGNED: detects/blocks injection at deterministic validation gate
+- `tests/test_purchase_order_routes.py` — ALIGNED: PO lifecycle endpoints + illegal-transition rejection
+- `tests/test_quickbooks_xero_intake.py` — ALIGNED: envelope parsing, signature verify, state-update derivation
+- `tests/test_rate_limit.py` — ALIGNED: rate-limit memory backend + middleware integration
+- `tests/test_recalibrate_confidence_gate.py` — ALIGNED: idempotent re-eval of old flat-gate records under tiered gates
+- `tests/test_reclassification_je.py` — ALIGNED: JE proposal shape, idempotency keys, cross-org isolation
+- `tests/test_report_export.py` — ALIGNED: aging/spend/posting-status report gen + CSV serialization
+- `tests/test_report_subscriptions.py` — ALIGNED: cadence math, delivery tracking, auto-pause on repeated failures
+- `tests/test_request_latency_fixes.py` — ALIGNED: non-blocking record_* paths + token-validation short-circuit
+- `tests/test_role_taxonomy.py` — ALIGNED: workspace/AP role rank ordering + legacy-predicate delegation
+- `tests/test_route_auth_policy_inventory.py` — ALIGNED: guards sensitive prefixes against unauthenticated regressions
+- `tests/test_runtime_surface_scope.py` — ALIGNED: strict-profile blocking of legacy surfaces + contract invariants
+- `tests/test_runtime_tenant_isolation.py` — ALIGNED: rejects empty org_id on runtime init, platform-mode semantics
+- `tests/test_runtime_triage_group8.py` — ALIGNED: failure classification, exception cascades, DB handle staleness
+- `tests/test_saml_sso.py` — ALIGNED: e2e SAML parse w/ signature verify, replay, audience-restriction gates
+- `tests/test_sample_data.py` — ALIGNED: idempotent load/clear + contamination guarantee at SQL layer
+- `tests/test_sanctions_screening.py` — ALIGNED: vendor screening state transitions + payment-gate enforcement
+- `tests/test_sap_adapter_fail_closed.py` — ALIGNED: non-live park fails closed when flag off
+- `tests/test_sap_b1_poll_celery_task.py` — ALIGNED: beat schedule registration + per-org isolation in polling
+- `tests/test_sap_fiori_audit_integration.py` — ALIGNED: e2e audit chain from SAP extension to decision_context
+- `tests/test_sap_s4hana_payment_path.py` — ALIGNED: connection-shape heuristic + S/4HANA payment polling
+- `tests/test_scheduled_reports.py` — ALIGNED: schedule retrieval, due-checking, cadence logic
+- `tests/test_secrets.py` — ALIGNED: deterministic dev generation, caching, env-var precedence
+- `tests/test_services_tenant_isolation.py` — ALIGNED: rejects empty org_id on services layer, platform-mode defaults
+- `tests/test_single_pass_cache.py` — ALIGNED: caching determinism + miss/hit behavior
+- `tests/test_single_pass_processor.py` — ALIGNED: prompt structure, response parsing, schema validation gate
+- `tests/test_slack_notifications.py` — ALIGNED: delivery retry queue + per-org channel routing
+- `tests/test_sod_enforcement.py` — ALIGNED: SoD validation, mode resolver, violation detection
+- `tests/test_specialist_agent.py` — ALIGNED: specialist wrapper isolation + router dispatch contract
+- `tests/test_specialist_circuit_breaker.py` — ALIGNED: circuit state machine + per-specialist quarantine
+- `tests/test_spend_analysis.py` — ALIGNED: spend aggregation, vendor metrics, GL categorization
+- `tests/test_state_audit_atomicity.py` — ALIGNED: state+audit commit atomicity, torn-write prevention
+- `tests/test_state_mutation_discipline.py` — MECHANICAL: regex fence detecting raw state mutations outside update_ap_item
+- `tests/test_state_observers.py` — ALIGNED: observer dispatch isolation + audit/vendor/notification side effects
+- `tests/test_subscription_quota_enforcement.py` — ALIGNED: tier-based saved-view caps + retention filtering
+- `tests/test_subscription_service.py` — ALIGNED: UsageStats legacy field mapping
+- `tests/test_subscription_tier_features.py` — ALIGNED: tier-comparison features + annual discount arithmetic
+- `tests/test_synthetic_invoice_suite.py` — ALIGNED: fixture integrity + extraction/validation against synthetic invoices
+- `tests/test_task_scheduler_tenant.py` — ALIGNED: org-scoped task notification routing + overdue isolation
+- `tests/test_tax_compliance.py` — ALIGNED: VAT ID formats, reverse charge, tax return calculations
+- `tests/test_team_invite_email.py` — ALIGNED: email composition + delivery state translation
+- `tests/test_team_invite_role_normalisation.py` — ALIGNED: thesis-role acceptance + normalisation
+- `tests/test_team_offboarding.py` — ALIGNED: deactivation, reactivation, auth layer enforcement
+- `tests/test_teams_audit_integration.py` — ALIGNED: Teams dispatch lands ui_surface in decision_context audit
+- `tests/test_teams_installations.py` — ALIGNED: AAD tenant installation mapping + fail-closed contract
+- `tests/test_teams_verify.py` — ALIGNED: JWT verification, JWKS caching, error mapping
+- `tests/test_tenant_isolation.py` — ALIGNED: query-param spoofing + resource-level org mismatch guards
+- `tests/test_three_way_match.py` — ALIGNED: match logic, line-item breakdown, idempotent audit emission
+- `tests/test_threshold_policy.py` — ALIGNED: resolution layering, persistence, vendor override CRUD
+- `tests/test_trust_arc.py` — ALIGNED: trust-arc activation phases + tier expansion lifecycle
+- `tests/test_user_offboarding.py` — ALIGNED: invite entity restrictions + offboarding cascade
+- `tests/test_v1_auth.py` — ALIGNED: legacy scopes -> new vocab mapping + revocation/expiry
+- `tests/test_v1_boundary_flags.py` — ALIGNED: feature flags gate routes + strict-profile allowlist
+- `tests/test_v1_core_completion.py` — ALIGNED: extension pipeline normalization + Teams interactive contract
+- `tests/test_v1_idempotency.py` — ALIGNED: hash determinism + idempotency key extraction
+- `tests/test_v1_integration.py` — ALIGNED: e2e agent flow w/ auth, rate limit, audit attribution
+- `tests/test_v1_rate_limit.py` — ALIGNED: per-key + per-org rate limit counters
+- `tests/test_v1_records.py` — ALIGNED: cursor encoding + public-field allowlist
+- `tests/test_v1_webhooks.py` — ALIGNED: secret generation, redaction, event-name allowlist
+- `tests/test_validate_launch_evidence.py` — ALIGNED: launch tracker parsing + readiness validation
+- `tests/test_validation_per_rule_audit.py` — ALIGNED: per-rule validation audit trail records every rule
+- `tests/test_vat_modeling.py` — ALIGNED: VAT calculation treatments + return box rollup
+- `tests/test_vat_return_forms.py` — ALIGNED: VAT form mapping preserves invariants per jurisdiction + API isolation
+- `tests/test_vendor_activation_sla.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_activation_slack.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_attribute_matcher.py` — ALIGNED: vendor profile matching + cross-org isolation
+- `tests/test_vendor_csv_import.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_dedup.py` — ALIGNED: dedup detection, merge consolidation, alias management
+- `tests/test_vendor_domain_lock.py` — ALIGNED: sender domain validation gates, processor bypass, mismatch block
+- `tests/test_vendor_domain_lookalike.py` — ALIGNED: homoglyph + edit-distance + TLD-swap impersonation detection
+- `tests/test_vendor_erp_push.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_erp_sync.py` — ALIGNED: vendor master sync detects new/deactivated/reactivated
+- `tests/test_vendor_inquiry.py` — ALIGNED: tenant isolation + status mapping on vendor invoice lookup (read-only)
+- `tests/test_vendor_issue_payloads.py` — MECHANICAL: shapes vendor detail + summary payloads, no invariant
+- `tests/test_vendor_kyc.py` — ALIGNED: KYC schema, risk scoring, iban_verified derivation
+- `tests/test_vendor_master_check.py` — ALIGNED: ERP master lookup gates AP intake + fuzzy fallback
+- `tests/test_vendor_onboarding_exceptions.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_onboarding_lifecycle.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_onboarding_state_machine.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_portal.py` — DEAD: module-level skip (vendor_onboarding_deferred), dormant VO
+- `tests/test_vendor_revalidation.py` — ALIGNED: in-flight AP items flagged when vendor status changes
+- `tests/test_vendor_risk_payload.py` — ALIGNED: risk score components in list + detail payloads
+- `tests/test_vendor_search.py` — ALIGNED: fuzzy matching primitives + hybrid scoring
+- `tests/test_vendor_statement_recon.py` — ALIGNED: reference + amount/date matching in reconciliation
+- `tests/test_vendor_status.py` — ALIGNED: vendor status gate on AP validation + audit emission
+- `tests/test_webhook_auth_hardening.py` — ALIGNED: source-inspection regression fence on auth landmines
+- `tests/test_workflow_hooks.py` — ALIGNED: expression conditions, WASM sandbox isolation, effect dispatch
+- `tests/test_workflow_isolation.py` — ALIGNED: tenant isolation on workflow specs + declarative boxes
+- `tests/test_workflow_specs.py` — ALIGNED: versioned spec authoring + version pinning for in-flight boxes
+- `tests/test_workspace_audit_export.py` — ALIGNED: async CSV export job lifecycle + cross-tenant gating
+- `tests/test_workspace_audit_search.py` — ALIGNED: audit search filtering, pagination, tenant isolation
+- `tests/test_workspace_audit_webhook_fanout.py` — ALIGNED: webhook dispatch enqueue + delivery log record
+- `tests/test_workspace_connection_health.py` — ALIGNED: connection health from audit events + webhook counters
+- `tests/test_workspace_custom_roles.py` — ALIGNED: custom role CRUD + permission resolver precedence
+- `tests/test_workspace_entity_roles.py` — ALIGNED: entity role override + approval ceiling enforcement
+- `tests/test_workspace_erp_field_mappings.py` — ALIGNED: field mapping CRUD w/ validation + audit on diff
+- `tests/test_workspace_fx.py` — ALIGNED: FX rate store, conversion paths, cross-currency rollup
+- `tests/test_workspace_org_settings.py` — ALIGNED: org rename + domain change with audit emission
+- `tests/test_workspace_reports.py` — ALIGNED: five fixed reports w/ time bucketing + cross-tenant isolation
+- `tests/test_workspace_rules.py` — ALIGNED: rule engine validation, conflict detection, wiring into decision service
 
 ## tests/erp_dom_regression  (1)
-- `tests/erp_dom_regression/profiles.py` — PENDING
+- `tests/erp_dom_regression/profiles.py` — MECHANICAL: ERP form fixture registry (QB/Xero/NS/SAP DOM profiles)
 
 ## ui/gmail-extension  (6)
-- `ui/gmail-extension/background.js` — PENDING
-- `ui/gmail-extension/config.js` — PENDING
-- `ui/gmail-extension/content-script.js` — PENDING
-- `ui/gmail-extension/queue-manager.js` — PENDING
-- `ui/gmail-extension/route-capture.js` — PENDING
-- `ui/gmail-extension/vitest.config.js` — PENDING
+- `ui/gmail-extension/background.js` — ALIGNED: service worker, retry + route handling (internal clearledgr storage keys, pre-rebrand)
+- `ui/gmail-extension/config.js` — ALIGNED: BACKEND_URL/WORKSPACE_URL point to soldenai.com
+- `ui/gmail-extension/content-script.js` — DRIFT: host-pin guard checks stale api.clearledgr.com vs config api.soldenai.com (self-heal never fires)
+- `ui/gmail-extension/queue-manager.js` — DRIFT: host-pin guard checks stale api.clearledgr.com vs config api.soldenai.com
+- `ui/gmail-extension/route-capture.js` — MECHANICAL: sessionStorage capture for pending routes
+- `ui/gmail-extension/vitest.config.js` — MECHANICAL: test config, Preact JSX factory
 
 ## ui/gmail-extension/build  (6)
-- `ui/gmail-extension/build/background.js` — PENDING
-- `ui/gmail-extension/build/config 2.js` — PENDING
-- `ui/gmail-extension/build/config.js` — PENDING
-- `ui/gmail-extension/build/content-script.js` — PENDING
-- `ui/gmail-extension/build/queue-manager.js` — PENDING
-- `ui/gmail-extension/build/route-capture.js` — PENDING
+- `ui/gmail-extension/build/background.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/config 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/config.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/content-script.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/queue-manager.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/route-capture.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
 
 ## ui/gmail-extension/build/clients  (14)
-- `ui/gmail-extension/build/clients/BaseClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/BaseClient.js` — PENDING
-- `ui/gmail-extension/build/clients/CategorizationClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/CategorizationClient.js` — PENDING
-- `ui/gmail-extension/build/clients/ClassificationClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/ClassificationClient.js` — PENDING
-- `ui/gmail-extension/build/clients/ExceptionClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/ExceptionClient.js` — PENDING
-- `ui/gmail-extension/build/clients/ExtractionClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/ExtractionClient.js` — PENDING
-- `ui/gmail-extension/build/clients/MatchingClient 2.js` — PENDING
-- `ui/gmail-extension/build/clients/MatchingClient.js` — PENDING
-- `ui/gmail-extension/build/clients/emailParsing 2.js` — PENDING
-- `ui/gmail-extension/build/clients/emailParsing.js` — PENDING
+- `ui/gmail-extension/build/clients/BaseClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/BaseClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/CategorizationClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/CategorizationClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/ClassificationClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/ClassificationClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/ExceptionClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/ExceptionClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/ExtractionClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/ExtractionClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/MatchingClient 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/MatchingClient.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
+- `ui/gmail-extension/build/clients/emailParsing 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/clients/emailParsing.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
 
 ## ui/gmail-extension/build/engines  (2)
-- `ui/gmail-extension/build/engines/DiscoveryEngine 2.js` — PENDING
-- `ui/gmail-extension/build/engines/DiscoveryEngine.js` — PENDING
+- `ui/gmail-extension/build/engines/DiscoveryEngine 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/engines/DiscoveryEngine.js` — MECHANICAL: checked-in build artifact (generated from src/, candidate for .gitignore)
 
 ## ui/gmail-extension/build/workflows  (2)
-- `ui/gmail-extension/build/workflows/registry 2.js` — PENDING
-- `ui/gmail-extension/build/workflows/registry.js` — PENDING
+- `ui/gmail-extension/build/workflows/registry 2.js` — DEAD: macOS duplicate-copy cruft (" 2.js"), should be removed/gitignored
+- `ui/gmail-extension/build/workflows/registry.js` — MECHANICAL: built workflow registry stub
 
 ## ui/gmail-extension/clients  (7)
-- `ui/gmail-extension/clients/BaseClient.js` — PENDING
-- `ui/gmail-extension/clients/CategorizationClient.js` — PENDING
-- `ui/gmail-extension/clients/ClassificationClient.js` — PENDING
-- `ui/gmail-extension/clients/ExceptionClient.js` — PENDING
-- `ui/gmail-extension/clients/ExtractionClient.js` — PENDING
-- `ui/gmail-extension/clients/MatchingClient.js` — PENDING
-- `ui/gmail-extension/clients/emailParsing.js` — PENDING
+- `ui/gmail-extension/clients/BaseClient.js` — MECHANICAL: abstract base client
+- `ui/gmail-extension/clients/CategorizationClient.js` — ALIGNED: GL categorization heuristics, sensible fallback codes
+- `ui/gmail-extension/clients/ClassificationClient.js` — ALIGNED: email type classification, no dead endpoints
+- `ui/gmail-extension/clients/ExceptionClient.js` — ALIGNED: routes exceptions via ensureExceptionTask, no contract drift
+- `ui/gmail-extension/clients/ExtractionClient.js` — DRIFT: en-US locale fallback in formatAmount (EU product)
+- `ui/gmail-extension/clients/MatchingClient.js` — ALIGNED: matchInvoiceViaAPI + getVendorInsightsViaAPI, contract matches
+- `ui/gmail-extension/clients/emailParsing.js` — DRIFT: inconsistent EUR vs USD currency handling
 
 ## ui/gmail-extension/engines  (1)
-- `ui/gmail-extension/engines/DiscoveryEngine.js` — PENDING
+- `ui/gmail-extension/engines/DiscoveryEngine.js` — ALIGNED: transaction classification + extraction, real endpoints
 
 ## ui/gmail-extension/src/components  (9)
-- `ui/gmail-extension/src/components/ActionDialog.js` — PENDING
-- `ui/gmail-extension/src/components/ActionDialog.test.js` — PENDING
-- `ui/gmail-extension/src/components/BudgetPausedBanner.js` — PENDING
-- `ui/gmail-extension/src/components/InviteVendorModal.js` — PENDING
-- `ui/gmail-extension/src/components/OnboardingFlow.js` — PENDING
-- `ui/gmail-extension/src/components/SidebarApp.js` — PENDING
-- `ui/gmail-extension/src/components/SidebarApp.test.js` — PENDING
-- `ui/gmail-extension/src/components/ThreadSidebar.js` — PENDING
-- `ui/gmail-extension/src/components/ThreadSidebar.test.js` — PENDING
+- `ui/gmail-extension/src/components/ActionDialog.js` — MECHANICAL: reason-sheet modal UI
+- `ui/gmail-extension/src/components/ActionDialog.test.js` — MECHANICAL: test
+- `ui/gmail-extension/src/components/BudgetPausedBanner.js` — DRIFT: "Claude" vendor name in comment + hardcoded USD cost display
+- `ui/gmail-extension/src/components/InviteVendorModal.js` — DEAD: posts /api/vendors/{name}/onboarding/invite (vendor onboarding parked dormant)
+- `ui/gmail-extension/src/components/OnboardingFlow.js` — ALIGNED: onboarding steps wired to bootstrap/integrations/policies, £ example
+- `ui/gmail-extension/src/components/SidebarApp.js` — ALIGNED: AP-first sidebar, real /api/ap/items + approval routes
+- `ui/gmail-extension/src/components/SidebarApp.test.js` — MECHANICAL: test
+- `ui/gmail-extension/src/components/ThreadSidebar.js` — ALIGNED: fixed sections (Invoice/Match/Vendor/Actions), real contract endpoints
+- `ui/gmail-extension/src/components/ThreadSidebar.test.js` — MECHANICAL: test
 
 ## ui/gmail-extension/src  (4)
-- `ui/gmail-extension/src/inboxsdk-layer.js` — PENDING
-- `ui/gmail-extension/src/settings-tab.js` — PENDING
-- `ui/gmail-extension/src/styles.js` — PENDING
-- `ui/gmail-extension/src/thesis-compliance.test.js` — PENDING
+- `ui/gmail-extension/src/inboxsdk-layer.js` — DRIFT: legacy clearledgr/* route-ids + __clearledgr_* storage keys (internal, pre-rebrand)
+- `ui/gmail-extension/src/settings-tab.js` — DRIFT: legacy clearledgr-settings-tab id + clearledgr_onboarding_dismissed key (internal)
+- `ui/gmail-extension/src/styles.js` — DRIFT: legacy mint #00D67E accent + navy #0A1628 + stale "mint green" DESIGN.md comment (extension not rebrand-swept)
+- `ui/gmail-extension/src/thesis-compliance.test.js` — ALIGNED: enforces Gmail thread-sidebar no-approve-action doctrine
 
 ## ui/gmail-extension/src/routes  (3)
-- `ui/gmail-extension/src/routes/oauth-bridge.js` — PENDING
-- `ui/gmail-extension/src/routes/route-helpers.js` — PENDING
-- `ui/gmail-extension/src/routes/workspace-shell-api.js` — PENDING
+- `ui/gmail-extension/src/routes/oauth-bridge.js` — MECHANICAL: OAuth popup coordinator, postMessage only
+- `ui/gmail-extension/src/routes/route-helpers.js` — ALIGNED: role capability mapping + state labels
+- `ui/gmail-extension/src/routes/workspace-shell-api.js` — ALIGNED: /api/workspace/* adapter, bearer auth, handles 401/403
 
 ## ui/gmail-extension/src/test-utils  (1)
-- `ui/gmail-extension/src/test-utils/happy-dom-env.js` — PENDING
+- `ui/gmail-extension/src/test-utils/happy-dom-env.js` — MECHANICAL: test harness utility
 
 ## ui/gmail-extension/src/utils  (13)
-- `ui/gmail-extension/src/utils/capabilities.js` — PENDING
-- `ui/gmail-extension/src/utils/document-types.js` — PENDING
-- `ui/gmail-extension/src/utils/formatters.js` — PENDING
-- `ui/gmail-extension/src/utils/formatters.test.js` — PENDING
-- `ui/gmail-extension/src/utils/inbox-route.js` — PENDING
-- `ui/gmail-extension/src/utils/perf-budget.js` — PENDING
-- `ui/gmail-extension/src/utils/record-route.js` — PENDING
-- `ui/gmail-extension/src/utils/roles.js` — PENDING
-- `ui/gmail-extension/src/utils/store.js` — PENDING
-- `ui/gmail-extension/src/utils/store.test.js` — PENDING
-- `ui/gmail-extension/src/utils/vendor-route.js` — PENDING
-- `ui/gmail-extension/src/utils/work-actions.js` — PENDING
-- `ui/gmail-extension/src/utils/workspace-link.js` — PENDING
+- `ui/gmail-extension/src/utils/capabilities.js` — ALIGNED: role-based capability checks, safe fallbacks
+- `ui/gmail-extension/src/utils/document-types.js` — ALIGNED: doc-type aliases + labels + guidance
+- `ui/gmail-extension/src/utils/formatters.js` — DRIFT: legacy mint #00D67E state colors (not teal/success token)
+- `ui/gmail-extension/src/utils/formatters.test.js` — ALIGNED: formatAmount tests cover EUR/GBP without USD bias
+- `ui/gmail-extension/src/utils/inbox-route.js` — DRIFT: legacy clearledgr/ route IDs (internal navigation, pre-rebrand)
+- `ui/gmail-extension/src/utils/perf-budget.js` — MECHANICAL: perf SLA tracking
+- `ui/gmail-extension/src/utils/record-route.js` — DRIFT: legacy clearledgr/invoice/:id route id (internal, pre-rebrand)
+- `ui/gmail-extension/src/utils/roles.js` — MECHANICAL: role normalization helpers
+- `ui/gmail-extension/src/utils/store.js` — MECHANICAL: reactive state store
+- `ui/gmail-extension/src/utils/store.test.js` — MECHANICAL: store unit tests
+- `ui/gmail-extension/src/utils/vendor-route.js` — DRIFT: legacy clearledgr/vendor/:name route id (internal, pre-rebrand)
+- `ui/gmail-extension/src/utils/work-actions.js` — ALIGNED: doc-type-aware workflow state logic
+- `ui/gmail-extension/src/utils/workspace-link.js` — ALIGNED: workspace deep-links to soldenai.com
 
 ## ui/gmail-extension/utils  (2)
-- `ui/gmail-extension/utils/ap_classifier.js` — PENDING
-- `ui/gmail-extension/utils/retry.js` — PENDING
+- `ui/gmail-extension/utils/ap_classifier.js` — ALIGNED: email classification heuristics, currency-agnostic
+- `ui/gmail-extension/utils/retry.js` — MECHANICAL: exponential backoff retry utility
 
 ## ui/gmail-extension/workflows  (1)
-- `ui/gmail-extension/workflows/registry.js` — PENDING
+- `ui/gmail-extension/workflows/registry.js` — ALIGNED: workflow registry, correct workflow IDs
 
 ## ui/outlook-addin/src  (1)
-- `ui/outlook-addin/src/outlook-entry.js` — PENDING
+- `ui/outlook-addin/src/outlook-entry.js` — ALIGNED: Office.js entry, backend auth, shared Preact sidebar, action handlers
 
 ## ui/shared  (3)
-- `ui/shared/hooks.js` — PENDING
-- `ui/shared/intent-labels.js` — PENDING
-- `ui/shared/tokens.js` — PENDING
+- `ui/shared/hooks.js` — MECHANICAL: shared Preact hooks (ErrorBoundary etc.)
+- `ui/shared/intent-labels.js` — ALIGNED: intent label map matches backend available_intents contract
+- `ui/shared/tokens.js` — MECHANICAL: shared design tokens (STATE_LABELS/CSS classes, no hardcoded hex)
 
 ## ui/web-app  (2)
-- `ui/web-app/server.js` — PENDING
-- `ui/web-app/vite.config.js` — PENDING
+- `ui/web-app/server.js` — MECHANICAL: Express static proxy, no user-facing surface
+- `ui/web-app/vite.config.js` — MECHANICAL: build config, API proxy
 
 ## ui/web-app/src  (2)
-- `ui/web-app/src/App.js` — PENDING
-- `ui/web-app/src/main.js` — PENDING
+- `ui/web-app/src/App.js` — ALIGNED: route IA (Primary/WORKFLOWS/DATA/ADMIN) wired to real endpoints
+- `ui/web-app/src/main.js` — MECHANICAL: Preact render entry + style imports
 
 ## ui/web-app/src/api  (1)
-- `ui/web-app/src/api/client.js` — PENDING
+- `ui/web-app/src/api/client.js` — ALIGNED: CSRF handling, real /auth + /api base, retries on 502/503/504
 
 ## ui/web-app/src/auth  (6)
-- `ui/web-app/src/auth/AuthGate.js` — PENDING
-- `ui/web-app/src/auth/InviteAcceptPage.js` — PENDING
-- `ui/web-app/src/auth/LegalPages.js` — PENDING
-- `ui/web-app/src/auth/LoginPage.js` — PENDING
-- `ui/web-app/src/auth/OAuthIcons.js` — PENDING
-- `ui/web-app/src/auth/useSession.js` — PENDING
+- `ui/web-app/src/auth/AuthGate.js` — ALIGNED: gate wired to useSession, redirects to /login when unauthenticated
+- `ui/web-app/src/auth/InviteAcceptPage.js` — ALIGNED: /auth/invites/preview + accept, plain copy
+- `ui/web-app/src/auth/LegalPages.js` — DRIFT: "Railway-managed infrastructure" names infra vendor in user-facing legal copy
+- `ui/web-app/src/auth/LoginPage.js` — ALIGNED: Google/Microsoft OAuth start + password login, real endpoints
+- `ui/web-app/src/auth/OAuthIcons.js` — MECHANICAL: official Google/Microsoft SVG marks
+- `ui/web-app/src/auth/useSession.js` — ALIGNED: session cache, /auth/me probe, 401 stale-session event
 
 ## ui/web-app/src/components  (2)
-- `ui/web-app/src/components/AgentActivityRibbon.js` — PENDING
-- `ui/web-app/src/components/StatePrimitives.js` — PENDING
+- `ui/web-app/src/components/AgentActivityRibbon.js` — ALIGNED: /api/workspace/dashboard/recent-activity, on-brand empty state
+- `ui/web-app/src/components/StatePrimitives.js` — ALIGNED: reusable empty/loading/error primitives
 
 ## ui/web-app/src/lib  (2)
-- `ui/web-app/src/lib/faviconBadge.js` — PENDING
-- `ui/web-app/src/lib/faviconBadge.test.js` — PENDING
+- `ui/web-app/src/lib/faviconBadge.js` — ALIGNED: favicon badge logic, red badge justified
+- `ui/web-app/src/lib/faviconBadge.test.js` — MECHANICAL: unit tests for badge formatting
 
 ## ui/web-app/src/pages  (1)
-- `ui/web-app/src/pages/PlaceholderPage.js` — PENDING
+- `ui/web-app/src/pages/PlaceholderPage.js` — ALIGNED: stub for in-progress pages, accurate copy
 
 ## ui/web-app/src/routes/pages  (37)
-- `ui/web-app/src/routes/pages/ActivityPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ActivityRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/ApiKeysPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ApiKeysRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/AuditLogPage.js` — PENDING
-- `ui/web-app/src/routes/pages/AuditLogRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/ConnectionsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ConnectionsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/ExceptionsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ExceptionsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/HealthPage.js` — PENDING
-- `ui/web-app/src/routes/pages/HealthRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/HomePage.js` — PENDING
-- `ui/web-app/src/routes/pages/OnboardingPage.js` — PENDING
-- `ui/web-app/src/routes/pages/PlanPage.js` — PENDING
-- `ui/web-app/src/routes/pages/PlanRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/ProcurementPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ProcurementPage.test.js` — PENDING
-- `ui/web-app/src/routes/pages/ProcurementRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/RecordDetailPage.js` — PENDING
-- `ui/web-app/src/routes/pages/RecordDetailRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/RecordsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/RecordsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/ReportsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/ReportsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/RulesPage.js` — PENDING
-- `ui/web-app/src/routes/pages/RulesRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/SettingsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/SettingsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/StatusPage.js` — PENDING
-- `ui/web-app/src/routes/pages/VendorDetailPage.js` — PENDING
-- `ui/web-app/src/routes/pages/VendorDetailRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/VendorsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/VendorsRoute.js` — PENDING
-- `ui/web-app/src/routes/pages/WorkflowsPage.js` — PENDING
-- `ui/web-app/src/routes/pages/WorkflowsPage.test.js` — PENDING
-- `ui/web-app/src/routes/pages/WorkflowsRoute.js` — PENDING
+- `ui/web-app/src/routes/pages/ActivityPage.js` — ALIGNED: recent-activity + SSE stream, on-brand copy
+- `ui/web-app/src/routes/pages/ActivityRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/ApiKeysPage.js` — ALIGNED: /api/workspace/api-keys + scopes catalog, real
+- `ui/web-app/src/routes/pages/ApiKeysRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/AuditLogPage.js` — ALIGNED: audit search/event/webhooks/chain-status/export, real
+- `ui/web-app/src/routes/pages/AuditLogRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/ConnectionsPage.js` — ALIGNED: gmail/outlook/slack/teams/erp integration endpoints
+- `ui/web-app/src/routes/pages/ConnectionsRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/ExceptionsPage.js` — ALIGNED: /api/admin/box/exceptions list+resolve, semantic severity colors
+- `ui/web-app/src/routes/pages/ExceptionsRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/HealthPage.js` — ALIGNED: bootstrap.health + /api/ops/monitoring-health
+- `ui/web-app/src/routes/pages/HealthRoute.js` — MECHANICAL: thin route wrapper
+- `ui/web-app/src/routes/pages/HomePage.js` — ALIGNED: control-center hero (activity ribbon + stats), brand tokens
+- `ui/web-app/src/routes/pages/OnboardingPage.js` — ALIGNED: wizard wired to /api/workspace/onboarding/*, ERP-first
+- `ui/web-app/src/routes/pages/PlanPage.js` — DRIFT: hardcoded USD ($/seat/mo) pricing display in EU product
+- `ui/web-app/src/routes/pages/PlanRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/ProcurementPage.js` — ALIGNED: PO lifecycle /api/workspace/purchase-orders, currency-aware
+- `ui/web-app/src/routes/pages/ProcurementPage.test.js` — MECHANICAL: test harness
+- `ui/web-app/src/routes/pages/ProcurementRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/RecordDetailPage.js` — ALIGNED: intervention surface, INTERVENTION_INTENTS whitelist, canonical audit
+- `ui/web-app/src/routes/pages/RecordDetailRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/RecordsPage.js` — ALIGNED: read-only records directory, dense list (control-center idiom)
+- `ui/web-app/src/routes/pages/RecordsRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/ReportsPage.js` — ALIGNED: five fixed reports + inline SVG charts + CSV/PDF download
+- `ui/web-app/src/routes/pages/ReportsRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/RulesPage.js` — ALIGNED: rule editor /api/workspace/rules*, JSON-mode v1, schema validate
+- `ui/web-app/src/routes/pages/RulesRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/SettingsPage.js` — ALIGNED: admin surface (GL map, match-config, users, keys), capability-gated
+- `ui/web-app/src/routes/pages/SettingsRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/StatusPage.js` — ALIGNED: internal health page /health, semantic tone mapping
+- `ui/web-app/src/routes/pages/VendorDetailPage.js` — ALIGNED: vendor profile /api/ap/items/vendors/{name}, currency-aware
+- `ui/web-app/src/routes/pages/VendorDetailRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/VendorsPage.js` — ALIGNED: vendor directory, mixed-currency-safe sums, /api/ap/items/vendors
+- `ui/web-app/src/routes/pages/VendorsRoute.js` — MECHANICAL: route adapter
+- `ui/web-app/src/routes/pages/WorkflowsPage.js` — ALIGNED: no-code workflow builder, /api/workspace/workflow-specs, validate->save->activate
+- `ui/web-app/src/routes/pages/WorkflowsPage.test.js` — MECHANICAL: test harness for builder state machine
+- `ui/web-app/src/routes/pages/WorkflowsRoute.js` — MECHANICAL: route adapter
 
 ## ui/web-app/src/routes  (2)
-- `ui/web-app/src/routes/pipeline-views.js` — PENDING
-- `ui/web-app/src/routes/route-helpers.js` — PENDING
+- `ui/web-app/src/routes/pipeline-views.js` — ALIGNED: shared slice/view preference logic, localStorage v2
+- `ui/web-app/src/routes/route-helpers.js` — ALIGNED: formatters use Europe/London + en-GB (EU), capability gates, no USD default
 
 ## ui/web-app/src/shell  (15)
-- `ui/web-app/src/shell/AppFooter.js` — PENDING
-- `ui/web-app/src/shell/AppShell.js` — PENDING
-- `ui/web-app/src/shell/BootstrapContext.js` — PENDING
-- `ui/web-app/src/shell/BrandMark.js` — PENDING
-- `ui/web-app/src/shell/CommandK.js` — PENDING
-- `ui/web-app/src/shell/EntityContext.js` — PENDING
-- `ui/web-app/src/shell/EntitySwitcher.js` — PENDING
-- `ui/web-app/src/shell/ErrorBoundary.js` — PENDING
-- `ui/web-app/src/shell/MobileShellContext.js` — PENDING
-- `ui/web-app/src/shell/OnboardingGate.js` — PENDING
-- `ui/web-app/src/shell/SidebarNav.js` — PENDING
-- `ui/web-app/src/shell/SidebarNav.test.js` — PENDING
-- `ui/web-app/src/shell/Toast.js` — PENDING
-- `ui/web-app/src/shell/Topbar.js` — PENDING
-- `ui/web-app/src/shell/usePageProps.js` — PENDING
+- `ui/web-app/src/shell/AppFooter.js` — ALIGNED: /health, correct branding + mailto, neutral copy
+- `ui/web-app/src/shell/AppShell.js` — ALIGNED: shell plumbing (SidebarNav/Topbar/CommandK/ErrorBoundary)
+- `ui/web-app/src/shell/BootstrapContext.js` — ALIGNED: /api/workspace/bootstrap, org_id/user, favicon badge
+- `ui/web-app/src/shell/BrandMark.js` — ALIGNED: lockup variants (navy+teal / white), no hardcoded hex
+- `ui/web-app/src/shell/CommandK.js` — ALIGNED: palette + live /api/ap/items/search, correct pages
+- `ui/web-app/src/shell/EntityContext.js` — ALIGNED: /api/workspace/entities, persists selection
+- `ui/web-app/src/shell/EntitySwitcher.js` — ALIGNED: entity dropdown when >1, "All entities" reset
+- `ui/web-app/src/shell/ErrorBoundary.js` — ALIGNED: standard error boundary, plain copy, no AI-tells
+- `ui/web-app/src/shell/MobileShellContext.js` — MECHANICAL: drawer state manager, 760px breakpoint
+- `ui/web-app/src/shell/OnboardingGate.js` — ALIGNED: redirects to /onboarding when not completed, correct allowlist
+- `ui/web-app/src/shell/SidebarNav.js` — ALIGNED: light rail, four groups, teal-soft active fill, lowercase labels
+- `ui/web-app/src/shell/SidebarNav.test.js` — ALIGNED: tests nav grouping + ordering + "Builder" label
+- `ui/web-app/src/shell/Toast.js` — ALIGNED: toast provider, solden:action-error, aria-live
+- `ui/web-app/src/shell/Topbar.js` — ALIGNED: workspace name + role pill, user menu, plain copy, ⌘K hint
+- `ui/web-app/src/shell/usePageProps.js` — ALIGNED: standardized page prop bundle
 
 ## ui/web-app/src/utils  (10)
-- `ui/web-app/src/utils/capabilities.js` — PENDING
-- `ui/web-app/src/utils/document-types.js` — PENDING
-- `ui/web-app/src/utils/formatters.js` — PENDING
-- `ui/web-app/src/utils/htm.js` — PENDING
-- `ui/web-app/src/utils/perf-budget.js` — PENDING
-- `ui/web-app/src/utils/record-route.js` — PENDING
-- `ui/web-app/src/utils/roles.js` — PENDING
-- `ui/web-app/src/utils/store.js` — PENDING
-- `ui/web-app/src/utils/vendor-route.js` — PENDING
-- `ui/web-app/src/utils/work-actions.js` — PENDING
+- `ui/web-app/src/utils/capabilities.js` — ALIGNED: workspace_role (v89) + legacy fallback resolver
+- `ui/web-app/src/utils/document-types.js` — ALIGNED: doc-type normalization, AP-framed labels, operational guidance
+- `ui/web-app/src/utils/formatters.js` — DRIFT: STATE_COLORS hardcodes legacy mint #00D67E (not --success/teal token)
+- `ui/web-app/src/utils/htm.js` — MECHANICAL: htm wrapper bound to h
+- `ui/web-app/src/utils/perf-budget.js` — MECHANICAL: perf budgets + telemetry beacon
+- `ui/web-app/src/utils/record-route.js` — ALIGNED: /records/:id routing, localStorage persistence
+- `ui/web-app/src/utils/roles.js` — ALIGNED: role normalization, ops/admin access predicates
+- `ui/web-app/src/utils/store.js` — MECHANICAL: reactive store with subscribe/update
+- `ui/web-app/src/utils/vendor-route.js` — ALIGNED: /vendors/:name routing, URL-safe encode/decode
+- `ui/web-app/src/utils/work-actions.js` — ALIGNED: AP state/action helpers, operational copy
 
 ---
 
@@ -1103,3 +1103,22 @@ DEAD:dormant-VO (deliberate, deferred 2026-04-30): vendor_bootstrap, vendor_csv_
 
 ### RESOLVED (2026-05-25) — all solden findings fixed (then tests/ui review next)
 Broken live paths: slack_digest (runtime keys), trust_arc (arg order), scheduled_reports + workspace_shell (extract_spreadsheet_id as module fn), recon_skill (removed — vestigial; recon is AP-subordinate), correction_learning (_learned_rules), agent_reasoning (downgrade-only: can't force auto-approve). In-memory: email_tasks (lazy db proxy + guarded init); calendar_ooo/budget_awareness/conversational_agent were FALSE POSITIVES (verified). Strict-profile 404s: ap audit/export, ops/box-health, netsuite_panel actions (allowlisted; cap 455->460). DEAD removed: error_codes, pattern_store + models/patterns + shim, slack_notifications 2 orphan fns (match_engine was a FALSE POSITIVE — live registry, kept). Doc/brand/hygiene: gmail_api OAuth-payload logging removed, gmail_webhooks OAuth page rebranded navy/teal/Inter, vendor_enrichment actor_type, ap_item_detail/payment_confirmations/vendor_store/box_export/sap_z_field/cli_health docstrings. SKIPPED: workspace_semaphore clearledgr: Redis key (backend brand intentional). DEFERRED: org_config admin gate (dormant — router disabled in strict profile, 4 tests assert it disabled, unreachable in prod).
+
+### Wave 4+5 (2026-05-25) — tests (304) + ui (155); ALL 914 files banked, 0 PENDING
+TESTS — one real finding, rest are dormant-VO by design or false positives (verified):
+- [ ] REAL `tests/test_agent_background.py` — both tests lie about isolation: `test_check_overdue_tasks_continues_when_one_org_fails` is named for isolation but asserts the OPPOSITE (`delivered == []`); `test_run_loop_iteration_isolates_org_failures` tests its own inline try/except wrapper, not the real `_run_loop`. Underlying PRODUCTION BUG: `agent_background._check_overdue_tasks` (L728) has no per-org try/except, so the first org's failure skips ALL remaining orgs' overdue/stale Slack summaries. Every other sweep in this file wraps each org. FIX: per-org guard + rewrite the 2 tests to assert real isolation.
+- NOTE (no fix): 11 `test_vendor_onboarding*/test_vendor_activation*/test_vendor_csv_import/test_vendor_erp_push/test_box_invariants/test_migration_v42/test_onboarding_token_single_use` are module-level skipped — dormant VO by design (deferred 2026-04-30, option-value). Leave.
+- FALSE POSITIVES reclassified ALIGNED: test_historical_replay (9 real asserts on _values_match), test_finance_agent_runtime (skill-contract coverage; bounded-agent invariant lives in test_ap_decision/test_execution_engine/test_gate_constraint_enforcement), test_api_endpoints (endpoint-exists are legit regression guards).
+
+UI — themes: (a) gmail-extension never got the 2026-05-02 rebrand sweep; (b) checked-in build/ artifacts + macOS dupes; (c) minor currency/vendor-name copy.
+REAL functional:
+- [ ] DRIFT `ui/gmail-extension/content-script.js` + `queue-manager.js` — self-heal host guard pins stale `api.clearledgr.com`; config.js now `api.soldenai.com` → guard never fires (stale ephemeral cached backend never replaced). FIX: derive canonical host from CONFIG.BACKEND_URL (or confirm live backend domain).
+- [ ] DRIFT `ui/web-app/src/utils/formatters.js` — STATE_COLORS hardcodes legacy mint `#00D67E` for approved/posted/closed (rebranded SPA should use `--success`/teal token). Contained, clean fix.
+- [ ] DRIFT `ui/gmail-extension/src/components/BudgetPausedBanner.js` — "Claude" vendor name in comment + hardcoded USD cost display. (no-vendor-names rule.)
+- [ ] DEAD? `ui/gmail-extension/src/components/InviteVendorModal.js` — posts /api/vendors/{name}/onboarding/invite (VO parked dormant). VERIFY if still mounted.
+NEEDS-MO-DECISION (scope/intent):
+- [ ] gmail-extension full rebrand sweep: `src/styles.js` (mint #00D67E accent, navy #0A1628 vs DESIGN #0A1F44, stale "mint green" DESIGN.md comment) + `src/utils/formatters.js` mint state colors. Larger re-skin.
+- [ ] Internal clearledgr identifiers (likely leave — backend brand intentionally untouched; risky to rename live storage/route keys): inboxsdk-layer, settings-tab, inbox-route, record-route, vendor-route, background.js (clearledgr/* route ids + __clearledgr_* localStorage keys).
+- [ ] Repo hygiene: `ui/gmail-extension/build/*` checked-in build artifacts (13) + 10 macOS " 2.js" duplicate-copy files → .gitignore + remove.
+- [ ] `ui/web-app/src/auth/LegalPages.js` — "Railway-managed infrastructure" names infra vendor in user-facing legal copy. Genericize or move to a proper sub-processor list.
+- [ ] Currency (minor): PlanPage USD pricing, ExtractionClient en-US locale, emailParsing EUR/USD inconsistency.
