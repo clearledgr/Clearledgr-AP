@@ -37,8 +37,13 @@ EXPECTED_UNAUTHENTICATED_SENSITIVE_ROUTES = {
     ("POST", "/extension/sap/exchange"),
     ("GET", "/extension/ap-items/by-sap-invoice"),
     # NetSuite SuiteApp panel — Suitelet-minted HMAC JWT verified by
-    # the handler. See clearledgr/api/netsuite_panel.py.
+    # the handler (_verify_panel_jwt). See clearledgr/api/netsuite_panel.py.
+    # The GET lookup and the three POST action routes all authenticate via
+    # the same in-handler HMAC check, not get_current_user.
     ("GET", "/extension/ap-items/by-netsuite-bill/{ns_internal_id}"),
+    ("POST", "/extension/ap-items/by-netsuite-bill/{ns_internal_id}/approve"),
+    ("POST", "/extension/ap-items/by-netsuite-bill/{ns_internal_id}/reject"),
+    ("POST", "/extension/ap-items/by-netsuite-bill/{ns_internal_id}/request-info"),
 }
 
 
@@ -63,6 +68,10 @@ def test_sensitive_route_inventory_requires_auth_by_default():
                 # bare get_current_user. Used by the workflow-spec authoring API.
                 "require_workspace_admin", "require_workspace_owner",
                 "require_workspace_member",
+                # Financial-controller gate: Depends(get_current_user) + enforces
+                # the FC/workspace-admin role (legacy error string). Authenticates
+                # like the workspace guards above. Used by /api/ap/items/consolidated.
+                "require_financial_controller",
             }
             & dependency_names
         )
