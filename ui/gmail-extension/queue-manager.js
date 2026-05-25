@@ -18,6 +18,15 @@ function normalizeBackendUrl(raw) {
   }
 }
 
+// Hosts we trust as canonical production backends. The self-heal below only
+// replaces a stale ephemeral cached URL when the configured host is one of
+// these. Keep both the current host (api.soldenai.com, see config.js) and the
+// legacy runtime domain (api.clearledgr.com) so cached configs still self-heal.
+const TRUSTED_PRODUCTION_API_HOSTS = new Set([
+  'api.soldenai.com',
+  'api.clearledgr.com',
+]);
+
 function selectBackendUrl(storedUrl, configuredUrl) {
   const configured = normalizeBackendUrl(configuredUrl);
   const stored = normalizeBackendUrl(storedUrl);
@@ -34,7 +43,7 @@ function selectBackendUrl(storedUrl, configuredUrl) {
       storedHost === 'localhost' ||
       storedHost.endsWith('.trycloudflare.com') ||
       storedHost.endsWith('.up.railway.app');
-    if (configuredSecure && configuredHost === 'api.clearledgr.com' && looksEphemeralStoredHost) {
+    if (configuredSecure && TRUSTED_PRODUCTION_API_HOSTS.has(configuredHost) && looksEphemeralStoredHost) {
       return configured;
     }
   } catch (_) {
@@ -52,7 +61,7 @@ function shouldClearStoredBackendOverride(storedUrl, configuredUrl) {
     const storedParsed = new URL(stored);
     const configuredHost = configuredParsed.hostname.toLowerCase();
     const storedHost = storedParsed.hostname.toLowerCase();
-    return configuredParsed.protocol === 'https:' && configuredHost === 'api.clearledgr.com' && (
+    return configuredParsed.protocol === 'https:' && TRUSTED_PRODUCTION_API_HOSTS.has(configuredHost) && (
       storedHost === '127.0.0.1' ||
       storedHost === 'localhost' ||
       storedHost.endsWith('.trycloudflare.com') ||
