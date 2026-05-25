@@ -1147,7 +1147,7 @@ class CorrectionLearningService:
             if not normalized:
                 return []
             results = []
-            for rule in self._rules:
+            for rule in self._learned_rules.values():
                 if rule.rule_type == "vendor_alias" and str(rule.condition.get("raw_vendor", "")).strip().lower() == normalized:
                     results.append({
                         "field": "vendor",
