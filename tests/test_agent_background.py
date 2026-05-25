@@ -5,33 +5,29 @@ import asyncio
 from solden.services import agent_background as agent_background_module
 
 
-def test_run_loop_iteration_isolates_org_failures(monkeypatch):
-    """_check_approval_timeouts per-org calls are invoked in sequence and errors
-    in one org propagate (the outer _run_loop catches them)."""
-    seen = []
+def test_check_approval_timeouts_self_isolates_org_failure(monkeypatch):
+    """_check_approval_timeouts wraps its whole body in try/except, so a failure
+    inside one org's run (here: a broken get_db) is swallowed and never raised.
 
-    async def _approval_timeout(org_id):
-        seen.append(org_id)
-        if org_id == "org-a":
-            raise RuntimeError("boom")
+    This is the real per-org isolation the background loop relies on at the
+    `for org_id in org_ids: await _check_approval_timeouts(org_id)` call site:
+    each org self-contains its errors so the next org still runs.
+    """
+    from solden.core import database as database_module
 
-    monkeypatch.setattr(agent_background_module, "_check_approval_timeouts", _approval_timeout)
+    def _broken_get_db():
+        raise RuntimeError("db down for this org")
 
-    async def _run_both():
-        for org_id in ["org-a", "org-b"]:
-            try:
-                await agent_background_module._check_approval_timeouts(org_id)
-            except RuntimeError:
-                pass  # simulate the outer loop catching per-org errors
+    monkeypatch.setattr(database_module, "get_db", _broken_get_db)
 
-    asyncio.run(_run_both())
-
-    assert seen == ["org-a", "org-b"]
+    # Must return normally (None), not raise, despite the internal failure.
+    result = asyncio.run(agent_background_module._check_approval_timeouts("org-a"))
+    assert result is None
 
 
 def test_check_overdue_tasks_continues_when_one_org_fails(monkeypatch):
-    """_check_overdue_tasks has an outer try/except; if _collect fails for the
-    first org, the entire function bails (logged but not raised)."""
+    """Per-org isolation: if _collect raises for the first org, _check_overdue
+    _tasks logs it and STILL delivers the summary for the remaining orgs."""
     delivered = []
 
     def _collect(org_id):
@@ -58,5 +54,5 @@ def test_check_overdue_tasks_continues_when_one_org_fails(monkeypatch):
 
     asyncio.run(agent_background_module._check_overdue_tasks())
 
-    # org-a fails and the outer try/except catches the error, so org-b is skipped
-    assert delivered == []
+    # org-a fails but is isolated; org-b's summary is still delivered.
+    assert delivered == [("org-b", 1, 0)]

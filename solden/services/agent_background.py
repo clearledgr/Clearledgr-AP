@@ -726,41 +726,51 @@ async def _check_overdue_tasks():
         org_ids = _active_org_ids()
         loop = asyncio.get_event_loop()
         for org_id in org_ids:
-            # E7: Run sync DB call in executor to avoid blocking the event loop
-            task_status = await loop.run_in_executor(None, _collect_org_overdue_and_stale_tasks, org_id)
-            org_overdue = task_status.get("overdue", [])
-            org_stale = task_status.get("stale", [])
-            total_overdue += len(org_overdue)
-            total_stale += len(org_stale)
-            if org_overdue or org_stale:
-                summary_task_id = f"{org_id}:daily_summary"
-                if not should_send_reminder(summary_task_id, "overdue_summary", 20):
-                    continue
-                try:
-                    from solden.services.slack_notifications import send_overdue_summary
-                    await send_overdue_summary(
-                        overdue_items=org_overdue,
-                        stale_items=org_stale,
-                        organization_id=org_id,
-                    )
-                except Exception as _kpi_err:
-                    logger.error("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
-                    lines = [":clock3: *AP Status Check*"]
-                    if org_overdue:
-                        lines.append(f"\n*{len(org_overdue)} overdue item(s):*")
-                        for item in org_overdue[:5]:
-                            vendor = item.get("vendor_name", "Unknown")
-                            amount = item.get("amount", 0)
-                            due = item.get("due_date", "?")
-                            lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
-                    if org_stale:
-                        lines.append(f"\n*{len(org_stale)} stale item(s) needing attention:*")
-                        for item in org_stale[:5]:
-                            vendor = item.get("vendor_name", "Unknown")
-                            state = item.get("state", "?")
-                            lines.append(f"  • {vendor} — stuck in `{state}`")
-                    await _slack_alert("\n".join(lines), organization_id=org_id)
-                log_reminder(summary_task_id, "overdue_summary")
+            # Per-org isolation: one tenant's failure (DB hiccup, a malformed
+            # task that breaks the summary builder) must not starve every other
+            # tenant's overdue/stale summary this tick. _collect_org_overdue_and
+            # _stale_tasks does no internal catching, so without this guard the
+            # first org to raise would abort the whole sweep. Matches the
+            # per-org try/except every other sweep in this file uses.
+            try:
+                # E7: Run sync DB call in executor to avoid blocking the event loop
+                task_status = await loop.run_in_executor(None, _collect_org_overdue_and_stale_tasks, org_id)
+                org_overdue = task_status.get("overdue", [])
+                org_stale = task_status.get("stale", [])
+                total_overdue += len(org_overdue)
+                total_stale += len(org_stale)
+                if org_overdue or org_stale:
+                    summary_task_id = f"{org_id}:daily_summary"
+                    if not should_send_reminder(summary_task_id, "overdue_summary", 20):
+                        continue
+                    try:
+                        from solden.services.slack_notifications import send_overdue_summary
+                        await send_overdue_summary(
+                            overdue_items=org_overdue,
+                            stale_items=org_stale,
+                            organization_id=org_id,
+                        )
+                    except Exception as _kpi_err:
+                        logger.error("KPI dashboard failed, falling back to plain alert: %s", _kpi_err)
+                        lines = [":clock3: *AP Status Check*"]
+                        if org_overdue:
+                            lines.append(f"\n*{len(org_overdue)} overdue item(s):*")
+                            for item in org_overdue[:5]:
+                                vendor = item.get("vendor_name", "Unknown")
+                                amount = item.get("amount", 0)
+                                due = item.get("due_date", "?")
+                                lines.append(f"  • {vendor} — ${amount:,.2f} (due {due})")
+                        if org_stale:
+                            lines.append(f"\n*{len(org_stale)} stale item(s) needing attention:*")
+                            for item in org_stale[:5]:
+                                vendor = item.get("vendor_name", "Unknown")
+                                state = item.get("state", "?")
+                                lines.append(f"  • {vendor} — stuck in `{state}`")
+                        await _slack_alert("\n".join(lines), organization_id=org_id)
+                    log_reminder(summary_task_id, "overdue_summary")
+            except Exception as org_exc:
+                logger.error("Overdue task check failed for org=%s: %s", org_id, org_exc)
+                continue
         if total_overdue or total_stale:
             logger.info(
                 "Background check: %d overdue, %d stale tasks across %d org(s)",
