@@ -207,9 +207,10 @@ def delete_saved_view(
     view_id: str,
     _user=Depends(require_ops_user),
 ):
-    """Delete a saved view (default views cannot be deleted)."""
+    """Delete a saved view (org-scoped; default views cannot be deleted)."""
+    organization_id = require_org(_user)
     db = get_db()
-    deleted = db.delete_saved_view(view_id)
+    deleted = db.delete_saved_view(view_id, organization_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="view_not_found_or_is_default")
     return {"status": "deleted"}

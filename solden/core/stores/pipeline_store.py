@@ -308,13 +308,16 @@ class PipelineStore:
                 view[json_field] = {}
         return view
 
-    def delete_saved_view(self, view_id: str) -> bool:
-        """Delete a saved view. Default views cannot be deleted."""
+    def delete_saved_view(self, view_id: str, organization_id: str) -> bool:
+        """Delete a saved view (org-scoped). Default views cannot be deleted."""
         self.initialize()
-        sql = "DELETE FROM saved_views WHERE id = %s AND is_default = 0"
+        sql = (
+            "DELETE FROM saved_views "
+            "WHERE id = %s AND organization_id = %s AND is_default = 0"
+        )
         with self.connect() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (view_id,))
+            cur.execute(sql, (view_id, organization_id))
             conn.commit()
             return cur.rowcount > 0
 
