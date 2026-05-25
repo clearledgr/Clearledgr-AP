@@ -2185,7 +2185,11 @@ class TestExtensionEndpoints:
         assert captured["invoice_payload"]["gmail_id"] == "gmail-thread-1"
         assert captured["invoice_payload"]["organization_id"] == "org-test"
         assert captured["invoice_payload"]["user_id"] == "extension-user-1"
-        assert captured["invoice_payload"]["confidence"] >= 0.95
+        # Bounded agent: an agent_decision of "auto_approve" must NOT raise
+        # confidence to force the gate. The deterministic router owns the
+        # auto-approve line, so the extraction confidence (0.76) is preserved
+        # rather than bumped to threshold.
+        assert captured["invoice_payload"]["confidence"] < 0.95
         # The endpoint should delegate domain writes to the runtime —
         # the ONLY audit row it writes directly is the idempotency
         # response cache (so retries with the same Idempotency-Key

@@ -1557,9 +1557,6 @@ async def submit_for_approval(
         budget_checks = [c.to_dict() for c in checks] if checks else None
     
     agent_decision = request.agent_decision or {}
-    agent_confidence = request.agent_confidence
-    if agent_confidence is None:
-        agent_confidence = agent_decision.get("confidence")
 
     reasoning_block = agent_decision.get("reasoning") or {}
     reasoning_summary = request.reasoning_summary or reasoning_block.get("summary")
@@ -1594,21 +1591,17 @@ async def submit_for_approval(
         line_items=request.line_items if hasattr(request, "line_items") and isinstance(getattr(request, "line_items", None), list) else None,
     )
 
-    # Respect agent decision when present
+    # Bounded agent: the LLM-influenced reasoning layer may route an item only
+    # TOWARD human review (conservative), never toward auto-approve. The
+    # deterministic gate (execute_ap_invoice_processing -> APDecisionService)
+    # owns the auto-approve line; the model describes, it does not raise
+    # confidence or force approval. (Same downgrade-only bound the duplicate
+    # path uses in cross_invoice_analysis.)
     decision = agent_decision.get("decision")
-    if agent_confidence is not None:
-        try:
-            invoice.confidence = max(float(invoice.confidence), float(agent_confidence))
-        except Exception:
-            pass
-
     approval_threshold = runtime.ap_auto_approve_threshold()
     if decision and decision != "auto_approve":
-        # Force human review path (even if confidence is high)
+        # Conservative only: force human review even if confidence is high.
         invoice.confidence = min(invoice.confidence, max(0.0, approval_threshold - 0.01))
-    elif decision == "auto_approve":
-        # Ensure auto-approve threshold is met
-        invoice.confidence = max(invoice.confidence, approval_threshold)
 
     result = await runtime.execute_ap_invoice_processing(
         invoice_payload=invoice.__dict__,
