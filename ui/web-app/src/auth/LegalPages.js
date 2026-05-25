@@ -44,7 +44,8 @@ export function PrivacyPage() {
 
         <h2>Where it lives</h2>
         <p>
-          Solden operates on Railway-managed infrastructure.
+          Solden operates on managed cloud infrastructure; the specific
+          hosting provider is named in our sub-processor list below.
           Customer data is encrypted in transit (TLS 1.3) and at rest
           (AES-256). Database backups are retained for 30 days and
           encrypted with the same keys.
