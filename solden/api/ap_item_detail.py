@@ -101,7 +101,7 @@ def available_intents(current_state: str) -> List[str]:
 def primary_intent(current_state: str, recommendation: Optional[str]) -> Optional[str]:
     """The single most likely action for the leader, given state + recommendation.
 
-    Drives which button gets the primary (mint-green) styling on the
+    Drives which button gets the primary (teal) styling on the
     detail page. The leader can still see every other available action;
     this is just the default-target highlight.
     """
@@ -425,7 +425,7 @@ def ask_the_agent_endpoint(
     requested invoice (item + vendor profile + last 20 vendor invoices
     + 3-way match + audit timeline). It cannot run other queries; it
     answers only what the bundle supports. Returns within 10-15s on a
-    cache-warm Sonnet path.
+    cache-warm model path.
     """
     organization_id = require_org(user)
     db = get_db()

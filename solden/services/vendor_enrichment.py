@@ -440,7 +440,9 @@ async def _persist_enrichment(
             {
                 "ap_item_id": "",
                 "event_type": "vendor_enriched",
-                "actor_type": "agent",
+                # Deterministic registry fetch (Companies House / HMRC), not
+                # agent reasoning — attribute it to the system, not the agent.
+                "actor_type": "system",
                 "actor_id": "vendor_enrichment",
                 "reason": (
                     f"Vendor {vendor_name} enriched from "

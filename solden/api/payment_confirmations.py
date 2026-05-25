@@ -313,10 +313,10 @@ def set_vendor_remittance_config(
 ):
     """Update the per-vendor remittance configuration.
 
-    Either field may be omitted — only fields explicitly present in
-    the body are written. Setting ``remittance_opt_out=True`` silences
-    the auto-send for this vendor; setting it back to False resumes
-    sending.
+    Operator reference only — Solden sends no vendor email. These fields
+    record where/whether an operator would send remittance from their own
+    tooling. Either field may be omitted; only fields explicitly present in
+    the body are written.
     """
     db = get_db()
     profile = db.get_vendor_profile(user.organization_id, vendor_name)

@@ -4,8 +4,6 @@ Single subcommand for v0.1: a one-shot probe that verifies:
 
 * ``DATABASE_URL`` is set + reachable
 * schema version >= ``min`` (defaults to the highest registered)
-* the M22-widened M19 source-walking test would pass (regex-based
-  scan over ``solden/`` for ``or "default"`` coercions)
 
 Exit code 0 on healthy, 1 on any failure. Designed for CI / cron
 health checks; pipe through ``--json`` for structured monitoring.

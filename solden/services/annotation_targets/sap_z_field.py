@@ -1,6 +1,6 @@
 """SAP S/4HANA Z-field annotation target.
 
-Writes ``Z_CLEARLEDGR_STATE`` (configurable) on the supplier-invoice
+Writes ``YY1_CLEARLEDGR_STATE`` (configurable) on the supplier-invoice
 record via OData PATCH so SAP users see the Solden state inline.
 
 Customer-side prerequisite: the Z-field must be added to the

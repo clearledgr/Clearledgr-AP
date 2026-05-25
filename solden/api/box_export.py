@@ -25,10 +25,10 @@ Path::
 
     GET /api/workspace/ap-items/{ap_item_id}/export
 
-Future: a generic ``GET /api/workspace/box/{box_type}/{box_id}/export``
-will replace this thin wrapper once a second BoxType ships
-(``bank_match`` is on the roadmap). The current shape is already
-generic; only the route prefix is AP-specific.
+AP-item and bank-match exports are implemented below as dedicated
+endpoints; a single generic ``GET /api/workspace/box/{box_type}/{box_id}/export``
+may consolidate them once more BoxTypes ship. The current shape is already
+generic; only the route prefixes are type-specific.
 """
 from __future__ import annotations
 

@@ -348,23 +348,23 @@ def _oauth_success_page(message: str) -> HTMLResponse:
     <style>
       :root {{
         color-scheme: light;
-        --bg: #efe6d4;
-        --panel: #fffdf8;
-        --ink: #1d2a21;
-        --muted: #5d6b61;
-        --accent: #0a8f57;
-        --accent-soft: rgba(10, 143, 87, 0.12);
-        --border: rgba(29, 42, 33, 0.1);
-        --shadow: 0 28px 90px rgba(29, 42, 33, 0.16);
+        --bg: #f4f6fa;
+        --panel: #ffffff;
+        --ink: #0A1F44;
+        --muted: #5b6675;
+        --accent: #18BFB0;
+        --accent-soft: rgba(24, 191, 176, 0.12);
+        --border: rgba(10, 31, 68, 0.1);
+        --shadow: 0 28px 90px rgba(10, 31, 68, 0.16);
       }}
       body {{
         margin: 0;
         min-height: 100vh;
         background:
-          radial-gradient(circle at top left, rgba(10, 143, 87, 0.18), transparent 28%),
-          radial-gradient(circle at right 18%, rgba(199, 156, 72, 0.16), transparent 22%),
-          linear-gradient(180deg, #f9f5eb 0%, var(--bg) 58%, #e8dcc8 100%);
-        font-family: Georgia, \"Iowan Old Style\", serif;
+          radial-gradient(circle at top left, rgba(24, 191, 176, 0.18), transparent 28%),
+          radial-gradient(circle at right 18%, rgba(10, 31, 68, 0.10), transparent 22%),
+          linear-gradient(180deg, #ffffff 0%, var(--bg) 58%, #e9eef6 100%);
+        font-family: Inter, -apple-system, \"Segoe UI\", Roboto, sans-serif;
         color: var(--ink);
       }}
       .shell {{
@@ -390,7 +390,7 @@ def _oauth_success_page(message: str) -> HTMLResponse:
         width: 160px;
         height: 160px;
         border-radius: 999px;
-        background: radial-gradient(circle, rgba(10, 143, 87, 0.12), transparent 66%);
+        background: radial-gradient(circle, rgba(24, 191, 176, 0.12), transparent 66%);
         pointer-events: none;
       }}
       .topline {{
@@ -424,7 +424,7 @@ def _oauth_success_page(message: str) -> HTMLResponse:
         height: 9px;
         border-radius: 999px;
         background: var(--accent);
-        box-shadow: 0 0 0 4px rgba(10, 143, 87, 0.16);
+        box-shadow: 0 0 0 4px rgba(24, 191, 176, 0.16);
       }}
       .hero {{
         display: grid;
@@ -439,9 +439,9 @@ def _oauth_success_page(message: str) -> HTMLResponse:
         display: grid;
         place-items: center;
         background:
-          linear-gradient(180deg, rgba(10, 143, 87, 0.18), rgba(10, 143, 87, 0.08)),
-          #f3fbf7;
-        border: 1px solid rgba(10, 143, 87, 0.18);
+          linear-gradient(180deg, rgba(24, 191, 176, 0.18), rgba(24, 191, 176, 0.08)),
+          #eefbf9;
+        border: 1px solid rgba(24, 191, 176, 0.18);
         color: var(--accent);
       }}
       h1 {{
@@ -489,7 +489,7 @@ def _oauth_success_page(message: str) -> HTMLResponse:
         margin-top: 5px;
         border-radius: 999px;
         background: var(--accent);
-        box-shadow: 0 0 0 5px rgba(10, 143, 87, 0.12);
+        box-shadow: 0 0 0 5px rgba(24, 191, 176, 0.12);
       }}
       .actions {{
         margin-top: 22px;
@@ -515,7 +515,7 @@ def _oauth_success_page(message: str) -> HTMLResponse:
       .primary {{
         background: var(--accent);
         color: #fff;
-        box-shadow: 0 10px 24px rgba(10, 143, 87, 0.24);
+        box-shadow: 0 10px 24px rgba(24, 191, 176, 0.24);
       }}
       .secondary {{
         background: rgba(255, 255, 255, 0.8);

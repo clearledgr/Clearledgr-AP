@@ -65,10 +65,10 @@ CREATE TABLE IF NOT EXISTS vendor_profiles (
     kyc_completion_date TEXT,
     vendor_kyc_updated_at TEXT,
     primary_contact_email TEXT,
-    -- Wave 2 / C5: remittance advice config. Both nullable; default
-    -- behaviour is "send to remittance_email or primary_contact_email
-    -- on payment confirmation". opt_out=1 silences the auto-send for
-    -- vendors who pull from their own portal / bank statement.
+    -- Wave 2 / C5: remittance config (operator reference only). Both
+    -- nullable. Solden sends NO vendor email; these fields just record
+    -- where/whether an operator would send remittance from their own
+    -- tooling (the auto-send sender was removed 2026-05-02).
     remittance_email TEXT,
     remittance_opt_out INTEGER NOT NULL DEFAULT 0,
     -- Wave 3 / E1: sanctions screening rolled-up disposition.
