@@ -44,7 +44,7 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
 .cl-ts-label { font-size: 12px; color: #5C6B7A; }
-.cl-ts-value { font-size: 13px; color: #0A1628; font-weight: 500; text-align: right; max-width: 60%; }
+.cl-ts-value { font-size: 13px; color: #001137; font-weight: 500; text-align: right; max-width: 60%; }
 .cl-ts-value.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
 .cl-ts-match-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .cl-ts-match-icon { width: 16px; text-align: center; font-size: 14px; }
@@ -52,10 +52,10 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-match-icon.warn { color: #CA8A04; }
 .cl-ts-match-icon.fail { color: #DC2626; }
 .cl-ts-match-icon.na { color: #94A3B8; }
-.cl-ts-match-label { font-size: 12px; color: #0A1628; flex: 1; }
+.cl-ts-match-label { font-size: 12px; color: #001137; flex: 1; }
 .cl-ts-match-detail { font-size: 11px; color: #5C6B7A; }
 .cl-ts-match-tolerance {
-  font-size: 11px; color: #16A34A; background: #ECFDF5;
+  font-size: 11px; color: #16A34A; background: #F0FDF4;
   padding: 2px 8px; border-radius: 10px; margin-top: 6px; display: inline-block;
 }
 .cl-ts-match-tolerance.warn { color: #92400E; background: #FEFCE8; }
@@ -68,7 +68,7 @@ const THREAD_SIDEBAR_CSS = `
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
 }
-.cl-ts-risk-low { background: #ECFDF5; color: #16A34A; }
+.cl-ts-risk-low { background: #F0FDF4; color: #16A34A; }
 .cl-ts-risk-medium { background: #FEFCE8; color: #92400E; }
 .cl-ts-risk-high { background: #FEF2F2; color: #991B1B; }
 .cl-ts-timeline { list-style: none; margin: 0; padding: 0; }
@@ -78,7 +78,7 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-timeline li::before {
   content: ''; width: 6px; height: 6px; border-radius: 50%;
-  background: #00D67E; position: absolute; left: 0; top: 5px;
+  background: #18BFB0; position: absolute; left: 0; top: 5px;
 }
 .cl-ts-timeline-time { font-size: 10px; color: #94A3B8; display: block; }
 .cl-ts-agent-icon { width: 10px; height: 10px; vertical-align: -1px; margin-right: 3px; opacity: 0.6; }
@@ -87,11 +87,11 @@ const THREAD_SIDEBAR_CSS = `
   display: inline-block; padding: 1px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600;
 }
-.cl-ts-iban-verified { background: #ECFDF5; color: #16A34A; }
+.cl-ts-iban-verified { background: #F0FDF4; color: #16A34A; }
 .cl-ts-iban-unverified { background: #FEF2F2; color: #991B1B; }
 .cl-ts-iban-pending { background: #FEFCE8; color: #92400E; }
 .cl-ts-expand-btn {
-  background: none; border: none; color: #00D67E; font-size: 12px;
+  background: none; border: none; color: #18BFB0; font-size: 12px;
   font-weight: 600; cursor: pointer; padding: 4px 0; font-family: inherit;
 }
 .cl-ts-timeline-why { font-weight: 400; color: #5C6B7A; }
@@ -103,13 +103,13 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-linked-box-icon { font-size: 14px; width: 20px; text-align: center; }
 .cl-ts-linked-box-info { flex: 1; min-width: 0; }
-.cl-ts-linked-box-title { font-size: 12px; color: #0A1628; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cl-ts-linked-box-title { font-size: 12px; color: #001137; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cl-ts-linked-box-meta { font-size: 11px; color: #5C6B7A; }
 .cl-ts-linked-box-status {
   display: inline-block; padding: 1px 6px; border-radius: 8px;
   font-size: 10px; font-weight: 600; text-transform: uppercase;
 }
-.cl-ts-linked-box-status.active { background: #ECFDF5; color: #16A34A; }
+.cl-ts-linked-box-status.active { background: #F0FDF4; color: #16A34A; }
 .cl-ts-linked-box-status.pending { background: #FEFCE8; color: #92400E; }
 .cl-ts-linked-box-status.completed { background: #EFF6FF; color: #1D4ED8; }
 .cl-ts-actions-bar { padding: 12px 16px; border-top: 1px solid #E2E8F0; }
@@ -158,9 +158,9 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-query-input {
   width: 100%; padding: 10px 12px; border: 1px solid #E2E8F0; border-radius: 8px;
-  font-size: 13px; color: #0A1628; background: #FBFCFD; font-family: inherit;
+  font-size: 13px; color: #001137; background: #FBFCFD; font-family: inherit;
 }
-.cl-ts-query-input:focus { outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
+.cl-ts-query-input:focus { outline: none; border-color: #18BFB0; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15); }
 .cl-ts-query-input::placeholder { color: #94A3B8; }
 .cl-ts-query-input:disabled { background: #F1F5F9; color: #94A3B8; cursor: not-allowed; }
 
@@ -174,14 +174,14 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-qa-row { display: flex; flex-direction: column; gap: 4px; }
 .cl-ts-qa-q {
   align-self: flex-end; max-width: 92%;
-  background: #0A1628; color: #fff; padding: 7px 11px;
+  background: #001137; color: #fff; padding: 7px 11px;
   border-radius: 12px 12px 2px 12px;
   font: 500 12px/1.4 'DM Sans', sans-serif;
   word-wrap: break-word;
 }
 .cl-ts-qa-a {
   align-self: flex-start; max-width: 96%;
-  background: #F1F5F9; color: #0A1628; padding: 7px 11px;
+  background: #F1F5F9; color: #001137; padding: 7px 11px;
   border-radius: 12px 12px 12px 2px;
   font: 400 12px/1.45 'DM Sans', sans-serif;
   white-space: pre-wrap; word-wrap: break-word;
@@ -192,11 +192,11 @@ const THREAD_SIDEBAR_CSS = `
 .cl-ts-qa-a.error {
   background: #FEF2F2; color: #B91C1C;
 }
-.cl-ts-qa-a strong { font-weight: 700; color: #0A1628; }
-.cl-ts-qa-a em { font-style: italic; color: #0A1628; }
+.cl-ts-qa-a strong { font-weight: 700; color: #001137; }
+.cl-ts-qa-a em { font-style: italic; color: #001137; }
 .cl-ts-qa-a code {
   font: 600 11px/1.3 'Geist Mono', ui-monospace, monospace;
-  background: #E2E8F0; color: #0A1628;
+  background: #E2E8F0; color: #001137;
   padding: 1px 5px; border-radius: 4px;
 }
 .cl-ts-qa-a ul {
@@ -215,7 +215,7 @@ const THREAD_SIDEBAR_CSS = `
 /* Streaming caret — blinks while Claude is still writing */
 .cl-ts-qa-a .cl-ts-caret {
   display: inline-block; width: 7px; height: 13px; vertical-align: text-bottom;
-  background: #00D67E; margin-left: 2px; animation: cl-ts-blink 0.9s steps(2) infinite;
+  background: #18BFB0; margin-left: 2px; animation: cl-ts-blink 0.9s steps(2) infinite;
 }
 @keyframes cl-ts-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
@@ -243,12 +243,12 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-suggestion-chip {
   text-align: left; padding: 7px 10px; border-radius: 8px;
-  border: 1px solid #E2E8F0; background: #FBFCFD; color: #0A1628;
+  border: 1px solid #E2E8F0; background: #FBFCFD; color: #001137;
   font: 500 12px/1.35 'DM Sans', sans-serif; cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
 .cl-ts-suggestion-chip:hover {
-  background: #fff; border-color: #00D67E; color: #059669;
+  background: #fff; border-color: #18BFB0; color: #059669;
 }
 
 /* Feedback link + dialog at the bottom of the sidebar */
@@ -261,7 +261,7 @@ const THREAD_SIDEBAR_CSS = `
   color: #94A3B8; cursor: pointer; background: transparent; border: 0;
   padding: 0; font: inherit; text-decoration: none;
 }
-.cl-ts-footer-link:hover { color: #00D67E; }
+.cl-ts-footer-link:hover { color: #18BFB0; }
 
 .cl-ts-feedback-overlay {
   position: fixed; inset: 0; background: rgba(10, 22, 40, 0.4); z-index: 99999;
@@ -273,7 +273,7 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-feedback-modal h3 {
   margin: 0 0 4px; font: 700 16px/1.3 'Instrument Sans','DM Sans',sans-serif;
-  color: #0A1628;
+  color: #001137;
 }
 .cl-ts-feedback-modal .muted {
   margin: 0 0 14px; font-size: 12px; color: #64748B;
@@ -287,15 +287,15 @@ const THREAD_SIDEBAR_CSS = `
   cursor: pointer;
 }
 .cl-ts-feedback-kind.active {
-  background: #0A1628; color: #fff; border-color: #0A1628;
+  background: #001137; color: #fff; border-color: #001137;
 }
 .cl-ts-feedback-textarea {
   width: 100%; box-sizing: border-box; min-height: 96px; padding: 10px 12px;
   border: 1px solid #E2E8F0; border-radius: 8px; font: 400 13px/1.45 'DM Sans', sans-serif;
-  color: #0A1628; resize: vertical;
+  color: #001137; resize: vertical;
 }
 .cl-ts-feedback-textarea:focus {
-  outline: none; border-color: #00D67E; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+  outline: none; border-color: #18BFB0; box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
 }
 .cl-ts-feedback-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;
@@ -308,7 +308,7 @@ const THREAD_SIDEBAR_CSS = `
   background: transparent; color: #64748B;
 }
 .cl-ts-feedback-btn.primary {
-  background: #00D67E; color: #0A1628;
+  background: #18BFB0; color: #001137;
 }
 .cl-ts-feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .cl-ts-feedback-thanks {
@@ -327,10 +327,10 @@ const THREAD_SIDEBAR_CSS = `
   font-size: 14px;
 }
 .cl-ts-banner-body { flex: 1; min-width: 0; }
-.cl-ts-banner-title { font-size: 12px; font-weight: 700; color: #0A1628; line-height: 1.2; }
+.cl-ts-banner-title { font-size: 12px; font-weight: 700; color: #001137; line-height: 1.2; }
 .cl-ts-banner-detail { font-size: 11px; color: #5C6B7A; margin-top: 2px; line-height: 1.3; }
-.cl-ts-banner.override { background: #ECFDF5; }
-.cl-ts-banner.override .cl-ts-banner-icon { background: #00D67E; color: #0A1628; }
+.cl-ts-banner.override { background: #DDF7F3; }
+.cl-ts-banner.override .cl-ts-banner-icon { background: #18BFB0; color: #001137; }
 .cl-ts-banner.waiting { background: #FEFCE8; }
 .cl-ts-banner.waiting .cl-ts-banner-icon { background: #CA8A04; color: #FEFCE8; }
 .cl-ts-banner.fraud { background: #FEF2F2; }
@@ -351,11 +351,11 @@ const THREAD_SIDEBAR_CSS = `
 }
 .cl-ts-banner-btn-onboard:hover { background: #A16207; }
 .cl-ts-banner-action {
-  padding: 6px 12px; border: 1px solid #0A1628; border-radius: 6px;
-  background: #fff; color: #0A1628; font: 600 12px/1 'DM Sans', sans-serif;
+  padding: 6px 12px; border: 1px solid #001137; border-radius: 6px;
+  background: #fff; color: #001137; font: 600 12px/1 'DM Sans', sans-serif;
   cursor: pointer; flex-shrink: 0;
 }
-.cl-ts-banner-action:hover { background: #0A1628; color: #fff; }
+.cl-ts-banner-action:hover { background: #001137; color: #fff; }
 .cl-ts-banner-action:disabled { opacity: 0.5; cursor: not-allowed; }
 .cl-ts-fraud-flag {
   display: flex; align-items: center; gap: 6px;

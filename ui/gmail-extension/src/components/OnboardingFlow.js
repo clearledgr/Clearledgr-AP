@@ -40,7 +40,7 @@ function AuthModal({ onSignIn, pending, onDismiss, errorMessage }) {
       <div class="cl-onboard-modal">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:48px;height:48px;margin-bottom:12px;" />` : ''}
-          <h2 style="font:700 20px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 8px;">Solden AP</h2>
+          <h2 style="font:700 20px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 8px;">Solden AP</h2>
           <p style="font:400 14px/1.5 'DM Sans',sans-serif;color:#475569;margin:0;max-width:320px;">
             Solden helps your finance team process invoices inside Gmail.
             Use your Google account to start.
@@ -89,7 +89,7 @@ function CreateWorkspace({ onContinue, pending, errorMessage, defaultName }) {
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ''}
-          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Name your workspace</h2>
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 6px;">Name your workspace</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             One workspace per finance team. Use your company name — you can change it later.
           </p>
@@ -117,7 +117,7 @@ function CreateWorkspace({ onContinue, pending, errorMessage, defaultName }) {
           }}
           style="
             display:block;width:100%;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;
-            font:400 14px/1.4 'DM Sans',sans-serif;color:#0A1628;box-sizing:border-box;margin-bottom:20px;
+            font:400 14px/1.4 'DM Sans',sans-serif;color:#001137;box-sizing:border-box;margin-bottom:20px;
           "
         />
         <button
@@ -149,7 +149,7 @@ function ErpPicker({ onSelect, pending, errorMessage }) {
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ''}
-          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Which accounting system do you use?</h2>
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 6px;">Which accounting system do you use?</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Solden connects to your ERP to read POs, GRNs, and vendor master data.
           </p>
@@ -167,11 +167,11 @@ function ErpPicker({ onSelect, pending, errorMessage }) {
               key=${erp.id}
               onClick=${() => setSelected(erp.id)}
               style="
-                padding:16px 8px;border-radius:8px;border:2px solid ${selected === erp.id ? '#00D67E' : '#E2E8F0'};
-                background:${selected === erp.id ? '#ECFDF5' : '#fff'};cursor:pointer;text-align:center;
+                padding:16px 8px;border-radius:8px;border:2px solid ${selected === erp.id ? '#18BFB0' : '#E2E8F0'};
+                background:${selected === erp.id ? '#DDF7F3' : '#fff'};cursor:pointer;text-align:center;
               "
             >
-              <div style="font:700 16px/1 'Geist Mono',monospace;color:#0A1628;margin-bottom:4px;">${erp.icon}</div>
+              <div style="font:700 16px/1 'Geist Mono',monospace;color:#001137;margin-bottom:4px;">${erp.icon}</div>
               <div style="font:500 12px/1 'DM Sans',sans-serif;color:#475569;">${erp.name}</div>
             </button>
           `)}
@@ -212,7 +212,7 @@ function PolicyForm({ onContinue, pending, errorMessage }) {
       <div class="cl-onboard-modal" style="max-width:480px;">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ''}
-          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Set your AP policy</h2>
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 6px;">Set your AP policy</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Three defaults you can fine-tune later from Settings > Policy.
           </p>
@@ -229,13 +229,13 @@ function PolicyForm({ onContinue, pending, errorMessage }) {
           Auto-approve threshold (matched invoices under this go through without a human)
         </label>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-          <span style="font:600 14px/1 'Geist Mono',monospace;color:#0A1628;">£</span>
+          <span style="font:600 14px/1 'Geist Mono',monospace;color:#001137;">£</span>
           <input
             type="number"
             value=${threshold}
             onInput=${(e) => setThreshold(e.target.value)}
             min="0"
-            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#0A1628;box-sizing:border-box;"
+            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#001137;box-sizing:border-box;"
           />
         </div>
 
@@ -249,9 +249,9 @@ function PolicyForm({ onContinue, pending, errorMessage }) {
             onInput=${(e) => setTolerance(e.target.value)}
             min="0"
             step="0.1"
-            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#0A1628;box-sizing:border-box;"
+            style="flex:1;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;font:500 14px/1.2 'Geist Mono',monospace;color:#001137;box-sizing:border-box;"
           />
-          <span style="font:600 14px/1 'Geist Mono',monospace;color:#0A1628;">%</span>
+          <span style="font:600 14px/1 'Geist Mono',monospace;color:#001137;">%</span>
         </div>
 
         <label style="display:block;font:500 12px/1.4 'DM Sans',sans-serif;color:#475569;margin-bottom:6px;">
@@ -264,7 +264,7 @@ function PolicyForm({ onContinue, pending, errorMessage }) {
           placeholder="sarah@acme.com"
           style="
             display:block;width:100%;padding:10px 12px;border:1px solid #E2E8F0;border-radius:8px;
-            font:400 14px/1.4 'DM Sans',sans-serif;color:#0A1628;box-sizing:border-box;margin-bottom:20px;
+            font:400 14px/1.4 'DM Sans',sans-serif;color:#001137;box-sizing:border-box;margin-bottom:20px;
           "
         />
 
@@ -297,7 +297,7 @@ function SlackConnect({ onConnect, onSkip, pending, errorMessage, connected }) {
       <div class="cl-onboard-modal" style="max-width:440px;">
         <div style="text-align:center;margin-bottom:20px;">
           ${LOGO_URL ? html`<img src=${LOGO_URL} alt="" style="width:36px;height:36px;margin-bottom:8px;" />` : ''}
-          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 6px;">Connect Slack</h2>
+          <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 6px;">Connect Slack</h2>
           <p style="font:400 13px/1.4 'DM Sans',sans-serif;color:#94A3B8;margin:0;">
             Approvals and escalations happen in Slack. The AP pipeline stays in Gmail.
           </p>
@@ -311,7 +311,7 @@ function SlackConnect({ onConnect, onSkip, pending, errorMessage, connected }) {
         ` : ''}
         ${connected ? html`
           <div style="
-            background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;
+            background:#F0FDF4;border:1px solid #A7F3D0;border-radius:8px;
             padding:10px 12px;margin-bottom:16px;
             font:500 13px/1.4 'DM Sans',sans-serif;color:#065F46;
           ">✓ Slack connected. You can change the channel anytime from Settings > Connections.</div>
@@ -375,7 +375,7 @@ function PipelineCreation({ erpType, onComplete }) {
       <div class="cl-onboard-modal" style="max-width:480px;">
         <div style="display:flex;gap:24px;">
           <div style="flex:1;">
-            <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#0A1628;margin:0 0 16px;">
+            <h2 style="font:700 18px/1.3 'Instrument Sans','DM Sans',sans-serif;color:#001137;margin:0 0 16px;">
               Setting up your AP workspace...
             </h2>
             <div style="display:flex;flex-direction:column;gap:14px;">
@@ -385,13 +385,13 @@ function PipelineCreation({ erpType, onComplete }) {
                     width:20px;height:20px;border-radius:50%;flex-shrink:0;margin-top:1px;
                     display:flex;align-items:center;justify-content:center;font-size:11px;
                     ${step.done
-                      ? 'background:#00D67E;color:#fff;'
+                      ? 'background:#18BFB0;color:#fff;'
                       : 'background:#F1F5F9;color:#94A3B8;border:1px solid #E2E8F0;'}
                   ">
                     ${step.done ? '✓' : ''}
                   </div>
                   <div>
-                    <div style="font:600 13px/1.3 'DM Sans',sans-serif;color:${step.done ? '#0A1628' : '#94A3B8'};">${step.label}</div>
+                    <div style="font:600 13px/1.3 'DM Sans',sans-serif;color:${step.done ? '#001137' : '#94A3B8'};">${step.label}</div>
                     <div style="font:400 11px/1.3 'DM Sans',sans-serif;color:#94A3B8;">${step.detail}</div>
                   </div>
                 </div>
@@ -401,7 +401,7 @@ function PipelineCreation({ erpType, onComplete }) {
           <div style="width:180px;flex-shrink:0;background:#F7F9FB;border-radius:8px;padding:14px;">
             <div style="font:600 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:8px;">Pipeline view</div>
             ${['Received', 'Matching', 'Exception', 'Approved', 'Paid'].map((stage) => html`
-              <div key=${stage} style="font:500 11px/2 'DM Sans',sans-serif;color:#0A1628;border-bottom:1px solid #E2E8F0;">${stage}</div>
+              <div key=${stage} style="font:500 11px/2 'DM Sans',sans-serif;color:#001137;border-bottom:1px solid #E2E8F0;">${stage}</div>
             `)}
             <div style="font:400 10px/1 'DM Sans',sans-serif;color:#94A3B8;margin-top:8px;">← Stages</div>
           </div>
@@ -669,14 +669,14 @@ export default function OnboardingFlow({ api, onComplete, onDismiss, oauthBridge
       .cl-onboard-google-btn {
         display: flex; align-items: center; justify-content: center;
         width: 100%; padding: 12px 16px; border: 1px solid #E2E8F0;
-        border-radius: 8px; background: #fff; color: #0A1628;
+        border-radius: 8px; background: #fff; color: #001137;
         font: 500 14px/1 'DM Sans', sans-serif; cursor: pointer;
       }
       .cl-onboard-google-btn:hover { background: #F7F9FB; }
       .cl-onboard-google-btn:disabled { opacity: 0.6; cursor: not-allowed; }
       .cl-onboard-primary-btn {
         display: block; width: 100%; padding: 12px 16px;
-        border: none; border-radius: 8px; background: #00D67E; color: #0A1628;
+        border: none; border-radius: 8px; background: #18BFB0; color: #001137;
         font: 600 14px/1 'DM Sans', sans-serif; cursor: pointer;
       }
       .cl-onboard-primary-btn:hover { background: #00C271; }

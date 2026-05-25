@@ -1,5 +1,5 @@
 /** Sidebar CSS — injected into Gmail DOM via <style> block
- *  Design system: DESIGN.md — Industrial/Utilitarian, mint green + navy
+ *  Design system: DESIGN.md — Solden — navy + teal
  *  Typography: Instrument Sans (headings) + DM Sans (body) + Geist Mono (data) */
 
 export const SIDEBAR_CSS = `
@@ -40,11 +40,11 @@ export const SIDEBAR_CSS = `
         --cl-primary: #0F172A;
         --cl-secondary: #475569;
         --cl-muted: #94A3B8;
-        --cl-accent: #00D67E;
-        --cl-accent-hover: #00BC6E;
-        --cl-accent-soft: #ECFDF5;
-        --cl-brand-muted: #10B981;
-        --cl-navy: #0A1628;
+        --cl-accent: #18BFB0;
+        --cl-accent-hover: #12B3A6;
+        --cl-accent-soft: #DDF7F3;
+        --cl-brand-muted: #12B3A6;
+        --cl-navy: #001137;
         --cl-navy-light: #1E293B;
         --cl-green: #16A34A;
         --cl-green-soft: #F0FDF4;
@@ -127,14 +127,14 @@ export const SIDEBAR_CSS = `
         font-size: 11px;
         font-weight: 600;
         color: var(--cl-brand-muted, #10B981);
-        background: var(--cl-accent-soft, #ECFDF5);
+        background: var(--cl-accent-soft, #DDF7F3);
         padding: 2px 8px;
         border-radius: 999px;
       }
       .cl-header-count {
         appearance: none;
         border: 0;
-        background: var(--cl-accent-soft, #ECFDF5);
+        background: var(--cl-accent-soft, #DDF7F3);
         color: var(--cl-brand-muted, #10B981);
         font-size: 11px;
         font-weight: 700;
@@ -934,7 +934,7 @@ export const SIDEBAR_CSS = `
         border-radius: var(--cl-radius-sm);
         border: none;
         background: var(--cl-accent);
-        color: var(--cl-navy, #0A1628);
+        color: var(--cl-navy, #001137);
         font: inherit;
         font-size: 13px;
         font-weight: 600;
@@ -2342,7 +2342,7 @@ export const SIDEBAR_CSS = `
         height: 36px;
         border-radius: 50%;
         border: none;
-        background: var(--cl-accent, #00D67E);
+        background: var(--cl-accent, #18BFB0);
         color: #fff;
         font-size: 20px;
         font-weight: 300;
@@ -2356,7 +2356,7 @@ export const SIDEBAR_CSS = `
       }
       .cl-fab-btn:hover {
         transform: scale(1.1);
-        background: #00BC6E;
+        background: #12B3A6;
       }
       .cl-fab-menu {
         position: absolute;
@@ -2541,7 +2541,7 @@ export const SIDEBAR_CSS = `
         color: var(--cl-secondary);
       }
       .cl-onboarding-step.done .cl-step-icon {
-        background: #ECFDF5;
+        background: #F0FDF4;
         color: #059669;
       }
       .cl-step-status {
@@ -2568,13 +2568,13 @@ export const STATE_PILL_CSS = `
   .cl-pill-needs-info::before { background: #d97706; }
   .cl-pill-needs-approval { color: #92400e; background: #fff7ed; border: 1px solid #fed7aa; }
   .cl-pill-needs-approval::before { background: #ea580c; }
-  .cl-pill-approved { color: #059669; background: #ECFDF5; }
+  .cl-pill-approved { color: #059669; background: #F0FDF4; }
   .cl-pill-approved::before { background: #10B981; }
-  .cl-pill-ready-to-post { color: #059669; background: #ECFDF5; }
+  .cl-pill-ready-to-post { color: #059669; background: #F0FDF4; }
   .cl-pill-ready-to-post::before { background: #10B981; }
   .cl-pill-posted-to-erp { color: #5b21b6; background: #ede9fe; }
   .cl-pill-posted-to-erp::before { background: #7c3aed; }
-  .cl-pill-closed { color: #059669; background: #ECFDF5; }
+  .cl-pill-closed { color: #059669; background: #F0FDF4; }
   .cl-pill-closed::before { background: #10B981; }
   .cl-pill-rejected { color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; }
   .cl-pill-rejected::before { background: #dc2626; }

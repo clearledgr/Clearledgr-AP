@@ -32,7 +32,7 @@ const OVERLAY_CSS = `
   box-shadow: 0 20px 48px rgba(10, 22, 40, 0.28);
   padding: 24px 24px 20px; font-family: inherit;
 }
-.cl-invm-title { font-size: 17px; font-weight: 700; color: #0A1628; margin: 0 0 4px; }
+.cl-invm-title { font-size: 17px; font-weight: 700; color: #001137; margin: 0 0 4px; }
 .cl-invm-subtitle { font-size: 12px; color: #5C6B7A; margin: 0 0 16px; line-height: 1.4; }
 .cl-invm-field { margin-bottom: 12px; }
 .cl-invm-label {
@@ -41,9 +41,9 @@ const OVERLAY_CSS = `
 }
 .cl-invm-input {
   width: 100%; padding: 8px 10px; border: 1px solid #E2E8F0; border-radius: 6px;
-  font-size: 13px; color: #0A1628; background: #fff; box-sizing: border-box;
+  font-size: 13px; color: #001137; background: #fff; box-sizing: border-box;
 }
-.cl-invm-input:focus { outline: none; border-color: #00D67E; }
+.cl-invm-input:focus { outline: none; border-color: #18BFB0; }
 .cl-invm-input[disabled] { background: #F7F9FB; color: #5C6B7A; }
 .cl-invm-hint { font-size: 11px; color: #94A3B8; margin-top: 4px; }
 .cl-invm-error {
@@ -51,7 +51,7 @@ const OVERLAY_CSS = `
   padding: 8px 10px; border-radius: 6px; margin: 4px 0 12px;
 }
 .cl-invm-success {
-  font-size: 12px; color: #065F46; background: #ECFDF5;
+  font-size: 12px; color: #065F46; background: #F0FDF4;
   padding: 10px 12px; border-radius: 6px; margin: 4px 0 12px; line-height: 1.5;
 }
 .cl-invm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
@@ -59,12 +59,12 @@ const OVERLAY_CSS = `
   padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 600;
   cursor: pointer; border: 1px solid transparent;
 }
-.cl-invm-btn.primary { background: #00D67E; color: #0A1628; border-color: #00D67E; }
+.cl-invm-btn.primary { background: #18BFB0; color: #001137; border-color: #18BFB0; }
 .cl-invm-btn.primary:disabled { background: #9FE6C1; cursor: not-allowed; }
 .cl-invm-btn.ghost { background: #fff; color: #5C6B7A; border-color: #E2E8F0; }
 .cl-invm-link {
   font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px;
-  word-break: break-all; color: #0A1628; display: block;
+  word-break: break-all; color: #001137; display: block;
   background: #F7F9FB; padding: 6px 8px; border-radius: 4px; margin-top: 4px;
 }
 `;

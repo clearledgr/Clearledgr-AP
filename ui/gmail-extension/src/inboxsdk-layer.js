@@ -246,7 +246,7 @@ function renderComposeRecordStatus(recordContext) {
     'gap:12px',
     'padding:7px 14px',
     'font-size:12px',
-    'background:#ecfdf5',
+    'background:#F0FDF4',
     'color:#166534',
     'border-bottom:1px solid #d1fae5',
     'font-family:inherit',
@@ -825,9 +825,9 @@ function injectInvoiceBanner(threadView, item) {
   const stateConfig = {
     needs_approval:   { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Needs approval' },
     pending_approval: { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Pending approval' },
-    approved:         { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Approved' },
-    ready_to_post:    { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Ready to post' },
-    posted_to_erp:    { bg: '#ECFDF5', border: '#10B981', text: '#16A34A', label: 'Posted to ERP' },
+    approved:         { bg: '#F0FDF4', border: '#10B981', text: '#16A34A', label: 'Approved' },
+    ready_to_post:    { bg: '#F0FDF4', border: '#10B981', text: '#16A34A', label: 'Ready to post' },
+    posted_to_erp:    { bg: '#F0FDF4', border: '#10B981', text: '#16A34A', label: 'Posted to ERP' },
     rejected:         { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'Rejected' },
     failed_post:      { bg: '#fef2f2', border: '#dc2626', text: '#991b1b', label: 'ERP post failed' },
     needs_info:       { bg: '#fef9ee', border: '#d97706', text: '#92400e', label: 'Info requested' },
@@ -1201,7 +1201,7 @@ function registerInboxHeadsUp() {
 
   const headsUpEl = document.createElement('div');
   headsUpEl.id = 'cl-inbox-headsup';
-  headsUpEl.style.cssText = 'display:none;padding:8px 16px;background:#0A1628;color:#fff;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;gap:12px;cursor:pointer;';
+  headsUpEl.style.cssText = 'display:none;padding:8px 16px;background:#001137;color:#fff;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;gap:12px;cursor:pointer;';
 
   const updateHeadsUp = () => {
     const items = store.queue || [];
@@ -1233,7 +1233,7 @@ function registerInboxHeadsUp() {
 
     headsUpEl.style.display = 'flex';
     headsUpEl.innerHTML = `
-      <span style="width:8px;height:8px;border-radius:50%;background:#00D67E;flex-shrink:0"></span>
+      <span style="width:8px;height:8px;border-radius:50%;background:#18BFB0;flex-shrink:0"></span>
       <span><strong>Solden</strong> \u00B7 ${parts.join(' \u00B7 ')}</span>
       <span style="margin-left:auto;opacity:0.6;font-size:11px">Open invoices \u203A</span>
     `;
@@ -1919,8 +1919,8 @@ bootstrap();
 
 console.log(
   '\n%cSolden\n%cThe back-office runtime,\nin your inbox\n\n%cYou found us in the console.\nThat means you care how things work.\nSo do we.\n\n%chttps://soldenai.com\n',
-  'font-size:28px;font-weight:800;color:#00D67E;line-height:1.2;',
-  'font-size:18px;font-weight:600;color:#0A1628;line-height:1.3;',
+  'font-size:28px;font-weight:800;color:#18BFB0;line-height:1.2;',
+  'font-size:18px;font-weight:600;color:#001137;line-height:1.3;',
   'font-size:14px;color:#6B7280;line-height:1.5;',
-  'font-size:13px;color:#00D67E;font-weight:600;',
+  'font-size:13px;color:#18BFB0;font-weight:600;',
 );
