@@ -591,6 +591,7 @@ STRICT_PROFILE_ALLOWED_PREFIXES = (
 
 STRICT_PROFILE_ALLOWED_OPS_PATHS = {
     "/api/ops/tenant-health",
+    "/api/ops/box-health",
     "/api/ops/ap-kpis",
     "/api/ops/ap-kpis/digest",
     "/api/ops/ap-aggregation",
@@ -790,6 +791,7 @@ STRICT_PROFILE_ALLOWED_AGENT_PATHS = {
 
 STRICT_PROFILE_ALLOWED_AP_PATHS = {
     "/api/ap/audit/recent",
+    "/api/ap/items/audit/export",
     "/api/ap/items/compose/create",
     "/api/ap/items/compose/lookup",
     "/api/ap/items/field-review/bulk-resolve",
@@ -809,6 +811,7 @@ STRICT_PROFILE_ALLOWED_INTERACTIVE_CALLBACK_PATHS = {
 STRICT_PROFILE_ALLOWED_DYNAMIC_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
+        r"^/extension/ap-items/by-netsuite-bill/[^/]+/(approve|reject|request-info)$",
         r"^/api/workspace/team/invites/[^/]+/revoke$",
         # Module 6 — team offboarding (deactivate / reactivate).
         r"^/api/workspace/team/users/[^/]+/(deactivate|reactivate)$",

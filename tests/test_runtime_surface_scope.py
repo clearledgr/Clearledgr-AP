@@ -269,7 +269,11 @@ def test_strict_profile_route_surface_is_minimized(monkeypatch):
         # were in the surface (e.g. "accrual-journal-entry API surface"); the
         # allowlist just never caught up. Now correctly allowlisted. Cap
         # raised 395 → 455 to reflect the real intended surface.
-        assert len(paths) <= 455
+        # 2026-05-25: +5 routes that were mounted+tested but never allowlisted,
+        # so the prune silently 404'd them in prod (manifesto per-file review):
+        # ap items audit/export, ops/box-health, and the 3 NetSuite-panel
+        # action POSTs (approve/reject/request-info). Cap 455 -> 460.
+        assert len(paths) <= 460
         assert not any(path.startswith("/config/") for path in paths)
         assert "/erp/status/{organization_id}" not in paths
         assert "/erp/quickbooks/connect" not in paths
