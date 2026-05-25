@@ -222,8 +222,8 @@ class ScheduledReportService:
                 logger.warning("[ScheduledReports] No Gmail tokens for Sheets delivery")
                 return
 
-            from solden.services.sheets_api import SheetsAPIClient
-            spreadsheet_id = SheetsAPIClient.extract_spreadsheet_id(spreadsheet_url)
+            from solden.services.sheets_api import extract_spreadsheet_id
+            spreadsheet_id = extract_spreadsheet_id(spreadsheet_url)
             if not spreadsheet_id:
                 return
 

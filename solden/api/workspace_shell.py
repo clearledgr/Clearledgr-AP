@@ -3609,8 +3609,8 @@ async def export_report_to_sheets(
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=400, content={"error": "spreadsheet_url and report_type are required"})
 
-    from solden.services.sheets_api import SheetsAPIClient
-    spreadsheet_id = SheetsAPIClient.extract_spreadsheet_id(spreadsheet_url)
+    from solden.services.sheets_api import extract_spreadsheet_id
+    spreadsheet_id = extract_spreadsheet_id(spreadsheet_url)
     if not spreadsheet_id:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=400, content={"error": "Could not parse spreadsheet ID from URL"})
