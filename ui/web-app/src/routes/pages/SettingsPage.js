@@ -1333,7 +1333,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
         ${canManagePlan ? html`
           <div style="margin-top:16px;border-top:1px solid var(--cl-border, #e2e8f0);padding-top:16px;">
             ${(sub.plan || '').toLowerCase() === 'free' ? html`
-              <div style="background:#ECFDF5;border:1px solid #BBF7D0;color:#065F46;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px">
+              <div style="background:var(--cl-teal-soft);border:1px solid #BBF7D0;color:#065F46;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px">
                 You're on the <strong>Free</strong> plan. Pick a tier below to upgrade.
               </div>
             ` : null}
@@ -1344,13 +1344,13 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
                 { id: 'professional', name: 'Professional', price: '$149/mo', annual: '$125/mo annual', desc: 'Per seat plus invoice volume. Multi-entity, 3-way match, advanced reporting, API access, priority support.' },
                 { id: 'enterprise', name: 'Enterprise', price: '$299/mo', annual: '$249/mo annual', desc: 'NetSuite/SAP custom. Unlimited users, custom ERP integrations, SSO, data residency. Contract.' },
               ].map((tier) => html`
-                <div key=${tier.id} style="border:1px solid ${(sub.plan || '').toLowerCase() === tier.id ? '#00D67E' : '#E2E8F0'};border-radius:8px;padding:12px;${(sub.plan || '').toLowerCase() === tier.id ? 'background:#ECFDF5;' : ''}">
+                <div key=${tier.id} style="border:1px solid ${(sub.plan || '').toLowerCase() === tier.id ? 'var(--cl-teal-500)' : '#E2E8F0'};border-radius:8px;padding:12px;${(sub.plan || '').toLowerCase() === tier.id ? 'background:var(--cl-teal-soft);' : ''}">
                   <strong style="font-size:14px;">${tier.name}</strong>
                   <div style="font:600 16px/1.2 'Geist Mono',monospace;color:var(--cl-navy);margin:4px 0;">${tier.price}</div>
                   <div style="font:400 11px/1 'DM Sans',sans-serif;color:#94A3B8;margin-bottom:4px;">${tier.annual}</div>
                   <div class="muted" style="font-size:11px;margin-bottom:8px;">${tier.desc}</div>
                   ${(sub.plan || '').toLowerCase() === tier.id
-                    ? html`<span style="font-size:11px;color:#00D67E;font-weight:600;">Current plan</span>`
+                    ? html`<span style="font-size:11px;color:var(--cl-teal-500);font-weight:600;">Current plan</span>`
                     : html`<button class="btn-secondary btn-sm" onClick=${() => {
                         api('/api/workspace/subscription/plan', {
                           method: 'PATCH',

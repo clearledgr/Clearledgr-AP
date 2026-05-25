@@ -162,7 +162,7 @@
 .cl-topbar-role-owner,
 .cl-topbar-role-admin {
   background: var(--cl-mint-soft);
-  border-color: rgba(0, 214, 126, 0.4);
+  border-color: rgba(24, 191, 176, 0.4);
   color: var(--cl-mint-strong);
 }
 

@@ -184,7 +184,7 @@
 .cl-inline-edit-trigger {
   background: transparent;
   border: none;
-  color: var(--cl-mint, #00d67e);
+  color: var(--cl-mint, #18BFB0);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -215,8 +215,8 @@
 
 .cl-inline-edit-input:focus {
   outline: none;
-  border-color: var(--cl-mint, #00d67e);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+  border-color: var(--cl-mint, #18BFB0);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.15);
 }
 
 .cl-inline-edit-input:disabled {
@@ -306,7 +306,7 @@
 .secondary-form-stack textarea:focus {
   outline: none;
   border-color: var(--cl-mint-strong);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.12);
 }
 
 .secondary-inline-actions {
@@ -367,7 +367,7 @@
 .field-row textarea:focus {
   outline: none;
   border-color: var(--cl-mint-strong);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.12);
 }
 
 .field-row .form-help {
@@ -641,7 +641,7 @@
 .status-badge.connected {
   background: var(--cl-mint-soft);
   color: var(--cl-mint-strong);
-  border-color: rgba(0, 214, 126, 0.3);
+  border-color: rgba(24, 191, 176, 0.3);
 }
 
 .status-badge.warning {
@@ -904,8 +904,8 @@
 .cl-audit-filter-field input:focus,
 .cl-audit-filter-field select:focus {
   outline: none;
-  border-color: var(--cl-mint, #00d67e);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+  border-color: var(--cl-mint, #18BFB0);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.12);
 }
 
 .cl-audit-filter-actions {
@@ -975,7 +975,7 @@
 }
 
 .cl-audit-row.is-active {
-  background: rgba(0, 214, 126, 0.08);
+  background: rgba(24, 191, 176, 0.08);
 }
 
 .cl-audit-cell-ts {
@@ -1054,7 +1054,7 @@
 }
 
 .cl-audit-verdict-should_execute {
-  background: rgba(0, 214, 126, 0.15);
+  background: rgba(24, 191, 176, 0.15);
   color: #0a663e;
 }
 
@@ -1266,7 +1266,7 @@
 }
 
 .cl-siem-table tr.is-active {
-  background: rgba(0, 214, 126, 0.06);
+  background: rgba(24, 191, 176, 0.06);
 }
 
 /* Per-webhook delivery log panel — appears below the table when a
@@ -1322,7 +1322,7 @@
 }
 
 .cl-audit-delivery-ok {
-  background: rgba(0, 214, 126, 0.15);
+  background: rgba(24, 191, 176, 0.15);
   color: #0a663e;
 }
 
@@ -1672,8 +1672,8 @@
 
 .cl-field-mapping-input input:focus {
   outline: none;
-  border-color: var(--cl-mint, #00d67e);
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.12);
+  border-color: var(--cl-mint, #18BFB0);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.12);
 }
 
 @media (max-width: 720px) {
@@ -1823,9 +1823,9 @@
 
 .cl-conn-health-healthy.cl-conn-health-chip,
 .cl-conn-health-tile.cl-conn-health-healthy {
-  background: rgba(0, 214, 126, 0.10);
+  background: rgba(24, 191, 176, 0.10);
   color: #0a663e;
-  border-color: rgba(0, 214, 126, 0.35);
+  border-color: rgba(24, 191, 176, 0.35);
 }
 
 .cl-conn-health-degraded.cl-conn-health-chip,
@@ -3911,8 +3911,8 @@
 .cl-record-dialog-field input:focus,
 .cl-record-dialog-field textarea:focus {
   outline: none;
-  border-color: #00D67E;
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+  border-color: var(--cl-teal-500);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.15);
 }
 .cl-record-dialog-warning {
   background: #FEF3C7;
@@ -3940,8 +3940,8 @@
   border-bottom: 1px dashed rgba(10, 22, 40, 0.4);
 }
 .cl-record-erp-link:hover {
-  border-bottom-color: #00D67E;
-  color: #047857;
+  border-bottom-color: var(--cl-teal-500);
+  color: var(--cl-teal-600);
 }
 .cl-record-action-override {
   border-color: #F59E0B;
@@ -4345,7 +4345,7 @@
   cursor: pointer;
 }
 .cl-api-key-scope-cell:hover {
-  border-color: #00D67E;
+  border-color: var(--cl-teal-500);
 }
 .cl-api-key-scope-cell input {
   margin: 0;
@@ -4377,7 +4377,7 @@
 .cl-api-key-scope-chip code {
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
-  color: #047857;
+  color: var(--cl-teal-600);
 }
 
 
@@ -4487,7 +4487,7 @@
   word-break: break-word;
 }
 .cl-rules-json-textarea::selection {
-  background: rgba(0, 214, 126, 0.25);
+  background: rgba(24, 191, 176, 0.25);
   color: transparent;
 }
 .cl-tok-key { color: #0F766E; font-weight: 600; }
@@ -4576,7 +4576,7 @@
   font-size: 13px;
   font-weight: 600;
 }
-.cl-onb-health-verdict-ok { color: #047857; }
+.cl-onb-health-verdict-ok { color: var(--cl-teal-600); }
 .cl-onb-health-verdict-fail { color: #B91C1C; }
 
 .cl-conn-health-tile-actions {
@@ -4639,7 +4639,7 @@
 }
 .cl-record-ask-chip:hover {
   background: #E2E8F0;
-  border-color: #00D67E;
+  border-color: var(--cl-teal-500);
 }
 .cl-record-ask-history {
   list-style: none;
@@ -4676,7 +4676,7 @@
 .cl-record-ask-source {
   font-size: 10px;
   background: #ECFDF5;
-  color: #047857;
+  color: var(--cl-teal-600);
   padding: 2px 6px;
   border-radius: 3px;
   border: 1px solid #A7F3D0;
@@ -4702,8 +4702,8 @@
 }
 .cl-record-ask-form input:focus {
   outline: none;
-  border-color: #00D67E;
-  box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.15);
+  border-color: var(--cl-teal-500);
+  box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.15);
 }
 
 /* ─── Secondary-page scaffolding (Connections / Exceptions /

@@ -166,7 +166,7 @@
 
 .billing-plan-option.is-current {
   border-color: var(--cl-mint-strong);
-  background: linear-gradient(0deg, rgba(0, 214, 126, 0.04), rgba(0, 214, 126, 0.04)), var(--cl-surface);
+  background: linear-gradient(0deg, rgba(24, 191, 176, 0.04), rgba(24, 191, 176, 0.04)), var(--cl-surface);
 }
 
 .billing-plan-row {

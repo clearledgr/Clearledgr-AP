@@ -453,7 +453,7 @@ function TimeSeriesChart({ report, series }) {
               y=${y}
               width=${w}
               height=${heightPct}
-              fill="#00D67E"
+              fill="#18BFB0"
               opacity="0.9"
             ><title>${series[idx].bucket}: ${formatChartValue(report.id, v)}</title></rect>
           `;

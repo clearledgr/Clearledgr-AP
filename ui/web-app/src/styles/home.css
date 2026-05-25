@@ -83,8 +83,8 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
-  background: linear-gradient(0deg, rgba(0, 214, 126, 0.05), rgba(0, 214, 126, 0.05)), var(--cl-surface);
-  border: 1px solid rgba(0, 214, 126, 0.2);
+  background: linear-gradient(0deg, rgba(24, 191, 176, 0.05), rgba(24, 191, 176, 0.05)), var(--cl-surface);
+  border: 1px solid rgba(24, 191, 176, 0.2);
   border-radius: var(--cl-radius);
   font-size: 13px;
   color: var(--cl-ink-primary);
@@ -151,8 +151,8 @@
   background: transparent;
 }
 .cl-home-checklist-item.is-done .cl-home-checklist-dot {
-  background: #00D67E;
-  border-color: #00D67E;
+  background: var(--cl-teal-500);
+  border-color: var(--cl-teal-500);
 }
 
 .cl-home-checklist-copy {
@@ -223,15 +223,15 @@
   height: 6px;
   border-radius: 50%;
   background: var(--cl-mint-strong);
-  box-shadow: 0 0 0 0 rgba(0, 214, 126, 0.45);
+  box-shadow: 0 0 0 0 rgba(24, 191, 176, 0.45);
   animation: cl-home-pulse 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   flex-shrink: 0;
 }
 
 @keyframes cl-home-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(0, 214, 126, 0.45); }
-  60%  { box-shadow: 0 0 0 6px rgba(0, 214, 126, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 214, 126, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(24, 191, 176, 0.45); }
+  60%  { box-shadow: 0 0 0 6px rgba(24, 191, 176, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(24, 191, 176, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -256,7 +256,7 @@
 .cl-home-stat-good .cl-home-stat-value  { color: var(--cl-mint-strong); }
 .cl-home-stat-warn .cl-home-stat-value  { color: var(--cl-warning); }
 .cl-home-stat-pending .cl-home-stat-value { color: #B45309; }
-.cl-home-stat-brand     { border-color: rgba(0, 214, 126, 0.25); }
+.cl-home-stat-brand     { border-color: rgba(24, 191, 176, 0.25); }
 
 
 /* ─── Agent activity ribbon (the hero) ────────────────────────── */

@@ -53,8 +53,8 @@
   transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-.cl-onb-step-next { border-color: var(--cl-mint); box-shadow: 0 0 0 3px rgba(0, 214, 126, 0.08); }
-.cl-onb-step-done { background: linear-gradient(0deg, rgba(0, 214, 126, 0.04), rgba(0, 214, 126, 0.04)) , var(--cl-surface); }
+.cl-onb-step-next { border-color: var(--cl-mint); box-shadow: 0 0 0 3px rgba(24, 191, 176, 0.08); }
+.cl-onb-step-done { background: linear-gradient(0deg, rgba(24, 191, 176, 0.04), rgba(24, 191, 176, 0.04)) , var(--cl-surface); }
 .cl-onb-step-pending { opacity: 0.7; }
 .cl-onb-step-optional { opacity: 0.85; }
 
@@ -81,7 +81,7 @@
 .cl-onb-step-pip-done {
   background: var(--cl-mint-soft);
   color: var(--cl-mint-strong);
-  border-color: rgba(0, 214, 126, 0.4);
+  border-color: rgba(24, 191, 176, 0.4);
 }
 
 .cl-onb-step-pip-next {
