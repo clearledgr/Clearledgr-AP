@@ -206,13 +206,15 @@ async def send_digest(org_id: str) -> bool:
     try:
         from solden.services.slack_api import resolve_slack_runtime
         runtime = resolve_slack_runtime(org_id)
-        if not runtime or not runtime.get("channel"):
-            logger.warning("[digest] org=%s: no Slack channel configured", org_id)
+        token = (runtime or {}).get("bot_token")
+        channel = (runtime or {}).get("approval_channel")
+        if not runtime or not runtime.get("connected") or not token or not channel:
+            logger.warning("[digest] org=%s: no connected Slack", org_id)
             return False
 
-        headers = {"Authorization": f"Bearer {runtime['token']}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         payload = {
-            "channel": runtime["channel"],
+            "channel": channel,
             "text": "Solden Daily Digest",
             "blocks": digest["blocks"],
         }

@@ -164,7 +164,7 @@ async def _send_slack_message(
     """Post a message to the org's finance channel. Returns True on success."""
     try:
         from solden.services.slack_notifications import _post_slack_blocks
-        result = await _post_slack_blocks(org_id, text, blocks=blocks)
+        result = await _post_slack_blocks(blocks or [], text, organization_id=org_id)
         return result is not None
     except Exception as exc:
         logger.warning("[trust_arc] Slack send failed for %s: %s", org_id, exc)
