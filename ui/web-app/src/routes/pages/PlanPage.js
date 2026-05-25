@@ -87,9 +87,46 @@ function statusTone(status) {
   return 'connected';
 }
 
-function formatPrice(plan, cycle = 'monthly') {
-  const meta = PLAN_META[plan] || PLAN_META.free;
+function minorToMajor(amountMinor, currency) {
+  const n = Number(amountMinor);
+  if (!Number.isFinite(n) || !currency) return null;
+  let decimals = 2;
+  try {
+    decimals = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits;
+  } catch (_) { /* unknown currency code — assume 2 dp */ }
+  return n / Math.pow(10, decimals);
+}
+
+function formatCurrencyAmount(amount, currency) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    }).format(amount);
+  } catch (_) {
+    return `${currency} ${amount}`;
+  }
+}
+
+// `preview` is the localized price map from Paddle (/billing/price-preview),
+// keyed by plan. When present we render the buyer's own currency; otherwise we
+// fall back to the static USD labels (Paddle not configured / no price IDs).
+function formatPrice(plan, cycle = 'monthly', preview = null) {
   const normalizedCycle = String(cycle || 'monthly').trim().toLowerCase();
+  const localized = preview && preview[plan];
+  if (localized && localized.formatted) {
+    if (normalizedCycle === 'yearly') {
+      const monthlyMajor = minorToMajor(localized.amount_minor, localized.currency_code);
+      // Annual monthly-equivalent is 80% of the monthly sticker (matches the
+      // backend "20% annual savings" convention).
+      if (monthlyMajor != null) {
+        return `${formatCurrencyAmount(monthlyMajor * 0.8, localized.currency_code)}/seat/mo billed annually`;
+      }
+    }
+    return `${localized.formatted}/seat/mo`;
+  }
+  const meta = PLAN_META[plan] || PLAN_META.free;
   const amount = normalizedCycle === 'yearly' ? meta.annual : meta.monthly;
   if (!amount) return 'Free';
   if (normalizedCycle === 'yearly') return `$${amount}/seat/mo billed annually`;
@@ -216,6 +253,17 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
     return () => { cancelled = true; };
   }, [api, plan]);
 
+  // Localized plan pricing via Paddle. When unavailable the cards fall back to
+  // the static USD labels in formatPrice, so this is purely additive.
+  const [pricePreview, setPricePreview] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api('/api/workspace/billing/price-preview', { silent: true })
+      .then((r) => { if (!cancelled && r && r.status === 'ok') setPricePreview(r.prices || null); })
+      .catch(() => { /* keep static labels */ });
+    return () => { cancelled = true; };
+  }, [api]);
+
   const [startCheckout, checkingOut] = useAction(async (chosenPlan, mode) => {
     if (!canManagePlan) return;
     const resp = await api('/api/workspace/billing/checkout', {
@@ -268,7 +316,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
         </p>
         <div class="billing-hero-meta">
           <span class=${`status-badge ${statusTone(status)}`}>${formatStatus(status)}</span>
-          <span class="secondary-chip">${formatPrice(plan, sub.billing_cycle)}</span>
+          <span class="secondary-chip">${formatPrice(plan, sub.billing_cycle, pricePreview)}</span>
           <span class="secondary-chip">${String(sub.billing_cycle || 'monthly').toLowerCase() === 'yearly' ? 'Annual billing' : 'Monthly billing'}</span>
           ${status === 'trialing'
             ? html`<span class="secondary-chip">${sub.trial_days_remaining || 0} trial day${Number(sub.trial_days_remaining || 0) === 1 ? '' : 's'} left</span>`
@@ -300,7 +348,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
             <div class="billing-summary-card">
               <strong>Current plan</strong>
               <span>${planLabel}</span>
-              <small>${formatPrice(plan, sub.billing_cycle)}</small>
+              <small>${formatPrice(plan, sub.billing_cycle, pricePreview)}</small>
             </div>
             <div class="billing-summary-card">
               <strong>Status</strong>
@@ -394,7 +442,7 @@ export default function PlanPage({ bootstrap, api, toast, orgId, onRefresh, navi
                       <strong>${meta.label}</strong>
                       ${isCurrent ? html`<span class="status-badge connected">Current</span>` : null}
                     </div>
-                    <div class="billing-plan-price">${formatPrice(planId, sub.billing_cycle)}</div>
+                    <div class="billing-plan-price">${formatPrice(planId, sub.billing_cycle, pricePreview)}</div>
                     <p>${meta.summary}</p>
                     <div class="billing-chip-row">
                       ${meta.highlights.map((highlight) => html`<span key=${highlight} class="secondary-chip">${highlight}</span>`)}

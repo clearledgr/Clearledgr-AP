@@ -150,6 +150,33 @@ def patch_collection_mode(
     return {"status": "ok", "mode": request.mode}
 
 
+@router.get("/price-preview")
+def get_price_preview(
+    request: Request,
+    user: TokenData = Depends(get_current_user),
+):
+    """Localized plan prices for the buyer's location, via Paddle.
+
+    Read-only and available to any authenticated workspace user (a member may
+    want to see what an upgrade costs before asking an admin). Geolocates from
+    the buyer's IP so EU/UK customers see their own currency instead of a
+    hardcoded ``$``. Returns ``status != "ok"`` (handled gracefully by the SPA,
+    which then renders its static labels) when Paddle isn't configured.
+    """
+    # First hop of X-Forwarded-For is the real client behind the proxy; fall
+    # back to the direct peer.
+    ip = None
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        ip = xff.split(",")[0].strip()
+    elif request.client:
+        ip = request.client.host
+    return paddle_svc.preview_plan_prices(
+        ["starter", "professional", "enterprise"],
+        ip_address=ip,
+    )
+
+
 @router.get("/invoices")
 def list_billing_invoices(
     user: TokenData = Depends(get_current_user),

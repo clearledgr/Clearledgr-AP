@@ -152,6 +152,71 @@ def create_checkout_url(
     }
 
 
+def preview_plan_prices(
+    plans,
+    *,
+    ip_address: Optional[str] = None,
+    country_code: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Localized price preview for the given plan tiers via Paddle.
+
+    Calls Paddle's ``/pricing-preview`` with the configured price IDs and the
+    buyer's location (IP preferred, else country), so the SPA can render plan
+    cards in the buyer's own currency instead of a hardcoded ``$`` label.
+
+    Returns ``{"status": "ok", "currency_code", "prices": {plan: {...}}}`` on
+    success. On any non-success path (Paddle not configured, no price IDs set,
+    HTTP error) returns ``status != "ok"`` with an empty ``prices`` map so the
+    caller falls back to its static labels — never raises.
+    """
+    if not is_configured():
+        return {"status": "not_configured", "prices": {}}
+
+    # Resolve each plan to its configured price ID; skip free / unconfigured.
+    price_to_plan: Dict[str, str] = {}
+    items = []
+    for plan in plans:
+        pid = _price_id_for_plan(plan)
+        if pid:
+            price_to_plan[pid] = plan
+            items.append({"price_id": pid, "quantity": 1})
+    if not items:
+        return {"status": "missing_prices", "prices": {}}
+
+    body: Dict[str, Any] = {"items": items}
+    if ip_address:
+        body["customer_ip_address"] = ip_address
+    elif country_code:
+        body["address"] = {"country_code": country_code}
+
+    try:
+        data = _http("POST", "/pricing-preview", json_body=body)
+    except Exception as exc:
+        logger.exception("[paddle.preview] pricing-preview failed")
+        return {"status": "error", "message": str(exc), "prices": {}}
+
+    currency = data.get("currency_code")
+    prices: Dict[str, Any] = {}
+    for line in (data.get("details") or {}).get("line_items") or []:
+        pid = (line.get("price") or {}).get("id")
+        plan = price_to_plan.get(pid)
+        if not plan:
+            continue
+        # quantity is 1, so unit totals == line totals; prefer the per-unit
+        # (per-seat) figures so the SPA renders a per-seat price.
+        unit_fmt = line.get("formatted_unit_totals") or {}
+        unit_raw = line.get("unit_totals") or {}
+        prices[plan] = {
+            # Paddle's locale-formatted string ("€65.00") for direct display.
+            "formatted": unit_fmt.get("total") or unit_fmt.get("subtotal"),
+            # Minor-unit integer string ("6500") + currency so the SPA can
+            # derive the annual-equivalent in the same currency via Intl.
+            "amount_minor": unit_raw.get("total") or unit_raw.get("subtotal"),
+            "currency_code": currency,
+        }
+    return {"status": "ok", "currency_code": currency, "prices": prices}
+
+
 def update_collection_mode(
     paddle_subscription_id: str, *, mode: str,
 ) -> Dict[str, Any]:
