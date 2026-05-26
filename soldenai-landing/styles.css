@@ -37,7 +37,7 @@
 
 :root {
   /* Brand */
-  --navy: #001137;
+  --navy: #0A1F44;
   --navy-soft: #14264F;
   --navy-deep: #061330;
   --teal: #18BFB0;
@@ -720,7 +720,7 @@ body:not(.theme-dark) .footer-cta {
    bottoms of the letters, so the wordmark reads as a monument
    bleeding off the bottom of the page. */
 .footer__wordmark {
-  font-family: "Geist", -apple-system, "system-ui", sans-serif;
+  font-family: "Iowan Old Style", "Georgia", serif;
   font-size: clamp(240px, 46vw, 720px);
   line-height: 0.9;
   letter-spacing: -0.05em;

@@ -39,12 +39,6 @@
   // (future → active → past) as the reader scrolls. ──
   initRuntimeBullets();
 
-  // ── 1g. Demo section: scroll-triggered beat entrance, per-artifact
-  // stagger (audit rows, cascade gates, obs cards, sparklines), and a
-  // spine traveling node that follows scroll progress through the
-  // section. Same intent as inngest's motion language, in vanilla JS. ──
-  initDemoAnimations();
-
   function initFlow() {
     var card = document.querySelector('[data-flow-state]');
     if (!card || typeof IntersectionObserver === 'undefined') return;
@@ -392,82 +386,4 @@
         setSubmitting(false);
       });
   });
-
-  // ─── Demo section animations ────────────────────────────────
-  function initDemoAnimations() {
-    if (typeof IntersectionObserver === 'undefined') return;
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    // 1. Beat entrance — each .demo__beat fades + slides up on enter.
-    var beats = document.querySelectorAll('.demo__beat');
-    if (beats.length) {
-      var beatIO = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting) {
-            e.target.classList.add('is-in');
-            beatIO.unobserve(e.target);
-          }
-        });
-      }, { threshold: 0.18, rootMargin: '0px 0px -8% 0px' });
-      beats.forEach(function (b) { beatIO.observe(b); });
-    }
-
-    // 2. Per-artifact stagger triggers (audit rows, cascade gates,
-    // obs cards + sparkline draw-in).
-    var artifacts = document.querySelectorAll('.demo-audit, .demo-cascade, .demo-obs');
-    if (artifacts.length) {
-      var artIO = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting) {
-            e.target.classList.add('is-in');
-            artIO.unobserve(e.target);
-          }
-        });
-      }, { threshold: 0.35, rootMargin: '0px 0px -10% 0px' });
-      artifacts.forEach(function (a) { artIO.observe(a); });
-    }
-
-    // 3. Spine traveling node — a small teal dot tracks scroll
-    // progress through the demo section, like inngest's lit-marker
-    // moving down the spine as you read.
-    var demo = document.querySelector('.demo');
-    var spine = document.querySelector('.demo__spine');
-    if (!demo || !spine) return;
-
-    var node = document.createElement('span');
-    node.className = 'demo__spine-node';
-    spine.appendChild(node);
-
-    var sectionIO = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        demo.classList.toggle('is-active', e.isIntersecting);
-      });
-    }, { threshold: 0 });
-    sectionIO.observe(demo);
-
-    var ticking = false;
-    function update() {
-      var rect = demo.getBoundingClientRect();
-      var spineRect = spine.getBoundingClientRect();
-      var vh = window.innerHeight || document.documentElement.clientHeight;
-      // Progress: 0 when section bottom reaches viewport top,
-      // 1 when section top exits viewport bottom. We bias toward
-      // the section's vertical middle so the node tracks the part
-      // the user is reading, not the chrome.
-      var pos = (vh - rect.top) - (vh * 0.45);
-      var span = rect.height - (vh * 0.45);
-      var progress = Math.max(0, Math.min(1, pos / Math.max(1, span)));
-      // Spine top:240px bottom:100px within section; map progress
-      // along the spine's actual rendered height.
-      node.style.transform = 'translate(-50%, ' + (progress * spineRect.height) + 'px)';
-    }
-    window.addEventListener('scroll', function () {
-      if (!ticking) {
-        window.requestAnimationFrame(function () { update(); ticking = false; });
-        ticking = true;
-      }
-    }, { passive: true });
-    window.addEventListener('resize', update, { passive: true });
-    update();
-  }
 })();
