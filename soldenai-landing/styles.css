@@ -3069,11 +3069,14 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-home--inngest .shell {
-  max-width: 1200px;
+  width: min(1200px, calc(100vw - 64px));
+  max-width: none;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .ix-workflow-section .shell {
-  max-width: 1240px;
+  max-width: none;
 }
 
 .ix-banner {
@@ -3288,7 +3291,7 @@ body:not(.theme-dark) .footer-cta {
 .ix-hero__inner {
   position: relative;
   z-index: 1;
-  width: min(1120px, calc(100vw - 64px));
+  width: min(1200px, calc(100vw - 64px));
   height: 100%;
   min-height: 0;
   display: flex;
@@ -3489,15 +3492,15 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-principles article {
-  min-height: 250px;
+  min-height: 200px;
   display: flex;
   flex-direction: column;
-  padding: 22px;
+  padding: 18px;
 }
 
 .ix-principles article .ix-principle-icon {
-  width: 52px;
-  height: 52px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
@@ -3510,8 +3513,8 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-principles article .ix-principle-icon svg {
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
   display: block;
   fill: none;
   stroke: currentColor;
@@ -3607,24 +3610,25 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-work-record__top {
-  min-height: 52px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 0 18px;
+  gap: 14px;
+  padding: 0 14px;
   border-bottom: 1px solid rgba(6, 19, 48, 0.12);
   color: #756b5e;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .ix-work-record__top strong {
-  padding: 5px 9px;
+  padding: 4px 8px;
   border: 1px solid rgba(24, 191, 176, 0.34);
   color: #076a62;
   background: rgba(24, 191, 176, 0.12);
   font-weight: 680;
+  font-size: 12px;
 }
 
 .ix-work-record__main {
@@ -3633,8 +3637,8 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-work-record__identity {
-  min-height: 330px;
-  padding: 28px;
+  min-height: 230px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -3644,27 +3648,27 @@ body:not(.theme-dark) .footer-cta {
 .ix-work-record__identity span {
   align-self: flex-start;
   margin-bottom: auto;
-  padding: 6px 10px;
+  padding: 5px 9px;
   border: 1px solid rgba(24, 191, 176, 0.34);
   border-radius: 999px;
   color: #076a62;
   background: rgba(24, 191, 176, 0.12);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
 }
 
 .ix-work-record__identity h3 {
   margin: 0;
   color: var(--ix-ink);
-  font-size: clamp(24px, 1.55vw, 27px);
-  line-height: 1.02;
+  font-size: clamp(18px, 1.2vw, 21px);
+  line-height: 1.08;
 }
 
 .ix-work-record__identity p {
-  margin: 12px 0 0;
+  margin: 8px 0 0;
   color: #685f53;
-  font-size: 16px;
+  font-size: 13.5px;
   line-height: 1.5;
 }
 
@@ -3673,12 +3677,12 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-work-record__fields div {
-  min-height: 82px;
+  min-height: 56px;
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
-  padding: 16px 20px;
+  padding: 11px 16px;
   border-bottom: 1px solid rgba(6, 19, 48, 0.12);
 }
 
@@ -3689,13 +3693,13 @@ body:not(.theme-dark) .footer-cta {
 .ix-work-record__fields span {
   color: #756b5e;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
 .ix-work-record__fields strong {
   color: var(--ix-ink);
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 620;
   overflow-wrap: anywhere;
 }
@@ -3722,8 +3726,8 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-work-record__chain div {
-  min-height: 116px;
-  padding: 18px;
+  min-height: 84px;
+  padding: 14px;
   border-left: 1px solid rgba(6, 19, 48, 0.12);
 }
 
@@ -3742,21 +3746,21 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-work-record__chain span {
-  margin-bottom: 28px;
+  margin-bottom: 18px;
   color: var(--ix-teal-2);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .ix-work-record__chain strong {
   color: var(--ix-ink);
-  font-size: 17px;
+  font-size: 14px;
 }
 
 .ix-work-record__chain small {
   margin-top: 4px;
   color: #685f53;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 @keyframes ix-record-chain {
@@ -5210,6 +5214,10 @@ body:not(.theme-dark) .footer-cta {
 }
 
 @media (max-width: 720px) {
+  .ix-home--inngest .shell {
+    width: calc(100vw - 44px);
+  }
+
   [data-site-header] {
     min-height: 68px;
   }

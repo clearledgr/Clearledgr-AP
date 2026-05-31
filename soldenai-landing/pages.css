@@ -318,6 +318,7 @@
 
 body.theme-manifesto-light,
 body.theme-manifesto-light.theme-subpage-light {
+  --page-rail: min(1200px, calc(100vw - 64px));
   background: #fbf6ea;
   color: #1f1b16;
 }
@@ -373,8 +374,11 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .page-cover__inner {
   position: relative;
   z-index: 1;
-  width: min(1320px, calc(100vw - 64px));
+  width: var(--page-rail);
   max-width: none;
+  margin: 0 auto;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .page-cover__eyebrow,
@@ -390,8 +394,8 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .page-cover__title {
   margin: 0 0 28px;
   font-family: "Iowan Old Style", Georgia, serif;
-  font-size: clamp(64px, 8vw, 120px);
-  line-height: 0.94;
+  font-size: clamp(56px, 6.5vw, 104px);
+  line-height: 1;
   letter-spacing: 0;
   font-weight: 500;
   color: #1f1b16;
@@ -431,12 +435,21 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
   border-top: 1px solid rgba(31, 27, 22, 0.1);
 }
 
+.page-section > .shell {
+  width: var(--page-rail);
+  max-width: none;
+  margin-right: auto;
+  margin-left: auto;
+  padding-right: 0;
+  padding-left: 0;
+}
+
 .page-section--alt {
   background: #fbf6ea;
 }
 
 .contact-shell {
-  width: min(1120px, 100%);
+  width: 100%;
   margin: 0 auto;
 }
 
@@ -726,22 +739,22 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 }
 
 .essay__cover-grid {
-  width: min(1600px, calc(100vw - 64px));
+  width: var(--page-rail);
   margin: 0 auto;
 }
 
 .essay__cover {
   position: relative;
-  padding: 112px 0 104px;
+  padding: 92px 0 78px;
   border-bottom: 1px solid rgba(31, 27, 22, 0.1);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .essay__cover::before {
   content: "";
   position: absolute;
-  inset: -20% -10% auto auto;
-  width: 62vw;
+  inset: -20% 0 auto auto;
+  width: min(62vw, 960px);
   height: 62vw;
   background: radial-gradient(circle, rgba(24, 191, 176, 0.12), rgba(24, 191, 176, 0) 64%);
   pointer-events: none;
@@ -757,14 +770,14 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 }
 
 .essay__cover-lockup {
-  max-width: 1360px;
+  max-width: 1120px;
 }
 
 .essay__title {
   margin: 0;
   font-family: "Iowan Old Style", Georgia, serif;
-  font-size: clamp(72px, 10vw, 170px);
-  line-height: 0.9;
+  font-size: clamp(56px, 6.7vw, 112px);
+  line-height: 1.02;
   letter-spacing: 0;
   font-weight: 500;
   color: #1f1b16;
@@ -783,8 +796,8 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 18px;
-  margin-top: 34px;
-  padding-top: 18px;
+  margin-top: 30px;
+  padding-top: 16px;
   border-top: 1px solid rgba(31, 27, 22, 0.14);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -936,9 +949,9 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
   justify-content: space-between;
   gap: clamp(56px, 5vw, 88px);
-  width: min(1600px, calc(100vw - 64px));
+  width: var(--page-rail);
   margin: 0 auto;
-  padding-top: 42px;
+  padding-top: 56px;
 }
 
 .essay__body {
@@ -989,7 +1002,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .essay__quotes {
   display: block;
   max-width: 780px;
-  margin: 0 0 78px;
+  margin: 0 0 58px;
 }
 
 .essay__quotes blockquote {
@@ -1226,6 +1239,11 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 }
 
 @media (max-width: 760px) {
+  body.theme-manifesto-light,
+  body.theme-manifesto-light.theme-subpage-light {
+    --page-rail: calc(100vw - 44px);
+  }
+
   .usecases,
   .work-parts,
   .workflow-groups {
@@ -1255,12 +1273,6 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
     padding-top: 40px;
   }
 
-  .page-cover__inner,
-  .essay__cover-grid,
-  .essay__layout {
-    width: calc(100vw - 44px);
-  }
-
   .page-section {
     padding: 68px 0;
   }
@@ -1276,10 +1288,6 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 
   .work-part {
     min-height: 0;
-  }
-
-  .essay__cover-grid {
-    width: calc(100vw - 44px);
   }
 
   .essay__cover-grid,
