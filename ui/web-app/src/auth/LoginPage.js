@@ -8,6 +8,21 @@ import { GoogleMark, MicrosoftMark } from './OAuthIcons.js';
 const GOOGLE_START_PATH = '/auth/google/start';
 const MICROSOFT_START_PATH = '/auth/microsoft/start';
 
+function authErrorMessage(code) {
+  const normalized = String(code || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'access_denied' || normalized === 'user_cancelled') {
+    return 'Sign-in was cancelled. Choose Google or Microsoft to try again.';
+  }
+  if (normalized === 'google_oauth_not_configured' || normalized === 'microsoft_oauth_not_configured') {
+    return 'This sign-in method is not configured yet. Use email sign-in or contact your admin.';
+  }
+  if (normalized === 'missing_code_or_state' || normalized === 'invalid_state' || normalized === 'expired_state') {
+    return 'The sign-in link expired. Start again.';
+  }
+  return "Sign-in couldn't finish. Try again.";
+}
+
 export function LoginPage() {
   const { isAuthenticated, isLoading } = useSession();
   const [, navigate] = useLocation();
@@ -29,6 +44,19 @@ export function LoginPage() {
   // cookies before AuthGate redirects.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const authError = params.get('auth_error');
+    if (authError) {
+      setError(authErrorMessage(authError));
+      try {
+        params.delete('auth_error');
+        params.delete('error_description');
+        const query = params.toString();
+        const next = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`;
+        window.history.replaceState({}, '', next);
+      } catch {
+        /* best effort: keep the visible error even if URL cleanup fails */
+      }
+    }
     if (params.has('post_oauth')) refreshSession();
   }, []);
 
@@ -150,7 +178,7 @@ export function LoginPage() {
           If your team admin sent you an invite link, open it directly.
         </p>
         <p class="cl-auth-fineprint">
-          By continuing you agree to our <a href="/terms">Terms</a>
+          By continuing you agree to our <a href="/terms">Terms</a>${' '}
           and <a href="/privacy">Privacy Policy</a>.
         </p>
       </div>

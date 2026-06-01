@@ -974,7 +974,7 @@ export default function SettingsPage({ bootstrap, api, toast, orgId, onRefresh, 
               : html`<button class="empty-cta" onClick=${goToConnections}>Connect Gmail →</button>`}
           </div>
           <div class="settings-summary-card">
-            <strong>Approval surface</strong>
+            <strong>Approvals</strong>
             ${slack.connected
               ? html`<span><span class="status-badge connected">Slack</span></span>`
               : teams.connected

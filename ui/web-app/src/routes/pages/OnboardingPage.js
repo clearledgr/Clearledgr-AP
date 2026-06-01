@@ -167,7 +167,7 @@ export function OnboardingPage() {
             <div>
               <strong>Pre-go-live health check</strong>
               <p class="muted">
-                Runs an actual test transaction against your ERP plus checks Gmail + approval-surface state.
+                Runs an actual test transaction against your ERP plus checks Gmail and the approval channel.
                 Catches expired tokens or misconfigured connections before bills start flowing.
               </p>
             </div>

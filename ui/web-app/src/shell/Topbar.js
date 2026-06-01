@@ -98,7 +98,7 @@ export function Topbar() {
       <div class="cl-topbar-left">
         <div
           class="cl-topbar-org"
-          title="Active workspace — multi-org switcher coming soon"
+          title="Active workspace"
           aria-label=${`Active workspace: ${orgName}`}>
           <div class="cl-topbar-org-stack">
             <span class="cl-topbar-org-label">Workspace</span>

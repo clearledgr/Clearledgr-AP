@@ -557,7 +557,7 @@ function SystemStatusFooter({ integrations, agentLastAction, navigate }) {
           </div>
         </div>
         <${StatusCell} label="Gmail" integration=${watch} fallbackLabel="Inbox not connected" />
-        <${StatusCell} label="Approval surface" integration=${slack.connected ? slack : teams} fallbackLabel="No Slack/Teams approval surface" />
+        <${StatusCell} label="Approvals" integration=${slack.connected ? slack : teams} fallbackLabel="No Slack/Teams approval channel" />
         <${StatusCell} label="ERP" integration=${erp} fallbackLabel="ERP not connected" />
       </div>
     </section>

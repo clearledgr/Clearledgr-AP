@@ -21,18 +21,18 @@ import { useOrgId } from './BootstrapContext.js';
 
 const NAV_ENTRIES = [
   { kind: 'nav', label: 'Home', sub: 'Workspace overview', path: '/', tokens: ['home', 'overview', 'dashboard'] },
-  { kind: 'nav', label: 'Activity', sub: 'Live agent activity ribbon', path: '/activity', tokens: ['activity', 'live', 'feed', 'agent'] },
+  { kind: 'nav', label: 'Activity', sub: 'Recent work activity', path: '/activity', tokens: ['activity', 'live', 'feed', 'agent'] },
   { kind: 'nav', label: 'Exceptions', sub: 'Records the agent escalated for human judgment', path: '/exceptions', tokens: ['exceptions', 'errors', 'blockers', 'review', 'queue', 'attention'] },
   { kind: 'nav', label: 'Records', sub: 'Search and inspect AP records', path: '/records', tokens: ['records', 'pipeline', 'invoices', 'ap'] },
   { kind: 'nav', label: 'Procurement', sub: 'Purchase orders + approval workflow', path: '/procurement', tokens: ['procurement', 'purchase', 'po', 'orders'] },
-  { kind: 'nav', label: 'Workflow builder', sub: 'Build custom workflow types (no-code)', path: '/workflows', tokens: ['workflows', 'builder', 'custom', 'box', 'types', 'spec', 'no-code'] },
+  { kind: 'nav', label: 'Builder', sub: 'Create custom work types', path: '/workflows', tokens: ['workflows', 'builder', 'custom', 'box', 'types', 'spec', 'no-code'] },
   { kind: 'nav', label: 'Vendors', sub: 'Vendor directory', path: '/vendors', tokens: ['vendors', 'suppliers'] },
   { kind: 'nav', label: 'Reports', sub: 'Volume, agent performance, cycle, exceptions, vendor quality', path: '/reports', tokens: ['reports', 'analytics', 'metrics'] },
   { kind: 'nav', label: 'Audit log', sub: 'Append-only governance trail', path: '/audit', tokens: ['audit', 'history', 'governance'] },
-  { kind: 'nav', label: 'Approval rules', sub: 'Configure agent routing policy', path: '/rules', tokens: ['rules', 'policy', 'approval'] },
+  { kind: 'nav', label: 'Approval rules', sub: 'Configure approval routing', path: '/rules', tokens: ['rules', 'policy', 'approval'] },
   { kind: 'nav', label: 'Connections', sub: 'ERP, Slack, Teams, Gmail', path: '/connections', tokens: ['connections', 'integrations', 'erp', 'slack', 'teams', 'gmail'] },
-  { kind: 'nav', label: 'API keys', sub: 'Agent identity, scopes, rotation', path: '/api-keys', tokens: ['api', 'keys', 'tokens', 'agent', 'identity'] },
-  { kind: 'nav', label: 'Settings', sub: 'Org, users, policies, billing', path: '/settings', tokens: ['settings', 'config', 'preferences', 'billing'] },
+  { kind: 'nav', label: 'API keys', sub: 'Service account access and rotation', path: '/api-keys', tokens: ['api', 'keys', 'tokens', 'agent', 'identity'] },
+  { kind: 'nav', label: 'Settings', sub: 'Company, users, policies, billing', path: '/settings', tokens: ['settings', 'config', 'preferences', 'billing'] },
   { kind: 'nav', label: 'Plan', sub: 'Subscription, usage, billing', path: '/plan', tokens: ['plan', 'billing', 'subscription'] },
   { kind: 'nav', label: 'Status', sub: 'Operational health', path: '/status', tokens: ['status', 'health', 'uptime', 'incidents'] },
   { kind: 'nav', label: 'Onboarding', sub: 'Setup wizard', path: '/onboarding', tokens: ['onboarding', 'setup', 'wizard'] },
@@ -96,7 +96,7 @@ export function CommandK() {
 
   // Debounced live search against /api/ap/items/search.
   useEffect(() => {
-    if (!open || !query || query.length < 2) {
+    if (!open || !query || query.length < 2 || !orgId) {
       setLiveResults([]);
       setSearchPending(false);
       setSearchError(false);

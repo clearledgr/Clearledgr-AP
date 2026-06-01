@@ -20,19 +20,34 @@ const BootstrapContext = createContext({ data: null, refresh: () => Promise.reso
 
 const BOOTSTRAP_ENDPOINT = '/api/workspace/bootstrap';
 
+function resolveBootstrapOrgId(data) {
+  return (
+    data?.organization?.id ||
+    data?.organization_id ||
+    data?.current_user?.organization_id ||
+    null
+  );
+}
+
 export function BootstrapProvider({ children }) {
   const [state, setState] = useState({ status: 'loading', data: null, error: null });
 
   const load = useCallback(async () => {
+    setState((current) => (
+      current.status === 'ready'
+        ? current
+        : { status: 'loading', data: null, error: null }
+    ));
     try {
       const data = await api(BOOTSTRAP_ENDPOINT, { retry: false });
+      if (!resolveBootstrapOrgId(data)) {
+        setState({ status: 'error', data: null, error: 'missing_organization' });
+        return null;
+      }
       setState({ status: 'ready', data, error: null });
       return data;
     } catch (err) {
-      // Non-fatal: pages can render without a bootstrap by treating
-      // the user as `operator` with no integrations. Capabilities
-      // hook returns the fallback in that case.
-      setState({ status: 'ready', data: null, error: err?.message || String(err) });
+      setState({ status: 'error', data: null, error: err?.message || String(err) });
       return null;
     }
   }, []);
@@ -54,6 +69,22 @@ export function BootstrapProvider({ children }) {
 
   if (state.status === 'loading') {
     return html`<div class="cl-app-loading">Loading workspace…</div>`;
+  }
+  if (state.status === 'error') {
+    return html`
+      <div class="cl-app-loading cl-app-loading-error" role="alert">
+        <div class="cl-app-loading-card">
+          <h1>We couldn't load your workspace.</h1>
+          <p>Refresh your session, then try again. If this keeps happening, contact your workspace admin.</p>
+          <div class="cl-app-loading-actions">
+            <button type="button" onClick=${load}>Retry</button>
+            <button type="button" onClick=${() => { window.location.href = '/login'; }}>
+              Sign in again
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
   }
   return html`<${BootstrapContext.Provider} value=${value}>${children}<//>`;
 }
@@ -82,12 +113,7 @@ export function useBootstrapRefresh() {
 // the failure as a session error rather than papering over it.
 export function useOrgId() {
   const bootstrap = useBootstrap();
-  const candidate = (
-    bootstrap?.organization?.id ||
-    bootstrap?.organization_id ||
-    bootstrap?.current_user?.organization_id ||
-    null
-  );
+  const candidate = resolveBootstrapOrgId(bootstrap);
   if (!candidate && bootstrap) {
     // Bootstrap fetched, but no org — that's a hard error condition
     // (session without org). Log so it surfaces in the browser

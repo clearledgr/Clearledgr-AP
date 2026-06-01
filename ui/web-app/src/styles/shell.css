@@ -34,6 +34,53 @@
   color: var(--cl-ink-muted);
 }
 
+.cl-app-loading-error {
+  padding: 24px;
+  color: var(--cl-ink-primary);
+}
+
+.cl-app-loading-card {
+  width: min(100%, 420px);
+  padding: 24px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: 12px;
+  box-shadow: var(--cl-shadow-sm);
+}
+
+.cl-app-loading-card h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.cl-app-loading-card p {
+  margin: 0;
+  color: var(--cl-ink-secondary);
+}
+
+.cl-app-loading-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.cl-app-loading-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--cl-border);
+  border-radius: 8px;
+  background: var(--cl-surface);
+  color: var(--cl-ink-primary);
+  font-weight: 600;
+}
+
+.cl-app-loading-actions button:first-child {
+  border-color: var(--cl-teal-500);
+  background: var(--cl-teal-500);
+  color: var(--cl-navy);
+}
+
 /* Sidebar nav */
 
 .cl-sidebar-nav {
