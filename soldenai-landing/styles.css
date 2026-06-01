@@ -51,9 +51,9 @@
   --bg-dark-deeper: #030714;
 
   /* Light surfaces (sub-pages) */
-  --bg:        #fbf6ea;
-  --bg-alt:    #fbf6ea;
-  --surface:   #fbf6ea;
+  --bg:        #F4F8F7;
+  --bg-alt:    #F4F8F7;
+  --surface:   #F4F8F7;
 
   /* Text, light theme */
   --text:        #0A1F44;
@@ -2030,7 +2030,7 @@ body:not(.theme-dark) .footer-cta {
   color: #1f1b16;
   background:
     radial-gradient(circle at 72% 12%, rgba(24, 191, 176, 0.08), transparent 32%),
-    #fbf6ea;
+    #F4F8F7;
 }
 
 .footer__inner {
@@ -2074,7 +2074,7 @@ body:not(.theme-dark) .footer-cta {
   padding: 0 18px;
   border: 1px solid rgba(6, 19, 48, 0.18);
   color: var(--ix-ink);
-  background: #fbf6ea;
+  background: #F4F8F7;
   font-size: 15px;
   font-weight: 760;
   text-decoration: none;
@@ -2184,7 +2184,7 @@ body:not(.theme-dark) .footer-cta {
   align-items: center;
   justify-content: center;
   color: rgba(31, 27, 22, 0.62);
-  background: #fbf6ea;
+  background: #F4F8F7;
   text-decoration: none;
   transition: color 0.15s ease, transform 0.15s ease;
 }
@@ -2232,7 +2232,7 @@ body:not(.theme-dark) .footer-cta {
  * ============================================================ */
 
 .ix-home {
-  background: #fbf6ea;
+  background: #F4F8F7;
 }
 
 .ix-home .btn,
@@ -2532,7 +2532,7 @@ body:not(.theme-dark) .footer-cta {
 .ix-trust,
 .ix-quote {
   color: #0e1726;
-  background: #fbf6ea;
+  background: #F4F8F7;
 }
 
 .ix-thesis {
@@ -2592,7 +2592,7 @@ body:not(.theme-dark) .footer-cta {
   padding: 24px;
   border: 1px solid #d9e1e8;
   border-radius: 8px;
-  background: #fbf6ea;
+  background: #F4F8F7;
 }
 
 .ix-principles article span,
@@ -2627,7 +2627,7 @@ body:not(.theme-dark) .footer-cta {
 
 .ix-stack {
   padding: 110px 0;
-  background: #fbf6ea;
+  background: #F4F8F7;
 }
 
 .ix-stack__inner {
@@ -2830,7 +2830,7 @@ body:not(.theme-dark) .footer-cta {
 
 .ix-trust {
   padding: 112px 0;
-  background: #fbf6ea;
+  background: #F4F8F7;
 }
 
 .ix-trust__grid {
@@ -3041,7 +3041,7 @@ body:not(.theme-dark) .footer-cta {
 /* Inngest-close homepage pass. This block intentionally overrides
    the earlier ix prototype without affecting the subpages. */
 .ix-home--inngest {
-  --ix-cream: #fbf6ea;
+  --ix-cream: #F4F8F7;
   --ix-cream-2: var(--ix-cream);
   --ix-cream-3: var(--ix-cream);
   --ix-paper: var(--ix-cream);
@@ -3085,7 +3085,7 @@ body:not(.theme-dark) .footer-cta {
   align-items: center;
   justify-content: center;
   padding: 8px 20px;
-  color: #fbf6ea;
+  color: #F4F8F7;
   background: #061330;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   font-size: 13px;
@@ -3101,7 +3101,7 @@ body:not(.theme-dark) .footer-cta {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: #fbf6ea;
+  background: #F4F8F7;
   border-bottom: 1px solid rgba(31, 27, 22, 0.1);
   backdrop-filter: saturate(160%) blur(8px);
   transition: background-color 0.3s var(--ease-out),
@@ -3112,12 +3112,12 @@ body:not(.theme-dark) .footer-cta {
 [data-site-header] {
   min-height: 72px;
   display: block;
-  background: #fbf6ea;
+  background: #F4F8F7;
   border-bottom: 1px solid rgba(31, 27, 22, 0.1);
 }
 
 .ix-nav.is-scrolled {
-  background: #fbf6ea;
+  background: #F4F8F7;
   backdrop-filter: saturate(180%) blur(14px);
 }
 
@@ -3204,7 +3204,7 @@ body:not(.theme-dark) .footer-cta {
   padding: 7px 10px;
   border: 1px solid var(--ix-line);
   border-radius: 999px;
-  background: #fbf6ea;
+  background: #F4F8F7;
   text-transform: none;
 }
 
@@ -3237,7 +3237,7 @@ body:not(.theme-dark) .footer-cta {
   padding: 0 18px;
   border: 1px solid #1f1b16;
   border-radius: 8px;
-  color: #fbf6ea !important;
+  color: #F4F8F7 !important;
   background: #1f1b16;
   text-transform: none;
   box-shadow: 0 8px 18px rgba(31, 27, 22, 0.16);
@@ -3376,7 +3376,7 @@ body:not(.theme-dark) .footer-cta {
 
 .ix-btn--secondary {
   color: var(--ix-ink);
-  background: #fbf6ea;
+  background: #F4F8F7;
   border-color: var(--ix-line-2);
 }
 
@@ -3864,7 +3864,7 @@ body:not(.theme-dark) .footer-cta {
   border: 1px solid rgba(6, 19, 48, 0.14);
   border-radius: 0;
   color: #6b6256;
-  background: #fbf6ea;
+  background: #F4F8F7;
   font-family: var(--font-mono);
   font-size: 14px;
   cursor: pointer;
@@ -4786,7 +4786,7 @@ body:not(.theme-dark) .footer-cta {
   min-height: 76px;
   display: grid;
   place-items: center;
-  color: #fbf6ea;
+  color: #F4F8F7;
   background: var(--ix-ink);
   font-family: var(--font-body);
   font-size: 30px;
