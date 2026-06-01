@@ -4230,6 +4230,7 @@ body:not(.theme-dark) .footer-cta {
 
 .ix-install__grid {
   position: relative;
+  --ix-demo-axis: calc(68.3545% + 17.72px);
   grid-template-columns: minmax(380px, 0.58fr) minmax(0, 1fr);
   gap: 56px;
   border-top: 0;
@@ -4254,13 +4255,12 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-install article:first-child {
-  --ix-live-align: clamp(43px, calc(8.07vw - 60px), 105px);
-  --ix-intake-route: calc(clamp(180px, 14.25vw, 292px) + var(--ix-live-align));
+  --ix-intake-route: 324px;
   grid-column: 1 / -1;
   width: min(560px, 100%);
   max-width: 560px;
-  justify-self: center;
-  transform: translateX(calc(206px + var(--ix-live-align)));
+  justify-self: start;
+  margin-left: calc(var(--ix-demo-axis) - 280px);
   margin-bottom: 68px;
 }
 
@@ -4334,7 +4334,7 @@ body:not(.theme-dark) .footer-cta {
 }
 
 .ix-env::before {
-  --ix-live-route-y: 226px;
+  --ix-live-route-y: 124px;
   content: "";
   position: absolute;
   left: 50%;
@@ -4618,10 +4618,10 @@ body:not(.theme-dark) .footer-cta {
   content: "";
   position: absolute;
   left: 50%;
-  top: -308px;
+  top: -176px;
   z-index: -1;
   width: 1px;
-  height: 308px;
+  height: 176px;
   pointer-events: none;
   background: var(--ix-route-line);
 }
@@ -5406,4 +5406,24 @@ body:not(.theme-dark) .footer-cta {
   .ix-trust__grid article:last-child {
     border-bottom: 0;
   }
+}
+
+/* Remove the horizontal divider lines between homepage sections.
+   The full-width top/bottom borders made the page read as a stack of
+   separate boxes rather than one continuous surface. Card/grid borders
+   are untouched; only the section-level dividers are removed. Last in
+   the file so it wins the cascade. */
+.ix-home--inngest .ix-hero,
+.ix-home--inngest .ix-thesis,
+.ix-home--inngest .ix-record-system,
+.ix-home--inngest .ix-workflow-section,
+.ix-home--inngest .ix-sdk,
+.ix-home--inngest .ix-install,
+.ix-home--inngest .ix-anywhere,
+.ix-home--inngest .ix-scale,
+.ix-home--inngest .ix-trust,
+.ix-home--inngest .ix-stories,
+.ix-home--inngest .ix-final {
+  border-top: 0;
+  border-bottom: 0;
 }
