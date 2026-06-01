@@ -394,7 +394,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .page-cover__title {
   margin: 0 0 28px;
   font-family: var(--font);
-  font-size: clamp(56px, 6.5vw, 104px);
+  font-size: clamp(40px, 4.2vw, 64px);
   line-height: 1;
   letter-spacing: 0;
   font-weight: 500;
@@ -476,7 +476,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .usecase-proof__title {
   margin: 0 0 22px;
   font-family: var(--font);
-  font-size: clamp(44px, 5.6vw, 76px);
+  font-size: clamp(32px, 3.4vw, 50px);
   line-height: 1;
   letter-spacing: 0;
   font-weight: 500;
@@ -525,7 +525,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
   margin: 0 0 34px;
   max-width: 920px;
   font-family: var(--font);
-  font-size: clamp(42px, 5vw, 72px);
+  font-size: clamp(30px, 3vw, 46px);
   line-height: 1.02;
   letter-spacing: 0;
   font-weight: 500;
@@ -663,7 +663,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
   margin: 0 0 38px;
   max-width: 1040px;
   font-family: var(--font);
-  font-size: clamp(42px, 5vw, 72px);
+  font-size: clamp(30px, 3vw, 46px);
   line-height: 1.02;
   letter-spacing: 0;
   font-weight: 500;
@@ -776,7 +776,7 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
 .essay__title {
   margin: 0;
   font-family: var(--font);
-  font-size: clamp(40px, 4.4vw, 74px);
+  font-size: clamp(34px, 3.4vw, 54px);
   line-height: 1.04;
   letter-spacing: 0;
   font-weight: 500;
@@ -1342,4 +1342,17 @@ body.theme-manifesto-light .ix-nav__links a[aria-current="page"] {
     grid-column: 1;
   }
 
+}
+
+/* ── Manifesto: long-form reading exception. The site voice is Geist
+   sans (headings included, set above), but the manifesto's running
+   body prose stays serif for legibility at length. Deliberate, scoped
+   to the manifesto page only. ── */
+.theme-manifesto-light .essay__lede,
+.theme-manifesto-light .essay__section p,
+.theme-manifesto-light .essay__pull,
+.theme-manifesto-light .essay__note,
+.theme-manifesto-light .essay__creed li,
+.theme-manifesto-light .dropcap {
+  font-family: "Iowan Old Style", Georgia, serif;
 }
